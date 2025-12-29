@@ -1,0 +1,123 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Customer } from '../../database/entities/customer.entity';
+import { CustomerFilterDto } from './dto/customer-filter.dto';
+
+@Injectable()
+export class CustomerRepository {
+  constructor(
+    @InjectRepository(Customer)
+    private readonly repository: Repository<Customer>,
+  ) {}
+
+  async findByCode(tenantId: string, code: string): Promise<Customer | null> {
+    return this.repository.findOne({ where: { tenantId, code } });
+  }
+
+  async findAllByTenant(tenantId: string): Promise<Customer[]> {
+    return this.repository.find({
+      where: { tenantId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async findOne(options: any): Promise<Customer | null> {
+    return this.repository.findOne(options);
+  }
+
+  async find(options?: any): Promise<Customer[]> {
+    return this.repository.find(options);
+  }
+
+  create(entity: Partial<Customer>): Customer {
+    return this.repository.create(entity);
+  }
+
+  async save(entity: Customer): Promise<Customer> {
+    return this.repository.save(entity);
+  }
+
+  async softRemove(entity: Customer): Promise<Customer> {
+    return this.repository.softRemove(entity);
+  }
+
+  async findWithFilters(tenantId: string, filters: CustomerFilterDto) {
+    const queryBuilder = this.repository.createQueryBuilder('customer')
+      .where('customer.tenantId = :tenantId', { tenantId })
+      .andWhere('customer.deletedAt IS NULL');
+
+    if (filters.channel) {
+      queryBuilder.andWhere('customer.channel = :channel', { channel: filters.channel });
+    }
+
+    if (filters.city) {
+      queryBuilder.andWhere('customer.city = :city', { city: filters.city });
+    }
+
+    if (filters.region) {
+      queryBuilder.andWhere('customer.region = :region', { region: filters.region });
+    }
+
+    if (filters.status) {
+      queryBuilder.andWhere('customer.status = :status', { status: filters.status });
+    }
+
+    if (filters.tier) {
+      queryBuilder.andWhere('customer.customerTier = :tier', { tier: filters.tier });
+    }
+
+    if (filters.isVip !== undefined) {
+      queryBuilder.andWhere('customer.isVip = :isVip', { isVip: filters.isVip });
+    }
+
+    if (filters.search) {
+      queryBuilder.andWhere(
+        '(customer.name ILIKE :search OR customer.code ILIKE :search)',
+        { search: `%${filters.search}%` },
+      );
+    }
+
+    const sortOrder = filters.sortOrder || 'ASC';
+    const sortBy = filters.sortBy || 'name';
+    queryBuilder.orderBy(`customer.${sortBy}`, sortOrder);
+
+    const page = filters.page || 1;
+    const limit = filters.limit || 10;
+    const skip = (page - 1) * limit;
+
+    queryBuilder.skip(skip).take(limit);
+
+    const [data, total] = await queryBuilder.getManyAndCount();
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async findByChannel(tenantId: string, channel: string): Promise<Customer[]> {
+    return this.repository.find({
+      where: { tenantId, channel: channel as any },
+      order: { name: 'ASC' },
+    });
+  }
+
+  async findByCity(tenantId: string, city: string): Promise<Customer[]> {
+    return this.repository.find({
+      where: { tenantId, city },
+      order: { name: 'ASC' },
+    });
+  }
+
+  async findVipCustomers(tenantId: string): Promise<Customer[]> {
+    return this.repository.find({
+      where: { tenantId, isVip: true },
+      order: { name: 'ASC' },
+    });
+  }
+}
+

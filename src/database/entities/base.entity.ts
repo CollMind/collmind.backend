@@ -1,38 +1,33 @@
 import {
   PrimaryGeneratedColumn,
+  Column,
   CreateDateColumn,
   UpdateDateColumn,
   DeleteDateColumn,
-  Column,
-  BeforeInsert,
-  BeforeUpdate,
+  Index,
 } from 'typeorm';
 
 export abstract class BaseEntity {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id!: string;
 
   @Column({ name: 'tenant_id', type: 'uuid' })
-  tenantId: string;
+  @Index()
+  tenantId!: string;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
-  createdAt: Date;
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt!: Date;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp' })
-  updatedAt: Date;
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt!: Date;
 
-  @DeleteDateColumn({ name: 'deleted_at', type: 'timestamp', nullable: true })
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
   deletedAt?: Date;
 
-  @BeforeInsert()
-  setCreatedAt() {
-    this.createdAt = new Date();
-    this.updatedAt = new Date();
-  }
+  @Column({ name: 'created_by', type: 'uuid', nullable: true })
+  createdBy?: string;
 
-  @BeforeUpdate()
-  setUpdatedAt() {
-    this.updatedAt = new Date();
-  }
+  @Column({ name: 'updated_by', type: 'uuid', nullable: true })
+  updatedBy?: string;
 }
 

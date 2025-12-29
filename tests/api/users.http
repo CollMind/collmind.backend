@@ -1,0 +1,125 @@
+### Variables
+@baseUrl = http://localhost:3000/api
+@adminToken = {{admin_login.accessToken}}
+@tenantId = {{tenant_id}}
+@userId = {{user_response.id}}
+
+### 1. Login as Admin
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+
+{
+  "email": "admin@demo.com",
+  "password": "Admin123!"
+}
+
+### 2. Create User
+POST {{baseUrl}}/users
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+x-tenant-id: {{tenantId}}
+
+{
+  "email": "newuser@demo.com",
+  "password": "NewUser123!",
+  "fullName": "New User",
+  "firstName": "New",
+  "lastName": "User",
+  "role": "PLANNER",
+  "status": "ACTIVE",
+  "phoneNumber": "+90 555 999 8888",
+  "department": "Sales",
+  "jobTitle": "Junior Planner",
+  "mustChangePassword": true
+}
+
+### 3. Get All Users
+GET {{baseUrl}}/users
+Authorization: Bearer {{adminToken}}
+x-tenant-id: {{tenantId}}
+
+### 4. Get User By ID
+GET {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{adminToken}}
+x-tenant-id: {{tenantId}}
+
+### 5. Update User
+PATCH {{baseUrl}}/users/{{userId}}
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+x-tenant-id: {{tenantId}}
+
+{
+  "status": "ACTIVE",
+  "department": "Marketing",
+  "jobTitle": "Senior Planner"
+}
+
+### 6. Change User Password
+PATCH {{baseUrl}}/users/{{userId}}/password
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+x-tenant-id: {{tenantId}}
+
+{
+  "currentPassword": "NewUser123!",
+  "newPassword": "UpdatedPassword123!"
+}
+
+### 7. Deactivate User
+POST {{baseUrl}}/users/{{userId}}/deactivate
+Authorization: Bearer {{adminToken}}
+x-tenant-id: {{tenantId}}
+
+### 8. Activate User
+POST {{baseUrl}}/users/{{userId}}/activate
+Authorization: Bearer {{adminToken}}
+x-tenant-id: {{tenantId}}
+
+### 9. Get User Profile (Current User)
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{adminToken}}
+
+### 10. Update User Profile
+PATCH {{baseUrl}}/users/me
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "fullName": "Updated Name",
+  "phoneNumber": "+90 555 111 2222",
+  "preferences": {
+    "language": "tr",
+    "timezone": "Europe/Istanbul",
+    "theme": "dark"
+  }
+}
+
+### 10.1. Change My Password
+PATCH {{baseUrl}}/users/me/password
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "currentPassword": "Admin123!",
+  "newPassword": "NewPassword123!"
+}
+
+### 11. Refresh Token
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refresh_token}}"
+}
+
+### 12. Logout
+POST {{baseUrl}}/auth/logout
+Authorization: Bearer {{adminToken}}
+
+### 13. Delete User (Soft Delete)
+DELETE {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{adminToken}}
+x-tenant-id: {{tenantId}}
+

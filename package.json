@@ -22,7 +22,8 @@
     "migration:generate": "npm run typeorm -- migration:generate -d src/config/typeorm.config.ts",
     "migration:create": "npm run typeorm -- migration:create",
     "migration:run": "npm run typeorm -- migration:run -d src/config/typeorm.config.ts",
-    "migration:revert": "npm run typeorm -- migration:revert -d src/config/typeorm.config.ts"
+    "migration:revert": "npm run typeorm -- migration:revert -d src/config/typeorm.config.ts",
+    "seed": "ts-node -r tsconfig-paths/register src/database/seeds/run-seeds.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",
@@ -31,6 +32,7 @@
     "@nestjs/typeorm": "^10.0.0",
     "@nestjs/config": "^3.1.1",
     "@nestjs/passport": "^10.0.3",
+    "@nestjs/jwt": "^10.2.0",
     "@nestjs/swagger": "^7.1.17",
     "typeorm": "^0.3.17",
     "pg": "^8.11.3",

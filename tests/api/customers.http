@@ -1,0 +1,156 @@
+### Variables
+@baseUrl = http://localhost:3000/api
+@token = {{login_response.accessToken}}
+@customerId = {{customer_response.id}}
+
+### 1. Create Customer
+POST {{baseUrl}}/customers
+Content-Type: application/json
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+{
+  "code": "CUST001",
+  "name": "Metro Türkiye",
+  "channel": "NKA",
+  "type": "DIRECT",
+  "status": "ACTIVE",
+  "city": "Istanbul",
+  "district": "Beşiktaş",
+  "region": "Marmara",
+  "country": "Turkey",
+  "address": "Metro Plaza, Beşiktaş",
+  "postalCode": "34349",
+  "taxNumber": "1234567890",
+  "taxOffice": "Beşiktaş",
+  "contactPerson": "Ahmet Yılmaz",
+  "contactEmail": "ahmet.yilmaz@metro.com.tr",
+  "contactPhone": "+90 212 555 1234",
+  "paymentTerms": "NET30",
+  "creditLimit": 500000,
+  "currency": "TRY",
+  "salesRepresentative": "John Doe",
+  "accountManager": "Jane Smith",
+  "customerGroup": "Modern Trade",
+  "customerSegment": "Hypermarket",
+  "customerTier": "A",
+  "businessSize": "Large",
+  "isVip": true,
+  "metadata": {
+    "storeSize": 5000,
+    "numberOfEmployees": 200,
+    "numberOfLocations": 15
+  }
+}
+
+### 2. Create Multiple Customers (Bulk)
+POST {{baseUrl}}/customers/bulk
+Content-Type: application/json
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+{
+  "customers": [
+    {
+      "code": "CUST002",
+      "name": "Migros",
+      "channel": "NKA",
+      "type": "DIRECT",
+      "city": "Istanbul"
+    },
+    {
+      "code": "CUST003",
+      "name": "CarrefourSA",
+      "channel": "NKA",
+      "type": "DIRECT",
+      "city": "Istanbul"
+    },
+    {
+      "code": "CUST004",
+      "name": "A101",
+      "channel": "NKA",
+      "type": "DIRECT",
+      "city": "Istanbul"
+    }
+  ]
+}
+
+### 3. Get All Customers
+GET {{baseUrl}}/customers
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 4. Get Customers with Filters
+GET {{baseUrl}}/customers?channel=NKA&city=Istanbul&status=ACTIVE&tier=A
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 5. Get Customers with Pagination
+GET {{baseUrl}}/customers?page=1&limit=10&sortBy=name&sortOrder=ASC
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 6. Search Customers
+GET {{baseUrl}}/customers/search?q=Metro
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 7. Get Customer By ID
+GET {{baseUrl}}/customers/{{customerId}}
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 8. Get Customer By Code
+GET {{baseUrl}}/customers/code/CUST001
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 9. Update Customer
+PATCH {{baseUrl}}/customers/{{customerId}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+{
+  "status": "ACTIVE",
+  "customerTier": "A+",
+  "creditLimit": 750000,
+  "contactPerson": "Mehmet Demir",
+  "contactEmail": "mehmet.demir@metro.com.tr"
+}
+
+### 10. Get Customers by Channel
+GET {{baseUrl}}/customers/channel/NKA
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 11. Get Customers by City
+GET {{baseUrl}}/customers/city/Istanbul
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 12. Get VIP Customers
+GET {{baseUrl}}/customers/vip
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 13. Get Customer Statistics
+GET {{baseUrl}}/customers/{{customerId}}/stats
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 14. Deactivate Customer
+POST {{baseUrl}}/customers/{{customerId}}/deactivate
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 15. Activate Customer
+POST {{baseUrl}}/customers/{{customerId}}/activate
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+
+### 16. Delete Customer (Soft Delete)
+DELETE {{baseUrl}}/customers/{{customerId}}
+Authorization: Bearer {{token}}
+x-tenant-id: {{tenantId}}
+

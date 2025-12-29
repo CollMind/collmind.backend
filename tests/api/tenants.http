@@ -1,0 +1,69 @@
+### Variables
+@baseUrl = http://localhost:3000/api
+@adminToken = {{login_response.accessToken}}
+@tenantId = {{tenant_response.id}}
+
+### 1. Create Tenant
+POST {{baseUrl}}/tenants
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "name": "New Test Company",
+  "domain": "newtest.tsp.local",
+  "status": "TRIAL",
+  "plan": "BASIC",
+  "contactEmail": "admin@newtest.com",
+  "contactPerson": "Test Admin",
+  "contactPhone": "+90 555 123 4567",
+  "city": "Istanbul",
+  "country": "Turkey",
+  "industry": "FMCG",
+  "maxUsers": 10,
+  "maxStorageGB": 50,
+  "settings": {
+    "defaultCurrency": "TRY",
+    "fiscalYearStart": "01-01",
+    "timezone": "Europe/Istanbul",
+    "features": {
+      "advancedAnalytics": false,
+      "apiAccess": true
+    }
+  }
+}
+
+### 2. Get All Tenants
+GET {{baseUrl}}/tenants
+Authorization: Bearer {{adminToken}}
+
+### 3. Get Tenant By ID
+GET {{baseUrl}}/tenants/{{tenantId}}
+Authorization: Bearer {{adminToken}}
+
+### 4. Update Tenant
+PATCH {{baseUrl}}/tenants/{{tenantId}}
+Content-Type: application/json
+Authorization: Bearer {{adminToken}}
+
+{
+  "status": "ACTIVE",
+  "plan": "PROFESSIONAL",
+  "maxUsers": 50
+}
+
+### 5. Activate Tenant
+POST {{baseUrl}}/tenants/{{tenantId}}/activate
+Authorization: Bearer {{adminToken}}
+
+### 6. Suspend Tenant
+POST {{baseUrl}}/tenants/{{tenantId}}/suspend
+Authorization: Bearer {{adminToken}}
+
+### 7. Get Tenant Stats
+GET {{baseUrl}}/tenants/{{tenantId}}/stats
+Authorization: Bearer {{adminToken}}
+
+### 8. Delete Tenant (Soft Delete)
+DELETE {{baseUrl}}/tenants/{{tenantId}}
+Authorization: Bearer {{adminToken}}
+

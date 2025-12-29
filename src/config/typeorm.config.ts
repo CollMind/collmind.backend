@@ -14,8 +14,9 @@ export const dataSourceOptions: DataSourceOptions = {
   username: configService.get('DB_USERNAME'),
   password: configService.get('DB_PASSWORD'),
   database: configService.get('DB_DATABASE'),
-  entities: ['dist/database/entities/**/*.entity.js'],
-  migrations: ['dist/database/migrations/**/*.js'],
+  schema: configService.get('DB_SCHEMA') || 'main',
+  entities: [__dirname + '/../database/entities/**/*.entity{.ts,.js}'],
+  migrations: [__dirname + '/../database/migrations/**/*{.ts,.js}'],
   synchronize: false, // PRODUCTION'DA MUTLAKA FALSE
   logging: configService.get('NODE_ENV') === 'development',
   namingStrategy: new SnakeCaseNamingStrategy(),
