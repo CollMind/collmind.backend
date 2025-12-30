@@ -13,6 +13,7 @@ lerna-debug.log*
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Tests
 /coverage
@@ -39,4 +40,25 @@ lerna-debug.log*
 .env.local
 .env.*.local
 
+# Compiled files
+*.class
+*.py[cod]
 
+# Package files
+*.jar
+*.war
+
+# Maven
+target/
+
+# Applications
+*.app
+*.exe
+
+# Large media files
+*.mp4
+*.tiff
+*.avi
+*.flv
+*.mov
+*.wmv
