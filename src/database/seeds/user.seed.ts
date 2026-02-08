@@ -1,24 +1,13 @@
 import { DataSource } from 'typeorm';
 import { User, UserRole, UserStatus } from '../entities/user.entity';
-import { Tenant } from '../entities/tenant.entity';
 import * as bcrypt from 'bcrypt';
 
-export async function seedUsers(dataSource: DataSource) {
+export async function seedUsers(dataSource: DataSource, tenantId: string): Promise<User[]> {
   const userRepository = dataSource.getRepository(User);
-  const tenantRepository = dataSource.getRepository(Tenant);
-
-  const demoTenant = await tenantRepository.findOne({
-    where: { name: 'Demo Corporation' },
-  });
-
-  if (!demoTenant) {
-    console.log('❌ Demo tenant not found');
-    return;
-  }
 
   const users = [
     {
-      email: 'admin@demo.com',
+      email: 'admin@wella.com',
       fullName: 'System Admin',
       firstName: 'System',
       lastName: 'Admin',
@@ -26,12 +15,12 @@ export async function seedUsers(dataSource: DataSource) {
       status: UserStatus.ACTIVE,
       department: 'IT',
       jobTitle: 'System Administrator',
-      passwordHash: await bcrypt.hash('Admin123!', 10),
+      passwordHash: await bcrypt.hash('password123', 10),
       emailVerified: true,
-      tenantId: demoTenant.id,
+      tenantId,
     },
     {
-      email: 'planner@demo.com',
+      email: 'planner@wella.com',
       fullName: 'John Planner',
       firstName: 'John',
       lastName: 'Planner',
@@ -39,12 +28,12 @@ export async function seedUsers(dataSource: DataSource) {
       status: UserStatus.ACTIVE,
       department: 'Sales',
       jobTitle: 'Trade Planner',
-      passwordHash: await bcrypt.hash('Planner123!', 10),
+      passwordHash: await bcrypt.hash('password123', 10),
       emailVerified: true,
-      tenantId: demoTenant.id,
+      tenantId,
     },
     {
-      email: 'approver@demo.com',
+      email: 'approver@wella.com',
       fullName: 'Jane Approver',
       firstName: 'Jane',
       lastName: 'Approver',
@@ -52,12 +41,12 @@ export async function seedUsers(dataSource: DataSource) {
       status: UserStatus.ACTIVE,
       department: 'Sales',
       jobTitle: 'Sales Manager',
-      passwordHash: await bcrypt.hash('Approver123!', 10),
+      passwordHash: await bcrypt.hash('password123', 10),
       emailVerified: true,
-      tenantId: demoTenant.id,
+      tenantId,
     },
     {
-      email: 'finance@demo.com',
+      email: 'finance@wella.com',
       fullName: 'Bob Finance',
       firstName: 'Bob',
       lastName: 'Finance',
@@ -65,12 +54,13 @@ export async function seedUsers(dataSource: DataSource) {
       status: UserStatus.ACTIVE,
       department: 'Finance',
       jobTitle: 'Finance Analyst',
-      passwordHash: await bcrypt.hash('Finance123!', 10),
+      passwordHash: await bcrypt.hash('password123', 10),
       emailVerified: true,
-      tenantId: demoTenant.id,
+      tenantId,
     },
   ];
 
+  const created: User[] = [];
   for (const userData of users) {
     const existing = await userRepository.findOne({
       where: { tenantId: userData.tenantId, email: userData.email },
@@ -78,9 +68,14 @@ export async function seedUsers(dataSource: DataSource) {
 
     if (!existing) {
       const user = userRepository.create(userData);
-      await userRepository.save(user);
+      created.push(await userRepository.save(user));
       console.log(`✅ Created user: ${user.email}`);
+    } else {
+      created.push(existing);
     }
   }
+
+  console.log(`✅ Seeded ${created.length} users`);
+  return created;
 }
 

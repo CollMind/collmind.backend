@@ -4,6 +4,7 @@ import {
   NotFoundException,
   UnauthorizedException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UserRepository } from './user.repository';
@@ -11,7 +12,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { User, UserStatus } from '../../database/entities/user.entity';
+import { User, UserStatus, UserRole } from '../../database/entities/user.entity';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -106,8 +107,33 @@ export class UserService {
     return this.userRepository.findByEmailWithoutTenant(email);
   }
 
-  async update(tenantId: string, id: string, updateUserDto: UpdateUserDto): Promise<User> {
+  async update(
+    tenantId: string,
+    id: string,
+    updateUserDto: UpdateUserDto,
+    currentUserId?: string,
+    currentUserRole?: UserRole,
+  ): Promise<User> {
     const user = await this.findOne(tenantId, id);
+
+    // Security: Prevent role escalation - only admins can change roles, and only for other users
+    if (updateUserDto.role && updateUserDto.role !== user.role) {
+      // Non-admin users cannot change any role (including their own)
+      if (currentUserRole !== UserRole.ADMIN) {
+        throw new ForbiddenException('Only administrators can change user roles');
+      }
+      // Admins cannot modify their own role
+      if (currentUserId === id) {
+        throw new ForbiddenException('Admins cannot modify their own role permissions');
+      }
+      // Log high-risk action
+      console.warn('EA-001: Admin attempting role change', {
+        adminId: currentUserId,
+        targetUserId: id,
+        oldRole: user.role,
+        newRole: updateUserDto.role,
+      });
+    }
 
     // Check email uniqueness if changing
     if (updateUserDto.email && updateUserDto.email !== user.email) {

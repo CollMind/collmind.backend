@@ -1,6 +1,7 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Tenant } from './tenant.entity';
+import { Cpl } from './cpl.entity';
 
 export enum CustomerChannel {
   NKA = 'NKA',
@@ -143,6 +144,9 @@ export class Customer extends BaseEntity {
   @Column({ name: 'total_orders', type: 'int', default: 0 })
   totalOrders!: number;
 
+  @Column({ name: 'number_of_branches', type: 'int', nullable: true })
+  numberOfBranches?: number;
+
   // Additional
   @Column({ type: 'jsonb', nullable: true })
   metadata?: {
@@ -161,7 +165,7 @@ export class Customer extends BaseEntity {
   @Column({ type: 'text', nullable: true })
   notes?: string;
 
-  @Column({ type: 'boolean', default: false })
+  @Column({ name: 'is_vip', type: 'boolean', default: false })
   @Index()
   isVip!: boolean;
 
@@ -171,9 +175,16 @@ export class Customer extends BaseEntity {
   @Column({ name: 'contract_end_date', type: 'date', nullable: true })
   contractEndDate?: Date;
 
+  @Column({ name: 'cpl_id', type: 'uuid', nullable: true })
+  cplId?: string;
+
   // Relations
   @ManyToOne(() => Tenant)
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
+
+  @ManyToOne(() => Cpl, (cpl) => cpl.customers, { nullable: true })
+  @JoinColumn({ name: 'cpl_id' })
+  cpl?: Cpl;
 }
 

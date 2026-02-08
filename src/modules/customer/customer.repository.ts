@@ -119,5 +119,66 @@ export class CustomerRepository {
       order: { name: 'ASC' },
     });
   }
+
+  async getCplList(tenantId: string, channel?: string, categoryId?: string): Promise<Array<{
+    id: string;
+    code: string;
+    name: string;
+    channel: string;
+    customerCount: number;
+    activeAgreementCount: number;
+  }>> {
+    // Get distinct customers (CPLs) grouped by code
+    const query = this.repository
+      .createQueryBuilder('customer')
+      .select('customer.id', 'id')
+      .addSelect('customer.code', 'code')
+      .addSelect('customer.name', 'name')
+      .addSelect('customer.channel', 'channel')
+      .where('customer.tenantId = :tenantId', { tenantId })
+      .andWhere('customer.deletedAt IS NULL')
+      .groupBy('customer.id')
+      .addGroupBy('customer.code')
+      .addGroupBy('customer.name')
+      .addGroupBy('customer.channel');
+
+    if (channel) {
+      query.andWhere('customer.channel = :channel', { channel });
+    }
+
+    const customers = await query.getRawMany();
+
+    // Get customer count and active agreement count for each CPL
+    const result = await Promise.all(
+      customers.map(async (cpl) => {
+        // Count customers with same code (branches)
+        const customerCount = await this.repository.count({
+          where: { tenantId, code: cpl.code, deletedAt: null as any },
+        });
+
+        // Count active agreements for this CPL
+        const activeAgreementCount = await this.repository.manager
+          .createQueryBuilder()
+          .select('COUNT(*)', 'count')
+          .from('main.agreements', 'agreement')
+          .where('agreement.cpl_id = :cplId', { cplId: cpl.id })
+          .andWhere('agreement.tenant_id = :tenantId', { tenantId })
+          .andWhere('agreement.status = :status', { status: 'ACTIVE' })
+          .andWhere('agreement.deleted_at IS NULL')
+          .getRawOne();
+
+        return {
+          id: cpl.id,
+          code: cpl.code,
+          name: cpl.name,
+          channel: cpl.channel,
+          customerCount: customerCount || 0,
+          activeAgreementCount: parseInt(activeAgreementCount?.count || '0', 10),
+        };
+      }),
+    );
+
+    return result;
+  }
 }
 

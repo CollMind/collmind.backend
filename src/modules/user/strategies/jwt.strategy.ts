@@ -27,7 +27,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     return {
-      sub: user.id,
+      id: user.id, // Add id field for consistency (EA-001 fix)
+      sub: user.id, // Keep sub for backward compatibility
       email: user.email,
       role: user.role,
       tenantId: user.tenantId,

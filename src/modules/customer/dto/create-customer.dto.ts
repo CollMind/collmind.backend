@@ -175,6 +175,11 @@ export class CreateCustomerDto {
   @IsOptional()
   firstOrderDate?: string;
 
+  @ApiPropertyOptional({ example: 5, description: 'Number of branches' })
+  @IsNumber()
+  @IsOptional()
+  numberOfBranches?: number;
+
   // Additional
   @ApiPropertyOptional()
   @IsObject()

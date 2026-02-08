@@ -1,17 +1,17 @@
 import { DataSource } from 'typeorm';
 import { Tenant, TenantStatus, TenantPlan } from '../entities/tenant.entity';
 
-export async function seedTenants(dataSource: DataSource) {
+export async function seedTenants(dataSource: DataSource): Promise<Tenant[]> {
   const tenantRepository = dataSource.getRepository(Tenant);
 
   const tenants = [
     {
-      name: 'Demo Corporation',
-      domain: 'demo.tsp.local',
+      name: 'Wella Turkey',
+      domain: 'wella.tsp.local',
       status: TenantStatus.ACTIVE,
       plan: TenantPlan.PROFESSIONAL,
-      contactEmail: 'admin@demo.com',
-      contactPerson: 'Demo Admin',
+      contactEmail: 'admin@wella.com',
+      contactPerson: 'Wella Admin',
       city: 'Istanbul',
       country: 'Turkey',
       industry: 'FMCG',
@@ -29,17 +29,9 @@ export async function seedTenants(dataSource: DataSource) {
         },
       },
     },
-    {
-      name: 'Test Company',
-      domain: 'test.tsp.local',
-      status: TenantStatus.TRIAL,
-      plan: TenantPlan.BASIC,
-      contactEmail: 'info@test.com',
-      city: 'Ankara',
-      country: 'Turkey',
-    },
   ];
 
+  const created: Tenant[] = [];
   for (const tenantData of tenants) {
     const existing = await tenantRepository.findOne({
       where: { name: tenantData.name },
@@ -47,9 +39,14 @@ export async function seedTenants(dataSource: DataSource) {
 
     if (!existing) {
       const tenant = tenantRepository.create(tenantData);
-      await tenantRepository.save(tenant);
+      created.push(await tenantRepository.save(tenant));
       console.log(`✅ Created tenant: ${tenant.name}`);
+    } else {
+      created.push(existing);
     }
   }
+
+  console.log(`✅ Seeded ${created.length} tenants`);
+  return created;
 }
 

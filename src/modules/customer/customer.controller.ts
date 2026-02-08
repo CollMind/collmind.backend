@@ -10,8 +10,13 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  Res,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { CustomerService } from './customer.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -138,6 +143,122 @@ export class CustomerController {
   @ApiResponse({ status: 200, description: 'Customer statistics' })
   getStats(@TenantId() tenantId: string, @Param('id') id: string) {
     return this.customerService.getStats(tenantId, id);
+  }
+
+  @Get('cpl/list')
+  @ApiOperation({ summary: 'Get CPL list with statistics (customer count, active agreements)' })
+  @ApiResponse({ status: 200, description: 'CPL list with statistics' })
+  getCplList(
+    @TenantId() tenantId: string,
+    @Query('channel') channel?: string,
+    @Query('categoryId') categoryId?: string,
+  ) {
+    return this.customerService.getCplList(tenantId, channel, categoryId);
+  }
+
+  @Post('import')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Import customers from Excel or CSV file' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Excel (.xlsx, .xls) or CSV (.csv) file',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'At least one customer was created successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        total: { type: 'number', description: 'Total rows processed' },
+        created: { type: 'number', description: 'Number of customers created' },
+        skipped: { type: 'number', description: 'Number of customers skipped' },
+        errors: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              row: { type: 'number', description: 'Row number in file' },
+              code: { type: 'string', description: 'Customer code' },
+              error_type: { 
+                type: 'string', 
+                description: 'Error type: MISSING_FIELD, INVALID_DATE, INVALID_AMOUNT, ALREADY_EXISTS, DUPLICATE_IN_FILE, DATABASE_ERROR, INVALID_EMAIL',
+                enum: ['MISSING_FIELD', 'INVALID_DATE', 'INVALID_AMOUNT', 'ALREADY_EXISTS', 'DUPLICATE_IN_FILE', 'DATABASE_ERROR', 'INVALID_EMAIL'],
+              },
+              error_message: { type: 'string', description: 'Human-readable error message' },
+              original_row_data: { 
+                type: 'object', 
+                description: 'Original row data from file',
+                additionalProperties: true,
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'No customers were created (all failed validation, already exist, or file processing error)',
+  })
+  async importFromFile(
+    @TenantId() tenantId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Res() res: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Dosya yüklenmedi');
+    }
+
+    // Security: File size validation to prevent DoS attacks (10MB max)
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_FILE_SIZE) {
+      throw new BadRequestException('Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.');
+    }
+
+    const allowedMimeTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel', // .xls
+      'text/csv',
+      'application/csv',
+    ];
+
+    const allowedExtensions = ['xlsx', 'xls', 'csv'];
+
+    // Security: Validate file extension
+    const fileExtension = file.originalname.split('.').pop()?.toLowerCase();
+    if (!fileExtension || !allowedExtensions.includes(fileExtension)) {
+      throw new BadRequestException(
+        'Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.',
+      );
+    }
+
+    // Security: Validate MIME type to prevent file type spoofing
+    // Attackers can rename malicious files with valid extensions, so we must check MIME type
+    if (!file.mimetype || !allowedMimeTypes.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Geçersiz dosya tipi. Beklenen MIME tipleri: ${allowedMimeTypes.join(', ')}`,
+      );
+    }
+
+    const result = await this.customerService.importFromFile(tenantId, file);
+
+    // Return appropriate HTTP status based on actual outcome
+    // 201 if at least one customer was created, 400 if none were created
+    if (result.created > 0) {
+      return res.status(HttpStatus.CREATED).json(result);
+    } else {
+      return res.status(HttpStatus.BAD_REQUEST).json(result);
+    }
   }
 }
 

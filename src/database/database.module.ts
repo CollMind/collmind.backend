@@ -5,6 +5,34 @@ import { SnakeCaseNamingStrategy } from './strategies/snake-case-naming.strategy
 import { User } from './entities/user.entity';
 import { Tenant } from './entities/tenant.entity';
 import { Customer } from './entities/customer.entity';
+import { BudgetEnvelope } from './entities/budget-envelope.entity';
+import { BudgetTransaction } from './entities/budget-transaction.entity';
+import { Notification } from './entities/notification.entity';
+import { AdminAuditLog } from './entities/admin-audit-log.entity';
+// Actuals-First entities
+import { Agreement } from './entities/agreement.entity';
+import { ApprovalRequest } from './entities/approval-request.entity';
+import { LedgerEntry } from './entities/ledger-entry.entity';
+import { AgreementTransaction } from './entities/agreement-transaction.entity';
+import { BudgetSummaryView } from './entities/budget-summary.view-entity';
+// Master Data entities
+import {
+  Brand,
+  Category,
+  Channel,
+  Cpl,
+  ForecastingUnit,
+  GenericUnit,
+  Mechanic,
+  Region,
+  Sku,
+  Tactic,
+} from './entities';
+// KPI and User Scope entities
+import { Kpi } from './entities/kpi.entity';
+import { UserScope } from './entities/user-scope.entity';
+// Planning-First entities
+import { Plan, PlanFu, PlanSku } from './entities/plan.entity';
 
 @Module({
   imports: [
@@ -18,7 +46,41 @@ import { Customer } from './entities/customer.entity';
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_DATABASE'),
         schema: configService.get('DB_SCHEMA') || 'main',
-        entities: [User, Tenant, Customer],
+        entities: [
+          // Shared entities
+          User,
+          Tenant,
+          Customer,
+          BudgetEnvelope,
+          BudgetTransaction,
+          Notification,
+          AdminAuditLog,
+          // View entities
+          BudgetSummaryView,
+          // Actuals-First entities
+          Agreement,
+          ApprovalRequest,
+          LedgerEntry,
+          AgreementTransaction,
+          // Master Data entities
+          Brand,
+          Category,
+          Channel,
+          Cpl,
+          ForecastingUnit,
+          GenericUnit,
+          Mechanic,
+          Region,
+          Sku,
+          Tactic,
+          // KPI and User Scope entities
+          Kpi,
+          UserScope,
+          // Planning-First entities
+          Plan,
+          PlanFu,
+          PlanSku,
+        ],
         synchronize: false,
         logging: configService.get('NODE_ENV') === 'development',
         namingStrategy: new SnakeCaseNamingStrategy(),

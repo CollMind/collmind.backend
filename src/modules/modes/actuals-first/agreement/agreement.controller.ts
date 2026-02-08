@@ -1,0 +1,164 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { AgreementService } from './agreement.service';
+import { CreateAgreementDto, UpdateAgreementDto } from './dto';
+import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { Roles } from '../../../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
+import { TenantId } from '../../../../common/decorators/tenant.decorator';
+import { UserRole } from '../../../../database/entities/user.entity';
+import { AgreementStatus } from '../../../../database/entities/agreement.entity';
+
+@ApiTags('Agreements')
+@ApiBearerAuth()
+@Controller('agreements')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class AgreementController {
+  constructor(private readonly agreementService: AgreementService) {}
+
+  @Post()
+  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create new agreement' })
+  @ApiResponse({ status: 201, description: 'Agreement created successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid agreement data' })
+  create(
+    @Body() dto: CreateAgreementDto,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.agreementService.create(dto, tenantId, user.id);
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Get all agreements' })
+  @ApiResponse({ status: 200, description: 'List of agreements' })
+  findAll(
+    @TenantId() tenantId: string,
+    @Query('status') status?: AgreementStatus,
+    @Query('cplId') cplId?: string,
+    @Query('channel') channel?: string,
+  ) {
+    return this.agreementService.findAll(tenantId, { status, cplId, channel });
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get agreement by ID' })
+  @ApiResponse({ status: 200, description: 'Agreement details' })
+  @ApiResponse({ status: 404, description: 'Agreement not found' })
+  findOne(@Param('id') id: string, @TenantId() tenantId: string) {
+    return this.agreementService.findById(id, tenantId);
+  }
+
+  @Patch(':id')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @ApiOperation({ summary: 'Update agreement (DRAFT only)' })
+  @ApiResponse({ status: 200, description: 'Agreement updated successfully' })
+  @ApiResponse({ status: 400, description: 'Only DRAFT agreements can be edited' })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateAgreementDto,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.agreementService.update(id, dto, tenantId, user.id);
+  }
+
+  @Post(':id/submit')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit agreement for approval' })
+  @ApiResponse({ status: 200, description: 'Agreement submitted successfully' })
+  @ApiResponse({ status: 400, description: 'Only DRAFT agreements can be submitted' })
+  submit(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.agreementService.submit(id, tenantId, user.id);
+  }
+
+  @Post(':id/approve')
+  @Roles(UserRole.ADMIN, UserRole.APPROVER, UserRole.FINANCE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve agreement' })
+  @ApiResponse({ status: 200, description: 'Agreement approved successfully' })
+  @ApiResponse({ status: 400, description: 'Only PENDING agreements can be approved' })
+  approve(
+    @Param('id') id: string,
+    @Body('comments') comments: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.agreementService.approve(id, tenantId, user.id, comments);
+  }
+
+  @Post(':id/reject')
+  @Roles(UserRole.ADMIN, UserRole.APPROVER, UserRole.FINANCE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reject agreement' })
+  @ApiResponse({ status: 200, description: 'Agreement rejected successfully' })
+  @ApiResponse({ status: 400, description: 'Only PENDING agreements can be rejected' })
+  reject(
+    @Param('id') id: string,
+    @Body('reason') reason: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.agreementService.reject(id, tenantId, user.id, reason);
+  }
+
+  @Post(':id/cancel')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel agreement (releases reserved budget)' })
+  @ApiResponse({ status: 200, description: 'Agreement cancelled successfully' })
+  @ApiResponse({ status: 400, description: 'Only APPROVED or ACTIVE agreements can be cancelled' })
+  cancel(
+    @Param('id') id: string,
+    @Body('reason') reason: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.agreementService.cancel(id, tenantId, user.id, reason);
+  }
+
+  @Delete(':id')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete agreement (DRAFT only)' })
+  @ApiResponse({ status: 204, description: 'Agreement deleted successfully' })
+  @ApiResponse({ status: 400, description: 'Only DRAFT agreements can be deleted' })
+  delete(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.agreementService.delete(id, tenantId, user.id);
+  }
+
+  @Get('tactics/available')
+  @ApiOperation({ summary: 'Get available tactics for channel and category' })
+  @ApiResponse({ status: 200, description: 'List of available tactics' })
+  getAvailableTactics(
+    @Query('channel') channel: string,
+    @Query('categoryId') categoryId?: string,
+  ) {
+    return this.agreementService.getAvailableTactics(channel, categoryId);
+  }
+}
+
+

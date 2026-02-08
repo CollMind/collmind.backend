@@ -21,6 +21,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { TenantId } from '../../common/decorators/tenant.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../../database/entities/user.entity';
 
 @ApiTags('Users')
@@ -56,8 +57,16 @@ export class UserController {
   @Patch('me')
   @ApiOperation({ summary: 'Update current user profile' })
   @ApiResponse({ status: 200, description: 'Profile updated', type: UserResponseDto })
-  updateProfile(@Request() req: any, @Body() updateUserDto: UpdateUserDto) {
-    return this.userService.update(req.user.tenantId, req.user.sub, updateUserDto);
+  updateProfile(
+    @Request() req: any,
+    @Body() updateUserDto: UpdateUserDto,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    // Prevent role escalation - users cannot change their own role
+    if (updateUserDto.role) {
+      delete updateUserDto.role;
+    }
+    return this.userService.update(req.user.tenantId, req.user.sub, updateUserDto, user.id, user.role);
   }
 
   @Patch('me/password')
@@ -78,14 +87,15 @@ export class UserController {
 
   @Patch(':id')
   @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Update user' })
+  @ApiOperation({ summary: 'Update user (EA-001: Admin restrictions apply)' })
   @ApiResponse({ status: 200, description: 'User updated successfully', type: UserResponseDto })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.userService.update(tenantId, id, updateUserDto);
+    return this.userService.update(tenantId, id, updateUserDto, user.id, user.role);
   }
 
   @Patch(':id/password')

@@ -49,6 +49,9 @@ export class CustomerResponseDto {
   customerTier?: string;
 
   @ApiProperty()
+  numberOfBranches?: number;
+
+  @ApiProperty()
   isVip!: boolean;
 
   @ApiProperty()
