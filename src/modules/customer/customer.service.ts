@@ -63,10 +63,26 @@ export class CustomerService {
   }
 
   async findAll(tenantId: string, filters?: CustomerFilterDto): Promise<any> {
-    if (filters) {
+    // Eğer filters varsa ve herhangi bir filtre değeri içeriyorsa findWithFilters kullan
+    if (filters && this.hasActiveFilters(filters)) {
       return this.customerRepository.findWithFilters(tenantId, filters);
     }
+    // Aksi halde tüm müşterileri getir (pagination olmadan)
     return this.customerRepository.findAllByTenant(tenantId);
+  }
+
+  private hasActiveFilters(filters: CustomerFilterDto): boolean {
+    // Sadece pagination parametreleri varsa (page, limit, sortBy, sortOrder) filtre yok sayılır
+    const hasFilterValues = !!(
+      filters.channel ||
+      filters.city ||
+      filters.region ||
+      filters.status ||
+      filters.tier ||
+      filters.isVip !== undefined ||
+      filters.search
+    );
+    return hasFilterValues;
   }
 
   async findOne(tenantId: string, id: string): Promise<Customer> {
@@ -129,6 +145,10 @@ export class CustomerService {
 
   async findByChannel(tenantId: string, channel: string): Promise<Customer[]> {
     return this.customerRepository.findByChannel(tenantId, channel);
+  }
+
+  async findByChannelId(tenantId: string, channelId: string): Promise<Customer[]> {
+    return this.customerRepository.findByChannelId(tenantId, channelId);
   }
 
   async findByCity(tenantId: string, city: string): Promise<Customer[]> {

@@ -12,17 +12,17 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BudgetEnvelopeStatus } from '../../../../database/entities/budget-envelope.entity';
 
 export class CreateBudgetEnvelopeDto {
-  @ApiProperty({ example: 'NKA/Hair/Jan', description: 'Budget envelope code' })
+  @ApiPropertyOptional({ example: 'NKA/Hair/Jan', description: 'Budget envelope code (auto-generated if not provided)' })
   @IsString()
-  @MinLength(1)
+  @IsOptional()
   @MaxLength(100)
-  code!: string;
+  code?: string;
 
-  @ApiProperty({ example: 'NKA Hair Care January Budget', description: 'Budget envelope name' })
+  @ApiPropertyOptional({ example: 'NKA Hair Care January Budget', description: 'Budget envelope name (auto-generated if not provided)' })
   @IsString()
-  @MinLength(2)
+  @IsOptional()
   @MaxLength(200)
-  name!: string;
+  name?: string;
 
   @ApiProperty({ example: '2024', description: 'Fiscal year' })
   @IsString()
@@ -30,11 +30,17 @@ export class CreateBudgetEnvelopeDto {
   @MaxLength(10)
   fiscalYear!: string;
 
-  @ApiProperty({ example: 'Jan', description: 'Period (Jan, Q1, 2024, etc.)' })
+  @ApiProperty({ example: '2024-01', description: 'Period (YYYY-MM format)' })
   @IsString()
   @MinLength(1)
   @MaxLength(50)
   period!: string;
+
+  @ApiPropertyOptional({ example: '01', description: 'Month (01-12)' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(2)
+  month?: string;
 
   @ApiProperty({ example: 100000, description: 'Allocated amount' })
   @IsNumber()
@@ -60,6 +66,28 @@ export class CreateBudgetEnvelopeDto {
   @IsString()
   @IsOptional()
   budgetOwnerName?: string;
+
+  @ApiPropertyOptional({ example: 'NKA', description: 'Channel code (NKA, ECOM, DT, TT, etc.)' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  channel?: string;
+
+  @ApiPropertyOptional({ example: 'HAIR_CARE', description: 'Category code' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  category?: string;
+
+  @ApiPropertyOptional({ description: 'Channel entity ID reference' })
+  @IsUUID()
+  @IsOptional()
+  channelId?: string;
+
+  @ApiPropertyOptional({ description: 'Category entity ID reference' })
+  @IsUUID()
+  @IsOptional()
+  categoryId?: string;
 
   @ApiPropertyOptional({ example: 'TRY', default: 'TRY' })
   @IsString()

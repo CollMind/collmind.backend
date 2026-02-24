@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommonModule } from '../../common/common.module';
+import { CustomerModule } from '../customer/customer.module';
 import {
   Brand,
   Category,
@@ -8,6 +9,7 @@ import {
   Cpl,
   ForecastingUnit,
   GenericUnit,
+  Kpi,
   Mechanic,
   Region,
   Sku,
@@ -21,6 +23,7 @@ import { ChannelController } from './channel/channel.controller';
 import { CplController } from './cpl/cpl.controller';
 import { FuController } from './forecasting-unit/fu.controller';
 import { GuController } from './generic-unit/gu.controller';
+import { KpiController } from './kpi/kpi.controller';
 import { MechanicController } from './mechanic/mechanic.controller';
 import { RegionController } from './region/region.controller';
 import { SkuController } from './sku/sku.controller';
@@ -33,6 +36,7 @@ import { ChannelService } from './channel/channel.service';
 import { CplService } from './cpl/cpl.service';
 import { FuService } from './forecasting-unit/fu.service';
 import { GuService } from './generic-unit/gu.service';
+import { KpiService } from './kpi/kpi.service';
 import { MechanicService } from './mechanic/mechanic.service';
 import { RegionService } from './region/region.service';
 import { SkuService } from './sku/sku.service';
@@ -45,6 +49,7 @@ import { ChannelRepository } from './channel/channel.repository';
 import { CplRepository } from './cpl/cpl.repository';
 import { FuRepository } from './forecasting-unit/fu.repository';
 import { GuRepository } from './generic-unit/gu.repository';
+import { KpiRepository } from './kpi/kpi.repository';
 import { MechanicRepository } from './mechanic/mechanic.repository';
 import { RegionRepository } from './region/region.repository';
 import { SkuRepository } from './sku/sku.repository';
@@ -53,6 +58,7 @@ import { TacticRepository } from './tactic/tactic.repository';
 @Module({
   imports: [
     CommonModule,
+    CustomerModule,
     TypeOrmModule.forFeature([
       Brand,
       Category,
@@ -60,6 +66,7 @@ import { TacticRepository } from './tactic/tactic.repository';
       Cpl,
       ForecastingUnit,
       GenericUnit,
+      Kpi,
       Mechanic,
       Region,
       Sku,
@@ -73,6 +80,7 @@ import { TacticRepository } from './tactic/tactic.repository';
     CplController,
     FuController,
     GuController,
+    KpiController,
     MechanicController,
     RegionController,
     SkuController,
@@ -91,6 +99,8 @@ import { TacticRepository } from './tactic/tactic.repository';
     FuRepository,
     GuService,
     GuRepository,
+    KpiService,
+    KpiRepository,
     MechanicService,
     MechanicRepository,
     RegionService,
@@ -107,6 +117,7 @@ import { TacticRepository } from './tactic/tactic.repository';
     CplService,
     FuService,
     GuService,
+    KpiService,
     MechanicService,
     RegionService,
     SkuService,

@@ -12,6 +12,7 @@ import { Sku } from './sku.entity';
 export enum PlanStatus {
   DRAFT = 'DRAFT',
   PENDING_APPROVAL = 'PENDING_APPROVAL',
+  PENDING_FINANCE_REVIEW = 'PENDING_FINANCE_REVIEW',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
 }
@@ -89,6 +90,36 @@ export class Plan extends BaseEntity {
   @Column({ type: 'text', nullable: true })
   comments?: string; // Planner comments for approver
 
+  // Submission details
+  @Column({ name: 'submission_notes', type: 'text', nullable: true })
+  submissionNotes?: string; // Notes from planner at submission
+
+  @Column({ name: 'submitted_at', type: 'timestamp', nullable: true })
+  submittedAt?: Date;
+
+  @Column({ name: 'submitted_by', type: 'uuid', nullable: true })
+  submittedById?: string;
+
+  // Finance review
+  @Column({ name: 'pending_finance_review', type: 'boolean', default: false })
+  pendingFinanceReview!: boolean;
+
+  @Column({ name: 'escalation_reason', type: 'text', nullable: true })
+  escalationReason?: string; // Reason for escalation to Finance
+
+  @Column({ name: 'escalated_at', type: 'timestamp', nullable: true })
+  escalatedAt?: Date;
+
+  @Column({ name: 'escalated_by', type: 'uuid', nullable: true })
+  escalatedById?: string;
+
+  // Budget breakdown (cached for approval workflow)
+  @Column({ name: 'on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  onInvoiceSpend!: number;
+
+  @Column({ name: 'off_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  offInvoiceSpend!: number;
+
   // Calculated totals (cached for performance)
   @Column({ name: 'total_planned_volume', type: 'decimal', precision: 18, scale: 3, default: 0 })
   totalPlannedVolume!: number;
@@ -133,6 +164,14 @@ export class Plan extends BaseEntity {
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'rejected_by' })
   rejectedBy?: User;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'submitted_by' })
+  submittedBy?: User;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'escalated_by' })
+  escalatedBy?: User;
 
   @OneToMany(() => PlanFu, (planFu) => planFu.plan, { cascade: true })
   planFus!: PlanFu[];
@@ -180,6 +219,9 @@ export class PlanFu extends BaseEntity {
 
   @OneToMany(() => PlanSku, (planSku) => planSku.planFu, { cascade: true })
   planSkus!: PlanSku[];
+
+  @OneToMany('PlanMechanicValue', 'planFu', { cascade: true })
+  planMechanicValues!: any[];
 }
 
 @Entity({ name: 'plan_skus', schema: 'main' })
@@ -219,6 +261,26 @@ export class PlanSku extends BaseEntity {
   @Column({ name: 'rag_status', length: 10, nullable: true })
   ragStatus?: string; // 'RED' | 'AMBER' | 'GREEN'
 
+  // LTA spend alanları
+  @Column({ name: 'base_lta_on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  baseLtaOnInvoiceSpend!: number;
+
+  @Column({ name: 'base_lta_off_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  baseLtaOffInvoiceSpend!: number;
+
+  @Column({ name: 'planned_lta_on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  plannedLtaOnInvoiceSpend!: number;
+
+  @Column({ name: 'planned_lta_off_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  plannedLtaOffInvoiceSpend!: number;
+
+  // Promo spend alanları (tüm on-invoice ve off-invoice mekaniklerin toplamı)
+  @Column({ name: 'promo_on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  promoOnInvoiceSpend!: number;
+
+  @Column({ name: 'promo_off_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  promoOffInvoiceSpend!: number;
+
   // Relations
   @ManyToOne(() => PlanFu, (planFu) => planFu.planSkus, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'plan_fu_id' })
@@ -227,4 +289,7 @@ export class PlanSku extends BaseEntity {
   @ManyToOne(() => Sku)
   @JoinColumn({ name: 'sku_id' })
   sku!: Sku;
+
+  @OneToMany('MechanicSpendBreakdown', 'planSku', { cascade: true })
+  spendBreakdowns?: any[];
 }

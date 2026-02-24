@@ -88,7 +88,7 @@ export class Agreement extends BaseEntity {
   guId?: string; // Generic Unit (optional)
 
   @Column({ name: 'fu_id', type: 'uuid' })
-  fuId!: string; // Forecasting Unit (required)
+  fuId!: string; // Forecasting Unit (required per BRD)
 
   @Column({ name: 'sku_scope', length: 20, default: 'FU' })
   skuScope!: string; // 'GU' | 'FU' | 'SKU' | 'ALL'
@@ -195,6 +195,14 @@ export class Agreement extends BaseEntity {
 
   @Column({ name: 'competitor_name', length: 200, nullable: true })
   competitorName?: string;
+
+  // Dynamic parameters for specific tactics
+  @Column({ name: 'additional_params', type: 'jsonb', nullable: true })
+  additionalParams?: Record<string, any>;
+
+  // KPI Calculation Results
+  @Column({ name: 'kpi_results', type: 'jsonb', nullable: true })
+  kpiResults?: Record<string, any>;
 
   // Relations
   @ManyToOne(() => Cpl)

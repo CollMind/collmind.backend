@@ -20,6 +20,10 @@ export class AgreementTransaction extends BaseEntity {
   @Column({ name: 'invoice_date', type: 'date' })
   invoiceDate!: Date;
 
+  // Fiscal period for budget deduction (YYYY-MM format)
+  @Column({ name: 'fiscal_period', length: 7, nullable: true })
+  fiscalPeriod?: string; // YYYY-MM format, used for budget deduction
+
   // Amount
   @Column({ type: 'decimal', precision: 18, scale: 2 })
   amount!: number;

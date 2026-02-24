@@ -125,6 +125,10 @@ export class CreateAgreementDto {
   @IsOptional()
   @IsString()
   currency?: string;
+
+  @ApiPropertyOptional({ description: 'Additional dynamic parameters for specific tactics' })
+  @IsOptional()
+  additionalParams?: Record<string, any>;
 }
 
 

@@ -1,0 +1,105 @@
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { FinanceReportingService } from './finance-reporting.service';
+import { ReportFilters, PaginationParams, ReportGranularity, ComparisonType } from './dto/report-filters.dto';
+import { BudgetUtilizationReport } from './dto/budget-utilization.dto';
+import { TrendReport } from './dto/trend-report.dto';
+import { CompositionReport } from './dto/composition-report.dto';
+import { PaginatedPlanReport } from './dto/plan-performance.dto';
+import { RiskReport } from './dto/risk-report.dto';
+import { MechanicReport } from './dto/mechanic-effectiveness.dto';
+import { VarianceReport } from './dto/variance-report.dto';
+import { CashFlowReport } from './dto/cash-flow-report.dto';
+import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { TenantId } from '../../../common/decorators/tenant.decorator';
+import { UserRole } from '../../../database/entities/user.entity';
+
+@ApiTags('Finance Reporting')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('finance-reporting')
+export class FinanceReportingController {
+  constructor(private readonly financeReportingService: FinanceReportingService) {}
+
+  @Get('budget-utilization')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER)
+  @ApiOperation({ summary: 'Get budget utilization report' })
+  @ApiResponse({ status: 200, description: 'Budget utilization report', type: BudgetUtilizationReport })
+  getBudgetUtilization(@TenantId() tenantId: string, @Query() filters: ReportFilters) {
+    return this.financeReportingService.getBudgetUtilization(tenantId, filters);
+  }
+
+  @Get('spend-trend')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER)
+  @ApiOperation({ summary: 'Get spend trend report' })
+  @ApiResponse({ status: 200, description: 'Spend trend report', type: TrendReport })
+  getSpendTrend(
+    @TenantId() tenantId: string,
+    @Query() filters: ReportFilters,
+    @Query('granularity') granularity: ReportGranularity = ReportGranularity.MONTHLY,
+  ) {
+    return this.financeReportingService.getSpendTrend(tenantId, filters, granularity);
+  }
+
+  @Get('spend-composition')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER)
+  @ApiOperation({ summary: 'Get spend composition report' })
+  @ApiResponse({ status: 200, description: 'Spend composition report', type: CompositionReport })
+  getSpendComposition(@TenantId() tenantId: string, @Query() filters: ReportFilters) {
+    return this.financeReportingService.getSpendComposition(tenantId, filters);
+  }
+
+  @Get('plan-performance')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER, UserRole.PLANNER)
+  @ApiOperation({ summary: 'Get plan performance report' })
+  @ApiResponse({ status: 200, description: 'Plan performance report', type: PaginatedPlanReport })
+  getPlanPerformance(
+    @TenantId() tenantId: string,
+    @Query() filters: ReportFilters,
+    @Query() pagination: PaginationParams,
+  ) {
+    return this.financeReportingService.getPlanPerformance(tenantId, filters, pagination);
+  }
+
+  @Get('budget-at-risk')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @ApiOperation({ summary: 'Get budget at risk analysis' })
+  @ApiResponse({ status: 200, description: 'Budget at risk report', type: RiskReport })
+  getBudgetAtRisk(@TenantId() tenantId: string, @Query() filters: ReportFilters) {
+    return this.financeReportingService.getBudgetAtRisk(tenantId, filters);
+  }
+
+  @Get('mechanic-effectiveness')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER)
+  @ApiOperation({ summary: 'Get mechanic effectiveness report' })
+  @ApiResponse({ status: 200, description: 'Mechanic effectiveness report', type: MechanicReport })
+  getMechanicEffectiveness(@TenantId() tenantId: string, @Query() filters: ReportFilters) {
+    return this.financeReportingService.getMechanicEffectiveness(tenantId, filters);
+  }
+
+  @Get('variance-analysis')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @ApiOperation({ summary: 'Get variance analysis report' })
+  @ApiResponse({ status: 200, description: 'Variance analysis report', type: VarianceReport })
+  getVarianceAnalysis(
+    @TenantId() tenantId: string,
+    @Query() filters: ReportFilters,
+    @Query('comparisonType') comparisonType: ComparisonType = ComparisonType.BUDGET_VS_ACTUAL,
+  ) {
+    return this.financeReportingService.getVarianceAnalysis(tenantId, filters, comparisonType);
+  }
+
+  @Get('cash-flow-projection')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @ApiOperation({ summary: 'Get cash flow projection' })
+  @ApiResponse({ status: 200, description: 'Cash flow projection report', type: CashFlowReport })
+  getCashFlowProjection(
+    @TenantId() tenantId: string,
+    @Query() filters: ReportFilters,
+    @Query('months') months: number = 12,
+  ) {
+    return this.financeReportingService.getCashFlowProjection(tenantId, filters, months);
+  }
+}

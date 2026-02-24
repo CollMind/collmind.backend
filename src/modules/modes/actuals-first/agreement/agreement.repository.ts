@@ -22,10 +22,16 @@ export class AgreementRepository {
     });
   }
 
-  async findByCode(code: string, tenantId: string): Promise<Agreement | null> {
-    return this.repo.findOne({
-      where: { agreementCode: code, tenantId },
-    });
+  async findByCode(code: string, tenantId: string, includeDeleted = false): Promise<Agreement | null> {
+    const query = this.repo.createQueryBuilder('agreement')
+      .where('agreement.agreementCode = :code', { code })
+      .andWhere('agreement.tenantId = :tenantId', { tenantId });
+    
+    if (!includeDeleted) {
+      query.andWhere('agreement.deletedAt IS NULL');
+    }
+    
+    return query.getOne();
   }
 
   async findAll(tenantId: string, filters?: {
@@ -78,12 +84,13 @@ export class AgreementRepository {
     const prefix = `${type}-${year}-`;
     
     // Find the highest sequence number for this type and year
+    // Include ALL records (including soft-deleted) to avoid code conflicts with unique constraint
+    // The unique constraint applies to all records regardless of deletedAt
     const agreements = await this.repo
       .createQueryBuilder('agreement')
       .where('agreement.tenantId = :tenantId', { tenantId })
       .andWhere('agreement.agreementType = :type', { type })
       .andWhere('agreement.agreementCode LIKE :prefix', { prefix: `${prefix}%` })
-      .andWhere('agreement.deletedAt IS NULL')
       .orderBy('agreement.agreementCode', 'DESC')
       .limit(1)
       .getOne();
@@ -91,9 +98,12 @@ export class AgreementRepository {
     let sequence = 1;
     if (agreements && agreements.agreementCode) {
       const lastCode = agreements.agreementCode;
-      const lastSequence = parseInt(lastCode.split('-')[2], 10);
-      if (!isNaN(lastSequence)) {
-        sequence = lastSequence + 1;
+      const parts = lastCode.split('-');
+      if (parts.length >= 3) {
+        const lastSequence = parseInt(parts[2], 10);
+        if (!isNaN(lastSequence) && lastSequence > 0) {
+          sequence = lastSequence + 1;
+        }
       }
     }
 

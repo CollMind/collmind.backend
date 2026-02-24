@@ -25,8 +25,11 @@
     "migration:revert": "npm run typeorm -- migration:revert -d src/config/typeorm.config.ts",
     "seed": "ts-node -r tsconfig-paths/register src/database/seeds/run-seeds.ts",
     "seed:run": "ts-node -r tsconfig-paths/register src/database/seeds/run-seeds.ts",
+    "seed:cleanup": "ts-node -r tsconfig-paths/register src/database/seeds/cleanup-data.ts",
+    "seed:cleanup-and-seed": "ts-node -r tsconfig-paths/register src/database/seeds/cleanup-and-seed.ts",
     "test:happy-path": "ts-node -r tsconfig-paths/register src/database/seeds/test-happy-path.ts",
-    "test:e2e:happy-path": "ts-node -r tsconfig-paths/register src/database/seeds/test-happy-path.ts"
+    "test:e2e:happy-path": "ts-node -r tsconfig-paths/register src/database/seeds/test-happy-path.ts",
+    "migration:run:prod": "typeorm migration:run -d dist/config/typeorm.config.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

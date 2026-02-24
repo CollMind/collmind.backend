@@ -1,0 +1,33 @@
+image: google/cloud-sdk:latest
+
+pipelines:
+  branches:
+    main:
+      - step:
+          name: Build and Deploy Backend
+          services:
+            - docker
+          script:
+            # GCP Authentication
+            - echo $GCP_CREDENTIALS > /tmp/gcp-key.json
+            - gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+            - gcloud config set project $GCP_PROJECT_ID
+            - gcloud auth configure-docker europe-west1-docker.pkg.dev
+
+            # Build & Push
+            - export IMAGE="europe-west1-docker.pkg.dev/$GCP_PROJECT_ID/app-repo/backend"
+            - docker build -t $IMAGE:$BITBUCKET_COMMIT -t $IMAGE:latest .
+            - docker push $IMAGE:$BITBUCKET_COMMIT
+            - docker push $IMAGE:latest
+
+            # Deploy to Cloud Run
+            - |
+              gcloud run deploy backend \
+                --image=$IMAGE:$BITBUCKET_COMMIT \
+                --region=europe-west1 \
+                --platform=managed \
+                --allow-unauthenticated \
+                --port=3000 \
+                --set-secrets="DB_PASSWORD=DB_PASSWORD:latest,JWT_SECRET=JWT_SECRET:latest" \
+                --set-env-vars="NODE_ENV=production,PORT=3000,DB_HOST=10.25.16.3,DB_PORT=5432,DB_USERNAME=_collmind_staging_user,DB_DATABASE=collmind_staging,DB_SCHEMA=main,JWT_EXPIRATION=48h" \
+                --vpc-connector=projects/$GCP_PROJECT_ID/locations/europe-west1/conn

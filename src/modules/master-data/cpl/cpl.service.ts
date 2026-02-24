@@ -8,12 +8,14 @@ import { CreateCplDto } from './dto/create-cpl.dto';
 import { UpdateCplDto } from './dto/update-cpl.dto';
 import { Cpl } from '../../../database/entities/cpl.entity';
 import { ChannelRepository } from '../channel/channel.repository';
+import { CustomerRepository } from '../../customer/customer.repository';
 
 @Injectable()
 export class CplService {
   constructor(
     private readonly cplRepository: CplRepository,
     private readonly channelRepository: ChannelRepository,
+    private readonly customerRepository: CustomerRepository,
   ) {}
 
   async create(tenantId: string, createCplDto: CreateCplDto): Promise<Cpl> {
@@ -37,7 +39,24 @@ export class CplService {
       isVip: createCplDto.isVip ?? false,
     });
 
-    return this.cplRepository.save(cpl);
+    const savedCpl = await this.cplRepository.save(cpl);
+
+    // Assign customers to CPL if provided
+    if (createCplDto.customerIds && createCplDto.customerIds.length > 0) {
+      await Promise.all(
+        createCplDto.customerIds.map(async (customerId) => {
+          const customer = await this.customerRepository.findOne({
+            where: { tenantId, id: customerId },
+          });
+          if (customer) {
+            customer.cplId = savedCpl.id;
+            await this.customerRepository.save(customer);
+          }
+        }),
+      );
+    }
+
+    return savedCpl;
   }
 
   async findAll(tenantId: string, activeOnly = false, channelId?: string): Promise<Cpl[]> {

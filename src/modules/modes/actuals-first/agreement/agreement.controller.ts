@@ -27,7 +27,7 @@ import { AgreementStatus } from '../../../../database/entities/agreement.entity'
 @Controller('agreements')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AgreementController {
-  constructor(private readonly agreementService: AgreementService) {}
+  constructor(private readonly agreementService: AgreementService) { }
 
   @Post()
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
@@ -55,6 +55,28 @@ export class AgreementController {
     return this.agreementService.findAll(tenantId, { status, cplId, channel });
   }
 
+  // Spesifik route'lar parametrik route'lardan (:id) önce tanımlanmalı
+  @Get('pending-approvals')
+  @Roles(UserRole.ADMIN, UserRole.APPROVER, UserRole.FINANCE)
+  @ApiOperation({ summary: 'Get pending approval agreements' })
+  @ApiResponse({ status: 200, description: 'List of pending approval agreements' })
+  findPendingApprovals(@TenantId() tenantId: string) {
+    return this.agreementService.findPendingApprovals(tenantId);
+  }
+
+  @Get('tactics/available')
+  @ApiOperation({ summary: 'Get available tactics for channel and category' })
+  @ApiResponse({ status: 200, description: 'List of available tactics with their mechanics' })
+  getAvailableTactics(
+    @TenantId() tenantId: string,
+    @Query('channelId') channelId?: string,
+    @Query('channel') channel?: string, // Legacy support for channel code
+    @Query('categoryId') categoryId?: string,
+  ) {
+    return this.agreementService.getAvailableTactics(tenantId, channelId || channel, categoryId);
+  }
+
+  // Parametrik route en sonda olmalı
   @Get(':id')
   @ApiOperation({ summary: 'Get agreement by ID' })
   @ApiResponse({ status: 200, description: 'Agreement details' })
@@ -149,16 +171,8 @@ export class AgreementController {
   ) {
     return this.agreementService.delete(id, tenantId, user.id);
   }
-
-  @Get('tactics/available')
-  @ApiOperation({ summary: 'Get available tactics for channel and category' })
-  @ApiResponse({ status: 200, description: 'List of available tactics' })
-  getAvailableTactics(
-    @Query('channel') channel: string,
-    @Query('categoryId') categoryId?: string,
-  ) {
-    return this.agreementService.getAvailableTactics(channel, categoryId);
-  }
 }
+
+
 
 

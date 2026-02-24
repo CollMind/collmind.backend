@@ -58,6 +58,32 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       emailVerified: true,
       tenantId,
     },
+    {
+      email: 'finance.manager@wella.com',
+      fullName: 'Sarah Finance Manager',
+      firstName: 'Sarah',
+      lastName: 'Finance Manager',
+      role: UserRole.FINANCE_MANAGER,
+      status: UserStatus.ACTIVE,
+      department: 'Finance',
+      jobTitle: 'Finance Manager',
+      passwordHash: await bcrypt.hash('password123', 10),
+      emailVerified: true,
+      tenantId,
+    },
+    {
+      email: 'category.manager@wella.com',
+      fullName: 'Mike Category Manager',
+      firstName: 'Mike',
+      lastName: 'Category Manager',
+      role: UserRole.CATEGORY_MANAGER,
+      status: UserStatus.ACTIVE,
+      department: 'Sales',
+      jobTitle: 'Category Manager',
+      passwordHash: await bcrypt.hash('password123', 10),
+      emailVerified: true,
+      tenantId,
+    },
   ];
 
   const created: User[] = [];

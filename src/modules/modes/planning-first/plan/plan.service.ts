@@ -8,7 +8,9 @@ import { PlanRepository } from './plan.repository';
 import { CreatePlanDto, UpdatePlanDto, AddFuDto, UpdateFuTacticDto, UpdateSkuVolumeDto } from './dto';
 import { Plan, PlanStatus, PlanFu, PlanSku } from '../../../../database/entities/plan.entity';
 import { BudgetService } from '../../../shared/budget/budget.service';
+import { BudgetEnvelopeStatus } from '../../../../database/entities/budget-envelope.entity';
 import { ApprovalService } from '../../../shared/approval/approval.service';
+import { KpiEngineService, CalculationResult, SkuCalculationContext } from '../../../shared/kpi-engine/kpi-engine.service';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -22,6 +24,7 @@ export class PlanService {
     private readonly planRepo: PlanRepository,
     private readonly budgetService: BudgetService,
     private readonly approvalService: ApprovalService,
+    private readonly kpiEngine: KpiEngineService,
     @InjectRepository(ForecastingUnit)
     private readonly fuRepo: Repository<ForecastingUnit>,
     @InjectRepository(Sku)
@@ -50,14 +53,13 @@ export class PlanService {
 
         // If not first attempt, add suffix to make it unique
         if (attempt > 0) {
-          const timestamp = Date.now().toString().slice(-4); // Last 4 digits of timestamp
+          const timestamp = Date.now().toString().slice(-4);
           planCode = `${planCode}-${timestamp}`;
         }
 
         // Check if code already exists
         const existing = await this.planRepo.findByCode(planCode, tenantId);
         if (existing) {
-          // Wait a bit before retrying
           await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
           continue;
         }
@@ -81,23 +83,19 @@ export class PlanService {
       } catch (error: any) {
         lastError = error;
         
-        // If duplicate key error, retry with new code
         if (error.code === '23505' || error.message?.includes('duplicate key')) {
-          // Wait before retrying (exponential backoff)
           if (attempt < maxAttempts - 1) {
             await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
             continue;
           }
         }
         
-        // If not a duplicate key error or max attempts reached, throw
         if (attempt === maxAttempts - 1 || (error.code !== '23505' && !error.message?.includes('duplicate key'))) {
           throw error;
         }
       }
     }
 
-    // If we get here, all attempts failed
     throw new ConflictException(
       `Unable to create plan: ${lastError?.message || 'Unknown error'}`
     );
@@ -132,12 +130,10 @@ export class PlanService {
   ): Promise<Plan> {
     const plan = await this.findById(id, tenantId);
 
-    // Only DRAFT plans can be edited
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be edited');
     }
 
-    // Update period month if start date changed
     const { startDate: dtoStartDate, endDate: dtoEndDate, ...dtoWithoutDates } = dto;
     const updateData: Partial<Plan> = { ...dtoWithoutDates, updatedBy: userId };
     
@@ -189,8 +185,8 @@ export class PlanService {
       await this.planRepo.addSku(planFu.id, sku.id, tenantId, userId);
     }
 
-    // Recalculate plan totals
-    await this.recalculatePlan(planId, tenantId);
+    // Recalculate plan totals using KPI engine
+    await this.recalculatePlanWithKpiEngine(planId, tenantId);
 
     return this.planRepo.findPlanFu(planId, dto.fuId) as Promise<PlanFu>;
   }
@@ -217,9 +213,8 @@ export class PlanService {
       tactics: dto.tactics || planFu.tactics,
     });
 
-    // Recalculate FU and SKU values
-    await this.recalculateFu(planFu.id, tenantId);
-    await this.recalculatePlan(planId, tenantId);
+    // Recalculate using KPI engine
+    await this.recalculatePlanWithKpiEngine(planId, tenantId);
 
     return this.planRepo.findPlanFu(planId, fuId) as Promise<PlanFu>;
   }
@@ -260,10 +255,8 @@ export class PlanService {
       incrementalVolume,
     });
 
-    // Recalculate SKU, FU, and Plan
-    await this.recalculateSku(planSku.id, tenantId);
-    await this.recalculateFu(planFu.id, tenantId);
-    await this.recalculatePlan(planId, tenantId);
+    // Recalculate using KPI engine
+    await this.recalculatePlanWithKpiEngine(planId, tenantId);
 
     return this.planRepo.findPlanSku(planFu.id, skuId) as Promise<PlanSku>;
   }
@@ -281,7 +274,7 @@ export class PlanService {
     }
 
     await this.planRepo.removeFu(planFu.id);
-    await this.recalculatePlan(planId, tenantId);
+    await this.recalculatePlanWithKpiEngine(planId, tenantId);
   }
 
   async submit(id: string, tenantId: string, userId: string): Promise<Plan> {
@@ -291,7 +284,6 @@ export class PlanService {
       throw new BadRequestException('Only DRAFT plans can be submitted');
     }
 
-    // Validate plan has at least one FU
     if (!plan.planFus || plan.planFus.length === 0) {
       throw new BadRequestException('Plan must have at least one FU before submission');
     }
@@ -307,14 +299,85 @@ export class PlanService {
       userId,
     );
 
-    // Update plan with approval request ID and status
     return this.planRepo.updateStatus(id, tenantId, PlanStatus.PENDING_APPROVAL, {
       approvalRequestId: approvalRequest.id,
       updatedBy: userId,
     });
   }
 
-  async approve(id: string, tenantId: string, userId: string, comments?: string): Promise<Plan> {
+  /**
+   * Check budget availability for a plan before approval
+   */
+  async checkBudget(id: string, tenantId: string): Promise<{
+    hasBudget: boolean;
+    planTotalSpend: number;
+    channel: string;
+    channelName: string;
+    period: string;
+    envelope?: {
+      id: string;
+      code: string;
+      name: string;
+      allocatedAmount: number;
+      availableAmount: number;
+      currency: string;
+    };
+    sufficient?: boolean;
+  }> {
+    const plan = await this.findById(id, tenantId);
+    const channelCode = plan.channel?.code || '';
+    const channelName = plan.channel?.name || channelCode;
+
+    const envelope = await this.budgetService.findEnvelopeByDimensions(
+      tenantId,
+      channelCode,
+      plan.periodMonth,
+    );
+
+    if (!envelope) {
+      return {
+        hasBudget: false,
+        planTotalSpend: Number(plan.totalSpend),
+        channel: channelCode,
+        channelName,
+        period: plan.periodMonth,
+      };
+    }
+
+    // Check availability
+    const budgetStatus = await this.budgetService.getBudgetStatus(
+      tenantId,
+      channelCode,
+      undefined,
+      plan.periodMonth,
+    );
+
+    return {
+      hasBudget: true,
+      planTotalSpend: Number(plan.totalSpend),
+      channel: channelCode,
+      channelName,
+      period: plan.periodMonth,
+      envelope: {
+        id: envelope.id,
+        code: envelope.code,
+        name: envelope.name,
+        allocatedAmount: Number(envelope.allocatedAmount),
+        availableAmount: budgetStatus.available,
+        currency: envelope.currency,
+      },
+      sufficient: budgetStatus.available >= Number(plan.totalSpend),
+    };
+  }
+
+  async approve(
+    id: string,
+    tenantId: string,
+    userId: string,
+    comments?: string,
+    autoCreateBudget?: boolean,
+    budgetAmount?: number,
+  ): Promise<Plan> {
     const plan = await this.findById(id, tenantId);
 
     if (plan.status !== PlanStatus.PENDING_APPROVAL) {
@@ -325,12 +388,47 @@ export class PlanService {
       throw new BadRequestException('Approval request not found');
     }
 
+    const channelCode = plan.channel?.code || '';
+
+    // Check if budget envelope exists
+    const existingEnvelope = await this.budgetService.findEnvelopeByDimensions(
+      tenantId,
+      channelCode,
+      plan.periodMonth,
+    );
+
+    if (!existingEnvelope && autoCreateBudget) {
+      // Auto-create budget envelope
+      const allocatedAmount = budgetAmount || Math.max(Number(plan.totalSpend) * 2, 100000);
+      const periodLabel = plan.periodMonth; // e.g., "2026-01"
+      const fiscalYear = plan.periodMonth.substring(0, 4);
+
+      await this.budgetService.createEnvelope(tenantId, {
+        code: `${channelCode}/${periodLabel}`,
+        name: `${plan.channel?.name || channelCode} - ${periodLabel} Bütçesi`,
+        fiscalYear,
+        period: periodLabel,
+        allocatedAmount,
+        status: BudgetEnvelopeStatus.ACTIVE,
+        currency: 'TRY',
+        metadata: {
+          channel: channelCode,
+          autoCreated: true,
+          createdForPlanId: plan.id,
+        },
+      });
+    } else if (!existingEnvelope && !autoCreateBudget) {
+      throw new BadRequestException(
+        `No active budget envelope found for channel: ${channelCode}, period: ${plan.periodMonth}. Use autoCreateBudget to create one automatically.`,
+      );
+    }
+
     // Create budget reservation
     try {
       await this.budgetService.reserveForPlan(
         plan.id,
         plan.totalSpend,
-        plan.channel.code,
+        channelCode,
         plan.periodMonth,
         'TRY',
         tenantId,
@@ -349,7 +447,6 @@ export class PlanService {
       { comments },
     );
 
-    // Update plan status
     return this.planRepo.updateStatus(id, tenantId, PlanStatus.APPROVED, {
       approvedAt: new Date(),
       approvedById: userId,
@@ -373,7 +470,6 @@ export class PlanService {
       throw new BadRequestException('Approval request not found');
     }
 
-    // Update approval request
     await this.approvalService.reject(
       plan.approvalRequestId,
       tenantId,
@@ -381,7 +477,6 @@ export class PlanService {
       { reason },
     );
 
-    // Update plan status back to DRAFT
     return this.planRepo.updateStatus(id, tenantId, PlanStatus.REJECTED, {
       rejectedAt: new Date(),
       rejectedById: userId,
@@ -393,127 +488,299 @@ export class PlanService {
   async delete(id: string, tenantId: string): Promise<void> {
     const plan = await this.findById(id, tenantId);
 
-    // Only allow deletion of DRAFT plans
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be deleted');
     }
 
-    // Release budget reservations if any
     if (plan.totalSpend > 0) {
       await this.budgetService.releaseForPlan(id, tenantId);
     }
 
-    // Soft delete the plan
     await this.planRepo.softDelete(id, tenantId);
   }
 
-  // Recalculation methods (simplified - will be replaced with KPI engine)
-  private async recalculateSku(planSkuId: string, tenantId: string): Promise<void> {
-    const planSku = await this.planRepo['planSkuRepo'].findOne({
-      where: { id: planSkuId },
-      relations: ['sku', 'planFu'],
-    });
-
-    if (!planSku) return;
-
-    const sku = planSku.sku;
-    const plannedVolume = planSku.plannedVolume || 0;
-    const unitPrice = sku.unitPrice || 0;
-    const cogs = sku.cogs || 0;
-
-    // Calculate basic KPIs
-    const plannedTurnover = plannedVolume * unitPrice;
-    const tacticSpend = 0; // Will be calculated from FU tactics
-    const plannedGp = plannedTurnover - (plannedVolume * cogs) - tacticSpend;
-    const gpRoi = tacticSpend > 0 ? (plannedGp / tacticSpend) * 100 : null;
-
-    // Determine RAG status (simplified - will use KPI engine)
-    let ragStatus = 'GREEN';
-    if (gpRoi !== null) {
-      if (gpRoi < 0) ragStatus = 'RED';
-      else if (gpRoi < 15) ragStatus = 'AMBER';
-    }
-
-    await this.planRepo['planSkuRepo'].update(
-      { id: planSkuId },
-      {
-        plannedTurnover,
-        tacticSpend,
-        plannedGp,
-        gpRoi: gpRoi ?? undefined,
-        ragStatus,
-      },
-    );
-  }
-
-  private async recalculateFu(planFuId: string, tenantId: string): Promise<void> {
-    const planFu = await this.planRepo['planFuRepo'].findOne({
-      where: { id: planFuId },
-      relations: ['planSkus'],
-    });
-
-    if (!planFu) return;
-
-    // Aggregate SKU values
-    let totalPlannedVolume = 0;
-    let totalSpend = 0;
-    let totalGp = 0;
-
-    for (const planSku of planFu.planSkus || []) {
-      totalPlannedVolume += planSku.plannedVolume || 0;
-      totalSpend += planSku.tacticSpend || 0;
-      totalGp += planSku.plannedGp || 0;
-    }
-
-    const gpRoi = totalSpend > 0 ? (totalGp / totalSpend) * 100 : null;
-
-    // Determine RAG status (aggregate from SKUs)
-    const skuRags = planFu.planSkus?.map(s => s.ragStatus).filter(Boolean) || [];
-    let ragStatus = 'GREEN';
-    if (skuRags.includes('RED')) ragStatus = 'RED';
-    else if (skuRags.includes('AMBER')) ragStatus = 'AMBER';
-
-    await this.planRepo['planFuRepo'].update(
-      { id: planFuId },
-      {
-        totalPlannedVolume,
-        totalSpend,
-        totalGp,
-        gpRoi: gpRoi ?? undefined,
-        ragStatus,
-      },
-    );
-  }
-
-  private async recalculatePlan(planId: string, tenantId: string): Promise<void> {
+  /**
+   * Full KPI engine recalculation for the entire plan
+   * Follows BRD hierarchy: SKU → FU → PLAN
+   */
+  async recalculatePlanWithKpiEngine(planId: string, tenantId: string): Promise<void> {
     const plan = await this.findById(planId, tenantId);
+    if (!plan.planFus || plan.planFus.length === 0) return;
 
-    // Aggregate FU values
-    let totalPlannedVolume = 0;
-    let totalSpend = 0;
-    let totalGp = 0;
+    // Get all tactics for tactic spend calculation
+    const allTactics = await this.tacticRepo.find({ where: { tenantId } });
+    const tacticMap = new Map(allTactics.map(t => [t.code, t]));
 
-    for (const planFu of plan.planFus || []) {
-      totalPlannedVolume += planFu.totalPlannedVolume || 0;
-      totalSpend += planFu.totalSpend || 0;
-      totalGp += planFu.totalGp || 0;
+    const allFuResults: Array<Record<string, CalculationResult>> = [];
+
+    for (const planFu of plan.planFus) {
+      const skuResults: Array<Record<string, CalculationResult>> = [];
+
+      // Calculate tactic spend for this FU
+      const fuTacticTotalSpend = this.calculateFuTacticSpend(planFu, tacticMap);
+
+      for (const planSku of planFu.planSkus || []) {
+        const sku = planSku.sku;
+        const baseVol = Number(planSku.baseVolume) || 0;
+        const planVol = Number(planSku.plannedVolume) || 0;
+        const unitPrice = Number(sku.unitPrice) || 0;
+        const cogs = Number(sku.cogs) || 0;
+
+        // Distribute FU tactic spend proportionally across SKUs
+        const fuPlannedVolume = planFu.planSkus?.reduce((sum, s) =>
+          sum + (Number(s.plannedVolume) || 0), 0) || 0;
+        const skuShareRatio = fuPlannedVolume > 0 ? planVol / fuPlannedVolume : 0;
+        const skuTacticSpend = fuTacticTotalSpend * skuShareRatio;
+
+        // Build context for KPI engine
+        const context: SkuCalculationContext = {
+          BASE_VOL: baseVol,
+          PLAN_VOL: planVol,
+          BPTT: unitPrice,
+          COGS: cogs,
+          // Inject computed intermediary values
+          INCR_VOL: planVol - baseVol,
+          PLAN_TURNOVER: planVol * unitPrice,
+          TACTIC_SPEND: skuTacticSpend,
+          BASE_TURNOVER: baseVol * unitPrice,
+          PLAN_COGS: planVol * cogs,
+          GP: (planVol * unitPrice) - (planVol * cogs) - skuTacticSpend,
+        };
+
+        // Try KPI engine first
+        let kpiResults: Record<string, CalculationResult>;
+        try {
+          kpiResults = await this.kpiEngine.calculateSku(tenantId, context);
+        } catch {
+          // Fallback to basic calculations if KPI engine fails
+          kpiResults = {};
+        }
+
+        skuResults.push(kpiResults);
+
+        // Extract values from KPI results or fallback
+        const incrementalVolume = planVol - baseVol;
+        const plannedTurnover = planVol * unitPrice;
+        const plannedGp = kpiResults['GP']?.value ?? ((planVol * unitPrice) - (planVol * cogs) - skuTacticSpend);
+        const gpRoi = kpiResults['GP_ROI_PCT']?.value ?? (skuTacticSpend > 0 ? (plannedGp / skuTacticSpend) * 100 : null);
+        
+        // RAG from KPI engine or fallback
+        let ragStatus = kpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
+        if (!kpiResults['GP_ROI_PCT']) {
+          if (gpRoi !== null) {
+            if (gpRoi < 0) ragStatus = 'RED';
+            else if (gpRoi < 15) ragStatus = 'AMBER';
+          }
+        }
+
+        await this.planRepo.updatePlanSku(planSku.id, {
+          incrementalVolume,
+          plannedTurnover,
+          tacticSpend: skuTacticSpend,
+          plannedGp,
+          gpRoi: gpRoi ?? undefined,
+          ragStatus,
+        });
+      }
+
+      // Calculate FU level using KPI engine
+      let fuKpiResults: Record<string, CalculationResult>;
+      try {
+        fuKpiResults = await this.kpiEngine.calculateFu(
+          tenantId,
+          skuResults,
+          planFu.tactics || {},
+        );
+      } catch {
+        fuKpiResults = {};
+      }
+
+      // Aggregate SKU values for FU
+      let fuTotalPlannedVolume = 0;
+      let fuTotalGp = 0;
+
+      for (const planSku of planFu.planSkus || []) {
+        // Re-read to get updated values
+        const updated = await this.planRepo.findPlanSku(planFu.id, planSku.skuId);
+        if (updated) {
+          fuTotalPlannedVolume += Number(updated.plannedVolume) || 0;
+          fuTotalGp += Number(updated.plannedGp) || 0;
+        }
+      }
+
+      const fuGpRoi = fuKpiResults['GP_ROI_PCT']?.value ?? (fuTacticTotalSpend > 0 ? (fuTotalGp / fuTacticTotalSpend) * 100 : null);
+      
+      let fuRagStatus = fuKpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
+      if (!fuKpiResults['GP_ROI_PCT']) {
+        if (fuGpRoi !== null) {
+          if (fuGpRoi < 0) fuRagStatus = 'RED';
+          else if (fuGpRoi < 15) fuRagStatus = 'AMBER';
+        }
+      }
+
+      await this.planRepo.updatePlanFu(planFu.id, {
+        totalPlannedVolume: fuTotalPlannedVolume,
+        totalSpend: fuTacticTotalSpend,
+        totalGp: fuTotalGp,
+        gpRoi: fuGpRoi ?? undefined,
+        ragStatus: fuRagStatus,
+      });
+
+      allFuResults.push(fuKpiResults);
     }
 
-    const overallRoi = totalSpend > 0 ? (totalGp / totalSpend) * 100 : null;
+    // Plan level aggregation
+    let planTotalPlannedVolume = 0;
+    let planTotalSpend = 0;
+    let planTotalGp = 0;
 
-    // Determine RAG status (aggregate from FUs)
-    const fuRags = plan.planFus?.map(f => f.ragStatus).filter(Boolean) || [];
-    let ragStatus = 'GREEN';
-    if (fuRags.includes('RED')) ragStatus = 'RED';
-    else if (fuRags.includes('AMBER')) ragStatus = 'AMBER';
+    // Re-read FUs to get updated aggregations
+    const updatedPlan = await this.findById(planId, tenantId);
+    for (const planFu of updatedPlan.planFus || []) {
+      planTotalPlannedVolume += Number(planFu.totalPlannedVolume) || 0;
+      planTotalSpend += Number(planFu.totalSpend) || 0;
+      planTotalGp += Number(planFu.totalGp) || 0;
+    }
+
+    // Plan-level KPI calculation
+    let planKpiResults: Record<string, CalculationResult>;
+    try {
+      planKpiResults = await this.kpiEngine.calculatePlan(tenantId, allFuResults);
+    } catch {
+      planKpiResults = {};
+    }
+
+    const overallRoi = planKpiResults['GP_ROI_PCT']?.value ?? (planTotalSpend > 0 ? (planTotalGp / planTotalSpend) * 100 : null);
+
+    let planRagStatus = planKpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
+    if (!planKpiResults['GP_ROI_PCT']) {
+      const fuRags = updatedPlan.planFus?.map(f => f.ragStatus).filter(Boolean) || [];
+      if (fuRags.includes('RED')) planRagStatus = 'RED';
+      else if (fuRags.includes('AMBER')) planRagStatus = 'AMBER';
+    }
 
     await this.planRepo.update(planId, tenantId, {
-      totalPlannedVolume,
-      totalSpend,
-      totalGp,
+      totalPlannedVolume: planTotalPlannedVolume,
+      totalSpend: planTotalSpend,
+      totalGp: planTotalGp,
       overallRoi: overallRoi ?? undefined,
-      ragStatus,
+      ragStatus: planRagStatus,
     });
+  }
+
+  /**
+   * Calculate total tactic spend for an FU based on tactic definitions
+   */
+  private calculateFuTacticSpend(
+    planFu: PlanFu,
+    tacticMap: Map<string, Tactic>,
+  ): number {
+    let totalTacticSpend = 0;
+
+    if (!planFu.tactics) return 0;
+
+    for (const [tacticCode, value] of Object.entries(planFu.tactics)) {
+      const tactic = tacticMap.get(tacticCode);
+
+      // Calculate based on tactic type
+      if (tactic?.tacticType === 'DISCOUNT' || tacticCode.includes('PCT') || tacticCode.includes('%')) {
+        // Percentage-based tactic: % of planned turnover
+        const plannedTurnover = planFu.planSkus?.reduce((sum, sku) => {
+          return sum + ((Number(sku.plannedVolume) || 0) * (Number(sku.sku?.unitPrice) || 0));
+        }, 0) || 0;
+        totalTacticSpend += plannedTurnover * (value / 100);
+      } else {
+        // Lumpsum tactic
+        totalTacticSpend += value;
+      }
+    }
+
+    return totalTacticSpend;
+  }
+
+  /**
+   * Calculate KPIs for a plan and return results (API endpoint)
+   */
+  async calculateKpis(planId: string, tenantId: string): Promise<{
+    planKpis: Record<string, CalculationResult>;
+    fuKpis: Array<{ fuId: string; fuName: string; kpis: Record<string, CalculationResult> }>;
+  }> {
+    // Trigger full recalculation
+    await this.recalculatePlanWithKpiEngine(planId, tenantId);
+
+    const plan = await this.findById(planId, tenantId);
+    const allTactics = await this.tacticRepo.find({ where: { tenantId } });
+    const tacticMap = new Map(allTactics.map(t => [t.code, t]));
+
+    const fuKpis: Array<{ fuId: string; fuName: string; kpis: Record<string, CalculationResult> }> = [];
+
+    const allFuResults: Array<Record<string, CalculationResult>> = [];
+
+    for (const planFu of plan.planFus || []) {
+      const skuResults: Array<Record<string, CalculationResult>> = [];
+
+      const fuTacticTotalSpend = this.calculateFuTacticSpend(planFu, tacticMap);
+
+      for (const planSku of planFu.planSkus || []) {
+        const sku = planSku.sku;
+        const baseVol = Number(planSku.baseVolume) || 0;
+        const planVol = Number(planSku.plannedVolume) || 0;
+        const unitPrice = Number(sku.unitPrice) || 0;
+        const cogsVal = Number(sku.cogs) || 0;
+
+        const fuPlannedVolume = planFu.planSkus?.reduce((sum, s) =>
+          sum + (Number(s.plannedVolume) || 0), 0) || 0;
+        const skuShareRatio = fuPlannedVolume > 0 ? planVol / fuPlannedVolume : 0;
+        const skuTacticSpend = fuTacticTotalSpend * skuShareRatio;
+
+        const context: SkuCalculationContext = {
+          BASE_VOL: baseVol,
+          PLAN_VOL: planVol,
+          BPTT: unitPrice,
+          COGS: cogsVal,
+          INCR_VOL: planVol - baseVol,
+          PLAN_TURNOVER: planVol * unitPrice,
+          TACTIC_SPEND: skuTacticSpend,
+          BASE_TURNOVER: baseVol * unitPrice,
+          PLAN_COGS: planVol * cogsVal,
+          GP: (planVol * unitPrice) - (planVol * cogsVal) - skuTacticSpend,
+        };
+
+        try {
+          const kpiResults = await this.kpiEngine.calculateSku(tenantId, context);
+          skuResults.push(kpiResults);
+        } catch {
+          skuResults.push({});
+        }
+      }
+
+      let fuKpiResults: Record<string, CalculationResult>;
+      try {
+        fuKpiResults = await this.kpiEngine.calculateFu(
+          tenantId,
+          skuResults,
+          planFu.tactics || {},
+        );
+      } catch {
+        fuKpiResults = {};
+      }
+
+      fuKpis.push({
+        fuId: planFu.fuId,
+        fuName: planFu.fu?.name || planFu.fuId,
+        kpis: fuKpiResults,
+      });
+      allFuResults.push(fuKpiResults);
+    }
+
+    let planKpis: Record<string, CalculationResult>;
+    try {
+      planKpis = await this.kpiEngine.calculatePlan(tenantId, allFuResults);
+    } catch {
+      planKpis = {};
+    }
+
+    return { planKpis, fuKpis };
   }
 
   async getAnalysis(planId: string, tenantId: string): Promise<{
@@ -565,18 +832,18 @@ export class PlanService {
     for (const planFu of plan.planFus || []) {
       for (const planSku of planFu.planSkus || []) {
         const sku = planSku.sku;
-        const baseVol = planSku.baseVolume || 0;
-        const unitPrice = sku.unitPrice || 0;
-        const cogs = sku.cogs || 0;
+        const baseVol = Number(planSku.baseVolume) || 0;
+        const unitPrice = Number(sku.unitPrice) || 0;
+        const cogs = Number(sku.cogs) || 0;
         baseVolume += baseVol;
         baseGp += (baseVol * unitPrice) - (baseVol * cogs);
       }
     }
 
-    const incrementalGp = plan.totalGp - baseGp;
-    const currentRoi = plan.overallRoi || null;
+    const incrementalGp = Number(plan.totalGp) - baseGp;
+    const currentRoi = plan.overallRoi ? Number(plan.overallRoi) : null;
     
-    // Target ROI: Default 20% (will be configurable from KPI config)
+    // Target ROI from KPI engine thresholds (if defined) or default 20%
     const targetRoi = 20.0;
     const status = currentRoi === null 
       ? 'BELOW_TARGET' 
@@ -591,7 +858,6 @@ export class PlanService {
     let offInvoiceSpend = 0;
     const tacticSpendMap = new Map<string, { spend: number; name: string }>();
 
-    // Get all tactics for this tenant to map codes to names and spend types
     const allTactics = await this.tacticRepo.find({
       where: { tenantId },
       select: ['code', 'name', 'spendType', 'tacticType'],
@@ -604,29 +870,24 @@ export class PlanService {
           const tactic = tacticMap.get(tacticCode);
           const tacticName = tactic?.name || tacticCode;
           
-          // Determine spend type from tactic entity or fallback to code analysis
           let isOffInvoice = false;
           if (tactic?.spendType === 'OFF_INVOICE') {
             isOffInvoice = true;
           } else if (tactic?.spendType === 'ON_INVOICE') {
             isOffInvoice = false;
           } else {
-            // Fallback: analyze code
             isOffInvoice = tacticCode.includes('OFF') || 
                           tacticCode.includes('DISPLAY') || 
                           tacticCode.includes('LUMP');
           }
           
-          // Calculate spend from tactic value
           let tacticSpend = 0;
           if (tactic?.tacticType === 'DISCOUNT' || tacticCode.includes('PCT') || tacticCode.includes('%')) {
-            // Percentage-based: calculate from planned turnover
             const plannedTurnover = planFu.planSkus?.reduce((sum, sku) => {
-              return sum + ((sku.plannedVolume || 0) * (sku.sku.unitPrice || 0));
+              return sum + ((Number(sku.plannedVolume) || 0) * (Number(sku.sku.unitPrice) || 0));
             }, 0) || 0;
             tacticSpend = plannedTurnover * (value / 100);
           } else {
-            // Lumpsum
             tacticSpend = value;
           }
 
@@ -646,14 +907,12 @@ export class PlanService {
       }
     }
 
-    // FU ROI Comparison
     const fuRoiComparison = (plan.planFus || []).map(planFu => ({
       fuId: planFu.fuId,
-      fuName: planFu.fu.name,
-      roi: planFu.gpRoi || null,
+      fuName: planFu.fu?.name || planFu.fuId,
+      roi: planFu.gpRoi ? Number(planFu.gpRoi) : null,
     }));
 
-    // Spend Breakdown by Tactic
     const totalSpendForBreakdown = Array.from(tacticSpendMap.values()).reduce((sum, val) => sum + val.spend, 0);
     const spendBreakdown = Array.from(tacticSpendMap.entries()).map(([tacticCode, data]) => ({
       tacticCode,
@@ -662,22 +921,21 @@ export class PlanService {
       percentage: totalSpendForBreakdown > 0 ? (data.spend / totalSpendForBreakdown) * 100 : 0,
     }));
 
-    // Volume Analysis
     let plannedVolume = 0;
     const fuDetails = (plan.planFus || []).map(planFu => {
       let fuBaseVolume = 0;
       let fuPlannedVolume = 0;
       
       for (const planSku of planFu.planSkus || []) {
-        fuBaseVolume += planSku.baseVolume || 0;
-        fuPlannedVolume += planSku.plannedVolume || 0;
+        fuBaseVolume += Number(planSku.baseVolume) || 0;
+        fuPlannedVolume += Number(planSku.plannedVolume) || 0;
       }
       
       plannedVolume += fuPlannedVolume;
       
       return {
         fuId: planFu.fuId,
-        fuName: planFu.fu.name,
+        fuName: planFu.fu?.name || planFu.fuId,
         baseVolume: fuBaseVolume,
         plannedVolume: fuPlannedVolume,
         uplift: fuBaseVolume > 0 ? ((fuPlannedVolume - fuBaseVolume) / fuBaseVolume) * 100 : 0,
@@ -695,8 +953,8 @@ export class PlanService {
         status,
       },
       financialSummary: {
-        totalSpend: plan.totalSpend,
-        plannedGp: plan.totalGp,
+        totalSpend: Number(plan.totalSpend),
+        plannedGp: Number(plan.totalGp),
       },
       onOffSplit: {
         onInvoice: onInvoiceSpend,

@@ -51,6 +51,19 @@ export class BudgetEnvelope extends BaseEntity {
   @Column({ name: 'budget_owner_name', length: 200, nullable: true })
   budgetOwnerName?: string;
 
+  // Dimension columns for envelope lookup
+  @Column({ name: 'channel', length: 50, nullable: true })
+  channel?: string; // NKA, ECOM, DT, TT, vb.
+
+  @Column({ name: 'category', length: 100, nullable: true })
+  category?: string; // HAIR_CARE, COLOR, SKIN_CARE, vb.
+
+  @Column({ name: 'channel_id', type: 'uuid', nullable: true })
+  channelId?: string;
+
+  @Column({ name: 'category_id', type: 'uuid', nullable: true })
+  categoryId?: string;
+
   @Column({ name: 'currency', length: 3, default: 'TRY' })
   currency!: string;
 

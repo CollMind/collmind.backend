@@ -72,6 +72,13 @@ export class CustomerController {
     return this.customerService.findByChannel(tenantId, channel);
   }
 
+  @Get('channel-id/:channelId')
+  @ApiOperation({ summary: 'Get customers by channel ID' })
+  @ApiResponse({ status: 200, description: 'List of customers', type: [CustomerResponseDto] })
+  findByChannelId(@TenantId() tenantId: string, @Param('channelId') channelId: string) {
+    return this.customerService.findByChannelId(tenantId, channelId);
+  }
+
   @Get('city/:city')
   @ApiOperation({ summary: 'Get customers by city' })
   @ApiResponse({ status: 200, description: 'List of customers', type: [CustomerResponseDto] })

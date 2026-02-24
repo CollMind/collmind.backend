@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsNumber, MaxLength, IsEnum } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsNumber, MaxLength, IsEnum, IsArray } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateCplDto {
@@ -83,4 +83,10 @@ export class CreateCplDto {
   @ApiPropertyOptional({ description: 'Additional metadata' })
   @IsOptional()
   metadata?: Record<string, any>;
+
+  @ApiPropertyOptional({ description: 'Customer IDs to assign to this CPL', type: [String] })
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  @IsOptional()
+  customerIds?: string[];
 }

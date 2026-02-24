@@ -31,6 +31,10 @@ export class PlanRepository {
         'planFus.fu',
         'planFus.planSkus',
         'planFus.planSkus.sku',
+        'approvedBy',
+        'rejectedBy',
+        // 'submittedBy', // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
+        // 'escalatedBy', // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
       ],
     });
   }
@@ -68,6 +72,10 @@ export class PlanRepository {
       .leftJoinAndSelect('plan.cpl', 'cpl')
       .leftJoinAndSelect('plan.channel', 'channel')
       .leftJoinAndSelect('plan.category', 'category')
+      // .leftJoinAndSelect('plan.submittedBy', 'submittedBy') // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
+      // .leftJoinAndSelect('plan.escalatedBy', 'escalatedBy') // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
+      .leftJoinAndSelect('plan.approvedBy', 'approvedBy')
+      .leftJoinAndSelect('plan.rejectedBy', 'rejectedBy')
       .leftJoinAndSelect('plan.planFus', 'planFus')
       .leftJoinAndSelect('planFus.fu', 'fu')
       .leftJoinAndSelect('planFus.planSkus', 'planSkus')

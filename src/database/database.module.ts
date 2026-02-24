@@ -14,6 +14,8 @@ import { Agreement } from './entities/agreement.entity';
 import { ApprovalRequest } from './entities/approval-request.entity';
 import { LedgerEntry } from './entities/ledger-entry.entity';
 import { AgreementTransaction } from './entities/agreement-transaction.entity';
+import { OnInvoiceEntry } from './entities/on-invoice-entry.entity';
+import { OnInvoiceBatch } from './entities/on-invoice-batch.entity';
 import { BudgetSummaryView } from './entities/budget-summary.view-entity';
 // Master Data entities
 import {
@@ -33,6 +35,14 @@ import { Kpi } from './entities/kpi.entity';
 import { UserScope } from './entities/user-scope.entity';
 // Planning-First entities
 import { Plan, PlanFu, PlanSku } from './entities/plan.entity';
+import { PlanMechanicValue } from './entities/plan-mechanic-value.entity';
+import { MechanicSpendBreakdown } from './entities/mechanic-spend-breakdown.entity';
+import { LTAAgreement } from './entities/lta-agreement.entity';
+import { LTARate } from './entities/lta-rate.entity';
+import { LTAPlanOverride } from './entities/lta-plan-override.entity';
+import { BudgetAllocation } from './entities/budget-allocation.entity';
+import { BudgetTransactionLog } from './entities/budget-transaction-log.entity';
+import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.entity';
 
 @Module({
   imports: [
@@ -62,6 +72,8 @@ import { Plan, PlanFu, PlanSku } from './entities/plan.entity';
           ApprovalRequest,
           LedgerEntry,
           AgreementTransaction,
+          OnInvoiceEntry,
+          OnInvoiceBatch,
           // Master Data entities
           Brand,
           Category,
@@ -80,6 +92,14 @@ import { Plan, PlanFu, PlanSku } from './entities/plan.entity';
           Plan,
           PlanFu,
           PlanSku,
+          PlanMechanicValue,
+          MechanicSpendBreakdown,
+          LTAAgreement,
+          LTARate,
+          LTAPlanOverride,
+          BudgetAllocation,
+          BudgetTransactionLog,
+          BudgetAlertConfiguration,
         ],
         synchronize: false,
         logging: configService.get('NODE_ENV') === 'development',

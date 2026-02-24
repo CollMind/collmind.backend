@@ -21,20 +21,33 @@ import {
 
 @Injectable()
 export class BudgetService {
-  constructor(private readonly budgetRepository: BudgetRepository) {}
+  constructor(private readonly budgetRepository: BudgetRepository) { }
 
   async createEnvelope(
     tenantId: string,
     createDto: CreateBudgetEnvelopeDto,
   ): Promise<BudgetEnvelope> {
+    // Auto-generate code and name if not provided
+    const channel = createDto.channel || 'UNKNOWN';
+    const category = createDto.category || 'GENERAL';
+    const period = createDto.period || `${createDto.fiscalYear}-${createDto.month || '01'}`;
+
+    const code = createDto.code || `${channel}/${category}/${period}`;
+    const name = createDto.name || `${channel} ${category.replace('_', ' ')} ${period} Budget`;
+
     // Check if code already exists
-    const existing = await this.budgetRepository.findEnvelopeByCode(tenantId, createDto.code);
+    const existing = await this.budgetRepository.findEnvelopeByCode(tenantId, code);
     if (existing) {
       throw new ConflictException('Budget envelope with this code already exists');
     }
 
     const envelope = await this.budgetRepository.createEnvelope({
       ...createDto,
+      code,
+      name,
+      period,
+      channel,
+      category,
       tenantId,
       availableAmount: createDto.allocatedAmount,
       consumedAmount: 0,

@@ -69,6 +69,19 @@ export class SkuService {
     return sku;
   }
 
+  async findByCode(tenantId: string, code: string): Promise<Sku> {
+    const sku = await this.skuRepository.findByCode(tenantId, code);
+    if (!sku) {
+      throw new NotFoundException(`SKU with code ${code} not found`);
+    }
+    // Relations'ı yükle
+    const skuWithRelations = await this.skuRepository.findOne({
+      where: { tenantId, id: sku.id },
+      relations: ['genericUnit', 'forecastingUnit', 'genericUnit.category'],
+    });
+    return skuWithRelations || sku;
+  }
+
   async update(
     tenantId: string,
     id: string,

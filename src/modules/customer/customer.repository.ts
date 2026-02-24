@@ -9,7 +9,7 @@ export class CustomerRepository {
   constructor(
     @InjectRepository(Customer)
     private readonly repository: Repository<Customer>,
-  ) {}
+  ) { }
 
   async findByCode(tenantId: string, code: string): Promise<Customer | null> {
     return this.repository.findOne({ where: { tenantId, code } });
@@ -44,6 +44,7 @@ export class CustomerRepository {
 
   async findWithFilters(tenantId: string, filters: CustomerFilterDto) {
     const queryBuilder = this.repository.createQueryBuilder('customer')
+      .leftJoinAndSelect('customer.cpl', 'cpl')
       .where('customer.tenantId = :tenantId', { tenantId })
       .andWhere('customer.deletedAt IS NULL');
 
@@ -102,6 +103,29 @@ export class CustomerRepository {
   async findByChannel(tenantId: string, channel: string): Promise<Customer[]> {
     return this.repository.find({
       where: { tenantId, channel: channel as any },
+      relations: ['cpl'],
+      order: { name: 'ASC' },
+    });
+  }
+
+  async findByChannelId(tenantId: string, channelId: string): Promise<Customer[]> {
+    // First, get the channel to find its code
+    const channel = await this.repository.manager
+      .createQueryBuilder()
+      .select('channel.code', 'code')
+      .from('main.channels', 'channel')
+      .where('channel.id = :channelId', { channelId })
+      .andWhere('channel.tenant_id = :tenantId', { tenantId })
+      .getRawOne();
+
+    if (!channel || !channel.code) {
+      return [];
+    }
+
+    // Then find customers with matching channel enum value
+    return this.repository.find({
+      where: { tenantId, channel: channel.code as any },
+      relations: ['cpl'],
       order: { name: 'ASC' },
     });
   }
@@ -143,7 +167,18 @@ export class CustomerRepository {
       .addGroupBy('customer.channel');
 
     if (channel) {
-      query.andWhere('customer.channel = :channel', { channel });
+      // Check if channel is a UUID (channelId) or an enum value
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(channel);
+
+      if (isUuid) {
+        // If it's a UUID, join with CPL table and filter by channelId
+        query
+          .leftJoin('customer.cpl', 'cpl')
+          .andWhere('cpl.channelId = :channelId', { channelId: channel });
+      } else {
+        // If it's an enum value, filter directly by channel field
+        query.andWhere('customer.channel = :channel', { channel });
+      }
     }
 
     const customers = await query.getRawMany();

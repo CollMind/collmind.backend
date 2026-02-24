@@ -31,6 +31,10 @@ export class AgreementTransactionService {
     // Validate agreement exists and is in correct status
     const agreement = await this.agreementService.findById(dto.agreementId, tenantId);
     
+    if (!agreement) {
+      throw new NotFoundException(`Agreement with ID ${dto.agreementId} not found`);
+    }
+    
     if (![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(agreement.status)) {
       throw new BadRequestException(
         'Off-invoice entries can only be added to APPROVED or ACTIVE agreements',
@@ -65,17 +69,39 @@ export class AgreementTransactionService {
       );
     }
 
+    // Determine fiscal period for budget deduction
+    // Priority: 1) DTO fiscalPeriod, 2) Agreement periodMonth, 3) Invoice date period
+    let fiscalPeriod = dto.fiscalPeriod;
+    if (!fiscalPeriod) {
+      // Fallback to agreement period month
+      fiscalPeriod = agreement.periodMonth;
+    }
+    if (!fiscalPeriod) {
+      // Last fallback: derive from invoice date
+      const invoiceYear = invoiceDate.getFullYear();
+      const invoiceMonth = String(invoiceDate.getMonth() + 1).padStart(2, '0');
+      fiscalPeriod = `${invoiceYear}-${invoiceMonth}`;
+    }
+
     // Create transaction
+    // Note: agreement_transactions.cpl_id refers to customers table, not cpls table
+    // agreement.cplId is a CPL ID (references cpls table), not a Customer ID
+    // We must explicitly omit cplId to avoid foreign key constraint violation
     const transaction = await this.txRepo.create({
-      ...dto,
+      agreementId: dto.agreementId,
+      invoiceNo: dto.invoiceNo,
+      invoiceDate,
+      fiscalPeriod, // Store fiscal period for budget deduction (already calculated above)
+      amount: dto.amount,
+      currency: dto.currency || 'TRY',
+      notes: dto.notes,
       tenantId,
       idempotencyKey,
-      invoiceDate,
-      currency: dto.currency || 'TRY',
-      cplId: agreement.cplId,
       createdBy: userId,
       batchId,
       rowNumber,
+      // cplId is omitted - it refers to customers table, not cpls (agreement.cplId is a CPL ID, not Customer ID)
+      // TypeORM will set it to null automatically since it's nullable
     });
 
     // Find budget envelope for this agreement
@@ -85,22 +111,23 @@ export class AgreementTransactionService {
       throw new BadRequestException('Agreement channel relation is not loaded');
     }
     const channelCode = agreement.channel.code;
+    
+    // Use fiscal period for envelope matching (as per BRD: "Bütçe buradan düşülür")
     const envelope = await this.budgetService.findEnvelopeByDimensions(
       tenantId,
       channelCode,
-      agreement.periodMonth,
+      fiscalPeriod, // Use transaction fiscal period, not agreement period
     );
 
     if (envelope) {
       // Create corresponding ledger entry
-      // Use agreement.periodMonth to match the envelope period, not invoiceDate period
-      // This ensures budget reconciliation aligns with the agreement's budget period
+      // Use fiscal period for budget deduction (as specified in BRD)
       await this.ledgerService.createFromAgreementTransaction(
         agreement.id,
         transaction.id,
         dto.amount,
         invoiceDate,
-        agreement.periodMonth, // Use agreement period, not invoice date period
+        fiscalPeriod, // Use transaction fiscal period for budget deduction
         envelope.id,
         {
           channel: channelCode,
@@ -181,12 +208,17 @@ export class AgreementTransactionService {
     batchId?: string;
     invoiceDateFrom?: Date;
     invoiceDateTo?: Date;
+    cplId?: string;
   }): Promise<AgreementTransaction[]> {
     return this.txRepo.findAll(tenantId, filters);
   }
 
   async getTotalByAgreement(agreementId: string, tenantId: string): Promise<number> {
     return this.txRepo.sumByAgreementId(agreementId, tenantId);
+  }
+
+  async getCount(tenantId: string): Promise<number> {
+    return this.txRepo.count(tenantId);
   }
 }
 

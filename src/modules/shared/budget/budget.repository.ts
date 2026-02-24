@@ -20,7 +20,7 @@ export class BudgetRepository {
     @InjectRepository(BudgetTransaction)
     private readonly transactionRepository: Repository<BudgetTransaction>,
     private readonly dataSource: DataSource,
-  ) {}
+  ) { }
 
   // Budget Envelope methods
   async createEnvelope(envelope: Partial<BudgetEnvelope>): Promise<BudgetEnvelope> {
@@ -43,6 +43,7 @@ export class BudgetRepository {
   /**
    * Find budget envelope by dimensions (channel, category, period)
    * Used to determine which envelope an agreement should reserve from
+   * Now uses dedicated columns with fallback to metadata for backward compatibility
    */
   async findEnvelopeByDimensions(
     tenantId: string,
@@ -56,9 +57,7 @@ export class BudgetRepository {
       .andWhere('envelope.deletedAt IS NULL')
       .andWhere('envelope.status = :status', { status: BudgetEnvelopeStatus.ACTIVE });
 
-    // Match by period (envelope.period should contain the month)
-    // Period format in envelope could be: '2026-01', '2026-Q1', '2026'
-    // For monthly matching, check if periodMonth falls within envelope period
+    // Match by period - prefer exact match, fallback to year pattern
     query.andWhere(
       `(envelope.period = :periodMonth OR envelope.period LIKE :yearPattern)`,
       {
@@ -67,36 +66,32 @@ export class BudgetRepository {
       },
     );
 
-    // Match by channel: check if channel is in metadata JSONB, code starts with channel, or code contains channel
-    // Envelope code formats: "NKA/Hair/Jan", "ENV-2026-NKA-Q1", etc.
-    // Metadata format: { channel: "NKA", category: "Hair" }
+    // Match by channel - use dedicated column with fallback to metadata for backward compatibility
     query.andWhere(
-      `(envelope.code LIKE :channelPatternStart OR envelope.code LIKE :channelPatternContains OR envelope.metadata->>'channel' = :channel)`,
-      {
-        channelPatternStart: `${channel}/%`,
-        channelPatternContains: `%${channel}%`,
-        channel,
-      },
+      `(envelope.channel = :channel OR envelope.metadata->>'channel' = :channel)`,
+      { channel },
     );
 
-    // Match by category if provided (stored in metadata)
+    // Match by category if provided
     if (category) {
-      query.andWhere(`envelope.metadata->>'category' = :category`, { category });
+      query.andWhere(
+        `(envelope.category = :category OR envelope.metadata->>'category' = :category)`,
+        { category },
+      );
     }
 
-    // Order by most specific match first to ensure deterministic results
-    // Prefer exact period matches over year pattern matches
-    // Prefer metadata channel matches over code pattern matches
+    // Order by most specific match first
+    // Prefer dedicated column matches over metadata matches
     query
       .orderBy(
         `CASE WHEN envelope.period = :periodMonth THEN 1 ELSE 2 END`,
         'ASC',
       )
       .addOrderBy(
-        `CASE WHEN envelope.metadata->>'channel' = :channel THEN 1 ELSE 2 END`,
+        `CASE WHEN envelope.channel = :channel THEN 1 ELSE 2 END`,
         'ASC',
       )
-      .addOrderBy('envelope.createdAt', 'DESC'); // Most recent as tiebreaker
+      .addOrderBy('envelope.createdAt', 'DESC');
 
     return query.getOne();
   }

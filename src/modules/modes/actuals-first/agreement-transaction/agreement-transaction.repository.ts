@@ -52,9 +52,12 @@ export class AgreementTransactionRepository {
     batchId?: string;
     invoiceDateFrom?: Date;
     invoiceDateTo?: Date;
+    cplId?: string;
   }): Promise<AgreementTransaction[]> {
     const query = this.repo.createQueryBuilder('tx')
       .leftJoinAndSelect('tx.agreement', 'agreement')
+      .leftJoinAndSelect('agreement.cpl', 'cpl')
+      .leftJoinAndSelect('tx.customer', 'customer')
       .where('tx.tenantId = :tenantId', { tenantId })
       .andWhere('tx.deletedAt IS NULL');
 
@@ -70,6 +73,9 @@ export class AgreementTransactionRepository {
     if (filters?.invoiceDateTo) {
       query.andWhere('tx.invoiceDate <= :invoiceDateTo', { invoiceDateTo: filters.invoiceDateTo });
     }
+    if (filters?.cplId) {
+      query.andWhere('tx.cplId = :cplId', { cplId: filters.cplId });
+    }
 
     return query.orderBy('tx.invoiceDate', 'DESC').getMany();
   }
@@ -83,6 +89,12 @@ export class AgreementTransactionRepository {
       .andWhere('tx.deletedAt IS NULL')
       .getRawOne();
     return parseFloat(result.total) || 0;
+  }
+
+  async count(tenantId: string): Promise<number> {
+    return this.repo.count({
+      where: { tenantId, deletedAt: IsNull() },
+    });
   }
 }
 

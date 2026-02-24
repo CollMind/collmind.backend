@@ -216,5 +216,10 @@ export class CreateCustomerDto {
   @IsDateString()
   @IsOptional()
   contractEndDate?: string;
+
+  @ApiPropertyOptional({ description: 'CPL ID' })
+  @IsString()
+  @IsOptional()
+  cplId?: string;
 }
 
