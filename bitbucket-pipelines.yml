@@ -29,4 +29,4 @@ pipelines:
               --allow-unauthenticated \
               --set-secrets=DB_PASSWORD=DB_PASSWORD:latest,JWT_SECRET=JWT_SECRET:latest \
               --set-env-vars=NODE_ENV=production,DB_HOST=10.25.16.3,DB_PORT=5432,DB_USERNAME=_collmind_staging_user,DB_DATABASE=collmind_staging,DB_SCHEMA=main,JWT_EXPIRATION=48h \
-              --vpc-connector=projects/$GCP_PROJECT_ID/locations/europe-west3/conn
+              --vpc-connector=projects/$GCP_PROJECT_ID/locations/europe-west3/connectors/conn
