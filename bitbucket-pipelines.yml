@@ -12,10 +12,10 @@ pipelines:
             - echo $GCP_CREDENTIALS > /tmp/gcp-key.json
             - gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
             - gcloud config set project $GCP_PROJECT_ID
-            - gcloud auth configure-docker europe-west1-docker.pkg.dev
+            - gcloud auth configure-docker europe-west3-docker.pkg.dev
 
             # Build & Push
-            - export IMAGE="europe-west1-docker.pkg.dev/$GCP_PROJECT_ID/app-repo/backend"
+            - export IMAGE="europe-west3-docker.pkg.dev/collmind-tpm/collmind/backend"
             - docker build -t $IMAGE:$BITBUCKET_COMMIT -t $IMAGE:latest .
             - docker push $IMAGE:$BITBUCKET_COMMIT
             - docker push $IMAGE:latest
