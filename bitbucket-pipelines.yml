@@ -31,5 +31,5 @@ pipelines:
               --timeout=300 \
               --service-account=bitbucket-action-sa@collmind-tpm.iam.gserviceaccount.com \
               --set-secrets=DB_PASSWORD=DB_PASSWORD:latest,JWT_SECRET=JWT_SECRET:latest \
-              --set-env-vars=NODE_ENV=production,DB_HOST=10.25.16.3,DB_PORT=5432,DB_USERNAME=_collmind_staging_user,DB_DATABASE=collmind_staging,DB_SCHEMA=main,JWT_EXPIRATION=48h,PORT=8080 \
+              --set-env-vars=NODE_ENV=production,DB_HOST=10.25.16.3,DB_PORT=5432,DB_USERNAME=_collmind_staging_user,DB_DATABASE=collmind_staging,DB_SCHEMA=main,JWT_EXPIRATION=48h \
               --vpc-connector=projects/collmind-tpm/locations/europe-west1/connectors/vpc-connector
