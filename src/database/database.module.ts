@@ -48,14 +48,33 @@ import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.
   imports: [
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres',
-        host: configService.get('DB_HOST'),
-        port: configService.get('DB_PORT'),
-        username: configService.get('DB_USERNAME'),
-        password: configService.get('DB_PASSWORD'),
-        database: configService.get('DB_DATABASE'),
-        schema: configService.get('DB_SCHEMA') || 'main',
+      useFactory: (configService: ConfigService) => {
+        const dbConfig = {
+          type: 'postgres' as const,
+          host: configService.get('DB_HOST'),
+          port: parseInt(configService.get('DB_PORT') || '5432', 10),
+          username: configService.get('DB_USERNAME'),
+          password: configService.get('DB_PASSWORD'),
+          database: configService.get('DB_DATABASE'),
+          schema: configService.get('DB_SCHEMA') || 'main',
+          // Connection pool settings for Cloud Run
+          extra: {
+            max: 10, // Maximum number of connections in the pool
+            connectionTimeoutMillis: 30000, // 30 seconds timeout
+            idleTimeoutMillis: 30000,
+          },
+        };
+        
+        console.log('Database configuration:', {
+          host: dbConfig.host,
+          port: dbConfig.port,
+          database: dbConfig.database,
+          schema: dbConfig.schema,
+          username: dbConfig.username,
+        });
+        
+        return {
+          ...dbConfig,
         entities: [
           // Shared entities
           User,
@@ -101,10 +120,11 @@ import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.
           BudgetTransactionLog,
           BudgetAlertConfiguration,
         ],
-        synchronize: false,
-        logging: configService.get('NODE_ENV') === 'development',
-        namingStrategy: new SnakeCaseNamingStrategy(),
-      }),
+          synchronize: false,
+          logging: configService.get('NODE_ENV') === 'development',
+          namingStrategy: new SnakeCaseNamingStrategy(),
+        };
+      },
       inject: [ConfigService],
     }),
   ],

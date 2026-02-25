@@ -6,7 +6,19 @@ import dataSource from './config/typeorm.config';
 import { runAllSeeds } from './database/seeds';
 
 async function bootstrap() {
+  console.log('Starting application bootstrap...');
+  console.log('Environment:', {
+    NODE_ENV: process.env.NODE_ENV,
+    PORT: process.env.PORT,
+    DB_HOST: process.env.DB_HOST,
+    DB_PORT: process.env.DB_PORT,
+    DB_DATABASE: process.env.DB_DATABASE,
+    DB_USERNAME: process.env.DB_USERNAME,
+    DB_SCHEMA: process.env.DB_SCHEMA,
+  });
+
   const app = await NestFactory.create(AppModule);
+  console.log('AppModule created successfully');
 
   // Global validation pipe
   app.useGlobalPipes(
@@ -36,9 +48,10 @@ async function bootstrap() {
   });
 
   const port = process.env.PORT || 8080;
-  await app.listen(port);
-  console.log(`Application is running on: http://localhost:${port}`);
-  console.log(`Swagger documentation: http://localhost:${port}/api`);
+  console.log(`Starting server on port ${port}...`);
+  await app.listen(port, '0.0.0.0');
+  console.log(`✅ Application is running on: http://0.0.0.0:${port}`);
+  console.log(`✅ Swagger documentation: http://0.0.0.0:${port}/api`);
 
   // Run migrations and seeds after app starts (non-blocking)
   if (process.env.NODE_ENV === 'production') {
@@ -88,6 +101,9 @@ async function runMigrationsAndSeeds() {
   }
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  console.error('Failed to start application:', error);
+  process.exit(1);
+});
 
 
