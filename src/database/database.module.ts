@@ -57,11 +57,15 @@ import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.
           password: configService.get('DB_PASSWORD'),
           database: configService.get('DB_DATABASE'),
           schema: configService.get('DB_SCHEMA') || 'main',
+          // Retry mechanism for Cloud Run (VPC connections can be slow)
+          retryAttempts: 5,
+          retryDelay: 3000, // 3 seconds between retries
           // Connection pool settings for Cloud Run
           extra: {
             max: 10, // Maximum number of connections in the pool
-            connectionTimeoutMillis: 30000, // 30 seconds timeout
+            connectionTimeoutMillis: 60000, // 60 seconds timeout (increased for VPC)
             idleTimeoutMillis: 30000,
+            statement_timeout: 30000,
           },
         };
         
