@@ -6,59 +6,83 @@ import dataSource from './config/typeorm.config';
 import { runAllSeeds } from './database/seeds';
 
 async function bootstrap() {
-  console.log('Starting application bootstrap...');
-  console.log('Environment:', {
-    NODE_ENV: process.env.NODE_ENV,
-    PORT: process.env.PORT,
-    DB_HOST: process.env.DB_HOST,
-    DB_PORT: process.env.DB_PORT,
-    DB_DATABASE: process.env.DB_DATABASE,
-    DB_USERNAME: process.env.DB_USERNAME,
-    DB_SCHEMA: process.env.DB_SCHEMA,
-  });
-
-  const app = await NestFactory.create(AppModule);
-  console.log('AppModule created successfully');
-
-  // Global validation pipe
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
-
-  // Swagger configuration
-  const config = new DocumentBuilder()
-    .setTitle('CollMind TPM Backend')
-    .setDescription('CollMind TPM Backend API Documentation')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
-
-  // CORS configuration
-  app.enableCors({
-    origin: true, // Allow all origins in development
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id'],
-    credentials: true,
-  });
-
-  const port = process.env.PORT || 8080;
-  console.log(`Starting server on port ${port}...`);
-  await app.listen(port, '0.0.0.0');
-  console.log(`✅ Application is running on: http://0.0.0.0:${port}`);
-  console.log(`✅ Swagger documentation: http://0.0.0.0:${port}/api`);
-
-  // Run migrations and seeds after app starts (non-blocking)
-  if (process.env.NODE_ENV === 'production') {
-    runMigrationsAndSeeds().catch((error) => {
-      console.error('Migration/Seed failed:', error);
-      // Don't exit - app is already running
+  try {
+    console.log('==========================================');
+    console.log('Starting application bootstrap...');
+    console.log('==========================================');
+    console.log('Environment:', {
+      NODE_ENV: process.env.NODE_ENV,
+      PORT: process.env.PORT,
+      DB_HOST: process.env.DB_HOST,
+      DB_PORT: process.env.DB_PORT,
+      DB_DATABASE: process.env.DB_DATABASE,
+      DB_USERNAME: process.env.DB_USERNAME,
+      DB_SCHEMA: process.env.DB_SCHEMA,
+      JWT_SECRET: process.env.JWT_SECRET ? '***SET***' : 'NOT SET',
+      JWT_EXPIRATION: process.env.JWT_EXPIRATION,
     });
+    console.log('==========================================');
+
+    console.log('Creating NestJS application...');
+    const app = await NestFactory.create(AppModule, {
+      logger: ['error', 'warn', 'log', 'debug', 'verbose'],
+    });
+    console.log('✅ AppModule created successfully');
+
+    console.log('Setting up global validation pipe...');
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
+    console.log('✅ Validation pipe configured');
+
+    console.log('Setting up Swagger...');
+    const config = new DocumentBuilder()
+      .setTitle('CollMind TPM Backend')
+      .setDescription('CollMind TPM Backend API Documentation')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api', app, document);
+    console.log('✅ Swagger configured');
+
+    console.log('Setting up CORS...');
+    app.enableCors({
+      origin: true, // Allow all origins in development
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id'],
+      credentials: true,
+    });
+    console.log('✅ CORS configured');
+
+    const port = process.env.PORT || 8080;
+    console.log(`==========================================`);
+    console.log(`Starting server on port ${port}...`);
+    console.log(`==========================================`);
+    await app.listen(port, '0.0.0.0');
+    console.log(`✅ Application is running on: http://0.0.0.0:${port}`);
+    console.log(`✅ Swagger documentation: http://0.0.0.0:${port}/api`);
+    console.log(`✅ Health check: http://0.0.0.0:${port}/`);
+    console.log(`==========================================`);
+
+    // Run migrations and seeds after app starts (non-blocking)
+    if (process.env.NODE_ENV === 'production') {
+      console.log('Scheduling migrations and seeds...');
+      runMigrationsAndSeeds().catch((error) => {
+        console.error('❌ Migration/Seed failed:', error);
+        // Don't exit - app is already running
+      });
+    }
+  } catch (error) {
+    console.error('==========================================');
+    console.error('❌ Fatal error during bootstrap:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error('==========================================');
+    throw error;
   }
 }
 
