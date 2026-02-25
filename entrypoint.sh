@@ -8,7 +8,7 @@ echo "Node version: $(node --version)"
 echo "NPM version: $(npm --version)"
 echo "Working directory: $(pwd)"
 echo "Environment: ${NODE_ENV:-not set}"
-echo "Port: ${PORT:-8080}"
+echo "Port: ${PORT:-3000}"
 echo "=========================================="
 
 # Check if dist/main.js exists
