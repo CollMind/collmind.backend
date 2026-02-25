@@ -3,7 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { config } from 'dotenv';
 import { SnakeCaseNamingStrategy } from '../database/strategies/snake-case-naming.strategy';
 
-config();
+// Only load .env file if it exists (for local development)
+// In Cloud Run, environment variables are set directly
+config({ override: false });
 
 const configService = new ConfigService();
 

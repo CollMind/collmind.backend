@@ -34,7 +34,9 @@ import { AdminModule } from './modules/admin/admin.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      // envFilePath is optional - Cloud Run sets env vars directly
+      // For local development, .env file will be used if it exists
+      envFilePath: process.env.NODE_ENV === 'production' ? undefined : '.env',
     }),
     DatabaseModule,
     // Shared core modules

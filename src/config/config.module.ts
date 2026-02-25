@@ -5,7 +5,9 @@ import { ConfigModule as NestConfigModule } from '@nestjs/config';
   imports: [
     NestConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      // envFilePath is optional - Cloud Run sets env vars directly
+      // For local development, .env file will be used if it exists
+      envFilePath: process.env.NODE_ENV === 'production' ? undefined : '.env',
     }),
   ],
 })
