@@ -7,18 +7,23 @@ config();
 
 const configService = new ConfigService();
 
+// Helper function to get env var with fallback to ConfigService (for NestJS context)
+function getEnvVar(key: string, defaultValue?: string): string | undefined {
+  return process.env[key] || configService.get(key) || defaultValue;
+}
+
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
-  host: configService.get('DB_HOST'),
-  port: configService.get('DB_PORT'),
-  username: configService.get('DB_USERNAME'),
-  password: configService.get('DB_PASSWORD'),
-  database: configService.get('DB_DATABASE'),
-  schema: configService.get('DB_SCHEMA') || 'main',
+  host: getEnvVar('DB_HOST') || 'localhost',
+  port: parseInt(getEnvVar('DB_PORT') || '5432', 10),
+  username: getEnvVar('DB_USERNAME') || 'postgres',
+  password: getEnvVar('DB_PASSWORD') || '',
+  database: getEnvVar('DB_DATABASE') || '',
+  schema: getEnvVar('DB_SCHEMA') || 'main',
   entities: [__dirname + '/../database/entities/**/*.entity{.ts,.js}'],
   migrations: [__dirname + '/../database/migrations/**/*{.ts,.js}'],
   synchronize: false, // PRODUCTION'DA MUTLAKA FALSE
-  logging: configService.get('NODE_ENV') === 'development',
+  logging: getEnvVar('NODE_ENV') === 'development',
   namingStrategy: new SnakeCaseNamingStrategy(),
 };
 
