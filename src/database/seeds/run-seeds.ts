@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { config } from 'dotenv';
-import dataSource from '../config/typeorm.config';
+import dataSource from '../../config/typeorm.config';
 import { runAllSeeds } from './index';
 
 // Only load .env file if it exists (for local development)

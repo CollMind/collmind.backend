@@ -6,8 +6,9 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build && npm run build:migrations",
+    "build": "nest build && npm run build:migrations && npm run build:runtime",
     "build:migrations": "sh scripts/build-migrations.sh",
+    "build:runtime": "tsc --project tsconfig.runtime.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
