@@ -212,14 +212,42 @@ async function runMigrationsAndSeeds() {
     }
 
     // Check what migrations are available
+    // First, check if migration files exist in the expected location
+    const fs = require('fs');
+    const path = require('path');
+    const isProduction = process.env.NODE_ENV === 'production';
+    const migrationDir = isProduction 
+      ? path.join(__dirname, '../database/migrations')
+      : path.join(process.cwd(), 'src/database/migrations');
+    
+    console.log(`Checking migration directory: ${migrationDir}`);
+    console.log(`Production mode: ${isProduction}`);
+    
+    try {
+      const migrationFiles = fs.readdirSync(migrationDir).filter((f: string) => 
+        isProduction ? f.endsWith('.js') : f.endsWith('.ts')
+      );
+      console.log(`Found ${migrationFiles.length} migration file(s) in directory:`);
+      migrationFiles.slice(0, 5).forEach((f: string) => console.log(`   - ${f}`));
+      if (migrationFiles.length > 5) {
+        console.log(`   ... and ${migrationFiles.length - 5} more`);
+      }
+    } catch (error) {
+      console.log(`⚠️  Could not read migration directory: ${error}`);
+    }
+    
     const availableMigrations = dataSource.migrations || [];
-    console.log(`Found ${availableMigrations.length} migration file(s) available`);
+    console.log(`TypeORM found ${availableMigrations.length} migration(s) available`);
     if (availableMigrations.length > 0) {
       console.log('Available migrations:');
       availableMigrations.forEach((migration) => {
         const migrationName = migration.constructor.name;
         console.log(`   - ${migrationName}`);
       });
+    } else {
+      console.log('⚠️  WARNING: No migrations found by TypeORM!');
+      console.log('⚠️  This usually means migration files are not being loaded correctly.');
+      console.log(`⚠️  Migration path in config: ${dataSource.options.migrations}`);
     }
 
     // Run migrations with error handling for constraint conflicts

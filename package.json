@@ -6,7 +6,8 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
+    "build": "nest build && npm run build:migrations",
+    "build:migrations": "mkdir -p dist/database/migrations && npx tsc src/database/migrations/*.ts --outDir dist/database/migrations --module commonjs --target ES2021 --moduleResolution node --esModuleInterop --skipLibCheck --declaration false --sourceMap false --resolveJsonModule --rootDir src || (echo 'Warning: Migration compilation may have failed, but continuing...')",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",

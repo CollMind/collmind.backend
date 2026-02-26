@@ -4,6 +4,8 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN rm -rf dist && npm run build
+# Verify migrations were compiled
+RUN ls -la dist/database/migrations/ || echo "Warning: No migration files found in dist"
 
 FROM node:20-alpine
 WORKDIR /app

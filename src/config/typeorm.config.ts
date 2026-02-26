@@ -119,7 +119,18 @@ export const dataSourceOptions: DataSourceOptions = {
     BudgetTransactionLog,
     BudgetAlertConfiguration,
   ],
-  migrations: [__dirname + '/../database/migrations/**/*{.ts,.js}'],
+  migrations: (() => {
+    // In production, use compiled JS files from dist
+    // In development, use TS files from src
+    const isProduction = getEnvVar('NODE_ENV') === 'production';
+    if (isProduction) {
+      // Production: use compiled JS files
+      return [__dirname + '/../database/migrations/**/*.js'];
+    } else {
+      // Development: use TS files
+      return [__dirname + '/../database/migrations/**/*.ts'];
+    }
+  })(),
   migrationsTableName: 'migrations',
   synchronize: false, // PRODUCTION'DA MUTLAKA FALSE
   logging: getEnvVar('NODE_ENV') === 'development',
