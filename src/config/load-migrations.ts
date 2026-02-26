@@ -64,8 +64,53 @@ export function loadMigrations(): (new () => MigrationInterface)[] {
         // Use fs.readFileSync + vm.runInThisContext instead of require()
         // This works because webpack doesn't bundle migration files
         const vm = require('vm');
-        const fileContent = fs.readFileSync(filePath, 'utf8');
+        let fileContent = fs.readFileSync(filePath, 'utf8');
         console.log(`🔍   Read file content (${fileContent.length} bytes)`);
+        
+        // Convert ES6 import statements to CommonJS require
+        // Migration files may have ES6 imports even though they should be CommonJS
+        fileContent = fileContent.replace(
+          /import\s+{([^}]+)}\s+from\s+['"]([^'"]+)['"];?/g,
+          (match, imports, moduleName) => {
+            const cleanImports = imports.trim();
+            return `const { ${cleanImports} } = require('${moduleName}');`;
+          }
+        );
+        
+        // Convert: import X from 'module' -> const X = require('module').default || require('module')
+        fileContent = fileContent.replace(
+          /import\s+(\w+)\s+from\s+['"]([^'"]+)['"];?/g,
+          (match, defaultImport, moduleName) => {
+            return `const ${defaultImport} = require('${moduleName}');`;
+          }
+        );
+        
+        // Remove export keyword from class declarations and add to module.exports
+        const classExportMatches = fileContent.match(/export\s+class\s+(\w+)/g);
+        if (classExportMatches) {
+          // Remove export keyword
+          fileContent = fileContent.replace(/export\s+class\s+/g, 'class ');
+          
+          // Extract class names
+          const classNames = classExportMatches.map(match => match.replace(/export\s+class\s+/, ''));
+          
+          // Add module.exports at the end if not already present
+          if (!fileContent.includes('module.exports')) {
+            fileContent += `\nmodule.exports = { ${classNames.join(', ')} };`;
+          } else {
+            // Update existing module.exports
+            const existingExports = fileContent.match(/module\.exports\s*=\s*{([^}]+)}/);
+            if (existingExports) {
+              const existing = existingExports[1].trim();
+              fileContent = fileContent.replace(
+                /module\.exports\s*=\s*{([^}]+)}/,
+                `module.exports = { ${existing}, ${classNames.join(', ')} }`
+              );
+            }
+          }
+        }
+        
+        console.log(`🔍   Converted ES6 to CommonJS`);
         
         // Create a module-like context with TypeORM
         const moduleExports: any = {};
@@ -93,15 +138,19 @@ export function loadMigrations(): (new () => MigrationInterface)[] {
           clearInterval: clearInterval,
         });
         
-        // Execute the migration file in the context
+        // Execute the converted migration file in the context
         let migrationModule;
         try {
           vm.runInContext(fileContent, moduleContext, { filename: filePath });
           migrationModule = moduleExports;
-          console.log(`   ✅ Successfully executed migration file`);
+          console.log(`   ✅ Successfully executed converted migration file`);
         } catch (vmError: any) {
           console.error(`   ❌ VM execution error: ${vmError?.message}`);
           console.error(`   ❌ Stack: ${vmError?.stack}`);
+          // Log first few lines for debugging
+          const lines = fileContent.split('\n').slice(0, 5);
+          console.error(`   ❌ First 5 lines of converted content:`);
+          lines.forEach((line, i) => console.error(`      ${i + 1}: ${line}`));
           throw vmError;
         }
         
