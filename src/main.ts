@@ -93,13 +93,69 @@ async function runMigrationsAndSeeds() {
   try {
     // Initialize DataSource if not already initialized
     if (!dataSource.isInitialized) {
+      console.log('Initializing DataSource...');
       await dataSource.initialize();
+      console.log('✅ DataSource initialized');
     }
+
+    const schema = process.env.DB_SCHEMA || 'main';
+    console.log(`Using schema: ${schema}`);
+
+    // Verify schema exists
+    const schemaCheck = await dataSource.query(
+      `SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1`,
+      [schema]
+    );
+    if (schemaCheck.length === 0) {
+      console.log(`⚠️  Schema "${schema}" does not exist, creating it...`);
+      await dataSource.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
+      console.log(`✅ Schema "${schema}" created`);
+    } else {
+      console.log(`✅ Schema "${schema}" exists`);
+    }
+
+    // Check migration table
+    const migrationsTableCheck = await dataSource.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
+      [schema, 'migrations']
+    );
+    console.log(`Migration table exists in schema "${schema}": ${migrationsTableCheck.length > 0}`);
 
     // Run migrations
     console.log('Running database migrations...');
-    await dataSource.runMigrations();
-    console.log('Migrations completed successfully');
+    const executedMigrations = await dataSource.runMigrations();
+    console.log(`✅ Migrations completed successfully. Executed ${executedMigrations.length} migration(s)`);
+    
+    if (executedMigrations.length > 0) {
+      executedMigrations.forEach((migration) => {
+        console.log(`   - ${migration.name}`);
+      });
+    } else {
+      console.log('   ℹ️  No new migrations to execute');
+    }
+
+    // Check which migrations have been executed
+    const executedMigrationsList = await dataSource.query(
+      `SELECT * FROM "${schema}"."migrations" ORDER BY timestamp DESC LIMIT 10`
+    );
+    if (executedMigrationsList.length > 0) {
+      console.log(`   ℹ️  Last ${executedMigrationsList.length} executed migration(s):`);
+      executedMigrationsList.forEach((m: any) => {
+        console.log(`      - ${m.name} (${new Date(parseInt(m.timestamp)).toISOString()})`);
+      });
+    }
+
+    // Verify tenants table exists after migrations
+    console.log('Verifying tenants table exists...');
+    const tableCheck = await dataSource.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
+      [schema, 'tenants']
+    );
+    
+    if (tableCheck.length === 0) {
+      throw new Error(`❌ Table "tenants" does not exist in schema "${schema}" after migrations!`);
+    }
+    console.log(`✅ Table "tenants" exists in schema "${schema}"`);
 
     // Wait 3 seconds before running seeds
     console.log('Waiting 3 seconds before running seeds...');
@@ -108,14 +164,19 @@ async function runMigrationsAndSeeds() {
     // Run seeds (using the same DataSource connection)
     console.log('Running database seeds...');
     await runAllSeeds(dataSource);
-    console.log('Seeds completed successfully');
+    console.log('✅ Seeds completed successfully');
 
     // Clean up connection
     if (dataSource.isInitialized) {
       await dataSource.destroy();
+      console.log('✅ DataSource connection closed');
     }
   } catch (error) {
-    console.error('Migration/Seed error:', error);
+    console.error('❌ Migration/Seed error:', error);
+    if (error instanceof Error) {
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
     // Clean up connection even on error
     if (dataSource.isInitialized) {
       try {

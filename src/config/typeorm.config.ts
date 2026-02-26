@@ -110,6 +110,7 @@ export const dataSourceOptions: DataSourceOptions = {
     BudgetAlertConfiguration,
   ],
   migrations: [__dirname + '/../database/migrations/**/*{.ts,.js}'],
+  migrationsTableName: `${getEnvVar('DB_SCHEMA') || 'main'}.migrations`,
   synchronize: false, // PRODUCTION'DA MUTLAKA FALSE
   logging: getEnvVar('NODE_ENV') === 'development',
   namingStrategy: new SnakeCaseNamingStrategy(),
