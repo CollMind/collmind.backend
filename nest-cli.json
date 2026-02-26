@@ -6,13 +6,7 @@
     "deleteOutDir": true,
     "webpack": true,
     "webpackConfigPath": "webpack.config.js",
-    "tsConfigPath": "tsconfig.json",
-    "assets": [
-      {
-        "include": "database/migrations/**/*",
-        "outDir": "dist"
-      }
-    ]
+    "tsConfigPath": "tsconfig.json"
   }
 }
 

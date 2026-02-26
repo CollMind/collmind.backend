@@ -20,11 +20,32 @@ RUN echo "Checking for compiled migration files..." && \
         exit 1; \
       fi; \
       if [ "$ts_count" -gt 0 ]; then \
-        echo "WARNING: Found .ts files in dist - these should be .js"; \
+        echo "ERROR: Found .ts files in dist - these should be .js!" && \
+        exit 1; \
+      fi; \
+      echo "Verifying migration files do not contain TypeScript syntax..." && \
+      first_migration=$(ls -1 dist/database/migrations/*.js 2>/dev/null | head -1) && \
+      if [ -n "$first_migration" ]; then \
+        if grep -q "implements MigrationInterface" "$first_migration" 2>/dev/null; then \
+          echo "ERROR: Found TypeScript syntax (implements) in compiled JS file: $first_migration" && \
+          echo "First 10 lines of file:" && \
+          head -10 "$first_migration" && \
+          exit 1; \
+        else \
+          echo "✅ Migration files are properly compiled (no TypeScript syntax found)"; \
+        fi; \
       fi; \
     else \
       echo "ERROR: Migration directory does not exist!" && \
       exit 1; \
+    fi && \
+    echo "Checking for compiled seed files..." && \
+    if [ ! -f "dist/database/seeds/run-seeds.js" ]; then \
+      echo "ERROR: dist/database/seeds/run-seeds.js not found!" && \
+      echo "Seed files must be compiled to JavaScript for production." && \
+      exit 1; \
+    else \
+      echo "✅ Seed file found: dist/database/seeds/run-seeds.js"; \
     fi
 
 FROM node:20-alpine

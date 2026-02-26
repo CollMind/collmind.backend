@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2021",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "sourceMap": false,
+    "resolveJsonModule": true,
+    "outDir": "./dist/database/migrations",
+    "rootDir": "./src/database/migrations",
+    "strict": false,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "noEmit": false
+  },
+  "include": ["src/database/migrations/**/*.ts"],
+  "exclude": ["node_modules", "**/*spec.ts", "dist"]
+}

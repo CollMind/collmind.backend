@@ -40,7 +40,7 @@ import { LTAPlanOverride } from '../database/entities/lta-plan-override.entity';
 import { BudgetAllocation } from '../database/entities/budget-allocation.entity';
 import { BudgetTransactionLog } from '../database/entities/budget-transaction-log.entity';
 import { BudgetAlertConfiguration } from '../database/entities/budget-alert-configuration.entity';
-import { loadMigrations } from './load-migrations';
+import { join } from 'path';
 
 // Only load .env file if it exists (for local development)
 // In Cloud Run, environment variables are set directly
@@ -121,30 +121,22 @@ export const dataSourceOptions: DataSourceOptions = {
     BudgetAlertConfiguration,
   ],
   migrations: (() => {
-    // In production, manually load migration classes to avoid glob pattern issues
-    // In development, use TS files with glob pattern
+    // Use glob pattern for both development and production
+    // Development: src/database/migrations/*.ts
+    // Production: dist/database/migrations/*.js
     const isProduction = getEnvVar('NODE_ENV') === 'production';
     console.log(`🔍 Config: isProduction=${isProduction}, NODE_ENV=${process.env.NODE_ENV}`);
     
     if (isProduction) {
-      // Production: manually load migration classes
-      console.log('🔍 Config: Calling loadMigrations()...');
-      try {
-        const loadedMigrations = loadMigrations();
-        console.log(`📦 Config: Using ${loadedMigrations.length} manually loaded migrations`);
-        if (loadedMigrations.length === 0) {
-          console.error('❌ Config: No migrations loaded! This will cause issues.');
-        }
-        return loadedMigrations;
-      } catch (error: any) {
-        console.error('❌ Config: Error loading migrations:', error?.message || error);
-        console.error('❌ Stack:', error?.stack);
-        return [];
-      }
+      // Production: use compiled JS files with glob pattern
+      const migrationsPath = join(__dirname, '..', 'database', 'migrations', '*.js');
+      console.log(`🔍 Config: Using glob pattern for production: ${migrationsPath}`);
+      return [migrationsPath];
     } else {
       // Development: use TS files with glob pattern
-      console.log('🔍 Config: Using glob pattern for development');
-      return [__dirname + '/../database/migrations/**/*.ts'];
+      const migrationsPath = join(__dirname, '..', 'database', 'migrations', '*.ts');
+      console.log(`🔍 Config: Using glob pattern for development: ${migrationsPath}`);
+      return [migrationsPath];
     }
   })(),
   migrationsTableName: 'migrations',

@@ -30,7 +30,9 @@
     "seed:cleanup-and-seed": "ts-node -r tsconfig-paths/register src/database/seeds/cleanup-and-seed.ts",
     "test:happy-path": "ts-node -r tsconfig-paths/register src/database/seeds/test-happy-path.ts",
     "test:e2e:happy-path": "ts-node -r tsconfig-paths/register src/database/seeds/test-happy-path.ts",
-    "migration:run:prod": "typeorm migration:run -d dist/config/typeorm.config.js"
+    "migration:run:prod": "typeorm migration:run -d dist/config/typeorm.config.js",
+    "seed:prod": "node dist/database/seeds/run-seeds.js",
+    "db:init:prod": "npm run migration:run:prod && npm run seed:prod"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

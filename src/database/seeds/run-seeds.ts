@@ -1,31 +1,32 @@
 import 'reflect-metadata';
-import { DataSource } from 'typeorm';
 import { config } from 'dotenv';
+import dataSource from '../config/typeorm.config';
 import { runAllSeeds } from './index';
 
-config();
+// Only load .env file if it exists (for local development)
+// In Cloud Run, environment variables are set directly
+config({ override: false });
 
 async function bootstrap() {
-  const dataSource = new DataSource({
-    type: 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432'),
-    username: process.env.DB_USERNAME || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
-    database: process.env.DB_DATABASE || 'collmind_tpm',
-    schema: process.env.DB_SCHEMA || 'main',
-    entities: [__dirname + '/../entities/*.entity{.ts,.js}'],
-    synchronize: false,
-  });
-
   let exitCode = 0;
   try {
-    await dataSource.initialize();
-    console.log('📦 Database connected\n');
+    // Initialize DataSource if not already initialized
+    if (!dataSource.isInitialized) {
+      console.log('📦 Initializing database connection...');
+      await dataSource.initialize();
+      console.log('📦 Database connected\n');
+    } else {
+      console.log('📦 Using existing database connection\n');
+    }
 
     await runAllSeeds(dataSource);
+    console.log('\n✅ Seed process completed successfully');
   } catch (error) {
     console.error('❌ Seed failed:', error);
+    if (error instanceof Error) {
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
     exitCode = 1;
   } finally {
     // Ensure database connection is always closed, even if an error occurred
