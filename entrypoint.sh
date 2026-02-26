@@ -19,5 +19,13 @@ if [ ! -f "dist/main.js" ]; then
   exit 1
 fi
 
+echo "Running migrations..."
+./node_modules/.bin/typeorm migration:run -d dist/config/typeorm.config.js
+echo "Migrations completed!"
+
+echo "Running seeds..."
+node dist/database/seeds/run-seeds.js
+echo "Seeds completed!"
+
 echo "Starting Node.js application..."
 exec node dist/main
