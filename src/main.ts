@@ -211,6 +211,17 @@ async function runMigrationsAndSeeds() {
       }
     }
 
+    // Check what migrations are available
+    const availableMigrations = dataSource.migrations || [];
+    console.log(`Found ${availableMigrations.length} migration file(s) available`);
+    if (availableMigrations.length > 0) {
+      console.log('Available migrations:');
+      availableMigrations.forEach((migration) => {
+        const migrationName = migration.constructor.name;
+        console.log(`   - ${migrationName}`);
+      });
+    }
+
     // Run migrations with error handling for constraint conflicts
     console.log('Running database migrations...');
     let executedMigrations;
@@ -305,9 +316,75 @@ async function runMigrationsAndSeeds() {
     );
     
     if (tableCheck.length === 0) {
-      throw new Error(`❌ Table "tenants" does not exist in schema "${schema}" after migrations!`);
+      console.log(`⚠️  Table "tenants" does not exist in schema "${schema}" after migrations!`);
+      console.log('⚠️  This might mean migrations were marked as executed but tables were not created.');
+      console.log('⚠️  Checking migration table status...');
+      
+      // Check if migrations table has entries
+      let migrationEntries;
+      try {
+        migrationEntries = await dataSource.query(
+          `SELECT * FROM "${schema}"."migrations" ORDER BY timestamp`
+        );
+      } catch (migrationError) {
+        try {
+          migrationEntries = await dataSource.query(
+            `SELECT * FROM "public"."migrations" ORDER BY timestamp`
+          );
+        } catch (publicError) {
+          migrationEntries = [];
+        }
+      }
+      
+      if (migrationEntries.length > 0) {
+        console.log(`⚠️  Found ${migrationEntries.length} migration(s) marked as executed:`);
+        migrationEntries.forEach((m: any) => {
+          console.log(`   - ${m.name} (timestamp: ${m.timestamp})`);
+        });
+        console.log('⚠️  But tenants table does not exist. This indicates a problem.');
+        console.log('⚠️  Attempting to re-run migrations by clearing migration table...');
+        
+        // Clear migration table and re-run migrations
+        try {
+          // Clear both main and public schema migration tables
+          try {
+            await dataSource.query(`DELETE FROM "${schema}"."migrations"`);
+            console.log(`✅ Migration table cleared in "${schema}" schema`);
+          } catch (mainError) {
+            console.log(`⚠️  Could not clear migration table in "${schema}" schema:`, mainError);
+          }
+          try {
+            await dataSource.query(`DELETE FROM "public"."migrations"`);
+            console.log('✅ Migration table cleared in "public" schema');
+          } catch (publicError) {
+            console.log('⚠️  Could not clear migration table in "public" schema:', publicError);
+          }
+          
+          // Re-run migrations
+          console.log('Re-running migrations...');
+          const reExecutedMigrations = await dataSource.runMigrations();
+          console.log(`✅ Re-executed ${reExecutedMigrations.length} migration(s)`);
+          
+          // Verify tenants table again
+          const retryTableCheck = await dataSource.query(
+            `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
+            [schema, 'tenants']
+          );
+          
+          if (retryTableCheck.length === 0) {
+            throw new Error(`❌ Table "tenants" still does not exist in schema "${schema}" after re-running migrations!`);
+          }
+          console.log(`✅ Table "tenants" now exists in schema "${schema}"`);
+        } catch (retryError) {
+          console.error('❌ Failed to re-run migrations:', retryError);
+          throw new Error(`❌ Table "tenants" does not exist in schema "${schema}" after migrations!`);
+        }
+      } else {
+        throw new Error(`❌ Table "tenants" does not exist in schema "${schema}" after migrations! No migrations were executed.`);
+      }
+    } else {
+      console.log(`✅ Table "tenants" exists in schema "${schema}"`);
     }
-    console.log(`✅ Table "tenants" exists in schema "${schema}"`);
 
     // Wait 3 seconds before running seeds
     console.log('Waiting 3 seconds before running seeds...');

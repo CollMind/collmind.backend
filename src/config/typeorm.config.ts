@@ -60,9 +60,19 @@ export const dataSourceOptions: DataSourceOptions = {
   password: getEnvVar('DB_PASSWORD') || '',
   database: getEnvVar('DB_DATABASE') || '',
   schema: getEnvVar('DB_SCHEMA') || 'main',
-  ssl: getEnvVar('NODE_ENV') === 'production' 
-    ? { rejectUnauthorized: false } 
-    : false,
+  ssl: (() => {
+    // Explicit SSL setting from environment variable
+    const dbSsl = getEnvVar('DB_SSL');
+    if (dbSsl === 'false' || dbSsl === '0') {
+      return false;
+    }
+    // For production (Cloud SQL), use SSL
+    if (getEnvVar('NODE_ENV') === 'production' && !dbSsl) {
+      return { rejectUnauthorized: false };
+    }
+    // Default: no SSL for local development
+    return false;
+  })(),
   // Use explicit entity imports instead of path pattern for better reliability
   entities: [
     // Shared entities

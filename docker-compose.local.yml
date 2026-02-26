@@ -1,7 +1,10 @@
+# Local test için Docker Compose dosyası
+# Kullanım: docker-compose -f docker-compose.local.yml up --build
+
 services:
   postgres:
     image: postgres:16
-    container_name: collmind-tpm-postgres
+    container_name: collmind-tpm-postgres-local
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -9,7 +12,7 @@ services:
     ports:
       - '5432:5432'
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_local:/var/lib/postgresql/data
       - ./docker/init-schema.sql:/docker-entrypoint-initdb.d/init-schema.sql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
@@ -21,11 +24,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: collmind-tpm-backend
+    container_name: collmind-tpm-backend-local
     ports:
       - '3000:3000'
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 3000
       DB_HOST: postgres
       DB_PORT: 5432
@@ -33,14 +36,13 @@ services:
       DB_USERNAME: postgres
       DB_PASSWORD: postgres
       DB_SCHEMA: main
-      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
-      JWT_EXPIRATION: ${JWT_EXPIRATION:-24h}
+      DB_SSL: 'false'
+      JWT_SECRET: local-test-secret-key
+      JWT_EXPIRATION: 24h
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  postgres_data:
-
-
+  postgres_data_local:
