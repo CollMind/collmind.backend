@@ -60,13 +60,16 @@ async function bootstrap() {
     console.log('✅ CORS configured');
 
     const port = process.env.PORT || 8080;
+    // Use '0.0.0.0' for production/containers, 'localhost' for local development
+    const host = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+    const displayHost = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
     console.log(`==========================================`);
     console.log(`Starting server on port ${port}...`);
     console.log(`==========================================`);
-    await app.listen(port, '0.0.0.0');
-    console.log(`✅ Application is running on: http://0.0.0.0:${port}`);
-    console.log(`✅ Swagger documentation: http://0.0.0.0:${port}/api`);
-    console.log(`✅ Health check: http://0.0.0.0:${port}/`);
+    await app.listen(port, host);
+    console.log(`✅ Application is running on: http://${displayHost}:${port}`);
+    console.log(`✅ Swagger documentation: http://${displayHost}:${port}/api`);
+    console.log(`✅ Health check: http://${displayHost}:${port}/`);
     console.log(`==========================================`);
 
     // Run migrations and seeds after app starts (non-blocking)

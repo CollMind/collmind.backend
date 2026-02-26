@@ -31,86 +31,155 @@ export async function seedAgreements(
   const nkaChannelId = nkaChannel?.id || '00000000-0000-0000-0000-000000000001';
   const traditionalChannelId = traditionalChannel?.id || '00000000-0000-0000-0000-000000000002';
 
+  // Helper function to check if error is a duplicate key error
+  const isDuplicateError = (error: any): boolean => {
+    return (
+      error?.code === '23505' ||
+      error?.driverError?.code === '23505' ||
+      error?.driverError?.driverError?.code === '23505' ||
+      (error?.message && error.message.includes('duplicate key')) ||
+      (error?.driverError?.message && error.driverError.message.includes('duplicate key'))
+    );
+  };
+
   // Create or get Brand
   let brand = await brandRepo.findOne({ where: { code: 'WELLA', tenantId } });
   if (!brand) {
-    brand = brandRepo.create({
-      code: 'WELLA',
-      name: 'Wella',
-      tenantId,
-      createdBy: createdByUserId,
-    });
-    brand = await brandRepo.save(brand);
+    try {
+      brand = brandRepo.create({
+        code: 'WELLA',
+        name: 'Wella',
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      brand = await brandRepo.save(brand);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        brand = await brandRepo.findOne({ where: { code: 'WELLA', tenantId } });
+        if (!brand) throw error;
+      } else {
+        throw error;
+      }
+    }
   }
 
   // Create or get Category
   let category = await categoryRepo.findOne({ where: { code: 'HAIR_CARE', tenantId } });
   if (!category) {
-    category = categoryRepo.create({
-      code: 'HAIR_CARE',
-      name: 'Hair Care',
-      tenantId,
-      createdBy: createdByUserId,
-    });
-    category = await categoryRepo.save(category);
+    try {
+      category = categoryRepo.create({
+        code: 'HAIR_CARE',
+        name: 'Hair Care',
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      category = await categoryRepo.save(category);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        category = await categoryRepo.findOne({ where: { code: 'HAIR_CARE', tenantId } });
+        if (!category) throw error;
+      } else {
+        throw error;
+      }
+    }
   }
 
   // Create or get Generic Unit
   let gu = await guRepo.findOne({ where: { code: 'GU-WELLA-HC-001', tenantId } });
   if (!gu) {
-    gu = guRepo.create({
-      code: 'GU-WELLA-HC-001',
-      name: 'Wella Hair Care Generic Unit',
-      brandId: brand.id,
-      categoryId: category.id,
-      tenantId,
-      createdBy: createdByUserId,
-    });
-    gu = await guRepo.save(gu);
+    try {
+      gu = guRepo.create({
+        code: 'GU-WELLA-HC-001',
+        name: 'Wella Hair Care Generic Unit',
+        brandId: brand.id,
+        categoryId: category.id,
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      gu = await guRepo.save(gu);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        gu = await guRepo.findOne({ where: { code: 'GU-WELLA-HC-001', tenantId } });
+        if (!gu) throw error;
+      } else {
+        throw error;
+      }
+    }
   }
 
   // Create or get Forecasting Unit
   let fu = await fuRepo.findOne({ where: { code: 'FU-WELLA-HC-500ML', tenantId } });
   if (!fu) {
-    fu = fuRepo.create({
-      code: 'FU-WELLA-HC-500ML',
-      name: 'Wella Hair Care 500ml',
-      guId: gu.id,
-      size: '500ml',
-      segment: 'Premium',
-      currency: 'TRY',
-      tenantId,
-      createdBy: createdByUserId,
-    });
-    fu = await fuRepo.save(fu);
+    try {
+      fu = fuRepo.create({
+        code: 'FU-WELLA-HC-500ML',
+        name: 'Wella Hair Care 500ml',
+        guId: gu.id,
+        size: '500ml',
+        segment: 'Premium',
+        currency: 'TRY',
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      fu = await fuRepo.save(fu);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        // Try to find it again (might have been created by another process)
+        fu = await fuRepo.findOne({ where: { code: 'FU-WELLA-HC-500ML', tenantId } });
+        if (!fu) {
+          throw error; // Re-throw if still not found
+        }
+        // Successfully found, continue
+      } else {
+        throw error; // Re-throw other errors
+      }
+    }
   }
 
   // Create or get Tactic
   let tactic = await tacticRepo.findOne({ where: { code: 'TAC-PROMO', tenantId } });
   if (!tactic) {
-    tactic = tacticRepo.create({
-      code: 'TAC-PROMO',
-      name: 'Promotion',
-      tacticType: TacticType.DISCOUNT,
-      spendType: 'OFF_INVOICE',
-      tenantId,
-      createdBy: createdByUserId,
-    });
-    tactic = await tacticRepo.save(tactic);
+    try {
+      tactic = tacticRepo.create({
+        code: 'TAC-PROMO',
+        name: 'Promotion',
+        tacticType: TacticType.DISCOUNT,
+        spendType: 'OFF_INVOICE',
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      tactic = await tacticRepo.save(tactic);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        tactic = await tacticRepo.findOne({ where: { code: 'TAC-PROMO', tenantId } });
+        if (!tactic) throw error;
+      } else {
+        throw error;
+      }
+    }
   }
 
   // Create or get Mechanic
   let mechanic = await mechanicRepo.findOne({ where: { code: 'MEC-DISCOUNT', tenantId } });
   if (!mechanic) {
-    mechanic = mechanicRepo.create({
-      code: 'MEC-DISCOUNT',
-      name: 'Discount',
-      tacticId: tactic.id,
-      mechanicType: MechanicType.PERCENT,
-      tenantId,
-      createdBy: createdByUserId,
-    });
-    mechanic = await mechanicRepo.save(mechanic);
+    try {
+      mechanic = mechanicRepo.create({
+        code: 'MEC-DISCOUNT',
+        name: 'Discount',
+        tacticId: tactic.id,
+        mechanicType: MechanicType.PERCENT,
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      mechanic = await mechanicRepo.save(mechanic);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        mechanic = await mechanicRepo.findOne({ where: { code: 'MEC-DISCOUNT', tenantId } });
+        if (!mechanic) throw error;
+      } else {
+        throw error;
+      }
+    }
   }
 
   // Agreement 1: DRAFT (ready to submit)
