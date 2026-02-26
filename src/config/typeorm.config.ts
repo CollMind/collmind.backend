@@ -124,14 +124,26 @@ export const dataSourceOptions: DataSourceOptions = {
     // In production, manually load migration classes to avoid glob pattern issues
     // In development, use TS files with glob pattern
     const isProduction = getEnvVar('NODE_ENV') === 'production';
+    console.log(`🔍 Config: isProduction=${isProduction}, NODE_ENV=${process.env.NODE_ENV}`);
     
     if (isProduction) {
       // Production: manually load migration classes
-      const loadedMigrations = loadMigrations();
-      console.log(`📦 Using ${loadedMigrations.length} manually loaded migrations`);
-      return loadedMigrations;
+      console.log('🔍 Config: Calling loadMigrations()...');
+      try {
+        const loadedMigrations = loadMigrations();
+        console.log(`📦 Config: Using ${loadedMigrations.length} manually loaded migrations`);
+        if (loadedMigrations.length === 0) {
+          console.error('❌ Config: No migrations loaded! This will cause issues.');
+        }
+        return loadedMigrations;
+      } catch (error: any) {
+        console.error('❌ Config: Error loading migrations:', error?.message || error);
+        console.error('❌ Stack:', error?.stack);
+        return [];
+      }
     } else {
       // Development: use TS files with glob pattern
+      console.log('🔍 Config: Using glob pattern for development');
       return [__dirname + '/../database/migrations/**/*.ts'];
     }
   })(),

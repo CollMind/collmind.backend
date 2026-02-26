@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import dataSource from './config/typeorm.config';
 import { runAllSeeds } from './database/seeds';
+import { loadMigrations } from './config/load-migrations';
 
 async function bootstrap() {
   try {
@@ -262,8 +263,29 @@ async function runMigrationsAndSeeds() {
       }
     }
     
-    const availableMigrations = dataSource.migrations || [];
-    console.log(`TypeORM found ${availableMigrations.length} migration(s) available`);
+    // If no migrations found, try to load them manually in production
+    let availableMigrations = dataSource.migrations || [];
+    console.log(`TypeORM found ${availableMigrations.length} migration(s) available from config`);
+    
+    if (availableMigrations.length === 0 && isProduction) {
+      console.log('⚠️  No migrations found in config, attempting to load manually...');
+      try {
+        const migrationClasses = loadMigrations();
+        console.log(`📦 Manually loaded ${migrationClasses.length} migration classes`);
+        
+        if (migrationClasses.length > 0) {
+          // Instantiate migration classes and set on DataSource
+          const migrationInstances = migrationClasses.map(MigrationClass => new MigrationClass());
+          (dataSource as any).migrations = migrationInstances;
+          (dataSource.options as any).migrations = migrationInstances;
+          availableMigrations = migrationInstances;
+          console.log(`✅ Set ${migrationInstances.length} migrations on DataSource`);
+        }
+      } catch (loadError: any) {
+        console.error('❌ Error manually loading migrations:', loadError?.message || loadError);
+        console.error('Stack:', loadError?.stack);
+      }
+    }
     
     if (availableMigrations.length > 0) {
       console.log('Available migrations:');
