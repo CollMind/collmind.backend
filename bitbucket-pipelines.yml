@@ -36,6 +36,35 @@ pipelines:
               --set-env-vars=NODE_ENV=production,DB_HOST=10.25.16.5,DB_PORT=5432,DB_USERNAME=_collmind_staging_user,DB_DATABASE=collmind_staging,DB_SCHEMA=main,JWT_EXPIRATION=48h \
               --vpc-connector=projects/$GCP_PROJECT_ID/locations/europe-west1/connectors/vpc-connector
 
+            # Run migrations + seeds via Cloud Run Job (single-run, safe for autoscaling)
+            - |
+              if gcloud run jobs describe backend-db-init --region=europe-west1 >/dev/null 2>&1; then
+                gcloud run jobs update backend-db-init \
+                  --image=$IMAGE:$BITBUCKET_COMMIT \
+                  --region=europe-west1 \
+                  --service-account=bitbucket-action-sa@collmind-tpm.iam.gserviceaccount.com \
+                  --vpc-connector=projects/$GCP_PROJECT_ID/locations/europe-west1/connectors/vpc-connector \
+                  --set-secrets=DB_PASSWORD=DB_PASSWORD:latest,JWT_SECRET=JWT_SECRET:latest \
+                  --set-env-vars=NODE_ENV=production,DB_HOST=10.25.16.5,DB_PORT=5432,DB_USERNAME=_collmind_staging_user,DB_DATABASE=collmind_staging,DB_SCHEMA=main,JWT_EXPIRATION=48h \
+                  --command=npm \
+                  --args=run,db:init:prod \
+                  --task-timeout=10m \
+                  --max-retries=1
+              else
+                gcloud run jobs create backend-db-init \
+                  --image=$IMAGE:$BITBUCKET_COMMIT \
+                  --region=europe-west1 \
+                  --service-account=bitbucket-action-sa@collmind-tpm.iam.gserviceaccount.com \
+                  --vpc-connector=projects/$GCP_PROJECT_ID/locations/europe-west1/connectors/vpc-connector \
+                  --set-secrets=DB_PASSWORD=DB_PASSWORD:latest,JWT_SECRET=JWT_SECRET:latest \
+                  --set-env-vars=NODE_ENV=production,DB_HOST=10.25.16.5,DB_PORT=5432,DB_USERNAME=_collmind_staging_user,DB_DATABASE=collmind_staging,DB_SCHEMA=main,JWT_EXPIRATION=48h \
+                  --command=npm \
+                  --args=run,db:init:prod \
+                  --task-timeout=10m \
+                  --max-retries=1
+              fi
+            - gcloud run jobs execute backend-db-init --region=europe-west1 --wait
+
 definitions:
   services:
     docker:
