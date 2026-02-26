@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build && npm run build:migrations",
-    "build:migrations": "mkdir -p dist/database/migrations && sh -c 'for file in src/database/migrations/*.ts; do if [ -f \"$file\" ]; then npx tsc \"$file\" --outDir dist/database/migrations --module commonjs --target ES2021 --moduleResolution node --esModuleInterop --skipLibCheck --declaration false --sourceMap false --resolveJsonModule --rootDir . || exit 1; fi; done' && echo '✅ Migration files compiled successfully'",
+    "build:migrations": "sh scripts/build-migrations.sh",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
