@@ -61,97 +61,143 @@ export function loadMigrations(): (new () => MigrationInterface)[] {
           continue;
         }
         
-        // Use fs.readFileSync + vm.runInThisContext instead of require()
-        // This works because webpack doesn't bundle migration files
-        const vm = require('vm');
-        let fileContent = fs.readFileSync(filePath, 'utf8');
-        console.log(`🔍   Read file content (${fileContent.length} bytes)`);
+        // Use Node.js Module API to load the compiled CommonJS file
+        // This is more reliable than vm.runInContext for CommonJS modules
+        const Module = require('module');
+        const originalRequire = Module.prototype.require;
         
-        // Convert ES6 import statements to CommonJS require
-        // Migration files may have ES6 imports even though they should be CommonJS
-        fileContent = fileContent.replace(
-          /import\s+{([^}]+)}\s+from\s+['"]([^'"]+)['"];?/g,
-          (match, imports, moduleName) => {
-            const cleanImports = imports.trim();
-            return `const { ${cleanImports} } = require('${moduleName}');`;
-          }
-        );
+        // Create a custom require function that can resolve migration files
+        // This bypasses webpack's module resolution
+        const migrationModulePath = path.resolve(filePath);
+        console.log(`🔍   Loading migration from: ${migrationModulePath}`);
         
-        // Convert: import X from 'module' -> const X = require('module').default || require('module')
-        fileContent = fileContent.replace(
-          /import\s+(\w+)\s+from\s+['"]([^'"]+)['"];?/g,
-          (match, defaultImport, moduleName) => {
-            return `const ${defaultImport} = require('${moduleName}');`;
-          }
-        );
-        
-        // Remove export keyword from class declarations and add to module.exports
-        const classExportMatches = fileContent.match(/export\s+class\s+(\w+)/g);
-        if (classExportMatches) {
-          // Remove export keyword
-          fileContent = fileContent.replace(/export\s+class\s+/g, 'class ');
+        let migrationModule: any;
+        try {
+          // Use Node.js's native require with absolute path
+          // This should work even if webpack doesn't bundle the file
+          // We need to clear the require cache first to allow reloading
+          delete require.cache[migrationModulePath];
           
-          // Extract class names
-          const classNames = classExportMatches.map(match => match.replace(/export\s+class\s+/, ''));
-          
-          // Add module.exports at the end if not already present
-          if (!fileContent.includes('module.exports')) {
-            fileContent += `\nmodule.exports = { ${classNames.join(', ')} };`;
-          } else {
-            // Update existing module.exports
-            const existingExports = fileContent.match(/module\.exports\s*=\s*{([^}]+)}/);
-            if (existingExports) {
-              const existing = existingExports[1].trim();
-              fileContent = fileContent.replace(
-                /module\.exports\s*=\s*{([^}]+)}/,
-                `module.exports = { ${existing}, ${classNames.join(', ')} }`
+          // Try to require the file directly
+          // If this fails due to webpack, we'll fall back to vm approach
+          try {
+            migrationModule = require(migrationModulePath);
+            console.log(`   ✅ Successfully loaded migration using require()`);
+          } catch (requireError: any) {
+            // If require fails (likely due to webpack), use vm.runInThisContext
+            console.log(`   ⚠️  require() failed (likely webpack issue), using vm.runInThisContext...`);
+            console.log(`   ⚠️  Error: ${requireError?.message}`);
+            
+            // Read the file content
+            const fileContent = fs.readFileSync(filePath, 'utf8');
+            console.log(`🔍   Read file content (${fileContent.length} bytes)`);
+            
+            // Check if file is CommonJS
+            const isCommonJS = fileContent.includes('require(') || fileContent.includes('module.exports') || fileContent.includes('exports.');
+            console.log(`🔍   File is CommonJS: ${isCommonJS}`);
+            
+            // If file has ES6 syntax, convert it
+            let processedContent = fileContent;
+            if (fileContent.includes('import ') || fileContent.includes('export ')) {
+              console.log(`🔍   Detected ES6 syntax, converting to CommonJS...`);
+              
+              // Convert imports
+              processedContent = processedContent.replace(
+                /import\s+{([^}]+)}\s+from\s+['"]([^'"]+)['"];?/g,
+                (match, imports, moduleName) => {
+                  return `const { ${imports.trim()} } = require('${moduleName}');`;
+                }
+              );
+              
+              processedContent = processedContent.replace(
+                /import\s+(\w+)\s+from\s+['"]([^'"]+)['"];?/g,
+                (match, defaultImport, moduleName) => {
+                  return `const ${defaultImport} = require('${moduleName}');`;
+                }
+              );
+              
+              // Convert export class
+              const classExportRegex = /export\s+class\s+(\w+)/g;
+              const classMatches = [...processedContent.matchAll(classExportRegex)];
+              if (classMatches.length > 0) {
+                processedContent = processedContent.replace(/export\s+class\s+/g, 'class ');
+                const classNames = classMatches.map(m => m[1]);
+                if (!processedContent.includes('module.exports')) {
+                  processedContent += `\nmodule.exports = { ${classNames.join(', ')} };`;
+                }
+              }
+              
+              processedContent = processedContent.replace(
+                /export\s+default\s+class\s+(\w+)/g,
+                (match, className) => `class ${className}`
               );
             }
-          }
-        }
-        
-        console.log(`🔍   Converted ES6 to CommonJS`);
-        
-        // Create a module-like context with TypeORM
-        const moduleExports: any = {};
-        const typeorm = require('typeorm');
-        const moduleContext = vm.createContext({
-          module: { exports: moduleExports },
-          exports: moduleExports,
-          require: (moduleName: string) => {
-            // Handle typeorm imports
-            if (moduleName === 'typeorm') {
-              return typeorm;
+            
+            // Use vm.runInThisContext (not runInContext) - this runs in the current global context
+            const vm = require('vm');
+            const moduleExports: any = {};
+            
+            // Create a custom require function
+            const customRequire = (moduleName: string) => {
+              if (moduleName === 'typeorm') {
+                return require('typeorm');
+              }
+              return require(moduleName);
+            };
+            
+            // Create a fake module object
+            const fakeModule = {
+              exports: moduleExports,
+              require: customRequire,
+              filename: filePath,
+              dirname: migrationDir,
+            };
+            
+            // Create a wrapper that provides module context
+            // This simulates CommonJS module loading
+            const wrappedCode = `
+              (function(exports, require, module, __filename, __dirname) {
+                ${processedContent}
+              })(module.exports, require, module, __filename, __dirname);
+            `;
+            
+            // We need to provide these variables in the scope
+            // Since runInThisContext uses the current global scope, we can set them temporarily
+            const originalModule = global.module;
+            const originalExports = global.exports;
+            const originalRequire = global.require;
+            const originalFilename = global.__filename;
+            const originalDirname = global.__dirname;
+            
+            try {
+              // Set global variables for the module context
+              (global as any).module = fakeModule;
+              (global as any).exports = moduleExports;
+              (global as any).require = customRequire;
+              (global as any).__filename = filePath;
+              (global as any).__dirname = migrationDir;
+              
+              // Execute in current context (not a sandbox)
+              vm.runInThisContext(wrappedCode, {
+                filename: filePath,
+                displayErrors: true,
+              });
+              
+              migrationModule = moduleExports;
+            } finally {
+              // Restore original globals
+              if (originalModule !== undefined) (global as any).module = originalModule;
+              if (originalExports !== undefined) (global as any).exports = originalExports;
+              if (originalRequire !== undefined) (global as any).require = originalRequire;
+              if (originalFilename !== undefined) (global as any).__filename = originalFilename;
+              if (originalDirname !== undefined) (global as any).__dirname = originalDirname;
             }
-            // For other modules, use regular require
-            return require(moduleName);
-          },
-          __dirname: migrationDir,
-          __filename: filePath,
-          console: console,
-          process: process,
-          Buffer: Buffer,
-          global: global,
-          setTimeout: setTimeout,
-          clearTimeout: clearTimeout,
-          setInterval: setInterval,
-          clearInterval: clearInterval,
-        });
-        
-        // Execute the converted migration file in the context
-        let migrationModule;
-        try {
-          vm.runInContext(fileContent, moduleContext, { filename: filePath });
-          migrationModule = moduleExports;
-          console.log(`   ✅ Successfully executed converted migration file`);
-        } catch (vmError: any) {
-          console.error(`   ❌ VM execution error: ${vmError?.message}`);
-          console.error(`   ❌ Stack: ${vmError?.stack}`);
-          // Log first few lines for debugging
-          const lines = fileContent.split('\n').slice(0, 5);
-          console.error(`   ❌ First 5 lines of converted content:`);
-          lines.forEach((line, i) => console.error(`      ${i + 1}: ${line}`));
-          throw vmError;
+            console.log(`   ✅ Successfully loaded migration using vm.runInThisContext()`);
+          }
+        } catch (loadError: any) {
+          console.error(`   ❌ Error loading migration: ${loadError?.message}`);
+          console.error(`   ❌ Stack: ${loadError?.stack}`);
+          throw loadError;
         }
         
         console.log(`🔍 Module loaded, exports: ${Object.keys(migrationModule).join(', ')}`);

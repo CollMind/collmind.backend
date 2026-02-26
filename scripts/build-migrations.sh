@@ -54,4 +54,17 @@ if [ "$js_count" -eq 0 ]; then
   exit 1
 fi
 
+# Verify that compiled files are in CommonJS format (should have require() or module.exports)
+echo "Verifying CommonJS format..."
+first_js_file=$(ls -1 dist/database/migrations/*.js 2>/dev/null | head -1)
+if [ -n "$first_js_file" ]; then
+  if grep -q "require\|module\.exports\|exports\." "$first_js_file" 2>/dev/null; then
+    echo "✅ Compiled files appear to be in CommonJS format"
+  else
+    echo "⚠️  WARNING: Compiled files may not be in CommonJS format (no require/module.exports found)"
+    echo "   First few lines of $first_js_file:"
+    head -5 "$first_js_file" | sed 's/^/   /'
+  fi
+fi
+
 echo "✅ Migration files compiled successfully: $js_count .js files found"
