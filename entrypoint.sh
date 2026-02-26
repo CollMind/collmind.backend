@@ -20,7 +20,7 @@ if [ ! -f "dist/main.js" ]; then
 fi
 
 echo "Running migrations..."
-./node_modules/.bin/typeorm migration:run -d dist/config/typeorm.config.js
+./node_modules/.bin/typeorm migration:run -d dist/src/config/typeorm.config.js
 echo "Migrations completed!"
 
 echo "Running seeds..."
