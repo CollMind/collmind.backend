@@ -127,10 +127,15 @@ export const dataSourceOptions: DataSourceOptions = {
     
     if (isProduction) {
       // Production: use absolute path to compiled JS files
-      // __dirname in production is /app/dist/config
+      // process.cwd() in production is /app
       // So migrations are at /app/dist/database/migrations
-      const migrationPath = path.resolve(__dirname, '../database/migrations/**/*.js');
+      // IMPORTANT: TypeORM needs glob patterns as strings
+      // Build base path with path.join, then append glob pattern as string
+      const migrationBaseDir = path.join(process.cwd(), 'dist', 'database', 'migrations');
+      const migrationPath = migrationBaseDir + '/**/*.js';
       console.log(`Production migration path: ${migrationPath}`);
+      console.log(`process.cwd(): ${process.cwd()}`);
+      console.log(`__dirname: ${__dirname}`);
       return [migrationPath];
     } else {
       // Development: use TS files with glob pattern

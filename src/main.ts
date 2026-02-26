@@ -264,6 +264,7 @@ async function runMigrationsAndSeeds() {
     
     const availableMigrations = dataSource.migrations || [];
     console.log(`TypeORM found ${availableMigrations.length} migration(s) available`);
+    
     if (availableMigrations.length > 0) {
       console.log('Available migrations:');
       availableMigrations.forEach((migration) => {
@@ -273,7 +274,18 @@ async function runMigrationsAndSeeds() {
     } else {
       console.log('⚠️  WARNING: No migrations found by TypeORM!');
       console.log('⚠️  This usually means migration files are not being loaded correctly.');
-      console.log(`⚠️  Migration path in config: ${dataSource.options.migrations}`);
+      console.log(`⚠️  Migration path in config: ${JSON.stringify(dataSource.options.migrations)}`);
+      console.log(`⚠️  Migration directory exists: ${fs.existsSync(migrationDir)}`);
+      if (fs.existsSync(migrationDir)) {
+        const files = fs.readdirSync(migrationDir);
+        const jsFiles = files.filter((f: string) => f.endsWith('.js'));
+        console.log(`⚠️  JS files in directory: ${jsFiles.length}`);
+        if (jsFiles.length > 0) {
+          console.log('⚠️  First few JS files:');
+          jsFiles.slice(0, 5).forEach((f: string) => console.log(`   - ${f}`));
+          console.log('⚠️  TypeORM should be able to find these files. Check if the migration path pattern is correct.');
+        }
+      }
     }
 
     // Run migrations with error handling for constraint conflicts
