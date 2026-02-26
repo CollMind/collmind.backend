@@ -216,24 +216,50 @@ async function runMigrationsAndSeeds() {
     const fs = require('fs');
     const path = require('path');
     const isProduction = process.env.NODE_ENV === 'production';
+    
+    // In production, __dirname is /app/dist/config, so we need to go up to dist and then to database/migrations
+    // In development, we check src/database/migrations
     const migrationDir = isProduction 
-      ? path.join(__dirname, '../database/migrations')
+      ? path.resolve(__dirname, '../database/migrations')
       : path.join(process.cwd(), 'src/database/migrations');
     
+    console.log(`__dirname: ${__dirname}`);
+    console.log(`process.cwd(): ${process.cwd()}`);
     console.log(`Checking migration directory: ${migrationDir}`);
     console.log(`Production mode: ${isProduction}`);
+    
+    // Also check the actual path that TypeORM is using
+    const typeormMigrationPath = Array.isArray(dataSource.options.migrations) 
+      ? dataSource.options.migrations[0] 
+      : dataSource.options.migrations;
+    console.log(`TypeORM migration path from config: ${typeormMigrationPath}`);
     
     try {
       const migrationFiles = fs.readdirSync(migrationDir).filter((f: string) => 
         isProduction ? f.endsWith('.js') : f.endsWith('.ts')
       );
-      console.log(`Found ${migrationFiles.length} migration file(s) in directory:`);
+      console.log(`✅ Found ${migrationFiles.length} migration file(s) in directory:`);
       migrationFiles.slice(0, 5).forEach((f: string) => console.log(`   - ${f}`));
       if (migrationFiles.length > 5) {
         console.log(`   ... and ${migrationFiles.length - 5} more`);
       }
     } catch (error) {
       console.log(`⚠️  Could not read migration directory: ${error}`);
+      // Try alternative paths
+      const altPaths = [
+        path.resolve(__dirname, '../../database/migrations'),
+        path.join(process.cwd(), 'dist/database/migrations'),
+        path.join(process.cwd(), 'database/migrations'),
+      ];
+      for (const altPath of altPaths) {
+        try {
+          const files = fs.readdirSync(altPath);
+          console.log(`✅ Found migration files in alternative path: ${altPath} (${files.length} files)`);
+          break;
+        } catch (e) {
+          // Continue to next path
+        }
+      }
     }
     
     const availableMigrations = dataSource.migrations || [];

@@ -123,11 +123,17 @@ export const dataSourceOptions: DataSourceOptions = {
     // In production, use compiled JS files from dist
     // In development, use TS files from src
     const isProduction = getEnvVar('NODE_ENV') === 'production';
+    const path = require('path');
+    
     if (isProduction) {
-      // Production: use compiled JS files
-      return [__dirname + '/../database/migrations/**/*.js'];
+      // Production: use absolute path to compiled JS files
+      // __dirname in production is /app/dist/config
+      // So migrations are at /app/dist/database/migrations
+      const migrationPath = path.resolve(__dirname, '../database/migrations/**/*.js');
+      console.log(`Production migration path: ${migrationPath}`);
+      return [migrationPath];
     } else {
-      // Development: use TS files
+      // Development: use TS files with glob pattern
       return [__dirname + '/../database/migrations/**/*.ts'];
     }
   })(),
