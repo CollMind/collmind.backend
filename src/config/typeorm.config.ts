@@ -40,6 +40,7 @@ import { LTAPlanOverride } from '../database/entities/lta-plan-override.entity';
 import { BudgetAllocation } from '../database/entities/budget-allocation.entity';
 import { BudgetTransactionLog } from '../database/entities/budget-transaction-log.entity';
 import { BudgetAlertConfiguration } from '../database/entities/budget-alert-configuration.entity';
+import { loadMigrations } from './load-migrations';
 
 // Only load .env file if it exists (for local development)
 // In Cloud Run, environment variables are set directly
@@ -120,23 +121,15 @@ export const dataSourceOptions: DataSourceOptions = {
     BudgetAlertConfiguration,
   ],
   migrations: (() => {
-    // In production, use compiled JS files from dist
-    // In development, use TS files from src
+    // In production, manually load migration classes to avoid glob pattern issues
+    // In development, use TS files with glob pattern
     const isProduction = getEnvVar('NODE_ENV') === 'production';
-    const path = require('path');
     
     if (isProduction) {
-      // Production: use absolute path to compiled JS files
-      // process.cwd() in production is /app
-      // So migrations are at /app/dist/database/migrations
-      // IMPORTANT: TypeORM needs glob patterns as strings
-      // Build base path with path.join, then append glob pattern as string
-      const migrationBaseDir = path.join(process.cwd(), 'dist', 'database', 'migrations');
-      const migrationPath = migrationBaseDir + '/**/*.js';
-      console.log(`Production migration path: ${migrationPath}`);
-      console.log(`process.cwd(): ${process.cwd()}`);
-      console.log(`__dirname: ${__dirname}`);
-      return [migrationPath];
+      // Production: manually load migration classes
+      const loadedMigrations = loadMigrations();
+      console.log(`📦 Using ${loadedMigrations.length} manually loaded migrations`);
+      return loadedMigrations;
     } else {
       // Development: use TS files with glob pattern
       return [__dirname + '/../database/migrations/**/*.ts'];
