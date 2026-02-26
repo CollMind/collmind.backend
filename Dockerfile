@@ -46,6 +46,14 @@ RUN echo "Checking for compiled migration files..." && \
       exit 1; \
     else \
       echo "✅ Seed file found: dist/database/seeds/run-seeds.js"; \
+    fi && \
+    echo "Checking for typeorm.config.js..." && \
+    if [ ! -f "dist/config/typeorm.config.js" ]; then \
+      echo "ERROR: dist/config/typeorm.config.js not found!" && \
+      echo "TypeORM config file must be compiled to JavaScript for production." && \
+      exit 1; \
+    else \
+      echo "✅ TypeORM config found: dist/config/typeorm.config.js"; \
     fi
 
 FROM node:20-alpine
