@@ -61,18 +61,48 @@ export function loadMigrations(): (new () => MigrationInterface)[] {
           continue;
         }
         
-        // Try require with relative path (without .js extension)
-        const pathWithoutExt = cleanPath.replace(/\.js$/, '');
-        console.log(`🔍   Requiring: ${pathWithoutExt}`);
+        // Use fs.readFileSync + vm.runInThisContext instead of require()
+        // This works because webpack doesn't bundle migration files
+        const vm = require('vm');
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        console.log(`🔍   Read file content (${fileContent.length} bytes)`);
         
+        // Create a module-like context with TypeORM
+        const moduleExports: any = {};
+        const typeorm = require('typeorm');
+        const moduleContext = vm.createContext({
+          module: { exports: moduleExports },
+          exports: moduleExports,
+          require: (moduleName: string) => {
+            // Handle typeorm imports
+            if (moduleName === 'typeorm') {
+              return typeorm;
+            }
+            // For other modules, use regular require
+            return require(moduleName);
+          },
+          __dirname: migrationDir,
+          __filename: filePath,
+          console: console,
+          process: process,
+          Buffer: Buffer,
+          global: global,
+          setTimeout: setTimeout,
+          clearTimeout: clearTimeout,
+          setInterval: setInterval,
+          clearInterval: clearInterval,
+        });
+        
+        // Execute the migration file in the context
         let migrationModule;
         try {
-          migrationModule = require(pathWithoutExt);
-          console.log(`   ✅ Successfully required`);
-        } catch (requireError: any) {
-          console.error(`   ❌ Require error: ${requireError?.message}`);
-          console.error(`   ❌ Stack: ${requireError?.stack}`);
-          throw requireError;
+          vm.runInContext(fileContent, moduleContext, { filename: filePath });
+          migrationModule = moduleExports;
+          console.log(`   ✅ Successfully executed migration file`);
+        } catch (vmError: any) {
+          console.error(`   ❌ VM execution error: ${vmError?.message}`);
+          console.error(`   ❌ Stack: ${vmError?.stack}`);
+          throw vmError;
         }
         
         console.log(`🔍 Module loaded, exports: ${Object.keys(migrationModule).join(', ')}`);
