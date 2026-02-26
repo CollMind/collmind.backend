@@ -105,14 +105,14 @@ export class CreateBudgetSummaryView1704067740000 implements MigrationInterface 
 
     // Create index on budget_transactions for performance
     await queryRunner.query(`
-      CREATE INDEX IF NOT EXISTS main.idx_budget_transactions_envelope_status 
+      CREATE INDEX IF NOT EXISTS idx_budget_transactions_envelope_status 
       ON main.budget_transactions(envelope_id, tx_status) 
       WHERE deleted_at IS NULL;
     `);
 
     // Create index on ledger_entries for performance
     await queryRunner.query(`
-      CREATE INDEX IF NOT EXISTS main.idx_ledger_entries_envelope 
+      CREATE INDEX IF NOT EXISTS idx_ledger_entries_envelope 
       ON main.ledger_entries(budget_envelope_id) 
       WHERE deleted_at IS NULL;
     `);
