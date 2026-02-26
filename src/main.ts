@@ -96,6 +96,15 @@ async function runMigrationsAndSeeds() {
       console.log('Initializing DataSource...');
       await dataSource.initialize();
       console.log('✅ DataSource initialized');
+      
+      // Set search_path to include main schema so migration table is created there
+      const schema = process.env.DB_SCHEMA || 'main';
+      try {
+        await dataSource.query(`SET search_path TO "${schema}", public`);
+        console.log(`✅ Search path set to "${schema}", public`);
+      } catch (searchPathError) {
+        console.log('⚠️  Could not set search_path:', searchPathError);
+      }
     }
 
     const schema = process.env.DB_SCHEMA || 'main';
@@ -114,20 +123,38 @@ async function runMigrationsAndSeeds() {
       console.log(`✅ Schema "${schema}" exists`);
     }
 
-    // Check migration table (migrations table is in 'public' schema by default)
+    // Check migration table in main schema (where it should be)
     const migrationsTableCheck = await dataSource.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
+      [schema, 'migrations']
+    );
+    const migrationTableExists = migrationsTableCheck.length > 0;
+    console.log(`Migration table exists in schema "${schema}": ${migrationTableExists}`);
+
+    // Also check if migration table exists in public schema (old location)
+    const publicMigrationsTableCheck = await dataSource.query(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
       ['public', 'migrations']
     );
-    const migrationTableExists = migrationsTableCheck.length > 0;
-    console.log(`Migration table exists in schema "public": ${migrationTableExists}`);
-
-    // If migration table exists, verify its structure is correct
-    if (migrationTableExists) {
+    if (publicMigrationsTableCheck.length > 0) {
+      console.log('⚠️  Migration table found in "public" schema, moving to main schema...');
       try {
+        // Move table from public to main schema
+        await dataSource.query(`ALTER TABLE "public"."migrations" SET SCHEMA "${schema}"`);
+        console.log(`✅ Migration table moved to "${schema}" schema`);
+      } catch (error) {
+        console.log('⚠️  Could not move migration table, will recreate:', error);
+        await dataSource.query(`DROP TABLE IF EXISTS "public"."migrations" CASCADE`);
+      }
+    }
+
+    // If migration table exists in main schema, verify its structure is correct
+    if (migrationTableExists || publicMigrationsTableCheck.length > 0) {
+      try {
+        const finalSchema = migrationTableExists ? schema : 'public';
         const tableColumns = await dataSource.query(
           `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
-          ['public', 'migrations']
+          [finalSchema, 'migrations']
         );
         console.log(`Migration table has ${tableColumns.length} columns`);
         
@@ -138,6 +165,7 @@ async function runMigrationsAndSeeds() {
         
         if (!hasCorrectStructure) {
           console.log('⚠️  Migration table has incorrect structure. Dropping and recreating...');
+          await dataSource.query(`DROP TABLE IF EXISTS "${schema}"."migrations" CASCADE`);
           await dataSource.query(`DROP TABLE IF EXISTS "public"."migrations" CASCADE`);
           console.log('✅ Migration table dropped');
         }
@@ -145,10 +173,40 @@ async function runMigrationsAndSeeds() {
         console.log('⚠️  Error checking migration table structure, will attempt to recreate:', error);
         // If we can't check the structure, try to drop and recreate
         try {
+          await dataSource.query(`DROP TABLE IF EXISTS "${schema}"."migrations" CASCADE`);
           await dataSource.query(`DROP TABLE IF EXISTS "public"."migrations" CASCADE`);
           console.log('✅ Migration table dropped');
         } catch (dropError) {
           console.log('⚠️  Could not drop migration table:', dropError);
+        }
+      }
+    }
+
+    // Ensure migration table exists in main schema before running migrations
+    // TypeORM creates it in public schema by default, so we need to create it in main schema first
+    const migrationTableInMain = await dataSource.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
+      [schema, 'migrations']
+    );
+    
+    if (migrationTableInMain.length === 0) {
+      console.log(`Creating migrations table in "${schema}" schema...`);
+      try {
+        await dataSource.query(`
+          CREATE TABLE IF NOT EXISTS "${schema}"."migrations" (
+            "id" SERIAL NOT NULL,
+            "timestamp" bigint NOT NULL,
+            "name" character varying NOT NULL,
+            CONSTRAINT "PK_${schema}_migrations" PRIMARY KEY ("id")
+          )
+        `);
+        console.log(`✅ Migrations table created in "${schema}" schema`);
+      } catch (createError: any) {
+        // If table creation fails, it might already exist or there's a constraint issue
+        if (createError?.message?.includes('already exists')) {
+          console.log(`⚠️  Migrations table might already exist, continuing...`);
+        } else {
+          console.log(`⚠️  Could not create migrations table in "${schema}" schema:`, createError);
         }
       }
     }
@@ -158,11 +216,42 @@ async function runMigrationsAndSeeds() {
     let executedMigrations;
     try {
       executedMigrations = await dataSource.runMigrations();
+      
+      // After migrations run, move migration table from public to main schema if needed
+      const publicTableCheck = await dataSource.query(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
+        ['public', 'migrations']
+      );
+      const mainTableCheck = await dataSource.query(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
+        [schema, 'migrations']
+      );
+      
+      if (publicTableCheck.length > 0 && mainTableCheck.length === 0) {
+        console.log(`Moving migrations table from "public" to "${schema}" schema...`);
+        try {
+          // Copy data from public to main
+          const publicMigrations = await dataSource.query(`SELECT * FROM "public"."migrations"`);
+          if (publicMigrations.length > 0) {
+            await dataSource.query(`
+              INSERT INTO "${schema}"."migrations" ("timestamp", "name")
+              SELECT "timestamp", "name" FROM "public"."migrations"
+              ON CONFLICT DO NOTHING
+            `);
+          }
+          // Drop public table
+          await dataSource.query(`DROP TABLE IF EXISTS "public"."migrations" CASCADE`);
+          console.log(`✅ Migrations table moved to "${schema}" schema`);
+        } catch (moveError) {
+          console.log('⚠️  Could not move migrations table:', moveError);
+        }
+      }
     } catch (error: any) {
       // If error is about constraint already existing, drop and recreate the table
       if (error?.message?.includes('already exists') || error?.driverError?.message?.includes('already exists')) {
         console.log('⚠️  Constraint conflict detected. Dropping and recreating migrations table...');
         try {
+          await dataSource.query(`DROP TABLE IF EXISTS "${schema}"."migrations" CASCADE`);
           await dataSource.query(`DROP TABLE IF EXISTS "public"."migrations" CASCADE`);
           console.log('✅ Migrations table dropped, retrying migrations...');
           executedMigrations = await dataSource.runMigrations();
@@ -184,10 +273,23 @@ async function runMigrationsAndSeeds() {
       console.log('   ℹ️  No new migrations to execute');
     }
 
-    // Check which migrations have been executed (migrations table is in 'public' schema)
-    const executedMigrationsList = await dataSource.query(
-      `SELECT * FROM "public"."migrations" ORDER BY timestamp DESC LIMIT 10`
-    );
+    // Check which migrations have been executed (migrations table should be in main schema)
+    let executedMigrationsList;
+    try {
+      executedMigrationsList = await dataSource.query(
+        `SELECT * FROM "${schema}"."migrations" ORDER BY timestamp DESC LIMIT 10`
+      );
+    } catch (error) {
+      // If table doesn't exist in main schema, try public schema
+      try {
+        executedMigrationsList = await dataSource.query(
+          `SELECT * FROM "public"."migrations" ORDER BY timestamp DESC LIMIT 10`
+        );
+      } catch (publicError) {
+        console.log('⚠️  Could not query migrations table:', publicError);
+        executedMigrationsList = [];
+      }
+    }
     if (executedMigrationsList.length > 0) {
       console.log(`   ℹ️  Last ${executedMigrationsList.length} executed migration(s):`);
       executedMigrationsList.forEach((m: any) => {
