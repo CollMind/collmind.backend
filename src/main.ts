@@ -114,16 +114,66 @@ async function runMigrationsAndSeeds() {
       console.log(`✅ Schema "${schema}" exists`);
     }
 
-    // Check migration table
+    // Check migration table (migrations table is in 'public' schema by default)
     const migrationsTableCheck = await dataSource.query(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2`,
-      [schema, 'migrations']
+      ['public', 'migrations']
     );
-    console.log(`Migration table exists in schema "${schema}": ${migrationsTableCheck.length > 0}`);
+    const migrationTableExists = migrationsTableCheck.length > 0;
+    console.log(`Migration table exists in schema "public": ${migrationTableExists}`);
 
-    // Run migrations
+    // If migration table exists, verify its structure is correct
+    if (migrationTableExists) {
+      try {
+        const tableColumns = await dataSource.query(
+          `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
+          ['public', 'migrations']
+        );
+        console.log(`Migration table has ${tableColumns.length} columns`);
+        
+        // Expected columns: id, timestamp, name
+        const expectedColumns = ['id', 'timestamp', 'name'];
+        const actualColumns = tableColumns.map((col: any) => col.column_name);
+        const hasCorrectStructure = expectedColumns.every(col => actualColumns.includes(col));
+        
+        if (!hasCorrectStructure) {
+          console.log('⚠️  Migration table has incorrect structure. Dropping and recreating...');
+          await dataSource.query(`DROP TABLE IF EXISTS "public"."migrations" CASCADE`);
+          console.log('✅ Migration table dropped');
+        }
+      } catch (error) {
+        console.log('⚠️  Error checking migration table structure, will attempt to recreate:', error);
+        // If we can't check the structure, try to drop and recreate
+        try {
+          await dataSource.query(`DROP TABLE IF EXISTS "public"."migrations" CASCADE`);
+          console.log('✅ Migration table dropped');
+        } catch (dropError) {
+          console.log('⚠️  Could not drop migration table:', dropError);
+        }
+      }
+    }
+
+    // Run migrations with error handling for constraint conflicts
     console.log('Running database migrations...');
-    const executedMigrations = await dataSource.runMigrations();
+    let executedMigrations;
+    try {
+      executedMigrations = await dataSource.runMigrations();
+    } catch (error: any) {
+      // If error is about constraint already existing, drop and recreate the table
+      if (error?.message?.includes('already exists') || error?.driverError?.message?.includes('already exists')) {
+        console.log('⚠️  Constraint conflict detected. Dropping and recreating migrations table...');
+        try {
+          await dataSource.query(`DROP TABLE IF EXISTS "public"."migrations" CASCADE`);
+          console.log('✅ Migrations table dropped, retrying migrations...');
+          executedMigrations = await dataSource.runMigrations();
+        } catch (fixError) {
+          console.error('❌ Failed to fix constraint issue:', fixError);
+          throw error; // Re-throw original error
+        }
+      } else {
+        throw error; // Re-throw if it's a different error
+      }
+    }
     console.log(`✅ Migrations completed successfully. Executed ${executedMigrations.length} migration(s)`);
     
     if (executedMigrations.length > 0) {
@@ -134,9 +184,9 @@ async function runMigrationsAndSeeds() {
       console.log('   ℹ️  No new migrations to execute');
     }
 
-    // Check which migrations have been executed
+    // Check which migrations have been executed (migrations table is in 'public' schema)
     const executedMigrationsList = await dataSource.query(
-      `SELECT * FROM "${schema}"."migrations" ORDER BY timestamp DESC LIMIT 10`
+      `SELECT * FROM "public"."migrations" ORDER BY timestamp DESC LIMIT 10`
     );
     if (executedMigrationsList.length > 0) {
       console.log(`   ℹ️  Last ${executedMigrationsList.length} executed migration(s):`);
