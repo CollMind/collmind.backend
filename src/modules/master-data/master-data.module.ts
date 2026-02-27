@@ -1,7 +1,8 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommonModule } from '../../common/common.module';
 import { CustomerModule } from '../customer/customer.module';
+import { PlanModule } from '../modes/planning-first/plan/plan.module';
 import {
   Brand,
   Category,
@@ -59,6 +60,7 @@ import { TacticRepository } from './tactic/tactic.repository';
   imports: [
     CommonModule,
     CustomerModule,
+    forwardRef(() => PlanModule),
     TypeOrmModule.forFeature([
       Brand,
       Category,

@@ -47,6 +47,13 @@ export class KpiController {
     return this.kpiService.findAll(tenantId, activeOnly === 'true');
   }
 
+  @Get('grid/:planId')
+  @ApiOperation({ summary: 'Get KPIs visible in planning grid for a specific plan' })
+  @ApiResponse({ status: 200, description: 'Grid KPIs for plan', type: [Kpi] })
+  getGridKpisForPlan(@TenantId() tenantId: string, @Param('planId') planId: string) {
+    return this.kpiService.getGridKpisForPlan(planId, tenantId);
+  }
+
   @Get('grid')
   @ApiOperation({ summary: 'Get KPIs visible in planning grid' })
   @ApiResponse({ status: 200, description: 'Grid KPIs', type: [Kpi] })

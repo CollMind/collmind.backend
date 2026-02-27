@@ -208,6 +208,16 @@ export class PlanFu extends BaseEntity {
   @Column({ name: 'rag_status', length: 10, nullable: true })
   ragStatus?: string; // 'RED' | 'AMBER' | 'GREEN'
 
+  // Calculated KPIs (stored as JSONB)
+  @Column({ name: 'calculated_kpis', type: 'jsonb', nullable: true })
+  calculatedKpis?: Record<string, {
+    value: number | null;
+    displayFormat: string;
+    decimalPlaces: number;
+    ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
+    calculatedAt?: string;
+  }>;
+
   // Relations
   @ManyToOne(() => Plan, (plan) => plan.planFus, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'plan_id' })
@@ -260,6 +270,16 @@ export class PlanSku extends BaseEntity {
 
   @Column({ name: 'rag_status', length: 10, nullable: true })
   ragStatus?: string; // 'RED' | 'AMBER' | 'GREEN'
+
+  // Calculated KPIs (stored as JSONB)
+  @Column({ name: 'calculated_kpis', type: 'jsonb', nullable: true })
+  calculatedKpis?: Record<string, {
+    value: number | null;
+    displayFormat: string;
+    decimalPlaces: number;
+    ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
+    calculatedAt?: string;
+  }>;
 
   // LTA spend alanları
   @Column({ name: 'base_lta_on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })

@@ -7,10 +7,14 @@ import { KpiRepository } from './kpi.repository';
 import { CreateKpiDto } from './dto/create-kpi.dto';
 import { UpdateKpiDto } from './dto/update-kpi.dto';
 import { Kpi, FormulaType, CalculationLevel, DisplayFormat, AggregationMethod } from '../../../database/entities/kpi.entity';
+import { PlanRepository } from '../../modes/planning-first/plan/plan.repository';
 
 @Injectable()
 export class KpiService {
-  constructor(private readonly kpiRepository: KpiRepository) {}
+  constructor(
+    private readonly kpiRepository: KpiRepository,
+    private readonly planRepository: PlanRepository,
+  ) {}
 
   async create(tenantId: string, createKpiDto: CreateKpiDto): Promise<Kpi> {
     const existing = await this.kpiRepository.findByCode(tenantId, createKpiDto.kpiCode);
@@ -51,6 +55,35 @@ export class KpiService {
 
   async findGridKpis(tenantId: string): Promise<Kpi[]> {
     return this.kpiRepository.findGridKpis(tenantId);
+  }
+
+  async getGridKpisForPlan(planId: string, tenantId: string): Promise<Kpi[]> {
+    // Get plan information
+    const plan = await this.planRepository.findById(planId, tenantId);
+
+    if (!plan) {
+      throw new NotFoundException('Plan not found');
+    }
+
+    // Get KPIs that should be shown in grid
+    // show_in_grid = true olanları getir
+    // column_order'a göre sırala
+    const kpis = await this.kpiRepository.find({
+      where: {
+        tenantId,
+        isActive: true,
+        showInGrid: true,
+      },
+      order: {
+        columnOrder: 'ASC',
+        calculationOrder: 'ASC',
+      },
+    });
+
+    // İsteğe bağlı: Plan'ın channel/category'sine göre filtreleme
+    // (şimdilik tüm aktif KPI'ları döndür)
+
+    return kpis;
   }
 
   async findCalculableKpis(tenantId: string): Promise<Kpi[]> {

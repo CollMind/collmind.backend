@@ -573,6 +573,18 @@ export class PlanService {
           }
         }
 
+        // Convert KPI results to calculated_kpis format
+        const calculatedKpis: Record<string, any> = {};
+        for (const [kpiCode, result] of Object.entries(kpiResults)) {
+          calculatedKpis[kpiCode] = {
+            value: result.value,
+            displayFormat: result.displayFormat,
+            decimalPlaces: result.decimalPlaces,
+            ragStatus: result.ragStatus,
+            calculatedAt: new Date().toISOString(),
+          };
+        }
+
         await this.planRepo.updatePlanSku(planSku.id, {
           incrementalVolume,
           plannedTurnover,
@@ -580,6 +592,7 @@ export class PlanService {
           plannedGp,
           gpRoi: gpRoi ?? undefined,
           ragStatus,
+          calculatedKpis,
         });
       }
 
@@ -618,12 +631,25 @@ export class PlanService {
         }
       }
 
+      // Convert FU KPI results to calculated_kpis format
+      const fuCalculatedKpis: Record<string, any> = {};
+      for (const [kpiCode, result] of Object.entries(fuKpiResults)) {
+        fuCalculatedKpis[kpiCode] = {
+          value: result.value,
+          displayFormat: result.displayFormat,
+          decimalPlaces: result.decimalPlaces,
+          ragStatus: result.ragStatus,
+          calculatedAt: new Date().toISOString(),
+        };
+      }
+
       await this.planRepo.updatePlanFu(planFu.id, {
         totalPlannedVolume: fuTotalPlannedVolume,
         totalSpend: fuTacticTotalSpend,
         totalGp: fuTotalGp,
         gpRoi: fuGpRoi ?? undefined,
         ragStatus: fuRagStatus,
+        calculatedKpis: fuCalculatedKpis,
       });
 
       allFuResults.push(fuKpiResults);

@@ -43,6 +43,10 @@ export class KpiRepository {
     return this.repository.findOne(options);
   }
 
+  async find(options: any): Promise<Kpi[]> {
+    return this.repository.find(options);
+  }
+
   create(entity: Partial<Kpi>): Kpi {
     return this.repository.create(entity);
   }
