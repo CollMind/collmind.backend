@@ -77,6 +77,13 @@ export class UserController {
     return this.userService.changePassword(req.user.tenantId, req.user.sub, changePasswordDto);
   }
 
+  @Get('dashboard-summary')
+  @ApiOperation({ summary: 'Get dashboard summary for current user' })
+  @ApiResponse({ status: 200, description: 'Dashboard summary data' })
+  getDashboardSummary(@TenantId() tenantId: string) {
+    return this.userService.getDashboardSummary(tenantId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get user by ID' })
   @ApiResponse({ status: 200, description: 'User details', type: UserResponseDto })

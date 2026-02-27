@@ -9,10 +9,13 @@ import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { User } from '../../database/entities/user.entity';
+import { Plan } from '../../database/entities/plan.entity';
+import { Agreement } from '../../database/entities/agreement.entity';
+import { BudgetEnvelope } from '../../database/entities/budget-envelope.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, Plan, Agreement, BudgetEnvelope]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
