@@ -44,6 +44,7 @@ export class AgreementController {
   }
 
   @Get()
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get all agreements' })
   @ApiResponse({ status: 200, description: 'List of agreements' })
   findAll(
@@ -57,7 +58,7 @@ export class AgreementController {
 
   // Spesifik route'lar parametrik route'lardan (:id) önce tanımlanmalı
   @Get('pending-approvals')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get pending approval agreements' })
   @ApiResponse({ status: 200, description: 'List of pending approval agreements' })
   findPendingApprovals(@TenantId() tenantId: string) {
@@ -65,6 +66,7 @@ export class AgreementController {
   }
 
   @Get('tactics/available')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get available tactics for channel and category' })
   @ApiResponse({ status: 200, description: 'List of available tactics with their mechanics' })
   getAvailableTactics(
@@ -78,6 +80,7 @@ export class AgreementController {
 
   // Parametrik route en sonda olmalı
   @Get(':id')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get agreement by ID' })
   @ApiResponse({ status: 200, description: 'Agreement details' })
   @ApiResponse({ status: 404, description: 'Agreement not found' })
@@ -114,7 +117,7 @@ export class AgreementController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Approve agreement' })
   @ApiResponse({ status: 200, description: 'Agreement approved successfully' })
@@ -129,7 +132,7 @@ export class AgreementController {
   }
 
   @Post(':id/reject')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject agreement' })
   @ApiResponse({ status: 200, description: 'Agreement rejected successfully' })

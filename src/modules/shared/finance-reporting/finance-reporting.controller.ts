@@ -24,7 +24,7 @@ export class FinanceReportingController {
   constructor(private readonly financeReportingService: FinanceReportingService) {}
 
   @Get('budget-utilization')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get budget utilization report' })
   @ApiResponse({ status: 200, description: 'Budget utilization report', type: BudgetUtilizationReport })
   getBudgetUtilization(@TenantId() tenantId: string, @Query() filters: ReportFilters) {
@@ -32,7 +32,7 @@ export class FinanceReportingController {
   }
 
   @Get('spend-trend')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get spend trend report' })
   @ApiResponse({ status: 200, description: 'Spend trend report', type: TrendReport })
   getSpendTrend(
@@ -44,7 +44,7 @@ export class FinanceReportingController {
   }
 
   @Get('spend-composition')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get spend composition report' })
   @ApiResponse({ status: 200, description: 'Spend composition report', type: CompositionReport })
   getSpendComposition(@TenantId() tenantId: string, @Query() filters: ReportFilters) {
@@ -52,7 +52,7 @@ export class FinanceReportingController {
   }
 
   @Get('plan-performance')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER, UserRole.PLANNER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get plan performance report' })
   @ApiResponse({ status: 200, description: 'Plan performance report', type: PaginatedPlanReport })
   getPlanPerformance(
@@ -64,7 +64,7 @@ export class FinanceReportingController {
   }
 
   @Get('budget-at-risk')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get budget at risk analysis' })
   @ApiResponse({ status: 200, description: 'Budget at risk report', type: RiskReport })
   getBudgetAtRisk(@TenantId() tenantId: string, @Query() filters: ReportFilters) {
@@ -72,7 +72,7 @@ export class FinanceReportingController {
   }
 
   @Get('mechanic-effectiveness')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.CATEGORY_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get mechanic effectiveness report' })
   @ApiResponse({ status: 200, description: 'Mechanic effectiveness report', type: MechanicReport })
   getMechanicEffectiveness(@TenantId() tenantId: string, @Query() filters: ReportFilters) {
@@ -80,7 +80,7 @@ export class FinanceReportingController {
   }
 
   @Get('variance-analysis')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get variance analysis report' })
   @ApiResponse({ status: 200, description: 'Variance analysis report', type: VarianceReport })
   getVarianceAnalysis(
@@ -92,7 +92,7 @@ export class FinanceReportingController {
   }
 
   @Get('cash-flow-projection')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get cash flow projection' })
   @ApiResponse({ status: 200, description: 'Cash flow projection report', type: CashFlowReport })
   getCashFlowProjection(

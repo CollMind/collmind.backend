@@ -39,7 +39,7 @@ export class ApprovalService {
     // Default approval levels (single level for Sprint 1)
     const defaultLevel = {
       order: 1,
-      role: 'APPROVER',
+      role: 'MANAGER',
       status: 'PENDING' as const,
     };
     

@@ -15,10 +15,14 @@ import { Tenant } from './tenant.entity';
 export enum UserRole {
   ADMIN = 'ADMIN',
   PLANNER = 'PLANNER',
-  APPROVER = 'APPROVER',
+  MANAGER = 'MANAGER',       // Replaces APPROVER — approves plans and agreements
   FINANCE = 'FINANCE',
   FINANCE_MANAGER = 'FINANCE_MANAGER',
   CATEGORY_MANAGER = 'CATEGORY_MANAGER',
+  READONLY = 'READONLY',     // Read-only access — all GET endpoints, no write
+
+  /** @deprecated Use MANAGER instead. Will be removed in a future migration. */
+  APPROVER = 'APPROVER',
 }
 
 export enum UserStatus {

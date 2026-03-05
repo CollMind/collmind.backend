@@ -7,7 +7,7 @@ interface TestContext {
   api: AxiosInstance;
   tokens: {
     planner?: string;
-    approver?: string;
+    manager?: string;
     admin?: string;
     finance?: string;
   };
@@ -64,13 +64,13 @@ async function step1_loginUsers(): Promise<boolean> {
     ctx.tokens.planner = plannerRes.data.accessToken;
     logStep(1.1, 'Login as Planner', true, `Token: ${ctx.tokens.planner?.substring(0, 20)}...`);
 
-    // Login as Approver
-    const approverRes = await ctx.api.post('/auth/login', {
-      email: 'approver@wella.com',
+    // Login as Manager
+    const managerRes = await ctx.api.post('/auth/login', {
+      email: 'manager@wella.com',
       password: 'password123',
     });
-    ctx.tokens.approver = approverRes.data.accessToken;
-    logStep(1.2, 'Login as Approver', true, `Token: ${ctx.tokens.approver?.substring(0, 20)}...`);
+    ctx.tokens.manager = managerRes.data.accessToken;
+    logStep(1.2, 'Login as Manager', true, `Token: ${ctx.tokens.manager?.substring(0, 20)}...`);
 
     // Login as Admin
     const adminRes = await ctx.api.post('/auth/login', {
@@ -211,8 +211,8 @@ async function step5_approveAgreement(): Promise<boolean> {
   logSection('APPROVE AGREEMENT');
   
   try {
-    // Switch to Approver
-    setAuth(ctx.tokens.approver!);
+    // Switch to Manager
+    setAuth(ctx.tokens.manager!);
 
     // First, verify pending approvals (if endpoint exists)
     try {
