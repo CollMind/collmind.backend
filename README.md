@@ -424,19 +424,3 @@ Proje Bitbucket Pipelines ile Cloud Run'a deploy edilir. `bitbucket-pipelines.ym
 ## 📄 Lisans
 
 Copyright © 2024 CollMind. All rights reserved.
-
----
-
-## 🤖 AI-Assisted Development — SAFE PROMPT
-
-Bu projede tüm kod değişiklikleri **SAFE PROMPT** metodolojisiyle yönetilir.
-
-Standart ve sprint prompt dosyaları:
-- `docs/safe-prompt-standard-v2.md` — Tam standart tanımı
-- `docs/safe-prompts/` — Sprint bazında implementation prompt'ları
-- `.bitbucket/pull-request-template.md` — PR checklist şablonu
-
-**Kritik kurallar:**
-- `staging` branch'ine direkt push yok — her zaman PR
-- Migration dosyaları Windsurf tarafından oluşturulur, geliştirici tarafından çalıştırılır
-- İki repo kapsayan feature'larda backend PR her zaman önce merge edilir
