@@ -2,23 +2,16 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddManagerAndReadonlyRoles1775000000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Add MANAGER to enum
-    await queryRunner.query(`
-      ALTER TYPE "main"."users_role_enum" ADD VALUE IF NOT EXISTS 'MANAGER';
-    `);
-
-    // Add READONLY to enum
-    await queryRunner.query(`
-      ALTER TYPE "main"."users_role_enum" ADD VALUE IF NOT EXISTS 'READONLY';
-    `);
-
-    // Migrate existing APPROVER users to MANAGER
-    // Note: Must run in separate transaction after enum value is committed
-    await queryRunner.query(`
-      UPDATE "main"."users"
-      SET role = 'MANAGER'
-      WHERE role = 'APPROVER';
-    `);
+    // First transaction: add enum values
+    await queryRunner.query(`ALTER TYPE "main"."users_role_enum" ADD VALUE IF NOT EXISTS 'MANAGER'`);
+    await queryRunner.query(`ALTER TYPE "main"."users_role_enum" ADD VALUE IF NOT EXISTS 'READONLY'`);
+    
+    // Commit first, then start new transaction for DML
+    await queryRunner.commitTransaction();
+    await queryRunner.startTransaction();
+    
+    // Second transaction: use new enum values
+    await queryRunner.query(`UPDATE "main"."users" SET role = 'MANAGER' WHERE role = 'APPROVER'`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
