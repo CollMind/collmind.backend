@@ -65,7 +65,7 @@ export class OnInvoiceController {
    * Get total count of On-Invoice entries
    */
   @Get('count')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
   @ApiOperation({ summary: "Toplam On-Invoice entry sayısını getir" })
   async getCount(@TenantId() tenantId: string) {
     const count = await this.onInvoiceService.getCount(tenantId);
@@ -77,7 +77,7 @@ export class OnInvoiceController {
    * NOT: Bu endpoint GET /on-invoice/:batchId'den ÖNCE olmalı (route sırası önemli)
    */
   @Get('entries')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
   @ApiOperation({ summary: "Tüm On-Invoice entry'lerini listele" })
   async getEntries(
     @TenantId() tenantId: string,
@@ -161,7 +161,7 @@ export class OnInvoiceController {
    * Batch Bilgisi
    */
   @Get('batch/:batchId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
   @ApiOperation({ summary: 'Batch bilgilerini getir' })
   async getBatch(
     @Param('batchId') batchId: string,

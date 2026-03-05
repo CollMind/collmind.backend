@@ -57,6 +57,7 @@ export class PlanController {
   }
 
   @Get()
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get all plans' })
   @ApiResponse({ status: 200, description: 'List of plans' })
   findAll(
@@ -70,7 +71,7 @@ export class PlanController {
   }
 
   @Get('pending-approvals')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get plans pending approval' })
   @ApiResponse({ status: 200, description: 'List of plans pending approval' })
   findPendingApprovals(@TenantId() tenantId: string) {
@@ -79,7 +80,7 @@ export class PlanController {
 
   // Spesifik route'lar parametrik route'dan ÖNCE tanımlanmalı
   @Get(':id/budget-check')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Check budget availability for plan approval' })
   @ApiResponse({ status: 200, description: 'Budget check result' })
   budgetCheck(
@@ -90,6 +91,7 @@ export class PlanController {
   }
 
   @Get(':id/analysis')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get plan analysis data' })
   @ApiResponse({ status: 200, description: 'Plan analysis data' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
@@ -98,6 +100,7 @@ export class PlanController {
   }
 
   @Get(':id')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get plan by ID' })
   @ApiResponse({ status: 200, description: 'Plan details' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
@@ -203,7 +206,7 @@ export class PlanController {
   }
 
   @Get('approval-queue')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get approval queue for current user' })
   @ApiResponse({ status: 200, description: 'List of pending plans' })
   getApprovalQueue(
@@ -215,7 +218,7 @@ export class PlanController {
   }
 
   @Post(':id/review')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Review plan (approve/reject/request changes/escalate)' })
   @ApiResponse({ status: 200, description: 'Review completed successfully' })
@@ -230,7 +233,7 @@ export class PlanController {
   }
 
   @Post(':id/escalate-to-finance')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Escalate plan to Finance Manager' })
   @ApiResponse({ status: 200, description: 'Plan escalated successfully' })
@@ -250,6 +253,7 @@ export class PlanController {
   }
 
   @Get(':id/approval-history')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get plan approval history' })
   @ApiResponse({ status: 200, description: 'Approval history entries' })
   getApprovalHistory(
@@ -260,7 +264,7 @@ export class PlanController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Approve plan' })
   @ApiResponse({ status: 200, description: 'Plan approved successfully' })
@@ -275,7 +279,7 @@ export class PlanController {
   }
 
   @Post(':id/reject')
-  @Roles(UserRole.ADMIN, UserRole.APPROVER)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject plan' })
   @ApiResponse({ status: 200, description: 'Plan rejected successfully' })
