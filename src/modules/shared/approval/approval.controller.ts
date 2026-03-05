@@ -50,7 +50,7 @@ export class ApprovalController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.MANAGER, UserRole.FINANCE)
+  @Roles(UserRole.MANAGER)
   @ApiOperation({ summary: 'Approve a request' })
   approve(
     @Param('id') id: string,
@@ -62,7 +62,7 @@ export class ApprovalController {
   }
 
   @Post(':id/reject')
-  @Roles(UserRole.MANAGER, UserRole.FINANCE)
+  @Roles(UserRole.MANAGER)
   @ApiOperation({ summary: 'Reject a request' })
   reject(
     @Param('id') id: string,
