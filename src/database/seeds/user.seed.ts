@@ -15,7 +15,7 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       status: UserStatus.ACTIVE,
       department: 'IT',
       jobTitle: 'System Administrator',
-      passwordHash: await bcrypt.hash('password123', 10),
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
       emailVerified: true,
       tenantId,
     },
@@ -28,7 +28,7 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       status: UserStatus.ACTIVE,
       department: 'Sales',
       jobTitle: 'Trade Planner',
-      passwordHash: await bcrypt.hash('password123', 10),
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
       emailVerified: true,
       tenantId,
     },
@@ -41,7 +41,7 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       status: UserStatus.ACTIVE,
       department: 'Sales',
       jobTitle: 'Sales Manager',
-      passwordHash: await bcrypt.hash('admin', 10),
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
       emailVerified: true,
       tenantId,
     },
@@ -54,7 +54,7 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       status: UserStatus.ACTIVE,
       department: 'Finance',
       jobTitle: 'Finance Analyst',
-      passwordHash: await bcrypt.hash('password123', 10),
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
       emailVerified: true,
       tenantId,
     },
@@ -67,7 +67,7 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       status: UserStatus.ACTIVE,
       department: 'Finance',
       jobTitle: 'Finance Manager',
-      passwordHash: await bcrypt.hash('password123', 10),
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
       emailVerified: true,
       tenantId,
     },
@@ -80,7 +80,7 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       status: UserStatus.ACTIVE,
       department: 'Sales',
       jobTitle: 'Category Manager',
-      passwordHash: await bcrypt.hash('password123', 10),
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
       emailVerified: true,
       tenantId,
     },
@@ -93,7 +93,7 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       status: UserStatus.ACTIVE,
       department: 'Audit',
       jobTitle: 'Auditor',
-      passwordHash: await bcrypt.hash('admin', 10),
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
       emailVerified: true,
       tenantId,
     },
@@ -110,7 +110,26 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
       created.push(await userRepository.save(user));
       console.log(`✅ Created user: ${user.email}`);
     } else {
-      created.push(existing);
+      // Update existing user including password_hash
+      await userRepository.update(
+        { tenantId: userData.tenantId, email: userData.email },
+        {
+          fullName: userData.fullName,
+          firstName: userData.firstName,
+          lastName: userData.lastName,
+          role: userData.role,
+          status: userData.status,
+          department: userData.department,
+          jobTitle: userData.jobTitle,
+          passwordHash: userData.passwordHash,
+          emailVerified: userData.emailVerified,
+        }
+      );
+      const updated = await userRepository.findOne({
+        where: { tenantId: userData.tenantId, email: userData.email },
+      });
+      created.push(updated!);
+      console.log(`✅ Updated user: ${updated!.email}`);
     }
   }
 
