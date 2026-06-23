@@ -155,6 +155,7 @@ export const dataSourceOptions: DataSourceOptions = {
     }
   })(),
   migrationsTableName: 'migrations',
+  migrationsTransactionMode: 'each',
   synchronize: false, // PRODUCTION'DA MUTLAKA FALSE
   logging: getEnvVar('NODE_ENV') === 'development',
   namingStrategy: new SnakeCaseNamingStrategy(),

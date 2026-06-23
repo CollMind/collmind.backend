@@ -11,6 +11,7 @@ export enum CustomerChannel {
   WHOLESALE = 'WHOLESALE',
   RETAIL = 'RETAIL',
   HORECA = 'HORECA',
+  DISTRIBUTOR = 'DISTRIBUTOR',
 }
 
 export enum CustomerStatus {

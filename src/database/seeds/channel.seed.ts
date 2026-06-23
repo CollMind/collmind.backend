@@ -37,6 +37,15 @@ export async function seedChannels(
       isActive: true,
     },
     {
+      code: 'DISTRIBUTOR',
+      name: 'Distributor',
+      description: 'Distributor channel (Distribütör)',
+      tenantId,
+      createdBy: createdByUserId,
+      sortOrder: 8,
+      isActive: true,
+    },
+    {
       code: 'EXPORT',
       name: 'Export',
       description: 'Export channel',

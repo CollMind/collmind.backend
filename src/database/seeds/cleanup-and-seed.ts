@@ -9,7 +9,6 @@ import { seedCpls } from './cpl.seed';
 import { seedBudgetEnvelopes } from './budget-envelope.seed';
 import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
-import { Customer } from '../entities/customer.entity';
 
 config();
 
@@ -70,24 +69,19 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
   console.log(`   NKA Channel: ${nkaChannel.name} (${nkaChannel.id})\n`);
 
   // 4. Seed CPLs (required for agreements)
-  const cpls = await seedCpls(dataSource, tenant.id, nkaChannel.id, adminUser.id);
+  const cpls = await seedCpls(dataSource, tenant.id, channels, adminUser.id);
   if (!cpls || cpls.length === 0) {
     throw new Error('❌ No CPLs were seeded. Cannot continue.');
   }
   const cpl = cpls[0];
   console.log(`   CPL: ${cpl.name} (${cpl.id})\n`);
 
-  // 5. Seed customers
-  const customers = await seedCustomers(dataSource, tenant.id);
+  // 5. Seed customers (her CPL için bir müşteri, cplId ile bağlı)
+  const customers = await seedCustomers(dataSource, tenant.id, cpls, channels, adminUser.id);
   if (!customers || customers.length === 0) {
     throw new Error('❌ No customers were seeded. Cannot continue.');
   }
-  const customer = customers[0];
-  // Link customer to CPL
-  const customerRepository = dataSource.getRepository(Customer);
-  customer.cplId = cpl.id;
-  await customerRepository.save(customer);
-  console.log(`   Customer: ${customer.name} (${customer.id}) linked to CPL: ${cpl.code}\n`);
+  console.log(`   Customers: ${customers.length} created & linked to CPLs\n`);
 
   // 6. Seed budget envelopes
   const envelopes = await seedBudgetEnvelopes(dataSource, tenant.id);
