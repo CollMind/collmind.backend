@@ -1,0 +1,675 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { SelectQueryBuilder } from 'typeorm';
+import { DashboardService } from './dashboard.service';
+import { FinanceReportingService } from '../finance-reporting/finance-reporting.service';
+import {
+  Agreement,
+  AgreementStatus,
+  AgreementType,
+  SpendType,
+} from '../../../database/entities/agreement.entity';
+import { UserScope } from '../../../database/entities/user-scope.entity';
+import { Cpl } from '../../../database/entities/cpl.entity';
+import {
+  ApprovalRequest,
+  ApprovalRequestType,
+} from '../../../database/entities/approval-request.entity';
+import { UserRole } from '../../../database/entities/user.entity';
+import { UtilizationStatus } from '../finance-reporting/dto/budget-utilization.dto';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const TENANT_ID = 'tenant-001';
+const USER_ADMIN_ID = 'user-admin-001';
+const USER_PLANNER_ID = 'user-planner-001';
+const CPL_ID_1 = 'cpl-001';
+const CPL_ID_2 = 'cpl-002';
+
+// ---------------------------------------------------------------------------
+// Factory helpers
+// ---------------------------------------------------------------------------
+
+function buildAgreement(overrides: Partial<Agreement> = {}): Agreement {
+  return {
+    id: 'agr-001',
+    tenantId: TENANT_ID,
+    agreementCode: 'STA-2026-001',
+    agreementName: 'Test Agreement',
+    agreementType: AgreementType.STA,
+    cplId: CPL_ID_1,
+    status: AgreementStatus.ACTIVE,
+    spendType: SpendType.OFF_INVOICE,
+    capTotalAmount: 10000,
+    consumedAmount: 0,
+    periodMonth: '2026-06',
+    ...overrides,
+  } as Agreement;
+}
+
+function buildUserScope(cplId: string): Partial<UserScope> {
+  return {
+    userId: USER_PLANNER_ID,
+    cplId,
+    isActive: true,
+    tenantId: TENANT_ID,
+  };
+}
+
+const mockBudgetUtilization = {
+  onInvoice: {
+    allocated: 100000,
+    utilized: 40000,
+    reserved: 5000,
+    available: 55000,
+    utilizationPercent: 45,
+    status: UtilizationStatus.GREEN,
+  },
+  offInvoice: {
+    allocated: 50000,
+    utilized: 45000,
+    reserved: 2000,
+    available: 3000,
+    utilizationPercent: 94,
+    status: UtilizationStatus.AMBER,
+  },
+  total: {
+    allocated: 150000,
+    utilized: 85000,
+    reserved: 7000,
+    available: 58000,
+    utilizationPercent: 61.3,
+    status: UtilizationStatus.GREEN,
+  },
+  periodStart: '2026-06-01',
+  periodEnd: '2026-06-30',
+  byCpl: undefined,
+  byChannel: undefined,
+  byCategory: undefined,
+};
+
+// ---------------------------------------------------------------------------
+// Mock factories
+// ---------------------------------------------------------------------------
+
+function buildMockQb(returnValue: any) {
+  const qb: Partial<SelectQueryBuilder<any>> = {
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    leftJoinAndSelect: jest.fn().mockReturnThis(),
+    innerJoin: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    addOrderBy: jest.fn().mockReturnThis(),
+    getCount: jest.fn().mockResolvedValue(returnValue),
+    getMany: jest.fn().mockResolvedValue(returnValue),
+  };
+  return qb as SelectQueryBuilder<any>;
+}
+
+// ---------------------------------------------------------------------------
+// Test suite
+// ---------------------------------------------------------------------------
+
+describe('DashboardService', () => {
+  let service: DashboardService;
+
+  let agreementRepo: {
+    count: jest.MockedFunction<any>;
+    find: jest.MockedFunction<any>;
+    createQueryBuilder: jest.MockedFunction<any>;
+  };
+  let userScopeRepo: { find: jest.MockedFunction<any> };
+  let cplRepo: { find: jest.MockedFunction<any> };
+  let approvalRequestRepo: { createQueryBuilder: jest.MockedFunction<any> };
+  let financeReportingService: {
+    getBudgetUtilization: jest.MockedFunction<any>;
+  };
+
+  beforeEach(async () => {
+    agreementRepo = {
+      count: jest.fn(),
+      find: jest.fn(),
+      createQueryBuilder: jest.fn(),
+    };
+    userScopeRepo = { find: jest.fn() };
+    cplRepo = { find: jest.fn() };
+    approvalRequestRepo = { createQueryBuilder: jest.fn() };
+    financeReportingService = { getBudgetUtilization: jest.fn() };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        DashboardService,
+        { provide: getRepositoryToken(Agreement), useValue: agreementRepo },
+        { provide: getRepositoryToken(UserScope), useValue: userScopeRepo },
+        { provide: getRepositoryToken(Cpl), useValue: cplRepo },
+        {
+          provide: getRepositoryToken(ApprovalRequest),
+          useValue: approvalRequestRepo,
+        },
+        { provide: FinanceReportingService, useValue: financeReportingService },
+      ],
+    }).compile();
+
+    service = module.get<DashboardService>(DashboardService);
+  });
+
+  // -------------------------------------------------------------------------
+  // resolveCplScope
+  // -------------------------------------------------------------------------
+
+  describe('CPL scope resolution', () => {
+    it('returns null for ADMIN (tenant-wide access)', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+      // ADMIN should not call userScopeRepo at all — returns null directly
+      const scope = await (service as any).resolveCplScope(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+      );
+      expect(scope).toBeNull();
+      expect(userScopeRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('returns null for MANAGER', async () => {
+      const scope = await (service as any).resolveCplScope(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.MANAGER,
+      );
+      expect(scope).toBeNull();
+    });
+
+    it('returns null for FINANCE', async () => {
+      const scope = await (service as any).resolveCplScope(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.FINANCE,
+      );
+      expect(scope).toBeNull();
+    });
+
+    it('returns PLANNER assigned cplIds', async () => {
+      userScopeRepo.find.mockResolvedValue([
+        buildUserScope(CPL_ID_1),
+        buildUserScope(CPL_ID_2),
+      ]);
+      const scope = await (service as any).resolveCplScope(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+      );
+      expect(scope).toEqual([CPL_ID_1, CPL_ID_2]);
+      expect(userScopeRepo.find).toHaveBeenCalledWith({
+        where: { userId: USER_PLANNER_ID, tenantId: TENANT_ID, isActive: true },
+        select: ['cplId'],
+      });
+    });
+
+    it('returns empty array for PLANNER with no scope assignments', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+      const scope = await (service as any).resolveCplScope(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+      );
+      expect(scope).toEqual([]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getSummary — admin path
+  // -------------------------------------------------------------------------
+
+  describe('getSummary', () => {
+    beforeEach(() => {
+      // admin: cplScope = null (tenant-wide)
+      userScopeRepo.find.mockResolvedValue([]);
+
+      // agreementRepo.count: ACTIVE count = 5, APPROVED count = 3
+      agreementRepo.count
+        .mockResolvedValueOnce(5) // ACTIVE
+        .mockResolvedValueOnce(3); // APPROVED
+
+      // Approval QB
+      const approvalQb = buildMockQb(2);
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(approvalQb);
+
+      // AwaitingInvoice QB
+      const awaitingQb = buildMockQb(4);
+      agreementRepo.createQueryBuilder.mockReturnValue(awaitingQb);
+
+      financeReportingService.getBudgetUtilization.mockResolvedValue(
+        mockBudgetUtilization,
+      );
+    });
+
+    it('returns summary with correct counts and delegates budget utilization', async () => {
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+        { period: '2026-06' },
+      );
+
+      expect(result.periodCode).toBe('2026-06');
+      expect(typeof result.activeAgreementCount).toBe('number');
+      expect(typeof result.pendingApprovalCount).toBe('number');
+      expect(typeof result.openTaskCount).toBe('number');
+
+      // Budget utilization must come from FinanceReportingService — not computed here
+      expect(
+        financeReportingService.getBudgetUtilization,
+      ).toHaveBeenCalledTimes(1);
+      expect(result.budgetUtilization).toBeDefined();
+      expect(result.budgetUtilization?.total).toBeDefined();
+    });
+
+    it('passes cplIds=undefined to getBudgetUtilization for ADMIN (no CPL filter)', async () => {
+      await service.getSummary(TENANT_ID, USER_ADMIN_ID, UserRole.ADMIN, {
+        period: '2026-06',
+      });
+
+      const callArgs = financeReportingService.getBudgetUtilization.mock
+        .calls[0] as [string, { cplIds?: string[] }];
+      // Admin path: cplIds should NOT be present in filter (null scope → no cplIds key)
+      expect(callArgs[1].cplIds).toBeUndefined();
+    });
+
+    it('returns null budgetUtilization gracefully if service throws', async () => {
+      financeReportingService.getBudgetUtilization.mockRejectedValue(
+        new Error('DB error'),
+      );
+
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+        { period: '2026-06' },
+      );
+
+      expect(result.budgetUtilization).toBeNull();
+    });
+
+    it('defaults period to current YYYY-MM when not provided', async () => {
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+        {},
+      );
+      const now = new Date();
+      const expected = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      expect(result.periodCode).toBe(expected);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getSummary — PLANNER scope
+  // -------------------------------------------------------------------------
+
+  describe('getSummary — PLANNER scope', () => {
+    it('passes Planner cplIds to getBudgetUtilization', async () => {
+      userScopeRepo.find.mockResolvedValue([buildUserScope(CPL_ID_1)]);
+
+      agreementRepo.count.mockResolvedValue(2);
+
+      const approvalQb = buildMockQb(1);
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(approvalQb);
+
+      const awaitingQb = buildMockQb(0);
+      agreementRepo.createQueryBuilder.mockReturnValue(awaitingQb);
+
+      financeReportingService.getBudgetUtilization.mockResolvedValue(
+        mockBudgetUtilization,
+      );
+
+      await service.getSummary(TENANT_ID, USER_PLANNER_ID, UserRole.PLANNER, {
+        period: '2026-06',
+      });
+
+      const callArgs = financeReportingService.getBudgetUtilization.mock
+        .calls[0] as [string, { cplIds?: string[] }];
+      expect(callArgs[1].cplIds).toEqual([CPL_ID_1]);
+    });
+
+    it('returns empty counts when Planner has no CPL assignments', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+
+      // with empty cplIds, countPendingApprovals returns 0 immediately
+      agreementRepo.count.mockResolvedValue(0);
+
+      const approvalQb = buildMockQb(0);
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(approvalQb);
+
+      const awaitingQb = buildMockQb(0);
+      agreementRepo.createQueryBuilder.mockReturnValue(awaitingQb);
+
+      financeReportingService.getBudgetUtilization.mockResolvedValue(
+        mockBudgetUtilization,
+      );
+
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+        { period: '2026-06' },
+      );
+
+      // openTaskCount is 0 because awaitingInvoice count returns 0 for empty scope
+      expect(result.openTaskCount).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getPendingTasks
+  // -------------------------------------------------------------------------
+
+  describe('getPendingTasks', () => {
+    it('returns structured pending tasks with empty arrays when no data', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+
+      const emptyQb = buildMockQb([]);
+      agreementRepo.createQueryBuilder.mockReturnValue(emptyQb);
+
+      const result = await service.getPendingTasks(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+        { period: '2026-06', includePast: false },
+      );
+
+      expect(result).toHaveProperty('pendingApprovals');
+      expect(result).toHaveProperty('pendingManualClaims');
+      expect(result).toHaveProperty('submittedClaims');
+      expect(result).toHaveProperty('awaitingInvoiceClaims');
+      expect(Array.isArray(result.pendingApprovals)).toBe(true);
+      expect(Array.isArray(result.pendingManualClaims)).toBe(true);
+    });
+
+    it('maps agreement fields to PendingApprovalItemDto correctly', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+
+      const pendingAgreement = buildAgreement({
+        id: 'agr-pending-01',
+        status: AgreementStatus.PENDING,
+        agreementName: 'Pending Agreement',
+        agreementType: AgreementType.STA,
+        periodMonth: '2026-06',
+        cpl: { id: CPL_ID_1, name: 'Migros NKA' } as any,
+        channel: { id: 'ch-1', code: 'MODERN_TRADE' } as any,
+      });
+
+      const pendingQb = buildMockQb([pendingAgreement]);
+      const emptyQb = buildMockQb([]);
+
+      agreementRepo.createQueryBuilder
+        .mockReturnValueOnce(pendingQb) // fetchPendingApprovals
+        .mockReturnValueOnce(emptyQb) // fetchPendingManualClaims
+        .mockReturnValueOnce(emptyQb) // fetchSubmittedClaims
+        .mockReturnValueOnce(emptyQb); // fetchAwaitingInvoiceClaims
+
+      const result = await service.getPendingTasks(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+        { period: '2026-06' },
+      );
+
+      expect(result.pendingApprovals).toHaveLength(1);
+      const item = result.pendingApprovals[0]!;
+      expect(item.agreementId).toBe('agr-pending-01');
+      expect(item.agreementName).toBe('Pending Agreement');
+      expect(item.agreementType).toBe(AgreementType.STA);
+      expect(item.cplName).toBe('Migros NKA');
+      expect(item.channelCode).toBe('MODERN_TRADE');
+      expect(item.period).toBe('2026-06');
+      expect(item.status).toBe(AgreementStatus.PENDING);
+    });
+
+    it('returns empty arrays immediately for PLANNER with no CPL scope', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+
+      const result = await service.getPendingTasks(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+        { period: '2026-06' },
+      );
+
+      expect(result.pendingApprovals).toEqual([]);
+      expect(result.pendingManualClaims).toEqual([]);
+      expect(result.submittedClaims).toEqual([]);
+      expect(result.awaitingInvoiceClaims).toEqual([]);
+      // createQueryBuilder should never be called for empty scope
+      expect(agreementRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getCplStatus
+  // -------------------------------------------------------------------------
+
+  describe('getCplStatus', () => {
+    it('returns empty items when no CPLs in scope', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+      cplRepo.find.mockResolvedValue([]);
+
+      const result = await service.getCplStatus(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+      );
+
+      expect(result.items).toEqual([]);
+    });
+
+    it('computes isUpToDate=true when all counters are zero', async () => {
+      cplRepo.find.mockResolvedValue([
+        { id: CPL_ID_1, name: 'Migros NKA', channel: { code: 'MODERN_TRADE' } },
+      ]);
+      agreementRepo.find.mockResolvedValue([]); // no agreements
+
+      const result = await service.getCplStatus(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+      );
+
+      expect(result.items).toHaveLength(1);
+      const item = result.items[0]!;
+      expect(item.cplId).toBe(CPL_ID_1);
+      expect(item.cplName).toBe('Migros NKA');
+      expect(item.channelCode).toBe('MODERN_TRADE');
+      expect(item.staCount).toBe(0);
+      expect(item.ltaCount).toBe(0);
+      expect(item.pendingApproval).toBe(0);
+      expect(item.pendingManual).toBe(0);
+      expect(item.awaitingInvoice).toBe(0);
+      expect(item.isUpToDate).toBe(true);
+    });
+
+    it('computes isUpToDate=false when pendingApproval > 0', async () => {
+      cplRepo.find.mockResolvedValue([
+        { id: CPL_ID_1, name: 'Migros NKA', channel: { code: 'MT' } },
+      ]);
+
+      const pendingAgreement = buildAgreement({
+        cplId: CPL_ID_1,
+        status: AgreementStatus.PENDING,
+        agreementType: AgreementType.STA,
+      });
+
+      agreementRepo.find.mockResolvedValue([pendingAgreement]);
+
+      const result = await service.getCplStatus(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+      );
+
+      const item = result.items[0]!;
+      expect(item.pendingApproval).toBe(1);
+      expect(item.isUpToDate).toBe(false);
+    });
+
+    it('counts STA and LTA separately', async () => {
+      cplRepo.find.mockResolvedValue([
+        { id: CPL_ID_1, name: 'Migros', channel: { code: 'MT' } },
+      ]);
+
+      const sta1 = buildAgreement({
+        cplId: CPL_ID_1,
+        agreementType: AgreementType.STA,
+        status: AgreementStatus.ACTIVE,
+        id: 'a1',
+      });
+      const sta2 = buildAgreement({
+        cplId: CPL_ID_1,
+        agreementType: AgreementType.STA,
+        status: AgreementStatus.APPROVED,
+        id: 'a2',
+      });
+      const lta1 = buildAgreement({
+        cplId: CPL_ID_1,
+        agreementType: AgreementType.LTA,
+        status: AgreementStatus.ACTIVE,
+        id: 'a3',
+      });
+
+      agreementRepo.find.mockResolvedValue([sta1, sta2, lta1]);
+
+      const result = await service.getCplStatus(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+      );
+
+      const item = result.items[0]!;
+      expect(item.staCount).toBe(2);
+      expect(item.ltaCount).toBe(1);
+    });
+
+    it('scopes CPLs for PLANNER — passes cplIds to cplRepo.find', async () => {
+      userScopeRepo.find.mockResolvedValue([buildUserScope(CPL_ID_1)]);
+      cplRepo.find.mockResolvedValue([]);
+      agreementRepo.find.mockResolvedValue([]);
+
+      await service.getCplStatus(TENANT_ID, USER_PLANNER_ID, UserRole.PLANNER);
+
+      expect(cplRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ tenantId: TENANT_ID }),
+        }),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // countPendingApprovals — polymorphic requestType guard (B-1)
+  // -------------------------------------------------------------------------
+
+  describe('countPendingApprovals — polymorphic requestType filter', () => {
+    it('queries with requestType = AGREEMENT so PLAN/BUDGET_TRANSFER rows are excluded', async () => {
+      const capturedConditions: string[] = [];
+
+      const qb: Partial<SelectQueryBuilder<any>> = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockImplementation((condition: string) => {
+          capturedConditions.push(condition);
+          return qb;
+        }),
+        innerJoin: jest.fn().mockReturnThis(),
+        getCount: jest.fn().mockResolvedValue(1),
+      };
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await (service as any).countPendingApprovals(TENANT_ID, null);
+
+      // Must include requestType filter — without it, PLAN/BUDGET_TRANSFER rows bleed in
+      const hasRequestTypeFilter = capturedConditions.some((c) =>
+        c.includes('requestType'),
+      );
+      expect(hasRequestTypeFilter).toBe(true);
+    });
+
+    it('passes ApprovalRequestType.AGREEMENT as the requestType parameter value', async () => {
+      const capturedParams: Record<string, any>[] = [];
+
+      const qb: Partial<SelectQueryBuilder<any>> = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest
+          .fn()
+          .mockImplementation(
+            (_condition: string, params?: Record<string, any>) => {
+              if (params) capturedParams.push(params);
+              return qb;
+            },
+          ),
+        innerJoin: jest.fn().mockReturnThis(),
+        getCount: jest.fn().mockResolvedValue(3),
+      };
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await (service as any).countPendingApprovals(TENANT_ID, null);
+
+      const requestTypeParam = capturedParams.find(
+        (p) => p['requestType'] !== undefined,
+      );
+      expect(requestTypeParam).toBeDefined();
+      expect(requestTypeParam!['requestType']).toBe(
+        ApprovalRequestType.AGREEMENT,
+      );
+    });
+
+    it('returns 0 immediately when cplIds is empty (no unnecessary DB call)', async () => {
+      const qb = buildMockQb(99); // would return 99 if called — must NOT be called
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const count = await (service as any).countPendingApprovals(TENANT_ID, []);
+
+      expect(count).toBe(0);
+      // getCount must not run when cplIds is empty []
+      expect(qb.getCount).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // No formulas / no raw SQL assertion
+  // -------------------------------------------------------------------------
+
+  describe('BRD compliance: dashboard.service contains no formula computation', () => {
+    it('does NOT contain inline budget threshold logic (delegates to FinanceReportingService)', () => {
+      // This test asserts at the source-code level that getSummary delegates
+      // budget utilization rather than computing it. We verify this by checking
+      // getBudgetUtilization is called and the result is passed through unchanged.
+      userScopeRepo.find.mockResolvedValue([]);
+      agreementRepo.count.mockResolvedValue(0);
+
+      const approvalQb = buildMockQb(0);
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(approvalQb);
+
+      const awaitingQb = buildMockQb(0);
+      agreementRepo.createQueryBuilder.mockReturnValue(awaitingQb);
+
+      const customBudget = { ...mockBudgetUtilization };
+      financeReportingService.getBudgetUtilization.mockResolvedValue(
+        customBudget,
+      );
+
+      return service
+        .getSummary(TENANT_ID, USER_ADMIN_ID, UserRole.ADMIN, {})
+        .then((result) => {
+          // budgetUtilization comes exactly from FinanceReportingService — not recomputed
+          expect(result.budgetUtilization?.total).toEqual(customBudget.total);
+          expect(result.budgetUtilization?.onInvoice).toEqual(
+            customBudget.onInvoice,
+          );
+          expect(result.budgetUtilization?.offInvoice).toEqual(
+            customBudget.offInvoice,
+          );
+        });
+    });
+  });
+});

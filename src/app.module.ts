@@ -29,6 +29,8 @@ import { LTAModule } from './modules/shared/lta/lta.module';
 import { SpendCalculationModule } from './modules/shared/spend-calculation/spend-calculation.module';
 // Shared Finance Reporting Module
 import { FinanceReportingModule } from './modules/shared/finance-reporting/finance-reporting.module';
+// Shared Dashboard Module
+import { DashboardModule } from './modules/shared/dashboard/dashboard.module';
 // Admin Module
 import { AdminModule } from './modules/admin/admin.module';
 
@@ -52,6 +54,7 @@ import { AdminModule } from './modules/admin/admin.module';
     LTAModule,
     SpendCalculationModule,
     FinanceReportingModule,
+    DashboardModule,
     // Actuals-First mode modules
     AgreementModule,
     AgreementTransactionModule,

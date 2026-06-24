@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -34,7 +39,11 @@ export class UserController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new user' })
-  @ApiResponse({ status: 201, description: 'User created successfully', type: UserResponseDto })
+  @ApiResponse({
+    status: 201,
+    description: 'User created successfully',
+    type: UserResponseDto,
+  })
   create(@TenantId() tenantId: string, @Body() createUserDto: CreateUserDto) {
     return this.userService.create(tenantId, createUserDto);
   }
@@ -42,21 +51,33 @@ export class UserController {
   @Get()
   @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Get all users' })
-  @ApiResponse({ status: 200, description: 'List of users', type: [UserResponseDto] })
+  @ApiResponse({
+    status: 200,
+    description: 'List of users',
+    type: [UserResponseDto],
+  })
   findAll(@TenantId() tenantId: string) {
     return this.userService.findAll(tenantId);
   }
 
   @Get('me')
   @ApiOperation({ summary: 'Get current user profile' })
-  @ApiResponse({ status: 200, description: 'User profile', type: UserResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'User profile',
+    type: UserResponseDto,
+  })
   getProfile(@Request() req: any) {
     return this.userService.getProfile(req.user.tenantId, req.user.sub);
   }
 
   @Patch('me')
   @ApiOperation({ summary: 'Update current user profile' })
-  @ApiResponse({ status: 200, description: 'Profile updated', type: UserResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Profile updated',
+    type: UserResponseDto,
+  })
   updateProfile(
     @Request() req: any,
     @Body() updateUserDto: UpdateUserDto,
@@ -66,27 +87,65 @@ export class UserController {
     if (updateUserDto.role) {
       delete updateUserDto.role;
     }
-    return this.userService.update(req.user.tenantId, req.user.sub, updateUserDto, user.id, user.role);
+    return this.userService.update(
+      req.user.tenantId,
+      req.user.sub,
+      updateUserDto,
+      user.id,
+      user.role,
+    );
   }
 
   @Patch('me/password')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Change current user password' })
   @ApiResponse({ status: 204, description: 'Password changed successfully' })
-  changeMyPassword(@Request() req: any, @Body() changePasswordDto: ChangePasswordDto) {
-    return this.userService.changePassword(req.user.tenantId, req.user.sub, changePasswordDto);
+  changeMyPassword(
+    @Request() req: any,
+    @Body() changePasswordDto: ChangePasswordDto,
+  ) {
+    return this.userService.changePassword(
+      req.user.tenantId,
+      req.user.sub,
+      changePasswordDto,
+    );
   }
 
+  /**
+   * @deprecated Use GET /dashboard/summary instead.
+   * This endpoint is preserved for backward compatibility while the frontend migrates.
+   * Delegate to the same underlying user.service logic; the canonical implementation
+   * lives in DashboardService (shared/dashboard).
+   */
   @Get('dashboard-summary')
-  @ApiOperation({ summary: 'Get dashboard summary for current user' })
-  @ApiResponse({ status: 200, description: 'Dashboard summary data' })
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.MANAGER,
+    UserRole.PLANNER,
+    UserRole.FINANCE,
+    UserRole.FINANCE_MANAGER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.READONLY,
+  )
+  @ApiOperation({
+    summary: '[DEPRECATED] Get dashboard summary — use GET /dashboard/summary',
+    deprecated: true,
+    description:
+      'Preserved for backward compatibility. Migrate to GET /dashboard/summary which provides ' +
+      'richer data, Planner CPL-scoping, and delegated budget utilization.',
+  })
+  @ApiResponse({ status: 200, description: 'Legacy dashboard summary data' })
   getDashboardSummary(@TenantId() tenantId: string) {
     return this.userService.getDashboardSummary(tenantId);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get user by ID' })
-  @ApiResponse({ status: 200, description: 'User details', type: UserResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'User details',
+    type: UserResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'User not found' })
   findOne(@TenantId() tenantId: string, @Param('id') id: string) {
     return this.userService.findOne(tenantId, id);
@@ -95,14 +154,24 @@ export class UserController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update user (EA-001: Admin restrictions apply)' })
-  @ApiResponse({ status: 200, description: 'User updated successfully', type: UserResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'User updated successfully',
+    type: UserResponseDto,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.userService.update(tenantId, id, updateUserDto, user.id, user.role);
+    return this.userService.update(
+      tenantId,
+      id,
+      updateUserDto,
+      user.id,
+      user.role,
+    );
   }
 
   @Patch(':id/password')
@@ -143,4 +212,3 @@ export class UserController {
     return this.userService.remove(tenantId, id);
   }
 }
-
