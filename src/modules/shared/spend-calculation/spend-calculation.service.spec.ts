@@ -3,8 +3,15 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SpendCalculationService } from './spend-calculation.service';
 import { PlanSku, PlanFu } from '../../../database/entities/plan.entity';
-import { Mechanic, MechanicCategory, SpendingType } from '../../../database/entities/mechanic.entity';
-import { PlanMechanicValue, DistributionMethod } from '../../../database/entities/plan-mechanic-value.entity';
+import {
+  Mechanic,
+  MechanicCategory,
+  SpendingType,
+} from '../../../database/entities/mechanic.entity';
+import {
+  PlanMechanicValue,
+  DistributionMethod,
+} from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { LTAAgreementService } from '../lta/lta-agreement.service';
 import { CalculationContext, SKUContext } from './dto/calculation-context.dto';
@@ -16,7 +23,9 @@ describe('SpendCalculationService', () => {
   let planFuRepo: jest.Mocked<Repository<PlanFu>>;
   let mechanicRepo: jest.Mocked<Repository<Mechanic>>;
   let planMechanicValueRepo: jest.Mocked<Repository<PlanMechanicValue>>;
-  let mechanicSpendBreakdownRepo: jest.Mocked<Repository<MechanicSpendBreakdown>>;
+  let mechanicSpendBreakdownRepo: jest.Mocked<
+    Repository<MechanicSpendBreakdown>
+  >;
   let ltaAgreementService: jest.Mocked<LTAAgreementService>;
 
   const mockTenantId = 'tenant-1';
@@ -77,7 +86,9 @@ describe('SpendCalculationService', () => {
     planFuRepo = module.get(getRepositoryToken(PlanFu));
     mechanicRepo = module.get(getRepositoryToken(Mechanic));
     planMechanicValueRepo = module.get(getRepositoryToken(PlanMechanicValue));
-    mechanicSpendBreakdownRepo = module.get(getRepositoryToken(MechanicSpendBreakdown));
+    mechanicSpendBreakdownRepo = module.get(
+      getRepositoryToken(MechanicSpendBreakdown),
+    );
     ltaAgreementService = module.get(LTAAgreementService);
   });
 
@@ -120,7 +131,12 @@ describe('SpendCalculationService', () => {
 
       mechanicRepo.findOne.mockResolvedValue(mechanic as Mechanic);
 
-      const spend = await service.calculateMechanicSpend(mockTenantId, 'CPP_ON', context, skuContext);
+      const spend = await service.calculateMechanicSpend(
+        mockTenantId,
+        'CPP_ON',
+        context,
+        skuContext,
+      );
 
       // Expected: (1200 * 10 - 1200 * 10 * 0.02) * 0.05 = (12000 - 240) * 0.05 = 11760 * 0.05 = 588
       expect(spend).toBeCloseTo(588, 2);
@@ -152,7 +168,12 @@ describe('SpendCalculationService', () => {
 
       mechanicRepo.findOne.mockResolvedValue(mechanic as Mechanic);
 
-      const spend = await service.calculateMechanicSpend(mockTenantId, 'PRICE_SUPPORT', context, skuContext);
+      const spend = await service.calculateMechanicSpend(
+        mockTenantId,
+        'PRICE_SUPPORT',
+        context,
+        skuContext,
+      );
 
       // Expected: 0.5 * 1200 = 600
       expect(spend).toBe(600);
@@ -205,7 +226,10 @@ describe('SpendCalculationService', () => {
         isActive: true,
       };
 
-      mechanicRepo.find.mockResolvedValue([onInvoiceMechanic, offInvoiceMechanic] as Mechanic[]);
+      mechanicRepo.find.mockResolvedValue([
+        onInvoiceMechanic,
+        offInvoiceMechanic,
+      ] as Mechanic[]);
       mechanicRepo.findOne.mockImplementation((options: any) => {
         if (options.where.code === 'CPP_ON') {
           return Promise.resolve(onInvoiceMechanic as Mechanic);
@@ -213,7 +237,11 @@ describe('SpendCalculationService', () => {
         return Promise.resolve(offInvoiceMechanic as Mechanic);
       });
 
-      const breakdown = await service.calculateAllSpendsForSKU(mockTenantId, skuContext, context);
+      const breakdown = await service.calculateAllSpendsForSKU(
+        mockTenantId,
+        skuContext,
+        context,
+      );
 
       expect(breakdown.skuId).toBe(mockSkuId);
       expect(breakdown.base.ltaOnInvoice).toBeGreaterThan(0);
@@ -259,7 +287,10 @@ describe('SpendCalculationService', () => {
       expect(distributions).toHaveLength(2);
       expect(distributions[0].ratio).toBeCloseTo(1000 / 3000, 4);
       expect(distributions[1].ratio).toBeCloseTo(2000 / 3000, 4);
-      expect(distributions[0].amount + distributions[1].amount).toBeCloseTo(1000, 2);
+      expect(distributions[0].amount + distributions[1].amount).toBeCloseTo(
+        1000,
+        2,
+      );
     });
   });
 
@@ -283,7 +314,10 @@ describe('SpendCalculationService', () => {
 
       planFuRepo.find.mockResolvedValue([planFu] as PlanFu[]);
 
-      const result = await service.validateSpendCalculations(mockTenantId, mockPlanId);
+      const result = await service.validateSpendCalculations(
+        mockTenantId,
+        mockPlanId,
+      );
 
       expect(result.isValid).toBe(false);
       expect(result.errors.length).toBeGreaterThan(0);

@@ -1,5 +1,10 @@
 import { DataSource } from 'typeorm';
-import { Agreement, AgreementStatus, AgreementType, SpendType } from '../entities/agreement.entity';
+import {
+  Agreement,
+  AgreementStatus,
+  AgreementType,
+  SpendType,
+} from '../entities/agreement.entity';
 import { Channel } from '../entities/channel.entity';
 import { Brand } from '../entities/brand.entity';
 import { Category } from '../entities/category.entity';
@@ -24,12 +29,17 @@ export async function seedAgreements(
   const mechanicRepo = dataSource.getRepository(Mechanic);
 
   // Get channel IDs by code (or use placeholder if channels don't exist)
-  const nkaChannel = await channelRepo.findOne({ where: { code: 'NKA', tenantId } });
-  const traditionalChannel = await channelRepo.findOne({ where: { code: 'TRADITIONAL_TRADE', tenantId } });
-  
+  const nkaChannel = await channelRepo.findOne({
+    where: { code: 'NKA', tenantId },
+  });
+  const traditionalChannel = await channelRepo.findOne({
+    where: { code: 'TRADITIONAL_TRADE', tenantId },
+  });
+
   // Use placeholder UUIDs if channels don't exist (for development)
   const nkaChannelId = nkaChannel?.id || '00000000-0000-0000-0000-000000000001';
-  const traditionalChannelId = traditionalChannel?.id || '00000000-0000-0000-0000-000000000002';
+  const traditionalChannelId =
+    traditionalChannel?.id || '00000000-0000-0000-0000-000000000002';
 
   // Helper function to check if error is a duplicate key error
   const isDuplicateError = (error: any): boolean => {
@@ -38,7 +48,8 @@ export async function seedAgreements(
       error?.driverError?.code === '23505' ||
       error?.driverError?.driverError?.code === '23505' ||
       (error?.message && error.message.includes('duplicate key')) ||
-      (error?.driverError?.message && error.driverError.message.includes('duplicate key'))
+      (error?.driverError?.message &&
+        error.driverError.message.includes('duplicate key'))
     );
   };
 
@@ -64,7 +75,9 @@ export async function seedAgreements(
   }
 
   // Create or get Category
-  let category = await categoryRepo.findOne({ where: { code: 'HAIR_CARE', tenantId } });
+  let category = await categoryRepo.findOne({
+    where: { code: 'HAIR_CARE', tenantId },
+  });
   if (!category) {
     try {
       category = categoryRepo.create({
@@ -76,7 +89,9 @@ export async function seedAgreements(
       category = await categoryRepo.save(category);
     } catch (error: any) {
       if (isDuplicateError(error)) {
-        category = await categoryRepo.findOne({ where: { code: 'HAIR_CARE', tenantId } });
+        category = await categoryRepo.findOne({
+          where: { code: 'HAIR_CARE', tenantId },
+        });
         if (!category) throw error;
       } else {
         throw error;
@@ -85,7 +100,9 @@ export async function seedAgreements(
   }
 
   // Create or get Generic Unit
-  let gu = await guRepo.findOne({ where: { code: 'GU-WELLA-HC-001', tenantId } });
+  let gu = await guRepo.findOne({
+    where: { code: 'GU-WELLA-HC-001', tenantId },
+  });
   if (!gu) {
     try {
       gu = guRepo.create({
@@ -99,7 +116,9 @@ export async function seedAgreements(
       gu = await guRepo.save(gu);
     } catch (error: any) {
       if (isDuplicateError(error)) {
-        gu = await guRepo.findOne({ where: { code: 'GU-WELLA-HC-001', tenantId } });
+        gu = await guRepo.findOne({
+          where: { code: 'GU-WELLA-HC-001', tenantId },
+        });
         if (!gu) throw error;
       } else {
         throw error;
@@ -108,7 +127,9 @@ export async function seedAgreements(
   }
 
   // Create or get Forecasting Unit
-  let fu = await fuRepo.findOne({ where: { code: 'FU-WELLA-HC-500ML', tenantId } });
+  let fu = await fuRepo.findOne({
+    where: { code: 'FU-WELLA-HC-500ML', tenantId },
+  });
   if (!fu) {
     try {
       fu = fuRepo.create({
@@ -125,7 +146,9 @@ export async function seedAgreements(
     } catch (error: any) {
       if (isDuplicateError(error)) {
         // Try to find it again (might have been created by another process)
-        fu = await fuRepo.findOne({ where: { code: 'FU-WELLA-HC-500ML', tenantId } });
+        fu = await fuRepo.findOne({
+          where: { code: 'FU-WELLA-HC-500ML', tenantId },
+        });
         if (!fu) {
           throw error; // Re-throw if still not found
         }
@@ -137,7 +160,9 @@ export async function seedAgreements(
   }
 
   // Create or get Tactic
-  let tactic = await tacticRepo.findOne({ where: { code: 'TAC-PROMO', tenantId } });
+  let tactic = await tacticRepo.findOne({
+    where: { code: 'TAC-PROMO', tenantId },
+  });
   if (!tactic) {
     try {
       tactic = tacticRepo.create({
@@ -151,7 +176,9 @@ export async function seedAgreements(
       tactic = await tacticRepo.save(tactic);
     } catch (error: any) {
       if (isDuplicateError(error)) {
-        tactic = await tacticRepo.findOne({ where: { code: 'TAC-PROMO', tenantId } });
+        tactic = await tacticRepo.findOne({
+          where: { code: 'TAC-PROMO', tenantId },
+        });
         if (!tactic) throw error;
       } else {
         throw error;
@@ -160,7 +187,9 @@ export async function seedAgreements(
   }
 
   // Create or get Mechanic
-  let mechanic = await mechanicRepo.findOne({ where: { code: 'MEC-DISCOUNT', tenantId } });
+  let mechanic = await mechanicRepo.findOne({
+    where: { code: 'MEC-DISCOUNT', tenantId },
+  });
   if (!mechanic) {
     try {
       mechanic = mechanicRepo.create({
@@ -174,7 +203,9 @@ export async function seedAgreements(
       mechanic = await mechanicRepo.save(mechanic);
     } catch (error: any) {
       if (isDuplicateError(error)) {
-        mechanic = await mechanicRepo.findOne({ where: { code: 'MEC-DISCOUNT', tenantId } });
+        mechanic = await mechanicRepo.findOne({
+          where: { code: 'MEC-DISCOUNT', tenantId },
+        });
         if (!mechanic) throw error;
       } else {
         throw error;
@@ -257,8 +288,8 @@ export async function seedAgreements(
   const created: Agreement[] = [];
 
   for (const agreement of agreements) {
-    const existing = await repo.findOne({ 
-      where: { agreementCode: agreement.agreementCode, tenantId } 
+    const existing = await repo.findOne({
+      where: { agreementCode: agreement.agreementCode, tenantId },
     });
     if (!existing) {
       const entity = repo.create(agreement);
@@ -271,4 +302,3 @@ export async function seedAgreements(
   console.log(`✅ Seeded ${created.length} agreements`);
   return created;
 }
-

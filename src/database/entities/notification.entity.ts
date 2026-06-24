@@ -107,5 +107,3 @@ export class Notification extends BaseEntity {
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }
-
-

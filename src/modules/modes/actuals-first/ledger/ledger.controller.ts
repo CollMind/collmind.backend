@@ -1,6 +1,4 @@
-import {
-  Controller, Get, Param, Query, UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { LedgerService } from './ledger.service';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
@@ -51,7 +49,10 @@ export class LedgerController {
     @Param('agreementId') agreementId: string,
     @TenantId() tenantId: string,
   ) {
-    const consumed = await this.ledgerService.getConsumedByAgreement(agreementId, tenantId);
+    const consumed = await this.ledgerService.getConsumedByAgreement(
+      agreementId,
+      tenantId,
+    );
     return { agreementId, consumed };
   }
 
@@ -72,7 +73,10 @@ export class LedgerController {
     @Param('envelopeId') envelopeId: string,
     @TenantId() tenantId: string,
   ) {
-    const consumed = await this.ledgerService.getConsumedByEnvelope(envelopeId, tenantId);
+    const consumed = await this.ledgerService.getConsumedByEnvelope(
+      envelopeId,
+      tenantId,
+    );
     return { envelopeId, consumed };
   }
 
@@ -83,4 +87,3 @@ export class LedgerController {
     return this.ledgerService.findById(id, tenantId);
   }
 }
-

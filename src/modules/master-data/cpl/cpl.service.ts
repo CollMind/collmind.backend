@@ -19,7 +19,10 @@ export class CplService {
   ) {}
 
   async create(tenantId: string, createCplDto: CreateCplDto): Promise<Cpl> {
-    const existing = await this.cplRepository.findByCode(tenantId, createCplDto.code);
+    const existing = await this.cplRepository.findByCode(
+      tenantId,
+      createCplDto.code,
+    );
     if (existing) {
       throw new ConflictException('CPL with this code already exists');
     }
@@ -59,7 +62,11 @@ export class CplService {
     return savedCpl;
   }
 
-  async findAll(tenantId: string, activeOnly = false, channelId?: string): Promise<Cpl[]> {
+  async findAll(
+    tenantId: string,
+    activeOnly = false,
+    channelId?: string,
+  ): Promise<Cpl[]> {
     return this.cplRepository.findAllByTenant(tenantId, activeOnly, channelId);
   }
 
@@ -84,7 +91,10 @@ export class CplService {
     const cpl = await this.findOne(tenantId, id);
 
     if (updateCplDto.code && updateCplDto.code !== cpl.code) {
-      const existing = await this.cplRepository.findByCode(tenantId, updateCplDto.code);
+      const existing = await this.cplRepository.findByCode(
+        tenantId,
+        updateCplDto.code,
+      );
       if (existing && existing.id !== id) {
         throw new ConflictException('CPL with this code already exists');
       }

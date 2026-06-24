@@ -19,7 +19,10 @@ export class ApprovalRepository {
     return this.repo.save(request);
   }
 
-  async findById(id: string, tenantId: string): Promise<ApprovalRequest | null> {
+  async findById(
+    id: string,
+    tenantId: string,
+  ): Promise<ApprovalRequest | null> {
     return this.repo.findOne({
       where: { id, tenantId, deletedAt: IsNull() },
     });
@@ -44,13 +47,18 @@ export class ApprovalRepository {
     return this.repo
       .createQueryBuilder('ar')
       .where('ar.tenantId = :tenantId', { tenantId })
-      .andWhere('ar.status = :status', { status: ApprovalRequestStatus.PENDING })
+      .andWhere('ar.status = :status', {
+        status: ApprovalRequestStatus.PENDING,
+      })
       .andWhere('ar.deletedAt IS NULL')
       .orderBy('ar.createdAt', 'ASC')
       .getMany();
   }
 
-  async findPendingForUser(userId: string, tenantId: string): Promise<ApprovalRequest[]> {
+  async findPendingForUser(
+    userId: string,
+    tenantId: string,
+  ): Promise<ApprovalRequest[]> {
     return this.repo.find({
       where: {
         tenantId,
@@ -61,7 +69,10 @@ export class ApprovalRepository {
     });
   }
 
-  async findByRequesterId(requesterId: string, tenantId: string): Promise<ApprovalRequest[]> {
+  async findByRequesterId(
+    requesterId: string,
+    tenantId: string,
+  ): Promise<ApprovalRequest[]> {
     return this.repo.find({
       where: {
         requestedById: requesterId,
@@ -90,10 +101,14 @@ export class ApprovalRepository {
       query.andWhere('ar.status = :status', { status: filters.status });
     }
     if (filters?.requestType) {
-      query.andWhere('ar.requestType = :requestType', { requestType: filters.requestType });
+      query.andWhere('ar.requestType = :requestType', {
+        requestType: filters.requestType,
+      });
     }
     if (filters?.entityType) {
-      query.andWhere('ar.entityType = :entityType', { entityType: filters.entityType });
+      query.andWhere('ar.entityType = :entityType', {
+        entityType: filters.entityType,
+      });
     }
     if (filters?.requestedById) {
       query.andWhere('ar.requestedById = :requestedById', {
@@ -127,4 +142,3 @@ export class ApprovalRepository {
     return this.update(id, tenantId, updateData);
   }
 }
-

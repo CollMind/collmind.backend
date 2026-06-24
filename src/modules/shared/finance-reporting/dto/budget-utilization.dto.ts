@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsString, IsEnum, IsArray, IsObject, IsOptional } from 'class-validator';
+import {
+  IsNumber,
+  IsString,
+  IsEnum,
+  IsArray,
+  IsObject,
+  IsOptional,
+} from 'class-validator';
 
 export enum UtilizationStatus {
   GREEN = 'GREEN',
@@ -34,11 +41,17 @@ export class BudgetSummary {
 }
 
 export class BudgetUtilizationReport {
-  @ApiProperty({ description: 'On-Invoice budget summary', type: BudgetSummary })
+  @ApiProperty({
+    description: 'On-Invoice budget summary',
+    type: BudgetSummary,
+  })
   @IsObject()
   onInvoice!: BudgetSummary;
 
-  @ApiProperty({ description: 'Off-Invoice budget summary', type: BudgetSummary })
+  @ApiProperty({
+    description: 'Off-Invoice budget summary',
+    type: BudgetSummary,
+  })
   @IsObject()
   offInvoice!: BudgetSummary;
 

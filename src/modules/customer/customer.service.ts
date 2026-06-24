@@ -8,7 +8,10 @@ import { CustomerRepository } from './customer.repository';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerFilterDto } from './dto/customer-filter.dto';
-import { Customer, CustomerStatus } from '../../database/entities/customer.entity';
+import {
+  Customer,
+  CustomerStatus,
+} from '../../database/entities/customer.entity';
 import { FileParserService } from './services/file-parser.service';
 
 @Injectable()
@@ -18,21 +21,37 @@ export class CustomerService {
     private readonly fileParserService: FileParserService,
   ) {}
 
-  private convertDateFields(dto: CreateCustomerDto | UpdateCustomerDto): Partial<Customer> {
-    const { lastOrderDate, firstOrderDate, contractStartDate, contractEndDate, ...rest } = dto;
-    
+  private convertDateFields(
+    dto: CreateCustomerDto | UpdateCustomerDto,
+  ): Partial<Customer> {
+    const {
+      lastOrderDate,
+      firstOrderDate,
+      contractStartDate,
+      contractEndDate,
+      ...rest
+    } = dto;
+
     return {
       ...rest,
       ...(lastOrderDate && { lastOrderDate: new Date(lastOrderDate) }),
       ...(firstOrderDate && { firstOrderDate: new Date(firstOrderDate) }),
-      ...(contractStartDate && { contractStartDate: new Date(contractStartDate) }),
+      ...(contractStartDate && {
+        contractStartDate: new Date(contractStartDate),
+      }),
       ...(contractEndDate && { contractEndDate: new Date(contractEndDate) }),
     };
   }
 
-  async create(tenantId: string, createCustomerDto: CreateCustomerDto): Promise<Customer> {
+  async create(
+    tenantId: string,
+    createCustomerDto: CreateCustomerDto,
+  ): Promise<Customer> {
     // Check if customer with same code exists
-    const existing = await this.customerRepository.findByCode(tenantId, createCustomerDto.code);
+    const existing = await this.customerRepository.findByCode(
+      tenantId,
+      createCustomerDto.code,
+    );
     if (existing) {
       throw new ConflictException('Customer with this code already exists');
     }
@@ -45,11 +64,17 @@ export class CustomerService {
     return this.customerRepository.save(customer);
   }
 
-  async createBulk(tenantId: string, customers: CreateCustomerDto[]): Promise<Customer[]> {
+  async createBulk(
+    tenantId: string,
+    customers: CreateCustomerDto[],
+  ): Promise<Customer[]> {
     const createdCustomers: Customer[] = [];
 
     for (const customerDto of customers) {
-      const existing = await this.customerRepository.findByCode(tenantId, customerDto.code);
+      const existing = await this.customerRepository.findByCode(
+        tenantId,
+        customerDto.code,
+      );
       if (!existing) {
         const customer = this.customerRepository.create({
           ...this.convertDateFields(customerDto),
@@ -116,7 +141,10 @@ export class CustomerService {
 
     // Check code uniqueness if changing
     if (updateCustomerDto.code && updateCustomerDto.code !== customer.code) {
-      const existing = await this.customerRepository.findByCode(tenantId, updateCustomerDto.code);
+      const existing = await this.customerRepository.findByCode(
+        tenantId,
+        updateCustomerDto.code,
+      );
       if (existing) {
         throw new ConflictException('Customer with this code already exists');
       }
@@ -147,7 +175,10 @@ export class CustomerService {
     return this.customerRepository.findByChannel(tenantId, channel);
   }
 
-  async findByChannelId(tenantId: string, channelId: string): Promise<Customer[]> {
+  async findByChannelId(
+    tenantId: string,
+    channelId: string,
+  ): Promise<Customer[]> {
     return this.customerRepository.findByChannelId(tenantId, channelId);
   }
 
@@ -171,13 +202,16 @@ export class CustomerService {
     };
   }
 
-  async importFromFile(tenantId: string, file: Express.Multer.File): Promise<{
+  async importFromFile(
+    tenantId: string,
+    file: Express.Multer.File,
+  ): Promise<{
     total: number;
     created: number;
     skipped: number;
-    errors: Array<{ 
-      row: number; 
-      code: string; 
+    errors: Array<{
+      row: number;
+      code: string;
       error_type: string;
       error_message: string;
       original_row_data?: Record<string, any>;
@@ -188,7 +222,11 @@ export class CustomerService {
     }
 
     const fileExtension = file.originalname.split('.').pop()?.toLowerCase();
-    let customersWithRowNumbers: Array<{ dto: CreateCustomerDto; originalRowNumber: number; originalRowData?: Record<string, any> }>;
+    let customersWithRowNumbers: Array<{
+      dto: CreateCustomerDto;
+      originalRowNumber: number;
+      originalRowData?: Record<string, any>;
+    }>;
 
     try {
       if (fileExtension === 'xlsx' || fileExtension === 'xls') {
@@ -196,15 +234,20 @@ export class CustomerService {
       } else if (fileExtension === 'csv') {
         customersWithRowNumbers = await this.fileParserService.parseCSV(file);
       } else {
-        throw new BadRequestException('Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.');
+        throw new BadRequestException(
+          'Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.',
+        );
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Bilinmeyen hata';
       throw new BadRequestException(`Dosya işlenemedi: ${errorMessage}`);
     }
 
     if (!customersWithRowNumbers || customersWithRowNumbers.length === 0) {
-      throw new BadRequestException('Dosyada geçerli müşteri verisi bulunamadı');
+      throw new BadRequestException(
+        'Dosyada geçerli müşteri verisi bulunamadı',
+      );
     }
 
     // AI-001: Validation runs on all rows BEFORE any insert
@@ -216,18 +259,33 @@ export class CustomerService {
       original_row_data?: Record<string, any>;
     }> = [];
 
-    const validCustomers: Array<{ dto: CreateCustomerDto; originalRowNumber: number; originalRowData?: Record<string, any> }> = [];
+    const validCustomers: Array<{
+      dto: CreateCustomerDto;
+      originalRowNumber: number;
+      originalRowData?: Record<string, any>;
+    }> = [];
 
     // Step 1: Validate all rows
-    for (const { dto: customerDto, originalRowNumber, originalRowData } of customersWithRowNumbers) {
-      const validationError = this.validateCustomerDto(customerDto, originalRowNumber);
+    for (const {
+      dto: customerDto,
+      originalRowNumber,
+      originalRowData,
+    } of customersWithRowNumbers) {
+      const validationError = this.validateCustomerDto(
+        customerDto,
+        originalRowNumber,
+      );
       if (validationError) {
         validationErrors.push({
           ...validationError,
           original_row_data: originalRowData || this.dtoToRecord(customerDto),
         });
       } else {
-        validCustomers.push({ dto: customerDto, originalRowNumber, originalRowData });
+        validCustomers.push({
+          dto: customerDto,
+          originalRowNumber,
+          originalRowData,
+        });
       }
     }
 
@@ -264,17 +322,28 @@ export class CustomerService {
       total: customersWithRowNumbers.length,
       created: 0,
       skipped: validationErrors.length + duplicateErrors.length,
-      errors: [...validationErrors, ...duplicateErrors] as typeof validationErrors,
+      errors: [
+        ...validationErrors,
+        ...duplicateErrors,
+      ] as typeof validationErrors,
     };
 
     // Filter out duplicates from valid customers
     const uniqueValidCustomers = validCustomers.filter(
-      ({ dto, originalRowNumber }) => !duplicateErrors.some(e => e.row === originalRowNumber)
+      ({ dto, originalRowNumber }) =>
+        !duplicateErrors.some((e) => e.row === originalRowNumber),
     );
 
-    for (const { dto: customerDto, originalRowNumber, originalRowData } of uniqueValidCustomers) {
+    for (const {
+      dto: customerDto,
+      originalRowNumber,
+      originalRowData,
+    } of uniqueValidCustomers) {
       try {
-        const existing = await this.customerRepository.findByCode(tenantId, customerDto.code);
+        const existing = await this.customerRepository.findByCode(
+          tenantId,
+          customerDto.code,
+        );
         if (existing) {
           result.skipped++;
           result.errors.push({
@@ -295,7 +364,8 @@ export class CustomerService {
         result.created++;
       } catch (error) {
         result.skipped++;
-        const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+        const errorMessage =
+          error instanceof Error ? error.message : 'Bilinmeyen hata';
         result.errors.push({
           row: originalRowNumber,
           code: customerDto.code || 'N/A',
@@ -309,7 +379,10 @@ export class CustomerService {
     return result;
   }
 
-  private validateCustomerDto(dto: CreateCustomerDto, rowNumber: number): {
+  private validateCustomerDto(
+    dto: CreateCustomerDto,
+    rowNumber: number,
+  ): {
     row: number;
     code: string;
     error_type: string;
@@ -397,7 +470,10 @@ export class CustomerService {
     }
 
     // Email validation (if provided)
-    if (dto.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dto.contactEmail)) {
+    if (
+      dto.contactEmail &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dto.contactEmail)
+    ) {
       return {
         row: rowNumber,
         code: dto.code,
@@ -412,11 +488,14 @@ export class CustomerService {
   /**
    * Validate date string is both correctly formatted and represents a valid date
    * Prevents silent data corruption from invalid dates like 2024-02-30
-   * 
+   *
    * @param dateString - Date string in YYYY-MM-DD format
    * @returns Object with isValid flag and optional error message
    */
-  private validateDateString(dateString: string): { isValid: boolean; error?: string } {
+  private validateDateString(dateString: string): {
+    isValid: boolean;
+    error?: string;
+  } {
     // Parse the date components
     const parts = dateString.split('-');
     if (parts.length !== 3) {
@@ -468,14 +547,20 @@ export class CustomerService {
     return { isValid: true };
   }
 
-  async getCplList(tenantId: string, channel?: string, categoryId?: string): Promise<Array<{
-    id: string;
-    code: string;
-    name: string;
-    channel: string;
-    customerCount: number;
-    activeAgreementCount: number;
-  }>> {
+  async getCplList(
+    tenantId: string,
+    channel?: string,
+    categoryId?: string,
+  ): Promise<
+    Array<{
+      id: string;
+      code: string;
+      name: string;
+      channel: string;
+      customerCount: number;
+      activeAgreementCount: number;
+    }>
+  > {
     return this.customerRepository.getCplList(tenantId, channel, categoryId);
   }
 
@@ -495,4 +580,3 @@ export class CustomerService {
     };
   }
 }
-

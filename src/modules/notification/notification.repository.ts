@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not } from 'typeorm';
-import { Notification, NotificationStatus } from '../../database/entities/notification.entity';
+import {
+  Notification,
+  NotificationStatus,
+} from '../../database/entities/notification.entity';
 
 @Injectable()
 export class NotificationRepository {
@@ -21,7 +24,11 @@ export class NotificationRepository {
     });
   }
 
-  async findByRecipient(tenantId: string, recipientId: string, limit = 30): Promise<Notification[]> {
+  async findByRecipient(
+    tenantId: string,
+    recipientId: string,
+    limit = 30,
+  ): Promise<Notification[]> {
     return this.notificationRepository.find({
       where: { tenantId, recipientId },
       order: { createdAt: 'DESC' },
@@ -29,7 +36,10 @@ export class NotificationRepository {
     });
   }
 
-  async findUnreadByRecipient(tenantId: string, recipientId: string): Promise<Notification[]> {
+  async findUnreadByRecipient(
+    tenantId: string,
+    recipientId: string,
+  ): Promise<Notification[]> {
     return this.notificationRepository.find({
       where: {
         tenantId,
@@ -54,4 +64,3 @@ export class NotificationRepository {
     });
   }
 }
-

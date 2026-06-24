@@ -1,9 +1,22 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { OnInvoiceRepository } from './on-invoice.repository';
-import { OnInvoiceFileParserService, ParsedOnInvoiceRow } from './services/on-invoice-file-parser.service';
+import {
+  OnInvoiceFileParserService,
+  ParsedOnInvoiceRow,
+} from './services/on-invoice-file-parser.service';
 import { OnInvoiceValidationService } from './services/on-invoice-validation.service';
-import { OnInvoiceBatch, OnInvoiceBatchStatus } from '../../../../database/entities/on-invoice-batch.entity';
-import { OnInvoiceEntry, OnInvoiceEntryStatus } from '../../../../database/entities/on-invoice-entry.entity';
+import {
+  OnInvoiceBatch,
+  OnInvoiceBatchStatus,
+} from '../../../../database/entities/on-invoice-batch.entity';
+import {
+  OnInvoiceEntry,
+  OnInvoiceEntryStatus,
+} from '../../../../database/entities/on-invoice-entry.entity';
 import { CustomerService } from '../../../customer/customer.service';
 import { SkuService } from '../../../master-data/sku/sku.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
@@ -33,7 +46,11 @@ export class OnInvoiceService {
     file: Express.Multer.File,
     tenantId: string,
     userId: string,
-  ): Promise<{ batchId: string; totalRows: number; validation: ValidationResponseDto }> {
+  ): Promise<{
+    batchId: string;
+    totalRows: number;
+    validation: ValidationResponseDto;
+  }> {
     // Parse et
     const fileExtension = file.originalname.split('.').pop()?.toLowerCase();
     let parsedRows: ParsedOnInvoiceRow[];
@@ -43,7 +60,9 @@ export class OnInvoiceService {
     } else if (fileExtension === 'csv') {
       parsedRows = await this.fileParserService.parseCSV(file);
     } else {
-      throw new BadRequestException('Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.');
+      throw new BadRequestException(
+        'Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.',
+      );
     }
 
     if (parsedRows.length === 0) {
@@ -106,7 +125,9 @@ export class OnInvoiceService {
     } else if (fileExtension === 'csv') {
       parsedRows = await this.fileParserService.parseCSV(file);
     } else {
-      throw new BadRequestException('Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.');
+      throw new BadRequestException(
+        'Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.',
+      );
     }
 
     if (parsedRows.length === 0) {
@@ -155,26 +176,35 @@ export class OnInvoiceService {
     }
 
     // Batch'i VALIDATING durumuna al
-    await this.repository.updateBatch(batchId, {
-      status: OnInvoiceBatchStatus.VALIDATING,
-    }, tenantId);
+    await this.repository.updateBatch(
+      batchId,
+      {
+        status: OnInvoiceBatchStatus.VALIDATING,
+      },
+      tenantId,
+    );
 
     try {
       // Dosyayı tekrar parse et (gerçek uygulamada cache'lenebilir)
       // Şimdilik batch'ten entries'leri al
-      const entries = await this.repository.findEntriesByBatchId(batchId, tenantId);
-      
+      const entries = await this.repository.findEntriesByBatchId(
+        batchId,
+        tenantId,
+      );
+
       // Eğer entries yoksa, dosyayı tekrar parse etmemiz gerekir
       // Bu durumda batch'te dosya bilgisi saklanmalı
       // Şimdilik basit bir yaklaşım: entries varsa onları kullan, yoksa hata ver
       if (entries.length === 0) {
-        throw new BadRequestException('Batch entries bulunamadı. Lütfen dosyayı tekrar yükleyin.');
+        throw new BadRequestException(
+          'Batch entries bulunamadı. Lütfen dosyayı tekrar yükleyin.',
+        );
       }
 
       // Validation yap (entries'leri ParsedOnInvoiceRow formatına çevir)
       // Bu kısım gerçek uygulamada optimize edilebilir
       const validationResults = await this.validationService.validateBatch(
-        entries.map(e => ({
+        entries.map((e) => ({
           dto: {
             customerCode: e.customerCode,
             invoiceNo: e.invoiceNo,
@@ -195,7 +225,7 @@ export class OnInvoiceService {
 
       // Özet oluştur
       const summary = await this.validationService.generateValidationSummary(
-        entries.map(e => ({
+        entries.map((e) => ({
           dto: {
             customerCode: e.customerCode,
             invoiceNo: e.invoiceNo,
@@ -216,19 +246,27 @@ export class OnInvoiceService {
       );
 
       // Batch'i güncelle
-      await this.repository.updateBatch(batchId, {
-        status: OnInvoiceBatchStatus.VALIDATED,
-        validRows: summary.lineAnalysis.valid,
-        errorRows: summary.lineAnalysis.errors,
-        totalDiscountAmount: summary.financialSummary.totalDiscount,
-        validationSummary: summary,
-      }, tenantId);
+      await this.repository.updateBatch(
+        batchId,
+        {
+          status: OnInvoiceBatchStatus.VALIDATED,
+          validRows: summary.lineAnalysis.valid,
+          errorRows: summary.lineAnalysis.errors,
+          totalDiscountAmount: summary.financialSummary.totalDiscount,
+          validationSummary: summary,
+        },
+        tenantId,
+      );
 
       return summary;
     } catch (error) {
-      await this.repository.updateBatch(batchId, {
-        status: OnInvoiceBatchStatus.FAILED,
-      }, tenantId);
+      await this.repository.updateBatch(
+        batchId,
+        {
+          status: OnInvoiceBatchStatus.FAILED,
+        },
+        tenantId,
+      );
       throw error;
     }
   }
@@ -247,13 +285,20 @@ export class OnInvoiceService {
     }
 
     // Batch'i VALIDATING durumuna al
-    await this.repository.updateBatch(batchId, {
-      status: OnInvoiceBatchStatus.VALIDATING,
-    }, tenantId);
+    await this.repository.updateBatch(
+      batchId,
+      {
+        status: OnInvoiceBatchStatus.VALIDATING,
+      },
+      tenantId,
+    );
 
     try {
       // Validation yap
-      const validationResults = await this.validationService.validateBatch(parsedRows, tenantId);
+      const validationResults = await this.validationService.validateBatch(
+        parsedRows,
+        tenantId,
+      );
 
       // Özet oluştur
       const summary = await this.validationService.generateValidationSummary(
@@ -263,7 +308,9 @@ export class OnInvoiceService {
       );
 
       // Valid entries'leri batch'e kaydet (PENDING status ile)
-      const validRows = parsedRows.filter((_, index) => validationResults[index]?.isValid);
+      const validRows = parsedRows.filter(
+        (_, index) => validationResults[index]?.isValid,
+      );
       const entries: Partial<OnInvoiceEntry>[] = [];
 
       for (let i = 0; i < validRows.length; i++) {
@@ -303,20 +350,28 @@ export class OnInvoiceService {
       }
 
       // Batch'i güncelle
-      await this.repository.updateBatch(batchId, {
-        status: OnInvoiceBatchStatus.VALIDATED,
-        validRows: summary.lineAnalysis.valid,
-        errorRows: summary.lineAnalysis.errors,
-        totalDiscountAmount: summary.financialSummary.totalDiscount,
-        affectedEnvelopesCount: summary.budgetImpact.length,
-        validationSummary: summary,
-      }, tenantId);
+      await this.repository.updateBatch(
+        batchId,
+        {
+          status: OnInvoiceBatchStatus.VALIDATED,
+          validRows: summary.lineAnalysis.valid,
+          errorRows: summary.lineAnalysis.errors,
+          totalDiscountAmount: summary.financialSummary.totalDiscount,
+          affectedEnvelopesCount: summary.budgetImpact.length,
+          validationSummary: summary,
+        },
+        tenantId,
+      );
 
       return summary;
     } catch (error) {
-      await this.repository.updateBatch(batchId, {
-        status: OnInvoiceBatchStatus.FAILED,
-      }, tenantId);
+      await this.repository.updateBatch(
+        batchId,
+        {
+          status: OnInvoiceBatchStatus.FAILED,
+        },
+        tenantId,
+      );
       throw error;
     }
   }
@@ -335,18 +390,29 @@ export class OnInvoiceService {
     }
 
     if (batch.status !== OnInvoiceBatchStatus.VALIDATED) {
-      throw new BadRequestException(`Batch durumu uygun değil. Mevcut durum: ${batch.status}`);
+      throw new BadRequestException(
+        `Batch durumu uygun değil. Mevcut durum: ${batch.status}`,
+      );
     }
 
     // Batch'i PROCESSING durumuna al
-    await this.repository.updateBatch(batchId, {
-      status: OnInvoiceBatchStatus.PROCESSING,
-    }, tenantId);
+    await this.repository.updateBatch(
+      batchId,
+      {
+        status: OnInvoiceBatchStatus.PROCESSING,
+      },
+      tenantId,
+    );
 
     try {
       // Valid entries'leri al
-      const entries = await this.repository.findEntriesByBatchId(batchId, tenantId);
-      const validEntries = entries.filter(e => e.status === OnInvoiceEntryStatus.PENDING);
+      const entries = await this.repository.findEntriesByBatchId(
+        batchId,
+        tenantId,
+      );
+      const validEntries = entries.filter(
+        (e) => e.status === OnInvoiceEntryStatus.PENDING,
+      );
 
       let processedCount = 0;
       let totalDiscount = 0;
@@ -355,14 +421,18 @@ export class OnInvoiceService {
       for (const entry of validEntries) {
         try {
           // Customer ve SKU bilgilerini al
-          const customer = await this.customerService.findOne(tenantId, entry.customerId);
+          const customer = await this.customerService.findOne(
+            tenantId,
+            entry.customerId,
+          );
           const sku = await this.skuService.findOne(tenantId, entry.skuId);
 
           // Channel ve category belirle
           const channel = customer.channel;
           let category: string | undefined;
           if (sku.genericUnit && sku.genericUnit.category) {
-            category = sku.genericUnit.category.code || sku.genericUnit.category.name;
+            category =
+              sku.genericUnit.category.code || sku.genericUnit.category.name;
           }
 
           // Budget envelope bul
@@ -408,10 +478,12 @@ export class OnInvoiceService {
             await this.repository.updateEntry(entry.id, {
               status: OnInvoiceEntryStatus.ERROR,
               validationStatus: 'ERROR',
-              validationErrors: [{
-                message: `Budget envelope bulunamadı: ${channel} / ${category} / ${entry.fiscalPeriod}`,
-                severity: 'ERROR',
-              }],
+              validationErrors: [
+                {
+                  message: `Budget envelope bulunamadı: ${channel} / ${category} / ${entry.fiscalPeriod}`,
+                  severity: 'ERROR',
+                },
+              ],
             });
           }
         } catch (error) {
@@ -419,21 +491,28 @@ export class OnInvoiceService {
           await this.repository.updateEntry(entry.id, {
             status: OnInvoiceEntryStatus.ERROR,
             validationStatus: 'ERROR',
-            validationErrors: [{
-              message: error instanceof Error ? error.message : 'Bilinmeyen hata',
-              severity: 'ERROR',
-            }],
+            validationErrors: [
+              {
+                message:
+                  error instanceof Error ? error.message : 'Bilinmeyen hata',
+                severity: 'ERROR',
+              },
+            ],
           });
         }
       }
 
       // Batch'i COMPLETED durumuna al
-      await this.repository.updateBatch(batchId, {
-        status: OnInvoiceBatchStatus.COMPLETED,
-        validRows: processedCount,
-        totalDiscountAmount: totalDiscount,
-        affectedEnvelopesCount: affectedEnvelopes.size,
-      }, tenantId);
+      await this.repository.updateBatch(
+        batchId,
+        {
+          status: OnInvoiceBatchStatus.COMPLETED,
+          validRows: processedCount,
+          totalDiscountAmount: totalDiscount,
+          affectedEnvelopesCount: affectedEnvelopes.size,
+        },
+        tenantId,
+      );
 
       return {
         batchId: batch.batchCode,
@@ -442,9 +521,13 @@ export class OnInvoiceService {
         affectedEnvelopes: affectedEnvelopes.size,
       };
     } catch (error) {
-      await this.repository.updateBatch(batchId, {
-        status: OnInvoiceBatchStatus.FAILED,
-      }, tenantId);
+      await this.repository.updateBatch(
+        batchId,
+        {
+          status: OnInvoiceBatchStatus.FAILED,
+        },
+        tenantId,
+      );
       throw error;
     }
   }
@@ -478,8 +561,11 @@ export class OnInvoiceService {
       });
     } catch (error) {
       console.error('Error in getEntries:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new BadRequestException(`On-Invoice entry'leri getirilirken hata oluştu: ${errorMessage}`);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(
+        `On-Invoice entry'leri getirilirken hata oluştu: ${errorMessage}`,
+      );
     }
   }
 

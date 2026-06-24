@@ -7,13 +7,9 @@ import { LedgerRepository } from './ledger.repository';
 import { BudgetModule } from '../../../shared/budget/budget.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([LedgerEntry]),
-    BudgetModule,
-  ],
+  imports: [TypeOrmModule.forFeature([LedgerEntry]), BudgetModule],
   controllers: [LedgerController],
   providers: [LedgerService, LedgerRepository],
   exports: [LedgerService, LedgerRepository],
 })
 export class LedgerModule {}
-

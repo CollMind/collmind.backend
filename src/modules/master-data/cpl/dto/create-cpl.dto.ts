@@ -1,4 +1,14 @@
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsNumber, MaxLength, IsEnum, IsArray } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsBoolean,
+  IsNumber,
+  MaxLength,
+  IsEnum,
+  IsArray,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateCplDto {
@@ -75,7 +85,11 @@ export class CreateCplDto {
   @IsOptional()
   annualRevenue?: number;
 
-  @ApiPropertyOptional({ description: 'Status', enum: ['PENDING', 'ACTIVE', 'SUSPENDED', 'DELETED'], default: 'ACTIVE' })
+  @ApiPropertyOptional({
+    description: 'Status',
+    enum: ['PENDING', 'ACTIVE', 'SUSPENDED', 'DELETED'],
+    default: 'ACTIVE',
+  })
   @IsEnum(['PENDING', 'ACTIVE', 'SUSPENDED', 'DELETED'])
   @IsOptional()
   status?: 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'DELETED';
@@ -84,7 +98,10 @@ export class CreateCplDto {
   @IsOptional()
   metadata?: Record<string, any>;
 
-  @ApiPropertyOptional({ description: 'Customer IDs to assign to this CPL', type: [String] })
+  @ApiPropertyOptional({
+    description: 'Customer IDs to assign to this CPL',
+    type: [String],
+  })
   @IsArray()
   @IsUUID(undefined, { each: true })
   @IsOptional()

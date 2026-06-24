@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateAgreementTransactions1704067820000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -221,5 +227,3 @@ export class CreateAgreementTransactions1704067820000 implements MigrationInterf
     await queryRunner.dropTable('main.agreement_transactions', true);
   }
 }
-
-

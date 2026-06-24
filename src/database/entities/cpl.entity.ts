@@ -1,4 +1,11 @@
-import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Customer } from './customer.entity';
 import { Channel } from './channel.entity';
@@ -43,7 +50,13 @@ export class Cpl extends BaseEntity {
   @Column({ name: 'is_vip', type: 'boolean', default: false })
   isVip!: boolean;
 
-  @Column({ name: 'annual_revenue', type: 'decimal', precision: 15, scale: 2, nullable: true })
+  @Column({
+    name: 'annual_revenue',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    nullable: true,
+  })
   annualRevenue?: number;
 
   @Column({

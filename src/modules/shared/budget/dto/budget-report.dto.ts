@@ -1,4 +1,10 @@
-import { IsEnum, IsDateString, IsUUID, IsString, IsOptional } from 'class-validator';
+import {
+  IsEnum,
+  IsDateString,
+  IsUUID,
+  IsString,
+  IsOptional,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PeriodType } from '../../../../database/entities/budget-allocation.entity';
 

@@ -4,7 +4,7 @@ export class CreateTenants1704067200000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Create schema if not exists
     await queryRunner.query(`CREATE SCHEMA IF NOT EXISTS "main"`);
-    
+
     // Create enum types if not exists
     await queryRunner.query(`
       DO $$ BEGIN
@@ -205,4 +205,3 @@ export class CreateTenants1704067200000 implements MigrationInterface {
     await queryRunner.query(`DROP TYPE IF EXISTS "main"."tenants_plan_enum"`);
   }
 }
-

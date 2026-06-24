@@ -29,6 +29,8 @@ export class AddFinanceManagerAndCategoryManagerRoles1771182475737 implements Mi
     // 3. Drop the old enum
     // This is complex and not recommended for production
     // Instead, we'll just log a warning
-    console.warn('⚠️  Cannot remove enum values in PostgreSQL. Manual rollback required if needed.');
+    console.warn(
+      '⚠️  Cannot remove enum values in PostgreSQL. Manual rollback required if needed.',
+    );
   }
 }

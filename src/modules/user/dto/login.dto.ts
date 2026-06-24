@@ -10,7 +10,10 @@ export class LoginDto {
   @IsString()
   password!: string;
 
-  @ApiPropertyOptional({ example: '192.168.1.1', description: 'Client IP address' })
+  @ApiPropertyOptional({
+    example: '192.168.1.1',
+    description: 'Client IP address',
+  })
   @IsOptional()
   @IsIP()
   ipAddress?: string;
@@ -32,4 +35,3 @@ export class LoginResponseDto {
     tenantId: string;
   };
 }
-

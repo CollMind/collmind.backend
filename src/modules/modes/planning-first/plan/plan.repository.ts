@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Plan, PlanStatus, PlanFu, PlanSku } from '../../../../database/entities/plan.entity';
+import {
+  Plan,
+  PlanStatus,
+  PlanFu,
+  PlanSku,
+} from '../../../../database/entities/plan.entity';
 
 @Injectable()
 export class PlanRepository {
@@ -45,13 +50,17 @@ export class PlanRepository {
     });
   }
 
-  async findAll(tenantId: string, filters?: {
-    status?: PlanStatus;
-    cplId?: string;
-    channelId?: string;
-    categoryId?: string;
-  }): Promise<Plan[]> {
-    const query = this.planRepo.createQueryBuilder('plan')
+  async findAll(
+    tenantId: string,
+    filters?: {
+      status?: PlanStatus;
+      cplId?: string;
+      channelId?: string;
+      categoryId?: string;
+    },
+  ): Promise<Plan[]> {
+    const query = this.planRepo
+      .createQueryBuilder('plan')
       .where('plan.tenantId = :tenantId', { tenantId })
       .andWhere('plan.deletedAt IS NULL');
 
@@ -62,29 +71,39 @@ export class PlanRepository {
       query.andWhere('plan.cplId = :cplId', { cplId: filters.cplId });
     }
     if (filters?.channelId) {
-      query.andWhere('plan.channelId = :channelId', { channelId: filters.channelId });
+      query.andWhere('plan.channelId = :channelId', {
+        channelId: filters.channelId,
+      });
     }
     if (filters?.categoryId) {
-      query.andWhere('plan.categoryId = :categoryId', { categoryId: filters.categoryId });
+      query.andWhere('plan.categoryId = :categoryId', {
+        categoryId: filters.categoryId,
+      });
     }
 
-    return query
-      .leftJoinAndSelect('plan.cpl', 'cpl')
-      .leftJoinAndSelect('plan.channel', 'channel')
-      .leftJoinAndSelect('plan.category', 'category')
-      // .leftJoinAndSelect('plan.submittedBy', 'submittedBy') // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
-      // .leftJoinAndSelect('plan.escalatedBy', 'escalatedBy') // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
-      .leftJoinAndSelect('plan.approvedBy', 'approvedBy')
-      .leftJoinAndSelect('plan.rejectedBy', 'rejectedBy')
-      .leftJoinAndSelect('plan.planFus', 'planFus')
-      .leftJoinAndSelect('planFus.fu', 'fu')
-      .leftJoinAndSelect('planFus.planSkus', 'planSkus')
-      .leftJoinAndSelect('planSkus.sku', 'sku')
-      .orderBy('plan.createdAt', 'DESC')
-      .getMany();
+    return (
+      query
+        .leftJoinAndSelect('plan.cpl', 'cpl')
+        .leftJoinAndSelect('plan.channel', 'channel')
+        .leftJoinAndSelect('plan.category', 'category')
+        // .leftJoinAndSelect('plan.submittedBy', 'submittedBy') // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
+        // .leftJoinAndSelect('plan.escalatedBy', 'escalatedBy') // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
+        .leftJoinAndSelect('plan.approvedBy', 'approvedBy')
+        .leftJoinAndSelect('plan.rejectedBy', 'rejectedBy')
+        .leftJoinAndSelect('plan.planFus', 'planFus')
+        .leftJoinAndSelect('planFus.fu', 'fu')
+        .leftJoinAndSelect('planFus.planSkus', 'planSkus')
+        .leftJoinAndSelect('planSkus.sku', 'sku')
+        .orderBy('plan.createdAt', 'DESC')
+        .getMany()
+    );
   }
 
-  async update(id: string, tenantId: string, data: Partial<Plan>): Promise<Plan> {
+  async update(
+    id: string,
+    tenantId: string,
+    data: Partial<Plan>,
+  ): Promise<Plan> {
     await this.planRepo.update({ id, tenantId }, data);
     const updated = await this.findById(id, tenantId);
     if (!updated) {
@@ -112,7 +131,7 @@ export class PlanRepository {
     const month = new Date().getMonth() + 1;
     const quarter = Math.ceil(month / 3);
     const prefix = `PLAN-${year}-Q${quarter}-`;
-    
+
     // Find the highest sequence number for this quarter and year
     const plans = await this.planRepo
       .createQueryBuilder('plan')
@@ -144,7 +163,13 @@ export class PlanRepository {
   }
 
   // PlanFU methods
-  async addFu(planId: string, fuId: string, tenantId: string, userId: string, tactics?: Record<string, number>): Promise<PlanFu> {
+  async addFu(
+    planId: string,
+    fuId: string,
+    tenantId: string,
+    userId: string,
+    tactics?: Record<string, number>,
+  ): Promise<PlanFu> {
     const planFu = this.planFuRepo.create({
       planId,
       fuId,
@@ -182,7 +207,14 @@ export class PlanRepository {
   }
 
   // PlanSKU methods
-  async addSku(planFuId: string, skuId: string, tenantId: string, userId: string, baseVolume?: number, plannedVolume?: number): Promise<PlanSku> {
+  async addSku(
+    planFuId: string,
+    skuId: string,
+    tenantId: string,
+    userId: string,
+    baseVolume?: number,
+    plannedVolume?: number,
+  ): Promise<PlanSku> {
     const planSku = this.planSkuRepo.create({
       planFuId,
       skuId,
@@ -190,7 +222,8 @@ export class PlanRepository {
       createdBy: userId,
       baseVolume,
       plannedVolume,
-      incrementalVolume: plannedVolume && baseVolume ? plannedVolume - baseVolume : 0,
+      incrementalVolume:
+        plannedVolume && baseVolume ? plannedVolume - baseVolume : 0,
     });
     return this.planSkuRepo.save(planSku);
   }
@@ -202,7 +235,10 @@ export class PlanRepository {
     });
   }
 
-  async updatePlanSku(planSkuId: string, data: Partial<PlanSku>): Promise<PlanSku> {
+  async updatePlanSku(
+    planSkuId: string,
+    data: Partial<PlanSku>,
+  ): Promise<PlanSku> {
     await this.planSkuRepo.update({ id: planSkuId }, data);
     const updated = await this.planSkuRepo.findOne({
       where: { id: planSkuId },

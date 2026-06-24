@@ -28,7 +28,9 @@ export class PromoOnInvoiceSpend {
   @ApiPropertyOptional({ description: 'TPR on-invoice spend' })
   tprOn?: number;
 
-  @ApiPropertyOptional({ description: 'WS TPR on-invoice spend (Wholesale only)' })
+  @ApiPropertyOptional({
+    description: 'WS TPR on-invoice spend (Wholesale only)',
+  })
   wsTprOn?: number;
 
   [mechanicCode: string]: number | undefined;
@@ -63,10 +65,16 @@ export class PlannedSpendBreakdown {
   @ApiProperty({ description: 'Planned LTA off-invoice spend' })
   ltaOffInvoice!: number;
 
-  @ApiProperty({ description: 'Promo on-invoice spend breakdown', type: PromoOnInvoiceSpend })
+  @ApiProperty({
+    description: 'Promo on-invoice spend breakdown',
+    type: PromoOnInvoiceSpend,
+  })
   promoOnInvoice!: PromoOnInvoiceSpend;
 
-  @ApiProperty({ description: 'Promo off-invoice spend breakdown', type: PromoOffInvoiceSpend })
+  @ApiProperty({
+    description: 'Promo off-invoice spend breakdown',
+    type: PromoOffInvoiceSpend,
+  })
   promoOffInvoice!: PromoOffInvoiceSpend;
 
   @ApiProperty({ description: 'Total promo on-invoice spend' })
@@ -100,13 +108,22 @@ export class SpendBreakdown {
   @ApiProperty({ description: 'SKU ID' })
   skuId!: string;
 
-  @ApiProperty({ description: 'Base spend breakdown', type: BaseSpendBreakdown })
+  @ApiProperty({
+    description: 'Base spend breakdown',
+    type: BaseSpendBreakdown,
+  })
   base!: BaseSpendBreakdown;
 
-  @ApiProperty({ description: 'Planned spend breakdown', type: PlannedSpendBreakdown })
+  @ApiProperty({
+    description: 'Planned spend breakdown',
+    type: PlannedSpendBreakdown,
+  })
   planned!: PlannedSpendBreakdown;
 
-  @ApiProperty({ description: 'Incremental spend breakdown', type: IncrementalSpendBreakdown })
+  @ApiProperty({
+    description: 'Incremental spend breakdown',
+    type: IncrementalSpendBreakdown,
+  })
   incremental!: IncrementalSpendBreakdown;
 }
 
@@ -117,13 +134,22 @@ export class FUSpendBreakdown {
   @ApiProperty({ description: 'SKU spend breakdowns', type: [SpendBreakdown] })
   skuBreakdowns!: SpendBreakdown[];
 
-  @ApiProperty({ description: 'Aggregated base spend breakdown', type: BaseSpendBreakdown })
+  @ApiProperty({
+    description: 'Aggregated base spend breakdown',
+    type: BaseSpendBreakdown,
+  })
   aggregatedBase!: BaseSpendBreakdown;
 
-  @ApiProperty({ description: 'Aggregated planned spend breakdown', type: PlannedSpendBreakdown })
+  @ApiProperty({
+    description: 'Aggregated planned spend breakdown',
+    type: PlannedSpendBreakdown,
+  })
   aggregatedPlanned!: PlannedSpendBreakdown;
 
-  @ApiProperty({ description: 'Aggregated incremental spend breakdown', type: IncrementalSpendBreakdown })
+  @ApiProperty({
+    description: 'Aggregated incremental spend breakdown',
+    type: IncrementalSpendBreakdown,
+  })
   aggregatedIncremental!: IncrementalSpendBreakdown;
 }
 

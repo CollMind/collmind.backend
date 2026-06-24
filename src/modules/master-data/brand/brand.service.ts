@@ -12,8 +12,14 @@ import { Brand } from '../../../database/entities/brand.entity';
 export class BrandService {
   constructor(private readonly brandRepository: BrandRepository) {}
 
-  async create(tenantId: string, createBrandDto: CreateBrandDto): Promise<Brand> {
-    const existing = await this.brandRepository.findByCode(tenantId, createBrandDto.code);
+  async create(
+    tenantId: string,
+    createBrandDto: CreateBrandDto,
+  ): Promise<Brand> {
+    const existing = await this.brandRepository.findByCode(
+      tenantId,
+      createBrandDto.code,
+    );
     if (existing) {
       throw new ConflictException('Brand with this code already exists');
     }
@@ -51,7 +57,10 @@ export class BrandService {
     const brand = await this.findOne(tenantId, id);
 
     if (updateBrandDto.code && updateBrandDto.code !== brand.code) {
-      const existing = await this.brandRepository.findByCode(tenantId, updateBrandDto.code);
+      const existing = await this.brandRepository.findByCode(
+        tenantId,
+        updateBrandDto.code,
+      );
       if (existing && existing.id !== id) {
         throw new ConflictException('Brand with this code already exists');
       }

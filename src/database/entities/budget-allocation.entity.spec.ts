@@ -42,8 +42,14 @@ describe('BudgetAllocation Entity', () => {
     allocation.onInvoiceReserved = 0;
     allocation.offInvoiceReserved = 0;
 
-    const availableOnInvoice = allocation.onInvoiceBudget - allocation.onInvoiceUtilized - allocation.onInvoiceReserved;
-    const availableOffInvoice = allocation.offInvoiceBudget - allocation.offInvoiceUtilized - allocation.offInvoiceReserved;
+    const availableOnInvoice =
+      allocation.onInvoiceBudget -
+      allocation.onInvoiceUtilized -
+      allocation.onInvoiceReserved;
+    const availableOffInvoice =
+      allocation.offInvoiceBudget -
+      allocation.offInvoiceUtilized -
+      allocation.offInvoiceReserved;
 
     expect(availableOnInvoice).toBe(7000);
     expect(availableOffInvoice).toBe(3500);

@@ -1,10 +1,25 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { PlanFu, PlanSku } from '../../../database/entities/plan.entity';
-import { Mechanic, MechanicCategory, MechanicType } from '../../../database/entities/mechanic.entity';
-import { PlanMechanicValue, DistributionMethod } from '../../../database/entities/plan-mechanic-value.entity';
-import { MechanicSpendBreakdown, DistributionBasis } from '../../../database/entities/mechanic-spend-breakdown.entity';
+import {
+  Mechanic,
+  MechanicCategory,
+  MechanicType,
+} from '../../../database/entities/mechanic.entity';
+import {
+  PlanMechanicValue,
+  DistributionMethod,
+} from '../../../database/entities/plan-mechanic-value.entity';
+import {
+  MechanicSpendBreakdown,
+  DistributionBasis,
+} from '../../../database/entities/mechanic-spend-breakdown.entity';
 import {
   DistributionResult,
   DistributionStatus,
@@ -42,7 +57,12 @@ export class SpendDistributionService {
     // Get FU with SKUs
     const planFu = await this.planFuRepository.findOne({
       where: { id: planFuId, tenantId },
-      relations: ['planSkus', 'planSkus.sku', 'planMechanicValues', 'planMechanicValues.mechanic'],
+      relations: [
+        'planSkus',
+        'planSkus.sku',
+        'planMechanicValues',
+        'planMechanicValues.mechanic',
+      ],
     });
 
     if (!planFu) {
@@ -99,7 +119,9 @@ export class SpendDistributionService {
     }
 
     // Determine distribution strategy
-    const distributionMethod = planMechanicValue.distributionMethod || this.determineDistributionMethod(mechanic);
+    const distributionMethod =
+      planMechanicValue.distributionMethod ||
+      this.determineDistributionMethod(mechanic);
     const skuDistributions = await this.calculateDistribution(
       planSkus,
       mechanic,
@@ -108,7 +130,10 @@ export class SpendDistributionService {
     );
 
     // Calculate totals
-    const distributedTotal = skuDistributions.reduce((sum, dist) => sum + dist.amount, 0);
+    const distributedTotal = skuDistributions.reduce(
+      (sum, dist) => sum + dist.amount,
+      0,
+    );
     const difference = Math.abs(enteredValue - distributedTotal);
 
     // Validate and adjust for rounding errors
@@ -119,7 +144,13 @@ export class SpendDistributionService {
     );
 
     // Save breakdowns
-    await this.saveBreakdowns(tenantId, planMechanicValue.id, mechanicId, adjustedDistributions, distributionMethod);
+    await this.saveBreakdowns(
+      tenantId,
+      planMechanicValue.id,
+      mechanicId,
+      adjustedDistributions,
+      distributionMethod,
+    );
 
     // Update PlanMechanicValue with calculated spend
     planMechanicValue.calculatedSpend = distributedTotal;
@@ -148,7 +179,9 @@ export class SpendDistributionService {
       skuDistributions: adjustedDistributions,
       warnings:
         difference > this.ROUNDING_TOLERANCE
-          ? [`Distribution difference: ${difference.toFixed(2)}. Adjusted to match total.`]
+          ? [
+              `Distribution difference: ${difference.toFixed(2)}. Adjusted to match total.`,
+            ]
           : undefined,
     };
   }
@@ -178,7 +211,10 @@ export class SpendDistributionService {
     }
 
     // Recalculate each mechanic
-    for (const [mechanicId, mechanicBreakdowns] of breakdownsByMechanic.entries()) {
+    for (const [
+      mechanicId,
+      mechanicBreakdowns,
+    ] of breakdownsByMechanic.entries()) {
       const firstBreakdown = mechanicBreakdowns[0];
       const planMechanicValue = firstBreakdown.planMechanicValue;
       const mechanic = planMechanicValue.mechanic;
@@ -198,7 +234,8 @@ export class SpendDistributionService {
 
       // Recalculate distribution
       const distributionMethod =
-        planMechanicValue.distributionMethod || this.determineDistributionMethod(mechanic);
+        planMechanicValue.distributionMethod ||
+        this.determineDistributionMethod(mechanic);
       const skuDistributions = await this.calculateDistribution(
         planSkus,
         mechanic,
@@ -216,7 +253,10 @@ export class SpendDistributionService {
       );
 
       // Update calculated spend
-      const distributedTotal = skuDistributions.reduce((sum, dist) => sum + dist.amount, 0);
+      const distributedTotal = skuDistributions.reduce(
+        (sum, dist) => sum + dist.amount,
+        0,
+      );
       planMechanicValue.calculatedSpend = distributedTotal;
       await this.planMechanicValueRepository.save(planMechanicValue);
     }
@@ -225,10 +265,17 @@ export class SpendDistributionService {
   /**
    * Get distribution breakdown for a FU
    */
-  async getDistributionBreakdown(tenantId: string, planFuId: string): Promise<FUDistributionBreakdown> {
+  async getDistributionBreakdown(
+    tenantId: string,
+    planFuId: string,
+  ): Promise<FUDistributionBreakdown> {
     const planFu = await this.planFuRepository.findOne({
       where: { id: planFuId, tenantId },
-      relations: ['planMechanicValues', 'planMechanicValues.mechanic', 'planMechanicValues.spendBreakdowns'],
+      relations: [
+        'planMechanicValues',
+        'planMechanicValues.mechanic',
+        'planMechanicValues.spendBreakdowns',
+      ],
     });
 
     if (!planFu) {
@@ -258,8 +305,13 @@ export class SpendDistributionService {
         d.ratio = total > 0 ? d.amount / total : 0;
       });
 
-      const distributedTotal = skuDistributions.reduce((sum, d) => sum + d.amount, 0);
-      const isValid = Math.abs((pmv.enteredValue || 0) - distributedTotal) <= this.ROUNDING_TOLERANCE;
+      const distributedTotal = skuDistributions.reduce(
+        (sum, d) => sum + d.amount,
+        0,
+      );
+      const isValid =
+        Math.abs((pmv.enteredValue || 0) - distributedTotal) <=
+        this.ROUNDING_TOLERANCE;
 
       mechanics[mechanic.code] = {
         mechanicCode: mechanic.code,
@@ -289,7 +341,10 @@ export class SpendDistributionService {
   /**
    * Validate distribution for a FU
    */
-  async validateDistribution(tenantId: string, planFuId: string): Promise<DistributionValidationResult> {
+  async validateDistribution(
+    tenantId: string,
+    planFuId: string,
+  ): Promise<DistributionValidationResult> {
     const breakdown = await this.getDistributionBreakdown(tenantId, planFuId);
     const planFu = await this.planFuRepository.findOne({
       where: { id: planFuId, tenantId },
@@ -326,7 +381,9 @@ export class SpendDistributionService {
     }
 
     const totalDifference = Math.abs(totalFuSpend - totalSkuDistributed);
-    const isValid = totalDifference <= this.ROUNDING_TOLERANCE && invalidMechanics.length === 0;
+    const isValid =
+      totalDifference <= this.ROUNDING_TOLERANCE &&
+      invalidMechanics.length === 0;
 
     return {
       isValid,
@@ -334,8 +391,10 @@ export class SpendDistributionService {
       skuTotalDistributed: totalSkuDistributed,
       difference: totalDifference,
       tolerance: this.ROUNDING_TOLERANCE,
-      invalidMechanics: invalidMechanics.length > 0 ? invalidMechanics : undefined,
-      adjustments: Object.keys(adjustments).length > 0 ? adjustments : undefined,
+      invalidMechanics:
+        invalidMechanics.length > 0 ? invalidMechanics : undefined,
+      adjustments:
+        Object.keys(adjustments).length > 0 ? adjustments : undefined,
     };
   }
 
@@ -376,7 +435,10 @@ export class SpendDistributionService {
   /**
    * Distribute by percentage (each SKU gets same percentage)
    */
-  private distributeByPercentage(planSkus: PlanSku[], percentage: number): SKUDistribution[] {
+  private distributeByPercentage(
+    planSkus: PlanSku[],
+    percentage: number,
+  ): SKUDistribution[] {
     const distributions: SKUDistribution[] = [];
 
     for (const planSku of planSkus) {
@@ -403,9 +465,15 @@ export class SpendDistributionService {
   /**
    * Distribute by per-unit value
    */
-  private distributeByPerUnit(planSkus: PlanSku[], perUnitValue: number): SKUDistribution[] {
+  private distributeByPerUnit(
+    planSkus: PlanSku[],
+    perUnitValue: number,
+  ): SKUDistribution[] {
     const distributions: SKUDistribution[] = [];
-    const totalVolume = planSkus.reduce((sum, sku) => sum + (Number(sku.plannedVolume) || 0), 0);
+    const totalVolume = planSkus.reduce(
+      (sum, sku) => sum + (Number(sku.plannedVolume) || 0),
+      0,
+    );
 
     for (const planSku of planSkus) {
       const plannedVolume = Number(planSku.plannedVolume) || 0;
@@ -427,12 +495,21 @@ export class SpendDistributionService {
   /**
    * Distribute lumpsum by base volume ratio (or planned volume if base is 0)
    */
-  private distributeByLumpsum(planSkus: PlanSku[], lumpsumTotal: number): SKUDistribution[] {
+  private distributeByLumpsum(
+    planSkus: PlanSku[],
+    lumpsumTotal: number,
+  ): SKUDistribution[] {
     const distributions: SKUDistribution[] = [];
 
     // Calculate total base volume
-    const totalBaseVolume = planSkus.reduce((sum, sku) => sum + (Number(sku.baseVolume) || 0), 0);
-    const totalPlannedVolume = planSkus.reduce((sum, sku) => sum + (Number(sku.plannedVolume) || 0), 0);
+    const totalBaseVolume = planSkus.reduce(
+      (sum, sku) => sum + (Number(sku.baseVolume) || 0),
+      0,
+    );
+    const totalPlannedVolume = planSkus.reduce(
+      (sum, sku) => sum + (Number(sku.plannedVolume) || 0),
+      0,
+    );
 
     // Use base volume if available, otherwise planned volume
     const useBaseVolume = totalBaseVolume > 0;
@@ -463,7 +540,9 @@ export class SpendDistributionService {
         skuCode: planSku.sku?.code || 'N/A',
         amount,
         ratio,
-        basis: useBaseVolume ? DistributionBasis.BASE_VOLUME_RATIO : DistributionBasis.PLANNED_VOLUME_RATIO,
+        basis: useBaseVolume
+          ? DistributionBasis.BASE_VOLUME_RATIO
+          : DistributionBasis.PLANNED_VOLUME_RATIO,
       });
     }
 

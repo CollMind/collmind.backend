@@ -6,5 +6,3 @@ export class AppService {
     return 'CollMind TPM Backend is running!';
   }
 }
-
-

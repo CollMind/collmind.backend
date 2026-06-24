@@ -2,8 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BudgetAllocationService } from './budget-allocation.service';
-import { BudgetAllocation, PeriodType } from '../../../database/entities/budget-allocation.entity';
-import { BudgetTransactionLog, BudgetTransactionType } from '../../../database/entities/budget-transaction-log.entity';
+import {
+  BudgetAllocation,
+  PeriodType,
+} from '../../../database/entities/budget-allocation.entity';
+import {
+  BudgetTransactionLog,
+  BudgetTransactionType,
+} from '../../../database/entities/budget-transaction-log.entity';
 import { Plan } from '../../../database/entities/plan.entity';
 import { BudgetCheckContext } from './dto/budget-check-context.dto';
 import { SpendBreakdown } from '../spend-calculation/dto/spend-breakdown.dto';
@@ -52,7 +58,9 @@ describe('BudgetAllocationService', () => {
 
     service = module.get<BudgetAllocationService>(BudgetAllocationService);
     budgetAllocationRepo = module.get(getRepositoryToken(BudgetAllocation));
-    budgetTransactionLogRepo = module.get(getRepositoryToken(BudgetTransactionLog));
+    budgetTransactionLogRepo = module.get(
+      getRepositoryToken(BudgetTransactionLog),
+    );
     planRepo = module.get(getRepositoryToken(Plan));
   });
 
@@ -80,13 +88,24 @@ describe('BudgetAllocationService', () => {
         getMany: jest.fn().mockResolvedValue([]),
       };
 
-      budgetAllocationRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder as any);
-      budgetAllocationRepo.create.mockReturnValue({ id: mockAllocationId } as any);
-      budgetAllocationRepo.save.mockResolvedValue({ id: mockAllocationId, ...dto } as any);
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
+      budgetAllocationRepo.create.mockReturnValue({
+        id: mockAllocationId,
+      } as any);
+      budgetAllocationRepo.save.mockResolvedValue({
+        id: mockAllocationId,
+        ...dto,
+      } as any);
       budgetTransactionLogRepo.create.mockReturnValue({} as any);
       budgetTransactionLogRepo.save.mockResolvedValue({} as any);
 
-      const result = await service.createAllocation(mockTenantId, mockUserId, dto);
+      const result = await service.createAllocation(
+        mockTenantId,
+        mockUserId,
+        dto,
+      );
 
       expect(result).toBeDefined();
       expect(budgetAllocationRepo.save).toHaveBeenCalled();
@@ -102,9 +121,9 @@ describe('BudgetAllocationService', () => {
         offInvoiceBudget: 50000,
       };
 
-      await expect(service.createAllocation(mockTenantId, mockUserId, dto)).rejects.toThrow(
-        'At least one dimension',
-      );
+      await expect(
+        service.createAllocation(mockTenantId, mockUserId, dto),
+      ).rejects.toThrow('At least one dimension');
     });
 
     it('should throw error if overlapping allocation exists', async () => {
@@ -124,9 +143,13 @@ describe('BudgetAllocationService', () => {
         getMany: jest.fn().mockResolvedValue([{ id: 'existing' }]),
       };
 
-      budgetAllocationRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder as any);
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
 
-      await expect(service.createAllocation(mockTenantId, mockUserId, dto)).rejects.toThrow('already exists');
+      await expect(
+        service.createAllocation(mockTenantId, mockUserId, dto),
+      ).rejects.toThrow('already exists');
     });
   });
 
@@ -155,7 +178,9 @@ describe('BudgetAllocationService', () => {
         getOne: jest.fn().mockResolvedValue(mockAllocation),
       };
 
-      budgetAllocationRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder as any);
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
 
       const result = await service.checkAvailability(mockTenantId, context);
 
@@ -189,7 +214,9 @@ describe('BudgetAllocationService', () => {
         getOne: jest.fn().mockResolvedValue(mockAllocation),
       };
 
-      budgetAllocationRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder as any);
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
 
       const result = await service.checkAvailability(mockTenantId, context);
 
@@ -254,12 +281,21 @@ describe('BudgetAllocationService', () => {
         getOne: jest.fn().mockResolvedValue(mockAllocation),
       };
 
-      budgetAllocationRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder as any);
-      budgetAllocationRepo.save.mockResolvedValue(mockAllocation as BudgetAllocation);
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
+      budgetAllocationRepo.save.mockResolvedValue(
+        mockAllocation as BudgetAllocation,
+      );
       budgetTransactionLogRepo.create.mockReturnValue({} as any);
       budgetTransactionLogRepo.save.mockResolvedValue({} as any);
 
-      await service.reserveBudget(mockTenantId, mockUserId, mockPlanId, amounts);
+      await service.reserveBudget(
+        mockTenantId,
+        mockUserId,
+        mockPlanId,
+        amounts,
+      );
 
       expect(budgetAllocationRepo.save).toHaveBeenCalled();
       expect(budgetTransactionLogRepo.save).toHaveBeenCalled();
@@ -282,7 +318,9 @@ describe('BudgetAllocationService', () => {
         } as BudgetAllocation,
       };
 
-      budgetTransactionLogRepo.findOne.mockResolvedValue(mockReservation as BudgetTransactionLog);
+      budgetTransactionLogRepo.findOne.mockResolvedValue(
+        mockReservation as BudgetTransactionLog,
+      );
       budgetAllocationRepo.save.mockResolvedValue({} as BudgetAllocation);
       budgetTransactionLogRepo.create.mockReturnValue({} as any);
       budgetTransactionLogRepo.save.mockResolvedValue({} as any);

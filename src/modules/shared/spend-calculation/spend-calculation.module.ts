@@ -27,7 +27,15 @@ import { BudgetModule } from '../budget/budget.module';
     BudgetModule,
   ],
   controllers: [SpendCalculationController],
-  providers: [SpendCalculationService, SpendDistributionService, SpendValidationService],
-  exports: [SpendCalculationService, SpendDistributionService, SpendValidationService],
+  providers: [
+    SpendCalculationService,
+    SpendDistributionService,
+    SpendValidationService,
+  ],
+  exports: [
+    SpendCalculationService,
+    SpendDistributionService,
+    SpendValidationService,
+  ],
 })
 export class SpendCalculationModule {}

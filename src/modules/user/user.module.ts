@@ -33,4 +33,3 @@ import { BudgetEnvelope } from '../../database/entities/budget-envelope.entity';
   exports: [UserService, UserRepository],
 })
 export class UserModule {}
-

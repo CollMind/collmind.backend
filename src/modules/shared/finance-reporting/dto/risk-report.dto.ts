@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsString, IsArray, IsObject, IsOptional } from 'class-validator';
+import {
+  IsNumber,
+  IsString,
+  IsArray,
+  IsObject,
+  IsOptional,
+} from 'class-validator';
 
 export class RiskPlan {
   @ApiProperty({ description: 'Plan ID' })

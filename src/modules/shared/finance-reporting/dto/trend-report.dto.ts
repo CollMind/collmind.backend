@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsString, IsArray, IsObject, IsOptional } from 'class-validator';
+import {
+  IsNumber,
+  IsString,
+  IsArray,
+  IsObject,
+  IsOptional,
+} from 'class-validator';
 
 export class TrendDataPoint {
   @ApiProperty({ description: 'Date (YYYY-MM-DD)' })
@@ -50,7 +56,10 @@ export class TrendDataPoint {
 }
 
 export class TrendReport {
-  @ApiProperty({ description: 'Granularity', enum: ['daily', 'weekly', 'monthly'] })
+  @ApiProperty({
+    description: 'Granularity',
+    enum: ['daily', 'weekly', 'monthly'],
+  })
   @IsString()
   granularity!: string;
 

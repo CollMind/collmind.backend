@@ -20,21 +20,29 @@ export class BudgetRepository {
     @InjectRepository(BudgetTransaction)
     private readonly transactionRepository: Repository<BudgetTransaction>,
     private readonly dataSource: DataSource,
-  ) { }
+  ) {}
 
   // Budget Envelope methods
-  async createEnvelope(envelope: Partial<BudgetEnvelope>): Promise<BudgetEnvelope> {
+  async createEnvelope(
+    envelope: Partial<BudgetEnvelope>,
+  ): Promise<BudgetEnvelope> {
     const newEnvelope = this.envelopeRepository.create(envelope);
     return this.envelopeRepository.save(newEnvelope);
   }
 
-  async findEnvelopeById(tenantId: string, id: string): Promise<BudgetEnvelope | null> {
+  async findEnvelopeById(
+    tenantId: string,
+    id: string,
+  ): Promise<BudgetEnvelope | null> {
     return this.envelopeRepository.findOne({
       where: { tenantId, id },
     });
   }
 
-  async findEnvelopeByCode(tenantId: string, code: string): Promise<BudgetEnvelope | null> {
+  async findEnvelopeByCode(
+    tenantId: string,
+    code: string,
+  ): Promise<BudgetEnvelope | null> {
     return this.envelopeRepository.findOne({
       where: { tenantId, code },
     });
@@ -55,7 +63,9 @@ export class BudgetRepository {
       .createQueryBuilder('envelope')
       .where('envelope.tenantId = :tenantId', { tenantId })
       .andWhere('envelope.deletedAt IS NULL')
-      .andWhere('envelope.status = :status', { status: BudgetEnvelopeStatus.ACTIVE });
+      .andWhere('envelope.status = :status', {
+        status: BudgetEnvelopeStatus.ACTIVE,
+      });
 
     // Match by period - prefer exact match, fallback to year pattern
     query.andWhere(
@@ -108,7 +118,10 @@ export class BudgetRepository {
   }
 
   // MC-001: Pessimistic locking for budget reservation
-  async findEnvelopeWithLock(tenantId: string, id: string): Promise<BudgetEnvelope | null> {
+  async findEnvelopeWithLock(
+    tenantId: string,
+    id: string,
+  ): Promise<BudgetEnvelope | null> {
     return this.envelopeRepository
       .createQueryBuilder('envelope')
       .setLock('pessimistic_write')
@@ -118,12 +131,17 @@ export class BudgetRepository {
   }
 
   // Budget Transaction methods (Event-Sourced Approach)
-  async createTransaction(transaction: Partial<BudgetTransaction>): Promise<BudgetTransaction> {
+  async createTransaction(
+    transaction: Partial<BudgetTransaction>,
+  ): Promise<BudgetTransaction> {
     const newTransaction = this.transactionRepository.create(transaction);
     return this.transactionRepository.save(newTransaction);
   }
 
-  async findTransactionById(tenantId: string, id: string): Promise<BudgetTransaction | null> {
+  async findTransactionById(
+    tenantId: string,
+    id: string,
+  ): Promise<BudgetTransaction | null> {
     return this.transactionRepository.findOne({
       where: { tenantId, id },
       relations: ['envelope'],
@@ -166,15 +184,22 @@ export class BudgetRepository {
   }
 
   // Computed reserved amount (from RESERVE - RELEASE transactions)
-  async getReservedAmount(tenantId: string, envelopeId: string): Promise<number> {
+  async getReservedAmount(
+    tenantId: string,
+    envelopeId: string,
+  ): Promise<number> {
     // Sum RESERVE transactions
     const reserveResult = await this.transactionRepository
       .createQueryBuilder('tx')
       .select('COALESCE(SUM(tx.amount), 0)', 'reserved')
       .where('tx.tenantId = :tenantId', { tenantId })
       .andWhere('tx.envelopeId = :envelopeId', { envelopeId })
-      .andWhere('tx.txType = :txType', { txType: BudgetTransactionType.RESERVE })
-      .andWhere('tx.txStatus = :txStatus', { txStatus: BudgetTransactionStatus.POSTED })
+      .andWhere('tx.txType = :txType', {
+        txType: BudgetTransactionType.RESERVE,
+      })
+      .andWhere('tx.txStatus = :txStatus', {
+        txStatus: BudgetTransactionStatus.POSTED,
+      })
       .getRawOne();
 
     // Sum RELEASE transactions
@@ -183,8 +208,12 @@ export class BudgetRepository {
       .select('COALESCE(SUM(tx.amount), 0)', 'released')
       .where('tx.tenantId = :tenantId', { tenantId })
       .andWhere('tx.envelopeId = :envelopeId', { envelopeId })
-      .andWhere('tx.txType = :txType', { txType: BudgetTransactionType.RELEASE })
-      .andWhere('tx.txStatus = :txStatus', { txStatus: BudgetTransactionStatus.POSTED })
+      .andWhere('tx.txType = :txType', {
+        txType: BudgetTransactionType.RELEASE,
+      })
+      .andWhere('tx.txStatus = :txStatus', {
+        txStatus: BudgetTransactionStatus.POSTED,
+      })
       .getRawOne();
 
     const reserved = parseFloat(reserveResult?.reserved || '0');
@@ -229,7 +258,7 @@ export class BudgetRepository {
   /**
    * Check budget availability for reservation
    * Uses v_budget_summary view for BRD-compliant calculations
-   * 
+   *
    * @param envelopeId - Budget envelope ID
    * @param tenantId - Tenant ID
    * @param requestedAmount - Amount to check availability for
@@ -251,4 +280,3 @@ export class BudgetRepository {
     };
   }
 }
-

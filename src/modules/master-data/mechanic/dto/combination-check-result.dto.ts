@@ -13,6 +13,8 @@ export class CombinationCheckResult {
   @ApiPropertyOptional({ description: 'Conflicting mechanics', type: [String] })
   conflictingMechanics?: string[];
 
-  @ApiPropertyOptional({ description: 'Total discount percentage if applicable' })
+  @ApiPropertyOptional({
+    description: 'Total discount percentage if applicable',
+  })
   totalDiscountPercentage?: number;
 }

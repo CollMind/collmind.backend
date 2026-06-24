@@ -1,4 +1,12 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsUUID, IsNumber, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsBoolean,
+  IsUUID,
+  IsNumber,
+  MaxLength,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateSkuDto {
@@ -8,7 +16,10 @@ export class CreateSkuDto {
   @MaxLength(50)
   code!: string;
 
-  @ApiProperty({ description: 'SKU name', example: 'Pantene 500ml Parlak Renkler' })
+  @ApiProperty({
+    description: 'SKU name',
+    example: 'Pantene 500ml Parlak Renkler',
+  })
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)

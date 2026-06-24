@@ -1,4 +1,11 @@
-import { MigrationInterface, QueryRunner, Table, TableColumn, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableColumn,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class UpdateBudgetAllocationStructure1771169825000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -55,7 +62,9 @@ export class UpdateBudgetAllocationStructure1771169825000 implements MigrationIn
       `);
 
       for (const fk of foreignKeys) {
-        await queryRunner.query(`ALTER TABLE "main"."budget_allocations" DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
+        await queryRunner.query(
+          `ALTER TABLE "main"."budget_allocations" DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`,
+        );
       }
 
       // Drop old columns if they exist
@@ -117,25 +126,114 @@ export class UpdateBudgetAllocationStructure1771169825000 implements MigrationIn
 
     // Add new columns to budget_allocations
     const columnsToAdd = [
-      { name: 'period_type', check: 'period_type', type: 'enum', enumName: 'budget_allocations_period_type_enum' },
+      {
+        name: 'period_type',
+        check: 'period_type',
+        type: 'enum',
+        enumName: 'budget_allocations_period_type_enum',
+      },
       { name: 'period_start', check: 'period_start', type: 'date' },
       { name: 'period_end', check: 'period_end', type: 'date' },
       { name: 'fiscal_year', check: 'fiscal_year', type: 'int' },
       { name: 'cpl_id', check: 'cpl_id', type: 'uuid', nullable: true },
-      { name: 'channel', check: 'channel', type: 'varchar', length: '50', nullable: true },
-      { name: 'category', check: 'category', type: 'varchar', length: '100', nullable: true },
-      { name: 'on_invoice_budget', check: 'on_invoice_budget', type: 'decimal', precision: 15, scale: 2, default: 0 },
-      { name: 'off_invoice_budget', check: 'off_invoice_budget', type: 'decimal', precision: 15, scale: 2, default: 0 },
-      { name: 'on_invoice_utilized', check: 'on_invoice_utilized', type: 'decimal', precision: 15, scale: 2, default: 0 },
-      { name: 'off_invoice_utilized', check: 'off_invoice_utilized', type: 'decimal', precision: 15, scale: 2, default: 0 },
-      { name: 'on_invoice_reserved', check: 'on_invoice_reserved', type: 'decimal', precision: 15, scale: 2, default: 0 },
-      { name: 'off_invoice_reserved', check: 'off_invoice_reserved', type: 'decimal', precision: 15, scale: 2, default: 0 },
-      { name: 'alert_threshold_80', check: 'alert_threshold_80', type: 'boolean', default: true },
-      { name: 'alert_threshold_95', check: 'alert_threshold_95', type: 'boolean', default: true },
-      { name: 'alert_threshold_100', check: 'alert_threshold_100', type: 'boolean', default: true },
-      { name: 'alert_recipients', check: 'alert_recipients', type: 'jsonb', nullable: true },
-      { name: 'hard_limit_mode', check: 'hard_limit_mode', type: 'boolean', default: false },
-      { name: 'allow_carry_forward', check: 'allow_carry_forward', type: 'boolean', default: false },
+      {
+        name: 'channel',
+        check: 'channel',
+        type: 'varchar',
+        length: '50',
+        nullable: true,
+      },
+      {
+        name: 'category',
+        check: 'category',
+        type: 'varchar',
+        length: '100',
+        nullable: true,
+      },
+      {
+        name: 'on_invoice_budget',
+        check: 'on_invoice_budget',
+        type: 'decimal',
+        precision: 15,
+        scale: 2,
+        default: 0,
+      },
+      {
+        name: 'off_invoice_budget',
+        check: 'off_invoice_budget',
+        type: 'decimal',
+        precision: 15,
+        scale: 2,
+        default: 0,
+      },
+      {
+        name: 'on_invoice_utilized',
+        check: 'on_invoice_utilized',
+        type: 'decimal',
+        precision: 15,
+        scale: 2,
+        default: 0,
+      },
+      {
+        name: 'off_invoice_utilized',
+        check: 'off_invoice_utilized',
+        type: 'decimal',
+        precision: 15,
+        scale: 2,
+        default: 0,
+      },
+      {
+        name: 'on_invoice_reserved',
+        check: 'on_invoice_reserved',
+        type: 'decimal',
+        precision: 15,
+        scale: 2,
+        default: 0,
+      },
+      {
+        name: 'off_invoice_reserved',
+        check: 'off_invoice_reserved',
+        type: 'decimal',
+        precision: 15,
+        scale: 2,
+        default: 0,
+      },
+      {
+        name: 'alert_threshold_80',
+        check: 'alert_threshold_80',
+        type: 'boolean',
+        default: true,
+      },
+      {
+        name: 'alert_threshold_95',
+        check: 'alert_threshold_95',
+        type: 'boolean',
+        default: true,
+      },
+      {
+        name: 'alert_threshold_100',
+        check: 'alert_threshold_100',
+        type: 'boolean',
+        default: true,
+      },
+      {
+        name: 'alert_recipients',
+        check: 'alert_recipients',
+        type: 'jsonb',
+        nullable: true,
+      },
+      {
+        name: 'hard_limit_mode',
+        check: 'hard_limit_mode',
+        type: 'boolean',
+        default: false,
+      },
+      {
+        name: 'allow_carry_forward',
+        check: 'allow_carry_forward',
+        type: 'boolean',
+        default: false,
+      },
     ];
 
     for (const col of columnsToAdd) {
@@ -178,11 +276,13 @@ export class UpdateBudgetAllocationStructure1771169825000 implements MigrationIn
       },
       {
         name: 'on_invoice_available',
-        expression: 'on_invoice_budget - on_invoice_utilized - on_invoice_reserved',
+        expression:
+          'on_invoice_budget - on_invoice_utilized - on_invoice_reserved',
       },
       {
         name: 'off_invoice_available',
-        expression: 'off_invoice_budget - off_invoice_utilized - off_invoice_reserved',
+        expression:
+          'off_invoice_budget - off_invoice_utilized - off_invoice_reserved',
       },
     ];
 
@@ -207,12 +307,26 @@ export class UpdateBudgetAllocationStructure1771169825000 implements MigrationIn
     const indexes = [
       {
         name: 'IDX_budget_allocations_tenant_period',
-        columns: ['tenant_id', 'period_type', 'period_start', 'period_end', 'cpl_id', 'channel', 'category'],
+        columns: [
+          'tenant_id',
+          'period_type',
+          'period_start',
+          'period_end',
+          'cpl_id',
+          'channel',
+          'category',
+        ],
         unique: true,
       },
-      { name: 'IDX_budget_allocations_period_fiscal', columns: ['period_type', 'fiscal_year'] },
+      {
+        name: 'IDX_budget_allocations_period_fiscal',
+        columns: ['period_type', 'fiscal_year'],
+      },
       { name: 'IDX_budget_allocations_cpl', columns: ['cpl_id'] },
-      { name: 'IDX_budget_allocations_period_dates', columns: ['period_start', 'period_end'] },
+      {
+        name: 'IDX_budget_allocations_period_dates',
+        columns: ['period_start', 'period_end'],
+      },
     ];
 
     for (const idx of indexes) {
@@ -300,7 +414,15 @@ export class UpdateBudgetAllocationStructure1771169825000 implements MigrationIn
             {
               name: 'transaction_type',
               type: 'enum',
-              enum: ['allocation', 'utilization', 'release', 'adjustment', 'transfer', 'reservation', 'commit'],
+              enum: [
+                'allocation',
+                'utilization',
+                'release',
+                'adjustment',
+                'transfer',
+                'reservation',
+                'commit',
+              ],
               enumName: 'budget_transaction_logs_transaction_type_enum',
             },
             {
@@ -551,9 +673,17 @@ export class UpdateBudgetAllocationStructure1771169825000 implements MigrationIn
     `);
 
     // Drop enum types
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."budget_alert_configurations_notification_channel_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."budget_alert_configurations_alert_level_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."budget_transaction_logs_transaction_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."budget_allocations_period_type_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."budget_alert_configurations_notification_channel_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."budget_alert_configurations_alert_level_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."budget_transaction_logs_transaction_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."budget_allocations_period_type_enum"`,
+    );
   }
 }

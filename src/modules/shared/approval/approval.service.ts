@@ -5,7 +5,11 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { ApprovalRepository } from './approval.repository';
-import { CreateApprovalRequestDto, ApproveRequestDto, RejectRequestDto } from './dto';
+import {
+  CreateApprovalRequestDto,
+  ApproveRequestDto,
+  RejectRequestDto,
+} from './dto';
 import {
   ApprovalRequest,
   ApprovalRequestStatus,
@@ -33,7 +37,9 @@ export class ApprovalService {
     );
 
     if (existing && existing.status === ApprovalRequestStatus.PENDING) {
-      throw new BadRequestException('An approval request already exists for this entity');
+      throw new BadRequestException(
+        'An approval request already exists for this entity',
+      );
     }
 
     // Default approval levels (single level for Sprint 1)
@@ -42,7 +48,7 @@ export class ApprovalService {
       role: 'MANAGER',
       status: 'PENDING' as const,
     };
-    
+
     const approvalLevels: Array<{
       order: number;
       role: string;
@@ -54,7 +60,10 @@ export class ApprovalService {
     }> = dto.approvalLevels
       ? dto.approvalLevels.map((level) => ({
           ...level,
-          status: (level.status || 'PENDING') as 'PENDING' | 'APPROVED' | 'REJECTED',
+          status: (level.status || 'PENDING') as
+            | 'PENDING'
+            | 'APPROVED'
+            | 'REJECTED',
         }))
       : [defaultLevel];
 
@@ -167,20 +176,29 @@ export class ApprovalService {
       };
     }
 
-    return this.approvalRepo.updateStatus(id, tenantId, ApprovalRequestStatus.REJECTED, {
-      approvalLevels: levels,
-      rejectedAt: new Date(),
-      rejectedById: rejectorId,
-      rejectionReason: dto.reason,
-      updatedBy: rejectorId,
-    });
+    return this.approvalRepo.updateStatus(
+      id,
+      tenantId,
+      ApprovalRequestStatus.REJECTED,
+      {
+        approvalLevels: levels,
+        rejectedAt: new Date(),
+        rejectedById: rejectorId,
+        rejectionReason: dto.reason,
+        updatedBy: rejectorId,
+      },
+    );
   }
 
   /**
    * Cancel an approval request
    * Only requester can cancel their own pending request
    */
-  async cancel(id: string, tenantId: string, userId: string): Promise<ApprovalRequest> {
+  async cancel(
+    id: string,
+    tenantId: string,
+    userId: string,
+  ): Promise<ApprovalRequest> {
     const request = await this.findById(id, tenantId);
 
     if (request.status !== ApprovalRequestStatus.PENDING) {
@@ -191,11 +209,16 @@ export class ApprovalService {
       throw new ForbiddenException('Only the requester can cancel the request');
     }
 
-    return this.approvalRepo.updateStatus(id, tenantId, ApprovalRequestStatus.CANCELLED, {
-      cancelledAt: new Date(),
-      cancelledById: userId,
-      updatedBy: userId,
-    });
+    return this.approvalRepo.updateStatus(
+      id,
+      tenantId,
+      ApprovalRequestStatus.CANCELLED,
+      {
+        cancelledAt: new Date(),
+        cancelledById: userId,
+        updatedBy: userId,
+      },
+    );
   }
 
   async findById(id: string, tenantId: string): Promise<ApprovalRequest> {
@@ -214,11 +237,17 @@ export class ApprovalService {
     return this.approvalRepo.findByEntityId(entityType, entityId, tenantId);
   }
 
-  async findPendingForUser(userId: string, tenantId: string): Promise<ApprovalRequest[]> {
+  async findPendingForUser(
+    userId: string,
+    tenantId: string,
+  ): Promise<ApprovalRequest[]> {
     return this.approvalRepo.findPendingForUser(userId, tenantId);
   }
 
-  async findMyRequests(userId: string, tenantId: string): Promise<ApprovalRequest[]> {
+  async findMyRequests(
+    userId: string,
+    tenantId: string,
+  ): Promise<ApprovalRequest[]> {
     return this.approvalRepo.findByRequesterId(userId, tenantId);
   }
 
@@ -226,4 +255,3 @@ export class ApprovalService {
     return this.approvalRepo.findAll(tenantId, filters);
   }
 }
-

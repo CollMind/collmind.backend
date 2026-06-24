@@ -1,4 +1,11 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey, TableColumn } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+  TableColumn,
+} from 'typeorm';
 
 export class AddSpendManagementTables1771200000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -61,105 +68,107 @@ export class AddSpendManagementTables1771200000000 implements MigrationInterface
       END $$;
     `);
 
-    const planMechanicValuesExists = await queryRunner.hasTable('main.plan_mechanic_values');
+    const planMechanicValuesExists = await queryRunner.hasTable(
+      'main.plan_mechanic_values',
+    );
     if (!planMechanicValuesExists) {
       await queryRunner.createTable(
         new Table({
           name: 'plan_mechanic_values',
           schema: 'main',
           columns: [
-          {
-            name: 'id',
-            type: 'uuid',
-            isPrimary: true,
-            generationStrategy: 'uuid',
-            default: 'uuid_generate_v4()',
-          },
-          {
-            name: 'tenant_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'plan_fu_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'mechanic_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'entered_value',
-            type: 'decimal',
-            precision: 18,
-            scale: 4,
-            isNullable: true,
-          },
-          {
-            name: 'calculated_spend',
-            type: 'decimal',
-            precision: 18,
-            scale: 2,
-            default: 0,
-            isNullable: false,
-          },
-          {
-            name: 'on_invoice_amount',
-            type: 'decimal',
-            precision: 18,
-            scale: 2,
-            default: 0,
-            isNullable: false,
-          },
-          {
-            name: 'off_invoice_amount',
-            type: 'decimal',
-            precision: 18,
-            scale: 2,
-            default: 0,
-            isNullable: false,
-          },
-          {
-            name: 'distribution_method',
-            type: 'enum',
-            enum: ['percentage', 'per_unit', 'lumpsum', 'proportional'],
-            enumName: 'plan_mechanic_values_distribution_method_enum',
-            isNullable: true,
-          },
-          {
-            name: 'metadata',
-            type: 'jsonb',
-            isNullable: true,
-          },
-          {
-            name: 'created_at',
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP',
-            isNullable: false,
-          },
-          {
-            name: 'updated_at',
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP',
-            isNullable: false,
-          },
-          {
-            name: 'deleted_at',
-            type: 'timestamp',
-            isNullable: true,
-          },
-          {
-            name: 'created_by',
-            type: 'uuid',
-            isNullable: true,
-          },
-          {
-            name: 'updated_by',
-            type: 'uuid',
-            isNullable: true,
-          },
+            {
+              name: 'id',
+              type: 'uuid',
+              isPrimary: true,
+              generationStrategy: 'uuid',
+              default: 'uuid_generate_v4()',
+            },
+            {
+              name: 'tenant_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'plan_fu_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'mechanic_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'entered_value',
+              type: 'decimal',
+              precision: 18,
+              scale: 4,
+              isNullable: true,
+            },
+            {
+              name: 'calculated_spend',
+              type: 'decimal',
+              precision: 18,
+              scale: 2,
+              default: 0,
+              isNullable: false,
+            },
+            {
+              name: 'on_invoice_amount',
+              type: 'decimal',
+              precision: 18,
+              scale: 2,
+              default: 0,
+              isNullable: false,
+            },
+            {
+              name: 'off_invoice_amount',
+              type: 'decimal',
+              precision: 18,
+              scale: 2,
+              default: 0,
+              isNullable: false,
+            },
+            {
+              name: 'distribution_method',
+              type: 'enum',
+              enum: ['percentage', 'per_unit', 'lumpsum', 'proportional'],
+              enumName: 'plan_mechanic_values_distribution_method_enum',
+              isNullable: true,
+            },
+            {
+              name: 'metadata',
+              type: 'jsonb',
+              isNullable: true,
+            },
+            {
+              name: 'created_at',
+              type: 'timestamp',
+              default: 'CURRENT_TIMESTAMP',
+              isNullable: false,
+            },
+            {
+              name: 'updated_at',
+              type: 'timestamp',
+              default: 'CURRENT_TIMESTAMP',
+              isNullable: false,
+            },
+            {
+              name: 'deleted_at',
+              type: 'timestamp',
+              isNullable: true,
+            },
+            {
+              name: 'created_by',
+              type: 'uuid',
+              isNullable: true,
+            },
+            {
+              name: 'updated_by',
+              type: 'uuid',
+              isNullable: true,
+            },
           ],
         }),
       );
@@ -219,87 +228,89 @@ export class AddSpendManagementTables1771200000000 implements MigrationInterface
       END $$;
     `);
 
-    const mechanicSpendBreakdownExists = await queryRunner.hasTable('main.mechanic_spend_breakdown');
+    const mechanicSpendBreakdownExists = await queryRunner.hasTable(
+      'main.mechanic_spend_breakdown',
+    );
     if (!mechanicSpendBreakdownExists) {
       await queryRunner.createTable(
         new Table({
           name: 'mechanic_spend_breakdown',
           schema: 'main',
           columns: [
-          {
-            name: 'id',
-            type: 'uuid',
-            isPrimary: true,
-            generationStrategy: 'uuid',
-            default: 'uuid_generate_v4()',
-          },
-          {
-            name: 'tenant_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'plan_sku_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'mechanic_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'plan_mechanic_value_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'calculated_amount',
-            type: 'decimal',
-            precision: 18,
-            scale: 2,
-            default: 0,
-            isNullable: false,
-          },
-          {
-            name: 'distribution_basis',
-            type: 'enum',
-            enum: ['base_volume_ratio', 'planned_volume_ratio', 'equal'],
-            enumName: 'mechanic_spend_breakdown_distribution_basis_enum',
-            isNullable: true,
-          },
-          {
-            name: 'metadata',
-            type: 'jsonb',
-            isNullable: true,
-          },
-          {
-            name: 'created_at',
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP',
-            isNullable: false,
-          },
-          {
-            name: 'updated_at',
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP',
-            isNullable: false,
-          },
-          {
-            name: 'deleted_at',
-            type: 'timestamp',
-            isNullable: true,
-          },
-          {
-            name: 'created_by',
-            type: 'uuid',
-            isNullable: true,
-          },
-          {
-            name: 'updated_by',
-            type: 'uuid',
-            isNullable: true,
-          },
+            {
+              name: 'id',
+              type: 'uuid',
+              isPrimary: true,
+              generationStrategy: 'uuid',
+              default: 'uuid_generate_v4()',
+            },
+            {
+              name: 'tenant_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'plan_sku_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'mechanic_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'plan_mechanic_value_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'calculated_amount',
+              type: 'decimal',
+              precision: 18,
+              scale: 2,
+              default: 0,
+              isNullable: false,
+            },
+            {
+              name: 'distribution_basis',
+              type: 'enum',
+              enum: ['base_volume_ratio', 'planned_volume_ratio', 'equal'],
+              enumName: 'mechanic_spend_breakdown_distribution_basis_enum',
+              isNullable: true,
+            },
+            {
+              name: 'metadata',
+              type: 'jsonb',
+              isNullable: true,
+            },
+            {
+              name: 'created_at',
+              type: 'timestamp',
+              default: 'CURRENT_TIMESTAMP',
+              isNullable: false,
+            },
+            {
+              name: 'updated_at',
+              type: 'timestamp',
+              default: 'CURRENT_TIMESTAMP',
+              isNullable: false,
+            },
+            {
+              name: 'deleted_at',
+              type: 'timestamp',
+              isNullable: true,
+            },
+            {
+              name: 'created_by',
+              type: 'uuid',
+              isNullable: true,
+            },
+            {
+              name: 'updated_by',
+              type: 'uuid',
+              isNullable: true,
+            },
           ],
         }),
       );
@@ -369,102 +380,104 @@ export class AddSpendManagementTables1771200000000 implements MigrationInterface
     }
 
     // 4. Create lta_agreements table
-    const ltaAgreementsExists = await queryRunner.hasTable('main.lta_agreements');
+    const ltaAgreementsExists = await queryRunner.hasTable(
+      'main.lta_agreements',
+    );
     if (!ltaAgreementsExists) {
       await queryRunner.createTable(
         new Table({
           name: 'lta_agreements',
           schema: 'main',
           columns: [
-          {
-            name: 'id',
-            type: 'uuid',
-            isPrimary: true,
-            generationStrategy: 'uuid',
-            default: 'uuid_generate_v4()',
-          },
-          {
-            name: 'tenant_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'cpl_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'channel_id',
-            type: 'uuid',
-            isNullable: false,
-          },
-          {
-            name: 'on_invoice_percentage',
-            type: 'decimal',
-            precision: 5,
-            scale: 2,
-            isNullable: true,
-          },
-          {
-            name: 'off_invoice_percentage',
-            type: 'decimal',
-            precision: 5,
-            scale: 2,
-            isNullable: true,
-          },
-          {
-            name: 'effective_date',
-            type: 'date',
-            isNullable: false,
-          },
-          {
-            name: 'expiry_date',
-            type: 'date',
-            isNullable: true,
-          },
-          {
-            name: 'is_active',
-            type: 'boolean',
-            default: true,
-            isNullable: false,
-          },
-          {
-            name: 'description',
-            type: 'text',
-            isNullable: true,
-          },
-          {
-            name: 'metadata',
-            type: 'jsonb',
-            isNullable: true,
-          },
-          {
-            name: 'created_at',
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP',
-            isNullable: false,
-          },
-          {
-            name: 'updated_at',
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP',
-            isNullable: false,
-          },
-          {
-            name: 'deleted_at',
-            type: 'timestamp',
-            isNullable: true,
-          },
-          {
-            name: 'created_by',
-            type: 'uuid',
-            isNullable: true,
-          },
-          {
-            name: 'updated_by',
-            type: 'uuid',
-            isNullable: true,
-          },
+            {
+              name: 'id',
+              type: 'uuid',
+              isPrimary: true,
+              generationStrategy: 'uuid',
+              default: 'uuid_generate_v4()',
+            },
+            {
+              name: 'tenant_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'cpl_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'channel_id',
+              type: 'uuid',
+              isNullable: false,
+            },
+            {
+              name: 'on_invoice_percentage',
+              type: 'decimal',
+              precision: 5,
+              scale: 2,
+              isNullable: true,
+            },
+            {
+              name: 'off_invoice_percentage',
+              type: 'decimal',
+              precision: 5,
+              scale: 2,
+              isNullable: true,
+            },
+            {
+              name: 'effective_date',
+              type: 'date',
+              isNullable: false,
+            },
+            {
+              name: 'expiry_date',
+              type: 'date',
+              isNullable: true,
+            },
+            {
+              name: 'is_active',
+              type: 'boolean',
+              default: true,
+              isNullable: false,
+            },
+            {
+              name: 'description',
+              type: 'text',
+              isNullable: true,
+            },
+            {
+              name: 'metadata',
+              type: 'jsonb',
+              isNullable: true,
+            },
+            {
+              name: 'created_at',
+              type: 'timestamp',
+              default: 'CURRENT_TIMESTAMP',
+              isNullable: false,
+            },
+            {
+              name: 'updated_at',
+              type: 'timestamp',
+              default: 'CURRENT_TIMESTAMP',
+              isNullable: false,
+            },
+            {
+              name: 'deleted_at',
+              type: 'timestamp',
+              isNullable: true,
+            },
+            {
+              name: 'created_by',
+              type: 'uuid',
+              isNullable: true,
+            },
+            {
+              name: 'updated_by',
+              type: 'uuid',
+              isNullable: true,
+            },
           ],
         }),
       );
@@ -523,7 +536,9 @@ export class AddSpendManagementTables1771200000000 implements MigrationInterface
     }
 
     // 5. Create budget_allocations table (guarded because later migrations may already create/reshape it)
-    const budgetAllocationsExists = await queryRunner.hasTable('main.budget_allocations');
+    const budgetAllocationsExists = await queryRunner.hasTable(
+      'main.budget_allocations',
+    );
     if (!budgetAllocationsExists) {
       await queryRunner.createTable(
         new Table({
@@ -725,9 +740,18 @@ export class AddSpendManagementTables1771200000000 implements MigrationInterface
     // Remove columns from plan_skus
     await queryRunner.dropColumn('main.plan_skus', 'promo_off_invoice_spend');
     await queryRunner.dropColumn('main.plan_skus', 'promo_on_invoice_spend');
-    await queryRunner.dropColumn('main.plan_skus', 'planned_lta_off_invoice_spend');
-    await queryRunner.dropColumn('main.plan_skus', 'planned_lta_on_invoice_spend');
-    await queryRunner.dropColumn('main.plan_skus', 'base_lta_off_invoice_spend');
+    await queryRunner.dropColumn(
+      'main.plan_skus',
+      'planned_lta_off_invoice_spend',
+    );
+    await queryRunner.dropColumn(
+      'main.plan_skus',
+      'planned_lta_on_invoice_spend',
+    );
+    await queryRunner.dropColumn(
+      'main.plan_skus',
+      'base_lta_off_invoice_spend',
+    );
     await queryRunner.dropColumn('main.plan_skus', 'base_lta_on_invoice_spend');
 
     // Drop budget_allocations table
@@ -749,8 +773,14 @@ export class AddSpendManagementTables1771200000000 implements MigrationInterface
     await queryRunner.dropColumn('main.mechanics', 'spending_type');
 
     // Drop enum types
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."mechanics_spending_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."plan_mechanic_values_distribution_method_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."mechanic_spend_breakdown_distribution_basis_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."mechanics_spending_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."plan_mechanic_values_distribution_method_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."mechanic_spend_breakdown_distribution_basis_enum"`,
+    );
   }
 }

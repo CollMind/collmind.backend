@@ -1,5 +1,10 @@
 import { DataSource } from 'typeorm';
-import { BudgetTransaction, BudgetTransactionType, BudgetTransactionStatus, BudgetTransactionSourceType } from '../entities/budget-transaction.entity';
+import {
+  BudgetTransaction,
+  BudgetTransactionType,
+  BudgetTransactionStatus,
+  BudgetTransactionSourceType,
+} from '../entities/budget-transaction.entity';
 
 export async function seedBudgetTransactions(
   dataSource: DataSource,
@@ -43,8 +48,8 @@ export async function seedBudgetTransactions(
   const created: BudgetTransaction[] = [];
 
   for (const tx of transactions) {
-    const existing = await repo.findOne({ 
-      where: { idempotencyKey: tx.idempotencyKey, tenantId } 
+    const existing = await repo.findOne({
+      where: { idempotencyKey: tx.idempotencyKey, tenantId },
     });
     if (!existing) {
       const entity = repo.create(tx);
@@ -57,4 +62,3 @@ export async function seedBudgetTransactions(
   console.log(`✅ Seeded ${created.length} budget transactions`);
   return created;
 }
-

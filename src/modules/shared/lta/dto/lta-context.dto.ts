@@ -9,10 +9,14 @@ export class LTAContext {
   @ApiProperty({ description: 'Applicable LTA Rate', type: LTARate })
   rate!: LTARate;
 
-  @ApiPropertyOptional({ description: 'Override on-invoice percentage if exists' })
+  @ApiPropertyOptional({
+    description: 'Override on-invoice percentage if exists',
+  })
   overrideOnInvoicePct?: number;
 
-  @ApiPropertyOptional({ description: 'Override off-invoice percentage if exists' })
+  @ApiPropertyOptional({
+    description: 'Override off-invoice percentage if exists',
+  })
   overrideOffInvoicePct?: number;
 
   @ApiProperty({ description: 'Final on-invoice percentage to use' })

@@ -34,7 +34,7 @@ export class AddManagerAndReadonlyRoles1775000000000 implements MigrationInterfa
     // Manual cleanup requires creating a new enum type if needed.
     console.warn(
       '⚠️  down() complete: MANAGER users reverted to APPROVER. ' +
-      'MANAGER and READONLY enum values remain in DB — this is expected PostgreSQL behavior.'
+        'MANAGER and READONLY enum values remain in DB — this is expected PostgreSQL behavior.',
     );
   }
 }

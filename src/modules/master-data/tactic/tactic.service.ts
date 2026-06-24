@@ -12,8 +12,14 @@ import { Tactic } from '../../../database/entities/tactic.entity';
 export class TacticService {
   constructor(private readonly tacticRepository: TacticRepository) {}
 
-  async create(tenantId: string, createTacticDto: CreateTacticDto): Promise<Tactic> {
-    const existing = await this.tacticRepository.findByCode(tenantId, createTacticDto.code);
+  async create(
+    tenantId: string,
+    createTacticDto: CreateTacticDto,
+  ): Promise<Tactic> {
+    const existing = await this.tacticRepository.findByCode(
+      tenantId,
+      createTacticDto.code,
+    );
     if (existing) {
       throw new ConflictException('Tactic with this code already exists');
     }
@@ -52,7 +58,10 @@ export class TacticService {
     const tactic = await this.findOne(tenantId, id);
 
     if (updateTacticDto.code && updateTacticDto.code !== tactic.code) {
-      const existing = await this.tacticRepository.findByCode(tenantId, updateTacticDto.code);
+      const existing = await this.tacticRepository.findByCode(
+        tenantId,
+        updateTacticDto.code,
+      );
       if (existing && existing.id !== id) {
         throw new ConflictException('Tactic with this code already exists');
       }

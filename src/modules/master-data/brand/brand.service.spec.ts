@@ -41,7 +41,9 @@ describe('BrandService', () => {
     }).compile();
 
     service = module.get<BrandService>(BrandService);
-    brandRepository = module.get(BrandRepository) as jest.Mocked<BrandRepository>;
+    brandRepository = module.get(
+      BrandRepository,
+    ) as jest.Mocked<BrandRepository>;
   });
 
   afterEach(() => {
@@ -73,9 +75,9 @@ describe('BrandService', () => {
     it('should throw ConflictException if brand with code already exists', async () => {
       brandRepository.findByCode.mockResolvedValue(mockBrand);
 
-      await expect(service.create(mockTenantId, createBrandDto)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.create(mockTenantId, createBrandDto),
+      ).rejects.toThrow(ConflictException);
     });
   });
 
@@ -86,7 +88,10 @@ describe('BrandService', () => {
 
       const result = await service.findAll(mockTenantId);
 
-      expect(brandRepository.findAllByTenant).toHaveBeenCalledWith(mockTenantId, false);
+      expect(brandRepository.findAllByTenant).toHaveBeenCalledWith(
+        mockTenantId,
+        false,
+      );
       expect(result).toEqual(brands);
     });
   });
@@ -119,9 +124,16 @@ describe('BrandService', () => {
 
     it('should update brand successfully', async () => {
       brandRepository.findOne.mockResolvedValue(mockBrand);
-      brandRepository.save.mockResolvedValue({ ...mockBrand, ...updateBrandDto } as any);
+      brandRepository.save.mockResolvedValue({
+        ...mockBrand,
+        ...updateBrandDto,
+      } as any);
 
-      const result = await service.update(mockTenantId, mockBrandId, updateBrandDto);
+      const result = await service.update(
+        mockTenantId,
+        mockBrandId,
+        updateBrandDto,
+      );
 
       expect(brandRepository.findOne).toHaveBeenCalled();
       expect(brandRepository.save).toHaveBeenCalled();
@@ -131,7 +143,11 @@ describe('BrandService', () => {
     it('should check code uniqueness when updating code', async () => {
       const updateDto: UpdateBrandDto = { code: 'NEWCODE' };
       const existingBrand = { ...mockBrand, code: 'OLDCODE' };
-      const conflictingBrand = { ...mockBrand, id: 'other-id', code: 'NEWCODE' };
+      const conflictingBrand = {
+        ...mockBrand,
+        id: 'other-id',
+        code: 'NEWCODE',
+      };
 
       brandRepository.findOne.mockResolvedValue(existingBrand);
       brandRepository.findByCode.mockResolvedValue(conflictingBrand);

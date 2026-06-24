@@ -1,10 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Notification, NotificationChannel } from '../../../database/entities/notification.entity';
+import {
+  Notification,
+  NotificationChannel,
+} from '../../../database/entities/notification.entity';
 
 /**
  * MC-002: Email Service for Notifications
- * 
+ *
  * This service handles email sending for notifications.
  * Currently uses console logging as placeholder.
  * In production, integrate with email service provider (SendGrid, AWS SES, etc.)
@@ -23,7 +26,7 @@ export class EmailService {
     try {
       // TODO: Integrate with email service provider
       // Example: SendGrid, AWS SES, Nodemailer, etc.
-      
+
       // For now, log the email
       this.logger.log({
         to: notification.recipientEmail,
@@ -42,7 +45,10 @@ export class EmailService {
 
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send email for notification ${notification.id}:`, error);
+      this.logger.error(
+        `Failed to send email for notification ${notification.id}:`,
+        error,
+      );
       return false;
     }
   }
@@ -80,16 +86,18 @@ export class EmailService {
     `;
   }
 
-  async sendBulkEmails(notifications: Notification[]): Promise<{ success: number; failed: number }> {
+  async sendBulkEmails(
+    notifications: Notification[],
+  ): Promise<{ success: number; failed: number }> {
     const results = await Promise.allSettled(
       notifications.map((notification) => this.sendEmail(notification)),
     );
 
-    const success = results.filter((r) => r.status === 'fulfilled' && r.value).length;
+    const success = results.filter(
+      (r) => r.status === 'fulfilled' && r.value,
+    ).length;
     const failed = results.length - success;
 
     return { success, failed };
   }
 }
-
-

@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { PlanService } from './plan.service';
 import { ApprovalWorkflowService } from './approval-workflow.service';
 import {
@@ -57,7 +62,13 @@ export class PlanController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get all plans' })
   @ApiResponse({ status: 200, description: 'List of plans' })
   findAll(
@@ -67,7 +78,12 @@ export class PlanController {
     @Query('channelId') channelId?: string,
     @Query('categoryId') categoryId?: string,
   ) {
-    return this.planService.findAll(tenantId, { status, cplId, channelId, categoryId });
+    return this.planService.findAll(tenantId, {
+      status,
+      cplId,
+      channelId,
+      categoryId,
+    });
   }
 
   @Get('pending-approvals')
@@ -83,15 +99,18 @@ export class PlanController {
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Check budget availability for plan approval' })
   @ApiResponse({ status: 200, description: 'Budget check result' })
-  budgetCheck(
-    @Param('id') id: string,
-    @TenantId() tenantId: string,
-  ) {
+  budgetCheck(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.planService.checkBudget(id, tenantId);
   }
 
   @Get(':id/analysis')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get plan analysis data' })
   @ApiResponse({ status: 200, description: 'Plan analysis data' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
@@ -100,7 +119,13 @@ export class PlanController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get plan by ID' })
   @ApiResponse({ status: 200, description: 'Plan details' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
@@ -181,7 +206,10 @@ export class PlanController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Submit plan for approval (legacy)' })
   @ApiResponse({ status: 200, description: 'Plan submitted successfully' })
-  @ApiResponse({ status: 400, description: 'Only DRAFT plans can be submitted' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only DRAFT plans can be submitted',
+  })
   submit(
     @Param('id') id: string,
     @TenantId() tenantId: string,
@@ -193,16 +221,26 @@ export class PlanController {
   @Post(':id/submit-for-approval')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Submit plan for approval with pre-submission checks' })
+  @ApiOperation({
+    summary: 'Submit plan for approval with pre-submission checks',
+  })
   @ApiResponse({ status: 200, description: 'Plan submitted successfully' })
-  @ApiResponse({ status: 400, description: 'Validation failed or insufficient budget' })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation failed or insufficient budget',
+  })
   submitForApproval(
     @Param('id') id: string,
     @Body() dto: SubmitForApprovalDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string },
   ) {
-    return this.approvalWorkflowService.submitForApproval(id, tenantId, user.id, dto);
+    return this.approvalWorkflowService.submitForApproval(
+      id,
+      tenantId,
+      user.id,
+      dto,
+    );
   }
 
   @Get('approval-queue')
@@ -214,15 +252,24 @@ export class PlanController {
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string },
   ) {
-    return this.approvalWorkflowService.getApprovalQueue(user.id, tenantId, filters);
+    return this.approvalWorkflowService.getApprovalQueue(
+      user.id,
+      tenantId,
+      filters,
+    );
   }
 
   @Post(':id/review')
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Review plan (approve/reject/request changes/escalate)' })
+  @ApiOperation({
+    summary: 'Review plan (approve/reject/request changes/escalate)',
+  })
   @ApiResponse({ status: 200, description: 'Review completed successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid review decision or missing required fields' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid review decision or missing required fields',
+  })
   reviewPlan(
     @Param('id') id: string,
     @Body() dto: ReviewPlanDto,
@@ -253,13 +300,16 @@ export class PlanController {
   }
 
   @Get(':id/approval-history')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get plan approval history' })
   @ApiResponse({ status: 200, description: 'Approval history entries' })
-  getApprovalHistory(
-    @Param('id') id: string,
-    @TenantId() tenantId: string,
-  ) {
+  getApprovalHistory(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.approvalWorkflowService.getPlanApprovalHistory(id, tenantId);
   }
 
@@ -268,14 +318,29 @@ export class PlanController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Approve plan' })
   @ApiResponse({ status: 200, description: 'Plan approved successfully' })
-  @ApiResponse({ status: 400, description: 'Only PENDING_APPROVAL plans can be approved' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only PENDING_APPROVAL plans can be approved',
+  })
   approve(
     @Param('id') id: string,
-    @Body() body: { comments?: string; autoCreateBudget?: boolean; budgetAmount?: number },
+    @Body()
+    body: {
+      comments?: string;
+      autoCreateBudget?: boolean;
+      budgetAmount?: number;
+    },
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string },
   ) {
-    return this.planService.approve(id, tenantId, user.id, body.comments, body.autoCreateBudget, body.budgetAmount);
+    return this.planService.approve(
+      id,
+      tenantId,
+      user.id,
+      body.comments,
+      body.autoCreateBudget,
+      body.budgetAmount,
+    );
   }
 
   @Post(':id/reject')
@@ -283,7 +348,10 @@ export class PlanController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject plan' })
   @ApiResponse({ status: 200, description: 'Plan rejected successfully' })
-  @ApiResponse({ status: 400, description: 'Only PENDING_APPROVAL plans can be rejected' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only PENDING_APPROVAL plans can be rejected',
+  })
   reject(
     @Param('id') id: string,
     @Body() body: { reason: string },
@@ -299,10 +367,7 @@ export class PlanController {
   @ApiOperation({ summary: 'Delete plan (DRAFT only)' })
   @ApiResponse({ status: 204, description: 'Plan deleted successfully' })
   @ApiResponse({ status: 400, description: 'Only DRAFT plans can be deleted' })
-  delete(
-    @Param('id') id: string,
-    @TenantId() tenantId: string,
-  ) {
+  delete(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.planService.delete(id, tenantId);
   }
 
@@ -320,10 +385,7 @@ export class PlanController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger full recalculation for a plan' })
   @ApiResponse({ status: 200, description: 'Recalculation complete' })
-  async recalculate(
-    @Param('id') id: string,
-    @TenantId() tenantId: string,
-  ) {
+  async recalculate(@Param('id') id: string, @TenantId() tenantId: string) {
     await this.planService.recalculatePlanWithKpiEngine(id, tenantId);
     return this.planService.findById(id, tenantId);
   }

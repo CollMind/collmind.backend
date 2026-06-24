@@ -15,11 +15,11 @@ import { Tenant } from './tenant.entity';
 export enum UserRole {
   ADMIN = 'ADMIN',
   PLANNER = 'PLANNER',
-  MANAGER = 'MANAGER',       // Replaces APPROVER — approves plans and agreements
+  MANAGER = 'MANAGER', // Replaces APPROVER — approves plans and agreements
   FINANCE = 'FINANCE',
   FINANCE_MANAGER = 'FINANCE_MANAGER',
   CATEGORY_MANAGER = 'CATEGORY_MANAGER',
-  READONLY = 'READONLY',     // Read-only access — all GET endpoints, no write
+  READONLY = 'READONLY', // Read-only access — all GET endpoints, no write
 
   /** @deprecated Use MANAGER instead. Will be removed in a future migration. */
   APPROVER = 'APPROVER',
@@ -112,7 +112,11 @@ export class User extends BaseEntity {
   @Exclude()
   emailVerificationToken?: string;
 
-  @Column({ name: 'email_verification_expires', type: 'timestamp', nullable: true })
+  @Column({
+    name: 'email_verification_expires',
+    type: 'timestamp',
+    nullable: true,
+  })
   emailVerificationExpires?: Date;
 
   // Password Reset
@@ -158,4 +162,3 @@ export class User extends BaseEntity {
     return bcrypt.compare(password, this.passwordHash);
   }
 }
-

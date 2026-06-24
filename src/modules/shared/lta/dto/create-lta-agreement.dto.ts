@@ -40,13 +40,21 @@ export class CreateLTARateDto {
   @MaxLength(100)
   category!: string; // Dairy, Beverages, etc. or "ALL"
 
-  @ApiProperty({ description: 'On-invoice percentage', minimum: 0, maximum: 100 })
+  @ApiProperty({
+    description: 'On-invoice percentage',
+    minimum: 0,
+    maximum: 100,
+  })
   @IsNumber()
   @Min(0)
   @Max(100)
   onInvoicePercentage!: number;
 
-  @ApiProperty({ description: 'Off-invoice percentage', minimum: 0, maximum: 100 })
+  @ApiProperty({
+    description: 'Off-invoice percentage',
+    minimum: 0,
+    maximum: 100,
+  })
   @IsNumber()
   @Min(0)
   @Max(100)
@@ -79,7 +87,11 @@ export class CreateLTAAgreementDto {
   @IsNotEmpty()
   cplId!: string;
 
-  @ApiProperty({ description: 'Agreement name', example: 'Carrefour 2025 Annual Agreement', maxLength: 200 })
+  @ApiProperty({
+    description: 'Agreement name',
+    example: 'Carrefour 2025 Annual Agreement',
+    maxLength: 200,
+  })
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
@@ -90,7 +102,8 @@ export class CreateLTAAgreementDto {
   @IsNotEmpty()
   @MaxLength(100)
   @Matches(/^[A-Z0-9_]+$/, {
-    message: 'Agreement code must contain only uppercase letters, numbers, and underscores',
+    message:
+      'Agreement code must contain only uppercase letters, numbers, and underscores',
   })
   agreementCode!: string;
 

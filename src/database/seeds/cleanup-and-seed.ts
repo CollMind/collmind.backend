@@ -40,16 +40,18 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
     throw new Error('❌ No users were seeded. Cannot continue.');
   }
   console.log(`   ✅ Seeded ${users.length} users with all roles:`);
-  users.forEach(user => {
+  users.forEach((user) => {
     console.log(`      - ${user.email} (${user.role})`);
   });
   console.log();
 
-  const adminUser = users.find(u => u.role === 'ADMIN') || users[0];
-  const plannerUser = users.find(u => u.role === 'PLANNER') || users[0];
-  const financeManagerUser = users.find(u => u.role === 'FINANCE_MANAGER') || users[0];
-  const categoryManagerUser = users.find(u => u.role === 'CATEGORY_MANAGER') || users[0];
-  
+  const adminUser = users.find((u) => u.role === 'ADMIN') || users[0];
+  const plannerUser = users.find((u) => u.role === 'PLANNER') || users[0];
+  const financeManagerUser =
+    users.find((u) => u.role === 'FINANCE_MANAGER') || users[0];
+  const categoryManagerUser =
+    users.find((u) => u.role === 'CATEGORY_MANAGER') || users[0];
+
   if (!adminUser) {
     throw new Error('❌ No admin user found. Cannot continue.');
   }
@@ -62,7 +64,7 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
   if (!channels || channels.length === 0) {
     throw new Error('❌ No channels were seeded. Cannot continue.');
   }
-  const nkaChannel = channels.find(c => c.code === 'NKA');
+  const nkaChannel = channels.find((c) => c.code === 'NKA');
   if (!nkaChannel) {
     throw new Error('❌ NKA channel not found after seeding.');
   }
@@ -77,7 +79,13 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
   console.log(`   CPL: ${cpl.name} (${cpl.id})\n`);
 
   // 5. Seed customers (her CPL için bir müşteri, cplId ile bağlı)
-  const customers = await seedCustomers(dataSource, tenant.id, cpls, channels, adminUser.id);
+  const customers = await seedCustomers(
+    dataSource,
+    tenant.id,
+    cpls,
+    channels,
+    adminUser.id,
+  );
   if (!customers || customers.length === 0) {
     throw new Error('❌ No customers were seeded. Cannot continue.');
   }
@@ -88,21 +96,33 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
   if (!envelopes || envelopes.length === 0) {
     throw new Error('❌ No budget envelopes were seeded. Cannot continue.');
   }
-  const nkaEnvelope = envelopes.find(e => e.code.includes('NKA')) || envelopes[0];
+  const nkaEnvelope =
+    envelopes.find((e) => e.code.includes('NKA')) || envelopes[0];
   if (!nkaEnvelope) {
     throw new Error('❌ No budget envelope found. Cannot continue.');
   }
-  console.log(`   NKA Envelope: ${nkaEnvelope.code} (${nkaEnvelope.allocatedAmount} TRY)\n`);
+  console.log(
+    `   NKA Envelope: ${nkaEnvelope.code} (${nkaEnvelope.allocatedAmount} TRY)\n`,
+  );
 
   // 7. Seed agreements (use CPL ID instead of customer ID)
-  const agreements = await seedAgreements(dataSource, tenant.id, cpl.id, plannerUser.id);
+  const agreements = await seedAgreements(
+    dataSource,
+    tenant.id,
+    cpl.id,
+    plannerUser.id,
+  );
   if (!agreements || agreements.length === 0) {
     throw new Error('❌ No agreements were seeded. Cannot continue.');
   }
-  const approvedAgreement = agreements.find(a => a.status === 'APPROVED');
+  const approvedAgreement = agreements.find((a) => a.status === 'APPROVED');
   console.log(`   Agreements: ${agreements.length} created`);
-  console.log(`   - DRAFT: ${agreements.filter(a => a.status === 'DRAFT').length}`);
-  console.log(`   - APPROVED: ${agreements.filter(a => a.status === 'APPROVED').length}\n`);
+  console.log(
+    `   - DRAFT: ${agreements.filter((a) => a.status === 'DRAFT').length}`,
+  );
+  console.log(
+    `   - APPROVED: ${agreements.filter((a) => a.status === 'APPROVED').length}\n`,
+  );
 
   // 8. Seed budget transactions (for approved agreement)
   let matchingEnvelope = nkaEnvelope;

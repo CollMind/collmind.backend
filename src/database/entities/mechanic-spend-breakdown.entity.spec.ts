@@ -1,4 +1,7 @@
-import { MechanicSpendBreakdown, DistributionBasis } from './mechanic-spend-breakdown.entity';
+import {
+  MechanicSpendBreakdown,
+  DistributionBasis,
+} from './mechanic-spend-breakdown.entity';
 
 describe('MechanicSpendBreakdown Entity', () => {
   it('should have all required fields', () => {
@@ -19,10 +22,14 @@ describe('MechanicSpendBreakdown Entity', () => {
   it('should support distribution_basis enum', () => {
     const breakdown = new MechanicSpendBreakdown();
     breakdown.distributionBasis = DistributionBasis.BASE_VOLUME_RATIO;
-    expect(breakdown.distributionBasis).toBe(DistributionBasis.BASE_VOLUME_RATIO);
+    expect(breakdown.distributionBasis).toBe(
+      DistributionBasis.BASE_VOLUME_RATIO,
+    );
 
     breakdown.distributionBasis = DistributionBasis.PLANNED_VOLUME_RATIO;
-    expect(breakdown.distributionBasis).toBe(DistributionBasis.PLANNED_VOLUME_RATIO);
+    expect(breakdown.distributionBasis).toBe(
+      DistributionBasis.PLANNED_VOLUME_RATIO,
+    );
 
     breakdown.distributionBasis = DistributionBasis.EQUAL;
     expect(breakdown.distributionBasis).toBe(DistributionBasis.EQUAL);

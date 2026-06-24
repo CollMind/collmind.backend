@@ -1,4 +1,11 @@
-import { IsUUID, IsString, IsDateString, IsNumber, Min, IsOptional } from 'class-validator';
+import {
+  IsUUID,
+  IsString,
+  IsDateString,
+  IsNumber,
+  Min,
+  IsOptional,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class BudgetCheckContext {

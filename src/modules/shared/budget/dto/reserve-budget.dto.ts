@@ -18,13 +18,19 @@ export class ReserveBudgetDto {
   @IsPositive()
   amount!: number;
 
-  @ApiProperty({ example: 'agreement-uuid', description: 'Agreement ID (required for RESERVE transaction)' })
+  @ApiProperty({
+    example: 'agreement-uuid',
+    description: 'Agreement ID (required for RESERVE transaction)',
+  })
   @IsUUID()
   agreementId!: string;
 
-  @ApiPropertyOptional({ example: 'TRY', description: 'Currency', default: 'TRY' })
+  @ApiPropertyOptional({
+    example: 'TRY',
+    description: 'Currency',
+    default: 'TRY',
+  })
   @IsString()
   @IsOptional()
   currency?: string;
 }
-

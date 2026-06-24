@@ -1,4 +1,11 @@
-import { MigrationInterface, QueryRunner, Table, TableColumn, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableColumn,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class UpdateLTAAgreementsStructure1771202000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -34,7 +41,9 @@ export class UpdateLTAAgreementsStructure1771202000000 implements MigrationInter
       `);
 
       for (const fk of foreignKeys) {
-        await queryRunner.query(`ALTER TABLE "main"."lta_agreements" DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
+        await queryRunner.query(
+          `ALTER TABLE "main"."lta_agreements" DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`,
+        );
       }
 
       // Drop old columns if they exist
@@ -683,12 +692,17 @@ export class UpdateLTAAgreementsStructure1771202000000 implements MigrationInter
 
     // Remove new columns from lta_agreements (keep base structure)
     await queryRunner.dropColumn('main.lta_agreements', 'notes');
-    await queryRunner.dropColumn('main.lta_agreements', 'total_agreement_value');
+    await queryRunner.dropColumn(
+      'main.lta_agreements',
+      'total_agreement_value',
+    );
     await queryRunner.dropColumn('main.lta_agreements', 'status');
     await queryRunner.dropColumn('main.lta_agreements', 'agreement_code');
     await queryRunner.dropColumn('main.lta_agreements', 'agreement_name');
 
     // Drop enum type
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."lta_agreements_status_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."lta_agreements_status_enum"`,
+    );
   }
 }

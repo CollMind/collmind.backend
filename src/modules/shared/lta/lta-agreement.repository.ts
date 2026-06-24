@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { LTAAgreement, LTAAgreementStatus } from '../../../database/entities/lta-agreement.entity';
+import {
+  LTAAgreement,
+  LTAAgreementStatus,
+} from '../../../database/entities/lta-agreement.entity';
 
 @Injectable()
 export class LTAAgreementRepository {
@@ -10,21 +13,38 @@ export class LTAAgreementRepository {
     private readonly repository: Repository<LTAAgreement>,
   ) {}
 
-  async findByCode(tenantId: string, agreementCode: string): Promise<LTAAgreement | null> {
+  async findByCode(
+    tenantId: string,
+    agreementCode: string,
+  ): Promise<LTAAgreement | null> {
     return this.repository.findOne({
       where: { tenantId, agreementCode },
-      relations: ['cpl', 'rates', 'rates.channelEntity', 'rates.categoryEntity'],
+      relations: [
+        'cpl',
+        'rates',
+        'rates.channelEntity',
+        'rates.categoryEntity',
+      ],
     });
   }
 
   async findById(tenantId: string, id: string): Promise<LTAAgreement | null> {
     return this.repository.findOne({
       where: { tenantId, id },
-      relations: ['cpl', 'rates', 'rates.channelEntity', 'rates.categoryEntity', 'planOverrides'],
+      relations: [
+        'cpl',
+        'rates',
+        'rates.channelEntity',
+        'rates.categoryEntity',
+        'planOverrides',
+      ],
     });
   }
 
-  async findAllByTenant(tenantId: string, status?: LTAAgreementStatus): Promise<LTAAgreement[]> {
+  async findAllByTenant(
+    tenantId: string,
+    status?: LTAAgreementStatus,
+  ): Promise<LTAAgreement[]> {
     const where: any = { tenantId };
     if (status) {
       where.status = status;
@@ -67,7 +87,9 @@ export class LTAAgreementRepository {
       .createQueryBuilder('lta')
       .where('lta.tenantId = :tenantId', { tenantId })
       .andWhere('lta.cplId = :cplId', { cplId })
-      .andWhere('lta.status != :terminated', { terminated: LTAAgreementStatus.TERMINATED })
+      .andWhere('lta.status != :terminated', {
+        terminated: LTAAgreementStatus.TERMINATED,
+      })
       .andWhere(
         `(
           (lta.effectiveDate <= :effectiveDate AND (lta.expiryDate IS NULL OR lta.expiryDate >= :effectiveDate))

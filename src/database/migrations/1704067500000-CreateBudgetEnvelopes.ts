@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateBudgetEnvelopes1704067500000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -192,7 +198,8 @@ export class CreateBudgetEnvelopes1704067500000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropTable('main.budget_envelopes', true);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."budget_envelopes_status_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."budget_envelopes_status_enum"`,
+    );
   }
 }
-

@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateOnInvoiceTables1773000000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -536,8 +542,14 @@ export class CreateOnInvoiceTables1773000000000 implements MigrationInterface {
     await queryRunner.dropTable('main.on_invoice_batches', true);
 
     // Drop enum types
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."on_invoice_entry_status_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."on_invoice_discount_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."on_invoice_batch_status_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."on_invoice_entry_status_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."on_invoice_discount_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."on_invoice_batch_status_enum"`,
+    );
   }
 }

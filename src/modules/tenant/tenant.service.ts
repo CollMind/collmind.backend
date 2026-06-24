@@ -15,14 +15,18 @@ export class TenantService {
 
   async create(createTenantDto: CreateTenantDto): Promise<Tenant> {
     // Check if tenant with same name exists
-    const existingName = await this.tenantRepository.findByName(createTenantDto.name);
+    const existingName = await this.tenantRepository.findByName(
+      createTenantDto.name,
+    );
     if (existingName) {
       throw new ConflictException('Tenant with this name already exists');
     }
 
     // Check if domain is already taken
     if (createTenantDto.domain) {
-      const existingDomain = await this.tenantRepository.findByDomain(createTenantDto.domain);
+      const existingDomain = await this.tenantRepository.findByDomain(
+        createTenantDto.domain,
+      );
       if (existingDomain) {
         throw new ConflictException('This domain is already taken');
       }
@@ -31,10 +35,14 @@ export class TenantService {
     // Convert date strings to Date objects
     const tenantData: any = { ...createTenantDto };
     if (createTenantDto.subscriptionStartDate) {
-      tenantData.subscriptionStartDate = new Date(createTenantDto.subscriptionStartDate);
+      tenantData.subscriptionStartDate = new Date(
+        createTenantDto.subscriptionStartDate,
+      );
     }
     if (createTenantDto.subscriptionEndDate) {
-      tenantData.subscriptionEndDate = new Date(createTenantDto.subscriptionEndDate);
+      tenantData.subscriptionEndDate = new Date(
+        createTenantDto.subscriptionEndDate,
+      );
     }
 
     const tenant = this.tenantRepository.create(tenantData);
@@ -65,7 +73,9 @@ export class TenantService {
 
     // Check name uniqueness if changing
     if (updateTenantDto.name && updateTenantDto.name !== tenant.name) {
-      const existingName = await this.tenantRepository.findByName(updateTenantDto.name);
+      const existingName = await this.tenantRepository.findByName(
+        updateTenantDto.name,
+      );
       if (existingName) {
         throw new ConflictException('Tenant with this name already exists');
       }
@@ -73,7 +83,9 @@ export class TenantService {
 
     // Check domain uniqueness if changing
     if (updateTenantDto.domain && updateTenantDto.domain !== tenant.domain) {
-      const existingDomain = await this.tenantRepository.findByDomain(updateTenantDto.domain);
+      const existingDomain = await this.tenantRepository.findByDomain(
+        updateTenantDto.domain,
+      );
       if (existingDomain) {
         throw new ConflictException('This domain is already taken');
       }
@@ -104,4 +116,3 @@ export class TenantService {
     return this.tenantRepository.getTenantStats(id);
   }
 }
-

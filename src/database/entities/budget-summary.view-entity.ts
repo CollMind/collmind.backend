@@ -2,13 +2,13 @@ import { ViewEntity, ViewColumn } from 'typeorm';
 
 /**
  * Budget Summary View Entity
- * 
+ *
  * Maps to v_budget_summary database view that computes:
  * - reserved_amount: from budget_transactions (RESERVE - RELEASE)
  * - consumed_amount: from ledger_entries (DEBIT - CREDIT)
  * - available_amount: allocated - reserved - consumed
  * - utilization_pct: (reserved + consumed) / allocated * 100
- * 
+ *
  * This view provides BRD-compliant computed fields for budget envelopes.
  * The view is the source of truth; stored fields in budget_envelopes are legacy.
  */
@@ -154,4 +154,3 @@ export class BudgetSummaryView {
   @ViewColumn()
   updatedAt!: Date;
 }
-

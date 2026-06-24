@@ -26,7 +26,13 @@ export class MechanicSpendBreakdown extends BaseEntity {
   planMechanicValueId!: string;
 
   // SKU seviyesinde dağıtılmış spend
-  @Column({ name: 'calculated_amount', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'calculated_amount',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   calculatedAmount!: number;
 
   // Dağıtım temeli
@@ -50,7 +56,9 @@ export class MechanicSpendBreakdown extends BaseEntity {
   @JoinColumn({ name: 'mechanic_id' })
   mechanic!: Mechanic;
 
-  @ManyToOne(() => PlanMechanicValue, (pmv) => pmv.spendBreakdowns, { onDelete: 'CASCADE' })
+  @ManyToOne(() => PlanMechanicValue, (pmv) => pmv.spendBreakdowns, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'plan_mechanic_value_id' })
   planMechanicValue!: PlanMechanicValue;
 }

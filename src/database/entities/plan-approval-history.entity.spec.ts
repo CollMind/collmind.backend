@@ -1,4 +1,7 @@
-import { PlanApprovalHistory, ApprovalHistoryAction } from './plan-approval-history.entity';
+import {
+  PlanApprovalHistory,
+  ApprovalHistoryAction,
+} from './plan-approval-history.entity';
 
 describe('PlanApprovalHistory Entity', () => {
   it('should create approval history with SUBMITTED action', () => {
@@ -35,7 +38,10 @@ describe('PlanApprovalHistory Entity', () => {
     history.specificChanges = ['Update SKU volumes', 'Recalculate ROI'];
 
     expect(history.action).toBe(ApprovalHistoryAction.REQUEST_CHANGES);
-    expect(history.specificChanges).toEqual(['Update SKU volumes', 'Recalculate ROI']);
+    expect(history.specificChanges).toEqual([
+      'Update SKU volumes',
+      'Recalculate ROI',
+    ]);
   });
 
   it('should create approval history with ESCALATED action and escalation reason', () => {
@@ -47,7 +53,9 @@ describe('PlanApprovalHistory Entity', () => {
     history.comments = 'Escalating to finance';
 
     expect(history.action).toBe(ApprovalHistoryAction.ESCALATED);
-    expect(history.escalationReason).toBe('High spend amount requires finance review');
+    expect(history.escalationReason).toBe(
+      'High spend amount requires finance review',
+    );
   });
 
   it('should support metadata field', () => {

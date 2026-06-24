@@ -4,10 +4,20 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
-import { User, UserStatus, UserRole } from '../../database/entities/user.entity';
+import {
+  User,
+  UserStatus,
+  UserRole,
+} from '../../database/entities/user.entity';
 import { Plan, PlanStatus } from '../../database/entities/plan.entity';
-import { Agreement, AgreementStatus } from '../../database/entities/agreement.entity';
-import { BudgetEnvelope, BudgetEnvelopeStatus } from '../../database/entities/budget-envelope.entity';
+import {
+  Agreement,
+  AgreementStatus,
+} from '../../database/entities/agreement.entity';
+import {
+  BudgetEnvelope,
+  BudgetEnvelopeStatus,
+} from '../../database/entities/budget-envelope.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginDto } from './dto/login.dto';
@@ -99,9 +109,15 @@ describe('UserService', () => {
     service = module.get<UserService>(UserService);
     userRepository = module.get(UserRepository) as jest.Mocked<UserRepository>;
     jwtService = module.get(JwtService) as jest.Mocked<JwtService>;
-    planRepository = module.get(getRepositoryToken(Plan)) as jest.Mocked<Repository<Plan>>;
-    agreementRepository = module.get(getRepositoryToken(Agreement)) as jest.Mocked<Repository<Agreement>>;
-    budgetEnvelopeRepository = module.get(getRepositoryToken(BudgetEnvelope)) as jest.Mocked<Repository<BudgetEnvelope>>;
+    planRepository = module.get(getRepositoryToken(Plan)) as jest.Mocked<
+      Repository<Plan>
+    >;
+    agreementRepository = module.get(
+      getRepositoryToken(Agreement),
+    ) as jest.Mocked<Repository<Agreement>>;
+    budgetEnvelopeRepository = module.get(
+      getRepositoryToken(BudgetEnvelope),
+    ) as jest.Mocked<Repository<BudgetEnvelope>>;
 
     // Mock bcrypt
     (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
@@ -199,7 +215,9 @@ describe('UserService', () => {
         validatePassword: jest.fn().mockResolvedValue(false),
       };
 
-      userRepository.findByEmail.mockResolvedValue(mockUserWithInvalidPassword as any);
+      userRepository.findByEmail.mockResolvedValue(
+        mockUserWithInvalidPassword as any,
+      );
 
       await expect(service.login(mockTenantId, loginDto)).rejects.toThrow(
         UnauthorizedException,
@@ -253,7 +271,10 @@ describe('UserService', () => {
 
       const result = await service.findOne(mockTenantId, mockUserId);
 
-      expect(userRepository.findById).toHaveBeenCalledWith(mockTenantId, mockUserId);
+      expect(userRepository.findById).toHaveBeenCalledWith(
+        mockTenantId,
+        mockUserId,
+      );
       expect(result).toEqual(mockUser);
     });
 
@@ -295,7 +316,10 @@ describe('UserService', () => {
 
     it('should update user successfully', async () => {
       userRepository.findById.mockResolvedValue(mockUser as any);
-      userRepository.save.mockResolvedValue({ ...mockUser, ...updateUserDto } as any);
+      userRepository.save.mockResolvedValue({
+        ...mockUser,
+        ...updateUserDto,
+      } as any);
 
       const result = await service.update(
         mockTenantId,
@@ -303,7 +327,10 @@ describe('UserService', () => {
         updateUserDto,
       );
 
-      expect(userRepository.findById).toHaveBeenCalledWith(mockTenantId, mockUserId);
+      expect(userRepository.findById).toHaveBeenCalledWith(
+        mockTenantId,
+        mockUserId,
+      );
       expect(userRepository.save).toHaveBeenCalled();
       expect(result.fullName).toBe(updateUserDto.fullName);
     });
@@ -319,7 +346,11 @@ describe('UserService', () => {
     it('should check email uniqueness when updating email', async () => {
       const updateDto: UpdateUserDto = { email: 'newemail@example.com' };
       const existingUser = { ...mockUser, email: 'old@example.com' };
-      const conflictingUser = { ...mockUser, id: 'other-id', email: 'newemail@example.com' };
+      const conflictingUser = {
+        ...mockUser,
+        id: 'other-id',
+        email: 'newemail@example.com',
+      };
 
       userRepository.findById.mockResolvedValue(existingUser as any);
       userRepository.findByEmail.mockResolvedValue(conflictingUser as any);
@@ -334,7 +365,10 @@ describe('UserService', () => {
       const targetUser = { ...mockUser, role: UserRole.PLANNER };
 
       userRepository.findById.mockResolvedValue(targetUser as any);
-      userRepository.save.mockResolvedValue({ ...targetUser, role: UserRole.ADMIN } as any);
+      userRepository.save.mockResolvedValue({
+        ...targetUser,
+        role: UserRole.ADMIN,
+      } as any);
 
       const result = await service.update(
         mockTenantId,
@@ -354,7 +388,13 @@ describe('UserService', () => {
       userRepository.findById.mockResolvedValue(targetUser as any);
 
       await expect(
-        service.update(mockTenantId, mockUserId, updateDto, 'user-id', UserRole.PLANNER),
+        service.update(
+          mockTenantId,
+          mockUserId,
+          updateDto,
+          'user-id',
+          UserRole.PLANNER,
+        ),
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -365,7 +405,13 @@ describe('UserService', () => {
       userRepository.findById.mockResolvedValue(adminUser as any);
 
       await expect(
-        service.update(mockTenantId, 'admin-id', updateDto, 'admin-id', UserRole.ADMIN),
+        service.update(
+          mockTenantId,
+          'admin-id',
+          updateDto,
+          'admin-id',
+          UserRole.ADMIN,
+        ),
       ).rejects.toThrow(ForbiddenException);
     });
   });
@@ -377,7 +423,10 @@ describe('UserService', () => {
 
       await service.remove(mockTenantId, mockUserId);
 
-      expect(userRepository.findById).toHaveBeenCalledWith(mockTenantId, mockUserId);
+      expect(userRepository.findById).toHaveBeenCalledWith(
+        mockTenantId,
+        mockUserId,
+      );
       expect(userRepository.softRemove).toHaveBeenCalledWith(mockUser);
     });
   });
@@ -404,7 +453,10 @@ describe('UserService', () => {
       expect(userWithValidate.validatePassword).toHaveBeenCalledWith(
         changePasswordDto.currentPassword,
       );
-      expect(bcrypt.hash).toHaveBeenCalledWith(changePasswordDto.newPassword, 10);
+      expect(bcrypt.hash).toHaveBeenCalledWith(
+        changePasswordDto.newPassword,
+        10,
+      );
       expect(userRepository.save).toHaveBeenCalled();
     });
 
@@ -426,7 +478,10 @@ describe('UserService', () => {
     it('should activate user', async () => {
       const inactiveUser = { ...mockUser, status: UserStatus.INACTIVE };
       userRepository.findById.mockResolvedValue(inactiveUser as any);
-      userRepository.save.mockResolvedValue({ ...inactiveUser, status: UserStatus.ACTIVE } as any);
+      userRepository.save.mockResolvedValue({
+        ...inactiveUser,
+        status: UserStatus.ACTIVE,
+      } as any);
 
       const result = await service.activate(mockTenantId, mockUserId);
 
@@ -437,7 +492,10 @@ describe('UserService', () => {
   describe('deactivate', () => {
     it('should deactivate user', async () => {
       userRepository.findById.mockResolvedValue(mockUser as any);
-      userRepository.save.mockResolvedValue({ ...mockUser, status: UserStatus.INACTIVE } as any);
+      userRepository.save.mockResolvedValue({
+        ...mockUser,
+        status: UserStatus.INACTIVE,
+      } as any);
 
       const result = await service.deactivate(mockTenantId, mockUserId);
 
@@ -447,7 +505,12 @@ describe('UserService', () => {
 
   describe('refreshToken', () => {
     it('should refresh token successfully', async () => {
-      const payload = { sub: mockUserId, email: mockUser.email, role: mockUser.role, tenantId: mockTenantId };
+      const payload = {
+        sub: mockUserId,
+        email: mockUser.email,
+        role: mockUser.role,
+        tenantId: mockTenantId,
+      };
       const refreshToken = 'refresh-token';
       const userWithRefreshToken = {
         ...mockUser,
@@ -495,7 +558,10 @@ describe('UserService', () => {
     it('should logout user by clearing refresh token', async () => {
       const userWithToken = { ...mockUser, refreshToken: 'refresh-token' };
       userRepository.findById.mockResolvedValue(userWithToken as any);
-      userRepository.save.mockResolvedValue({ ...userWithToken, refreshToken: undefined } as any);
+      userRepository.save.mockResolvedValue({
+        ...userWithToken,
+        refreshToken: undefined,
+      } as any);
 
       await service.logout(mockTenantId, mockUserId);
 

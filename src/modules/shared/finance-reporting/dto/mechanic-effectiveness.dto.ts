@@ -42,7 +42,10 @@ export class MechanicEffectiveness {
 }
 
 export class MechanicReport {
-  @ApiProperty({ description: 'Mechanic effectiveness data', type: [MechanicEffectiveness] })
+  @ApiProperty({
+    description: 'Mechanic effectiveness data',
+    type: [MechanicEffectiveness],
+  })
   @IsArray()
   mechanics!: MechanicEffectiveness[];
 

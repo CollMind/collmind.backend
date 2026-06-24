@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsString, IsEnum, IsArray, IsObject, IsOptional } from 'class-validator';
+import {
+  IsNumber,
+  IsString,
+  IsEnum,
+  IsArray,
+  IsObject,
+  IsOptional,
+} from 'class-validator';
 
 export enum ComparisonType {
   BUDGET_VS_ACTUAL = 'budget_vs_actual',

@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { LTAAgreementService } from './lta-agreement.service';
 import { LTACalculationService } from './lta-calculation.service';
 import { CreateLTAAgreementDto } from './dto/create-lta-agreement.dto';
@@ -39,22 +44,40 @@ export class LTAAgreementController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new LTA agreement' })
-  @ApiResponse({ status: 201, description: 'LTA agreement created successfully', type: LTAAgreement })
-  create(@TenantId() tenantId: string, @Body() createDto: CreateLTAAgreementDto) {
+  @ApiResponse({
+    status: 201,
+    description: 'LTA agreement created successfully',
+    type: LTAAgreement,
+  })
+  create(
+    @TenantId() tenantId: string,
+    @Body() createDto: CreateLTAAgreementDto,
+  ) {
     return this.ltaAgreementService.createAgreement(tenantId, createDto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Get all LTA agreements' })
-  @ApiResponse({ status: 200, description: 'List of LTA agreements', type: [LTAAgreement] })
-  async findAll(@TenantId() tenantId: string, @Query('status') status?: string) {
+  @ApiResponse({
+    status: 200,
+    description: 'List of LTA agreements',
+    type: [LTAAgreement],
+  })
+  async findAll(
+    @TenantId() tenantId: string,
+    @Query('status') status?: string,
+  ) {
     // Add method to service for getting all agreements
     return this.ltaAgreementService.findAll(tenantId, status as any);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get LTA agreement by ID' })
-  @ApiResponse({ status: 200, description: 'LTA agreement details', type: LTAAgreement })
+  @ApiResponse({
+    status: 200,
+    description: 'LTA agreement details',
+    type: LTAAgreement,
+  })
   async findOne(@TenantId() tenantId: string, @Param('id') id: string) {
     return this.ltaAgreementService.findOne(tenantId, id);
   }
@@ -62,7 +85,11 @@ export class LTAAgreementController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update LTA agreement' })
-  @ApiResponse({ status: 200, description: 'LTA agreement updated successfully', type: LTAAgreement })
+  @ApiResponse({
+    status: 200,
+    description: 'LTA agreement updated successfully',
+    type: LTAAgreement,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,
@@ -75,7 +102,10 @@ export class LTAAgreementController {
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Activate LTA agreement' })
-  @ApiResponse({ status: 204, description: 'LTA agreement activated successfully' })
+  @ApiResponse({
+    status: 204,
+    description: 'LTA agreement activated successfully',
+  })
   activate(@TenantId() tenantId: string, @Param('id') id: string) {
     return this.ltaAgreementService.activateAgreement(tenantId, id);
   }
@@ -84,40 +114,67 @@ export class LTAAgreementController {
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Terminate LTA agreement' })
-  @ApiResponse({ status: 204, description: 'LTA agreement terminated successfully' })
+  @ApiResponse({
+    status: 204,
+    description: 'LTA agreement terminated successfully',
+  })
   terminate(
     @TenantId() tenantId: string,
     @Param('id') id: string,
     @Body() body: { reason: string },
   ) {
-    return this.ltaAgreementService.terminateAgreement(tenantId, id, body.reason);
+    return this.ltaAgreementService.terminateAgreement(
+      tenantId,
+      id,
+      body.reason,
+    );
   }
 
   @Get('cpl/:cplId/active')
   @ApiOperation({ summary: 'Get active LTA agreement for CPL' })
-  @ApiResponse({ status: 200, description: 'Active LTA agreement', type: LTAAgreement })
+  @ApiResponse({
+    status: 200,
+    description: 'Active LTA agreement',
+    type: LTAAgreement,
+  })
   getActiveForCPL(
     @TenantId() tenantId: string,
     @Param('cplId') cplId: string,
     @Query('date') date?: string,
   ) {
     const targetDate = date ? new Date(date) : new Date();
-    return this.ltaAgreementService.getActiveAgreementForCPL(tenantId, cplId, targetDate);
+    return this.ltaAgreementService.getActiveAgreementForCPL(
+      tenantId,
+      cplId,
+      targetDate,
+    );
   }
 
   @Post('context/rates')
   @ApiOperation({ summary: 'Get LTA rates for plan context' })
-  @ApiResponse({ status: 200, description: 'LTA context with rates', type: LTAContext })
-  getRatesForContext(@TenantId() tenantId: string, @Body() planContext: PlanContextDto) {
+  @ApiResponse({
+    status: 200,
+    description: 'LTA context with rates',
+    type: LTAContext,
+  })
+  getRatesForContext(
+    @TenantId() tenantId: string,
+    @Body() planContext: PlanContextDto,
+  ) {
     return this.ltaAgreementService.getLTAForPlanContext(tenantId, planContext);
   }
 
   @Post('calculate/base-spend')
   @ApiOperation({ summary: 'Calculate base LTA spend for plan SKU' })
-  @ApiResponse({ status: 200, description: 'Base LTA spend breakdown', type: LTASpendBreakdown })
+  @ApiResponse({
+    status: 200,
+    description: 'Base LTA spend breakdown',
+    type: LTASpendBreakdown,
+  })
   calculateBaseSpend(
     @TenantId() tenantId: string,
-    @Body() body: { planId: string; skuId: string; planContext: PlanContextDto },
+    @Body()
+    body: { planId: string; skuId: string; planContext: PlanContextDto },
   ) {
     return this.ltaCalculationService.calculateBaseLTASpend(
       tenantId,
@@ -129,10 +186,15 @@ export class LTAAgreementController {
 
   @Post('calculate/planned-spend')
   @ApiOperation({ summary: 'Calculate planned LTA spend for plan SKU' })
-  @ApiResponse({ status: 200, description: 'Planned LTA spend breakdown', type: LTASpendBreakdown })
+  @ApiResponse({
+    status: 200,
+    description: 'Planned LTA spend breakdown',
+    type: LTASpendBreakdown,
+  })
   calculatePlannedSpend(
     @TenantId() tenantId: string,
-    @Body() body: { planId: string; skuId: string; planContext: PlanContextDto },
+    @Body()
+    body: { planId: string; skuId: string; planContext: PlanContextDto },
   ) {
     return this.ltaCalculationService.calculatePlannedLTASpend(
       tenantId,

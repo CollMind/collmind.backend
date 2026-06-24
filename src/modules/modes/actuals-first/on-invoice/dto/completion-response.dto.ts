@@ -7,7 +7,7 @@ export class CompletionResponseDto {
   @ApiProperty({ description: 'Yüklenen kayıt sayısı', example: 1238 })
   uploadedRecords!: number;
 
-  @ApiProperty({ description: 'Toplam indirim tutarı', example: 156750.00 })
+  @ApiProperty({ description: 'Toplam indirim tutarı', example: 156750.0 })
   totalDiscount!: number;
 
   @ApiProperty({ description: 'Etkilenen envelope sayısı', example: 3 })

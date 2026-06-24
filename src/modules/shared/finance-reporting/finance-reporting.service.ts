@@ -7,13 +7,31 @@ import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-valu
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
 import { BudgetAllocationService } from '../budget/budget-allocation.service';
-import { ReportFilters, PaginationParams, ReportGranularity, ComparisonType } from './dto/report-filters.dto';
-import { BudgetUtilizationReport, BudgetSummary, UtilizationStatus } from './dto/budget-utilization.dto';
+import {
+  ReportFilters,
+  PaginationParams,
+  ReportGranularity,
+  ComparisonType,
+} from './dto/report-filters.dto';
+import {
+  BudgetUtilizationReport,
+  BudgetSummary,
+  UtilizationStatus,
+} from './dto/budget-utilization.dto';
 import { TrendReport, TrendDataPoint } from './dto/trend-report.dto';
-import { CompositionReport, CompositionSlice } from './dto/composition-report.dto';
-import { PaginatedPlanReport, PlanPerformanceRow } from './dto/plan-performance.dto';
+import {
+  CompositionReport,
+  CompositionSlice,
+} from './dto/composition-report.dto';
+import {
+  PaginatedPlanReport,
+  PlanPerformanceRow,
+} from './dto/plan-performance.dto';
 import { RiskReport, RiskPlan } from './dto/risk-report.dto';
-import { MechanicReport, MechanicEffectiveness } from './dto/mechanic-effectiveness.dto';
+import {
+  MechanicReport,
+  MechanicEffectiveness,
+} from './dto/mechanic-effectiveness.dto';
 import { VarianceReport, VarianceItem } from './dto/variance-report.dto';
 import { CashFlowReport, CashFlowProjection } from './dto/cash-flow-report.dto';
 
@@ -38,8 +56,13 @@ export class FinanceReportingService {
   /**
    * Get budget utilization report
    */
-  async getBudgetUtilization(tenantId: string, filters: ReportFilters): Promise<BudgetUtilizationReport> {
-    const startDate = filters.startDate ? new Date(filters.startDate) : new Date();
+  async getBudgetUtilization(
+    tenantId: string,
+    filters: ReportFilters,
+  ): Promise<BudgetUtilizationReport> {
+    const startDate = filters.startDate
+      ? new Date(filters.startDate)
+      : new Date();
     const endDate = filters.endDate ? new Date(filters.endDate) : new Date();
 
     // Get budget allocations for the period
@@ -47,9 +70,15 @@ export class FinanceReportingService {
       where: {
         tenantId,
         periodStart: Between(startDate, endDate),
-        ...(filters.cplIds && filters.cplIds.length > 0 ? { cplId: In(filters.cplIds) } : {}),
-        ...(filters.channels && filters.channels.length > 0 ? { channel: In(filters.channels) } : {}),
-        ...(filters.categories && filters.categories.length > 0 ? { category: In(filters.categories) } : {}),
+        ...(filters.cplIds && filters.cplIds.length > 0
+          ? { cplId: In(filters.cplIds) }
+          : {}),
+        ...(filters.channels && filters.channels.length > 0
+          ? { channel: In(filters.channels) }
+          : {}),
+        ...(filters.categories && filters.categories.length > 0
+          ? { category: In(filters.categories) }
+          : {}),
       },
     });
 
@@ -70,15 +99,23 @@ export class FinanceReportingService {
       totalOffInvoiceReserved += Number(allocation.offInvoiceReserved) || 0;
     }
 
-    const onInvoiceAvailable = totalOnInvoiceAllocated - totalOnInvoiceUtilized - totalOnInvoiceReserved;
-    const offInvoiceAvailable = totalOffInvoiceAllocated - totalOffInvoiceUtilized - totalOffInvoiceReserved;
+    const onInvoiceAvailable =
+      totalOnInvoiceAllocated - totalOnInvoiceUtilized - totalOnInvoiceReserved;
+    const offInvoiceAvailable =
+      totalOffInvoiceAllocated -
+      totalOffInvoiceUtilized -
+      totalOffInvoiceReserved;
     const onInvoiceUtilizationPercent =
       totalOnInvoiceAllocated > 0
-        ? ((totalOnInvoiceUtilized + totalOnInvoiceReserved) / totalOnInvoiceAllocated) * 100
+        ? ((totalOnInvoiceUtilized + totalOnInvoiceReserved) /
+            totalOnInvoiceAllocated) *
+          100
         : 0;
     const offInvoiceUtilizationPercent =
       totalOffInvoiceAllocated > 0
-        ? ((totalOffInvoiceUtilized + totalOffInvoiceReserved) / totalOffInvoiceAllocated) * 100
+        ? ((totalOffInvoiceUtilized + totalOffInvoiceReserved) /
+            totalOffInvoiceAllocated) *
+          100
         : 0;
 
     const onInvoice: BudgetSummary = {
@@ -106,24 +143,38 @@ export class FinanceReportingService {
       available: onInvoiceAvailable + offInvoiceAvailable,
       utilizationPercent:
         totalOnInvoiceAllocated + totalOffInvoiceAllocated > 0
-          ? ((totalOnInvoiceUtilized + totalOnInvoiceReserved + totalOffInvoiceUtilized + totalOffInvoiceReserved) /
+          ? ((totalOnInvoiceUtilized +
+              totalOnInvoiceReserved +
+              totalOffInvoiceUtilized +
+              totalOffInvoiceReserved) /
               (totalOnInvoiceAllocated + totalOffInvoiceAllocated)) *
             100
           : 0,
       status: this.getUtilizationStatus(
         totalOnInvoiceAllocated + totalOffInvoiceAllocated > 0
-          ? ((totalOnInvoiceUtilized + totalOnInvoiceReserved + totalOffInvoiceUtilized + totalOffInvoiceReserved) /
+          ? ((totalOnInvoiceUtilized +
+              totalOnInvoiceReserved +
+              totalOffInvoiceUtilized +
+              totalOffInvoiceReserved) /
               (totalOnInvoiceAllocated + totalOffInvoiceAllocated)) *
-            100
+              100
           : 0,
       ),
     };
 
     // Breakdown by dimensions (if requested)
-    const byCpl = filters.cplIds && filters.cplIds.length > 0 ? undefined : this.aggregateByCpl(allocations);
-    const byChannel = filters.channels && filters.channels.length > 0 ? undefined : this.aggregateByChannel(allocations);
+    const byCpl =
+      filters.cplIds && filters.cplIds.length > 0
+        ? undefined
+        : this.aggregateByCpl(allocations);
+    const byChannel =
+      filters.channels && filters.channels.length > 0
+        ? undefined
+        : this.aggregateByChannel(allocations);
     const byCategory =
-      filters.categories && filters.categories.length > 0 ? undefined : this.aggregateByCategory(allocations);
+      filters.categories && filters.categories.length > 0
+        ? undefined
+        : this.aggregateByCategory(allocations);
 
     return {
       onInvoice,
@@ -145,7 +196,9 @@ export class FinanceReportingService {
     filters: ReportFilters,
     granularity: ReportGranularity,
   ): Promise<TrendReport> {
-    const startDate = filters.startDate ? new Date(filters.startDate) : new Date();
+    const startDate = filters.startDate
+      ? new Date(filters.startDate)
+      : new Date();
     const endDate = filters.endDate ? new Date(filters.endDate) : new Date();
 
     // Get plans in the period
@@ -176,7 +229,9 @@ export class FinanceReportingService {
 
       // Calculate spends for this period
       const periodPlans = plans.filter(
-        (p) => new Date(p.startDate) < periodEnd && new Date(p.endDate) >= periodStart,
+        (p) =>
+          new Date(p.startDate) < periodEnd &&
+          new Date(p.endDate) >= periodStart,
       );
 
       let onInvoice = 0;
@@ -189,7 +244,11 @@ export class FinanceReportingService {
       for (const plan of periodPlans) {
         const planFus = await this.planFuRepository.find({
           where: { planId: plan.id },
-          relations: ['planSkus', 'planMechanicValues', 'planMechanicValues.mechanic'],
+          relations: [
+            'planSkus',
+            'planMechanicValues',
+            'planMechanicValues.mechanic',
+          ],
         });
 
         for (const planFu of planFus) {
@@ -228,9 +287,17 @@ export class FinanceReportingService {
       });
     }
 
-    const totalOnInvoice = dataPoints.reduce((sum, dp) => sum + dp.onInvoice, 0);
-    const totalOffInvoice = dataPoints.reduce((sum, dp) => sum + dp.offInvoice, 0);
-    const days = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+    const totalOnInvoice = dataPoints.reduce(
+      (sum, dp) => sum + dp.onInvoice,
+      0,
+    );
+    const totalOffInvoice = dataPoints.reduce(
+      (sum, dp) => sum + dp.offInvoice,
+      0,
+    );
+    const days = Math.ceil(
+      (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+    );
     const avgDailyOnInvoice = days > 0 ? totalOnInvoice / days : 0;
     const avgDailyOffInvoice = days > 0 ? totalOffInvoice / days : 0;
 
@@ -247,11 +314,20 @@ export class FinanceReportingService {
   /**
    * Get spend composition report
    */
-  async getSpendComposition(tenantId: string, filters: ReportFilters): Promise<CompositionReport> {
+  async getSpendComposition(
+    tenantId: string,
+    filters: ReportFilters,
+  ): Promise<CompositionReport> {
     const plans = await this.getFilteredPlans(tenantId, filters);
 
-    const onInvoiceMap = new Map<string, { amount: number; planCount: number; totalRoi: number; roiCount: number }>();
-    const offInvoiceMap = new Map<string, { amount: number; planCount: number; totalRoi: number; roiCount: number }>();
+    const onInvoiceMap = new Map<
+      string,
+      { amount: number; planCount: number; totalRoi: number; roiCount: number }
+    >();
+    const offInvoiceMap = new Map<
+      string,
+      { amount: number; planCount: number; totalRoi: number; roiCount: number }
+    >();
 
     for (const plan of plans) {
       const planFus = await this.planFuRepository.find({
@@ -265,10 +341,18 @@ export class FinanceReportingService {
           if (!mechanic) continue;
 
           const spend = pmv.calculatedSpend || 0;
-          const map = mechanic.category === 'on_invoice_discount' ? onInvoiceMap : offInvoiceMap;
+          const map =
+            mechanic.category === 'on_invoice_discount'
+              ? onInvoiceMap
+              : offInvoiceMap;
 
           if (!map.has(mechanic.code)) {
-            map.set(mechanic.code, { amount: 0, planCount: 0, totalRoi: 0, roiCount: 0 });
+            map.set(mechanic.code, {
+              amount: 0,
+              planCount: 0,
+              totalRoi: 0,
+              roiCount: 0,
+            });
           }
 
           const entry = map.get(mechanic.code)!;
@@ -286,10 +370,18 @@ export class FinanceReportingService {
       }
     }
 
-    const totalOnInvoice = Array.from(onInvoiceMap.values()).reduce((sum, e) => sum + e.amount, 0);
-    const totalOffInvoice = Array.from(offInvoiceMap.values()).reduce((sum, e) => sum + e.amount, 0);
+    const totalOnInvoice = Array.from(onInvoiceMap.values()).reduce(
+      (sum, e) => sum + e.amount,
+      0,
+    );
+    const totalOffInvoice = Array.from(offInvoiceMap.values()).reduce(
+      (sum, e) => sum + e.amount,
+      0,
+    );
 
-    const onInvoice: CompositionSlice[] = Array.from(onInvoiceMap.entries()).map(([code, data]) => ({
+    const onInvoice: CompositionSlice[] = Array.from(
+      onInvoiceMap.entries(),
+    ).map(([code, data]) => ({
       mechanicCode: code,
       mechanicName: code, // Will be resolved from mechanic entity
       amount: data.amount,
@@ -298,11 +390,14 @@ export class FinanceReportingService {
       avgRoi: data.roiCount > 0 ? data.totalRoi / data.roiCount : undefined,
     }));
 
-    const offInvoice: CompositionSlice[] = Array.from(offInvoiceMap.entries()).map(([code, data]) => ({
+    const offInvoice: CompositionSlice[] = Array.from(
+      offInvoiceMap.entries(),
+    ).map(([code, data]) => ({
       mechanicCode: code,
       mechanicName: code,
       amount: data.amount,
-      percentage: totalOffInvoice > 0 ? (data.amount / totalOffInvoice) * 100 : 0,
+      percentage:
+        totalOffInvoice > 0 ? (data.amount / totalOffInvoice) * 100 : 0,
       planCount: data.planCount,
       avgRoi: data.roiCount > 0 ? data.totalRoi / data.roiCount : undefined,
     }));
@@ -332,7 +427,9 @@ export class FinanceReportingService {
 
     // Apply filters
     if (filters.startDate) {
-      query.andWhere('plan.startDate >= :startDate', { startDate: filters.startDate });
+      query.andWhere('plan.startDate >= :startDate', {
+        startDate: filters.startDate,
+      });
     }
     if (filters.endDate) {
       query.andWhere('plan.endDate <= :endDate', { endDate: filters.endDate });
@@ -341,21 +438,32 @@ export class FinanceReportingService {
       query.andWhere('plan.cplId IN (:...cplIds)', { cplIds: filters.cplIds });
     }
     if (filters.channels && filters.channels.length > 0) {
-      query.andWhere('plan.channel.code IN (:...channels)', { channels: filters.channels });
+      query.andWhere('plan.channel.code IN (:...channels)', {
+        channels: filters.channels,
+      });
     }
     if (filters.categories && filters.categories.length > 0) {
-      query.andWhere('plan.category.code IN (:...categories)', { categories: filters.categories });
+      query.andWhere('plan.category.code IN (:...categories)', {
+        categories: filters.categories,
+      });
     }
     if (filters.planStatuses && filters.planStatuses.length > 0) {
-      query.andWhere('plan.status IN (:...statuses)', { statuses: filters.planStatuses });
+      query.andWhere('plan.status IN (:...statuses)', {
+        statuses: filters.planStatuses,
+      });
     }
     if (filters.ragStatuses && filters.ragStatuses.length > 0) {
-      query.andWhere('plan.ragStatus IN (:...ragStatuses)', { ragStatuses: filters.ragStatuses });
+      query.andWhere('plan.ragStatus IN (:...ragStatuses)', {
+        ragStatuses: filters.ragStatuses,
+      });
     }
 
     // Sorting
     if (pagination.sortBy) {
-      const sortField = pagination.sortBy === 'planName' ? 'plan.planName' : `plan.${pagination.sortBy}`;
+      const sortField =
+        pagination.sortBy === 'planName'
+          ? 'plan.planName'
+          : `plan.${pagination.sortBy}`;
       query.orderBy(sortField, pagination.sortOrder || 'DESC');
     } else {
       query.orderBy('plan.createdAt', 'DESC');
@@ -392,8 +500,10 @@ export class FinanceReportingService {
           }
         }
 
-        const onInvoicePercent = totalSpend > 0 ? (onInvoiceSpend / totalSpend) * 100 : 0;
-        const offInvoicePercent = totalSpend > 0 ? (offInvoiceSpend / totalSpend) * 100 : 0;
+        const onInvoicePercent =
+          totalSpend > 0 ? (onInvoiceSpend / totalSpend) * 100 : 0;
+        const offInvoicePercent =
+          totalSpend > 0 ? (offInvoiceSpend / totalSpend) * 100 : 0;
 
         return {
           planId: plan.id,
@@ -428,7 +538,10 @@ export class FinanceReportingService {
   /**
    * Get budget at risk analysis
    */
-  async getBudgetAtRisk(tenantId: string, filters: ReportFilters): Promise<RiskReport> {
+  async getBudgetAtRisk(
+    tenantId: string,
+    filters: ReportFilters,
+  ): Promise<RiskReport> {
     const plans = await this.getFilteredPlans(tenantId, {
       ...filters,
       ragStatuses: ['RED', 'AMBER'],
@@ -475,14 +588,19 @@ export class FinanceReportingService {
     // Get total budget for risk percentage
     const budgetReport = await this.getBudgetUtilization(tenantId, filters);
     const totalBudget = budgetReport.total.allocated;
-    const riskPercentage = totalBudget > 0 ? (totalAtRisk / totalBudget) * 100 : 0;
+    const riskPercentage =
+      totalBudget > 0 ? (totalAtRisk / totalBudget) * 100 : 0;
 
     const recommendations: string[] = [];
     if (redPlans.length > 0) {
-      recommendations.push(`${redPlans.length} RED status plans should be reviewed and potentially revised`);
+      recommendations.push(
+        `${redPlans.length} RED status plans should be reviewed and potentially revised`,
+      );
     }
     if (amberPlans.length > 0) {
-      recommendations.push(`${amberPlans.length} AMBER status plans should be monitored closely`);
+      recommendations.push(
+        `${amberPlans.length} AMBER status plans should be monitored closely`,
+      );
     }
 
     return {
@@ -499,13 +617,20 @@ export class FinanceReportingService {
   /**
    * Get mechanic effectiveness report
    */
-  async getMechanicEffectiveness(tenantId: string, filters: ReportFilters): Promise<MechanicReport> {
+  async getMechanicEffectiveness(
+    tenantId: string,
+    filters: ReportFilters,
+  ): Promise<MechanicReport> {
     const composition = await this.getSpendComposition(tenantId, filters);
 
     const allMechanics = [...composition.onInvoice, ...composition.offInvoice];
 
     const mechanics: MechanicEffectiveness[] = allMechanics.map((slice) => {
-      const efficiencyScore = slice.avgRoi ? slice.avgRoi * (slice.amount / composition.totalOnInvoice + composition.totalOffInvoice) : 0;
+      const efficiencyScore = slice.avgRoi
+        ? slice.avgRoi *
+          (slice.amount / composition.totalOnInvoice +
+            composition.totalOffInvoice)
+        : 0;
 
       return {
         mechanicCode: slice.mechanicCode,
@@ -517,7 +642,10 @@ export class FinanceReportingService {
         totalIncrementalGp: 0, // TODO: Calculate from plan data
         efficiencyScore,
         insights: slice.avgRoi
-          ? [`Average GP ROI: ${slice.avgRoi.toFixed(1)}%`, `Used in ${slice.planCount} plans`]
+          ? [
+              `Average GP ROI: ${slice.avgRoi.toFixed(1)}%`,
+              `Used in ${slice.planCount} plans`,
+            ]
           : undefined,
       };
     });
@@ -529,7 +657,10 @@ export class FinanceReportingService {
       mechanics,
       totalSpend: composition.totalOnInvoice + composition.totalOffInvoice,
       mostEfficient: mechanics.length > 0 ? mechanics[0].mechanicCode : '',
-      leastEfficient: mechanics.length > 0 ? mechanics[mechanics.length - 1].mechanicCode : '',
+      leastEfficient:
+        mechanics.length > 0
+          ? mechanics[mechanics.length - 1].mechanicCode
+          : '',
     };
   }
 
@@ -541,11 +672,17 @@ export class FinanceReportingService {
     filters: ReportFilters,
     comparisonType: ComparisonType,
   ): Promise<VarianceReport> {
-    const startDate = filters.startDate ? new Date(filters.startDate) : new Date();
+    const startDate = filters.startDate
+      ? new Date(filters.startDate)
+      : new Date();
     const endDate = filters.endDate ? new Date(filters.endDate) : new Date();
 
     // Get actual spends
-    const actualTrend = await this.getSpendTrend(tenantId, filters, ReportGranularity.MONTHLY);
+    const actualTrend = await this.getSpendTrend(
+      tenantId,
+      filters,
+      ReportGranularity.MONTHLY,
+    );
     const actualOnInvoice = actualTrend.totalOnInvoice;
     const actualOffInvoice = actualTrend.totalOffInvoice;
     const actualTotal = actualOnInvoice + actualOffInvoice;
@@ -561,14 +698,20 @@ export class FinanceReportingService {
       plannedTotal = plannedOnInvoice + plannedOffInvoice;
     } else if (comparisonType === ComparisonType.PREVIOUS_PERIOD) {
       // Calculate previous period
-      const periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const periodDays = Math.ceil(
+        (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+      );
       const prevStartDate = new Date(startDate);
       prevStartDate.setDate(prevStartDate.getDate() - periodDays);
       const prevEndDate = new Date(startDate);
 
       const prevTrend = await this.getSpendTrend(
         tenantId,
-        { ...filters, startDate: prevStartDate.toISOString().split('T')[0], endDate: prevEndDate.toISOString().split('T')[0] },
+        {
+          ...filters,
+          startDate: prevStartDate.toISOString().split('T')[0],
+          endDate: prevEndDate.toISOString().split('T')[0],
+        },
         ReportGranularity.MONTHLY,
       );
       plannedOnInvoice = prevTrend.totalOnInvoice;
@@ -582,21 +725,30 @@ export class FinanceReportingService {
         planned: plannedOnInvoice,
         actual: actualOnInvoice,
         variance: actualOnInvoice - plannedOnInvoice,
-        variancePercent: plannedOnInvoice > 0 ? ((actualOnInvoice - plannedOnInvoice) / plannedOnInvoice) * 100 : 0,
+        variancePercent:
+          plannedOnInvoice > 0
+            ? ((actualOnInvoice - plannedOnInvoice) / plannedOnInvoice) * 100
+            : 0,
       },
       {
         category: 'Off-Invoice',
         planned: plannedOffInvoice,
         actual: actualOffInvoice,
         variance: actualOffInvoice - plannedOffInvoice,
-        variancePercent: plannedOffInvoice > 0 ? ((actualOffInvoice - plannedOffInvoice) / plannedOffInvoice) * 100 : 0,
+        variancePercent:
+          plannedOffInvoice > 0
+            ? ((actualOffInvoice - plannedOffInvoice) / plannedOffInvoice) * 100
+            : 0,
       },
       {
         category: 'Total',
         planned: plannedTotal,
         actual: actualTotal,
         variance: actualTotal - plannedTotal,
-        variancePercent: plannedTotal > 0 ? ((actualTotal - plannedTotal) / plannedTotal) * 100 : 0,
+        variancePercent:
+          plannedTotal > 0
+            ? ((actualTotal - plannedTotal) / plannedTotal) * 100
+            : 0,
       },
     ];
 
@@ -606,15 +758,24 @@ export class FinanceReportingService {
       periodEnd: endDate.toISOString().split('T')[0],
       variances,
       totalVariance: actualTotal - plannedTotal,
-      totalVariancePercent: plannedTotal > 0 ? ((actualTotal - plannedTotal) / plannedTotal) * 100 : 0,
+      totalVariancePercent:
+        plannedTotal > 0
+          ? ((actualTotal - plannedTotal) / plannedTotal) * 100
+          : 0,
     };
   }
 
   /**
    * Get cash flow projection
    */
-  async getCashFlowProjection(tenantId: string, filters: ReportFilters, months: number): Promise<CashFlowReport> {
-    const startDate = filters.startDate ? new Date(filters.startDate) : new Date();
+  async getCashFlowProjection(
+    tenantId: string,
+    filters: ReportFilters,
+    months: number,
+  ): Promise<CashFlowReport> {
+    const startDate = filters.startDate
+      ? new Date(filters.startDate)
+      : new Date();
     const endDate = new Date(startDate);
     endDate.setMonth(endDate.getMonth() + months);
 
@@ -697,21 +858,32 @@ export class FinanceReportingService {
       });
     }
 
-    const projections = Array.from(projectionsMap.values()).sort((a, b) => a.month.localeCompare(b.month));
+    const projections = Array.from(projectionsMap.values()).sort((a, b) =>
+      a.month.localeCompare(b.month),
+    );
 
     return {
       startDate: startDate.toISOString().split('T')[0],
       endDate: endDate.toISOString().split('T')[0],
       projections,
-      totalOnInvoiceOutflow: projections.reduce((sum, p) => sum + p.onInvoiceOutflow, 0),
-      totalOffInvoiceOutflow: projections.reduce((sum, p) => sum + p.offInvoiceOutflow, 0),
+      totalOnInvoiceOutflow: projections.reduce(
+        (sum, p) => sum + p.onInvoiceOutflow,
+        0,
+      ),
+      totalOffInvoiceOutflow: projections.reduce(
+        (sum, p) => sum + p.offInvoiceOutflow,
+        0,
+      ),
       totalOutflow: projections.reduce((sum, p) => sum + p.totalOutflow, 0),
     };
   }
 
   // Helper methods
 
-  private async getFilteredPlans(tenantId: string, filters: ReportFilters): Promise<Plan[]> {
+  private async getFilteredPlans(
+    tenantId: string,
+    filters: ReportFilters,
+  ): Promise<Plan[]> {
     const query = this.planRepository
       .createQueryBuilder('plan')
       .where('plan.tenantId = :tenantId', { tenantId })
@@ -720,7 +892,9 @@ export class FinanceReportingService {
       });
 
     if (filters.startDate) {
-      query.andWhere('plan.startDate >= :startDate', { startDate: filters.startDate });
+      query.andWhere('plan.startDate >= :startDate', {
+        startDate: filters.startDate,
+      });
     }
     if (filters.endDate) {
       query.andWhere('plan.endDate <= :endDate', { endDate: filters.endDate });
@@ -729,16 +903,24 @@ export class FinanceReportingService {
       query.andWhere('plan.cplId IN (:...cplIds)', { cplIds: filters.cplIds });
     }
     if (filters.channels && filters.channels.length > 0) {
-      query.andWhere('plan.channel.code IN (:...channels)', { channels: filters.channels });
+      query.andWhere('plan.channel.code IN (:...channels)', {
+        channels: filters.channels,
+      });
     }
     if (filters.categories && filters.categories.length > 0) {
-      query.andWhere('plan.category.code IN (:...categories)', { categories: filters.categories });
+      query.andWhere('plan.category.code IN (:...categories)', {
+        categories: filters.categories,
+      });
     }
     if (filters.planStatuses && filters.planStatuses.length > 0) {
-      query.andWhere('plan.status IN (:...statuses)', { statuses: filters.planStatuses });
+      query.andWhere('plan.status IN (:...statuses)', {
+        statuses: filters.planStatuses,
+      });
     }
     if (filters.ragStatuses && filters.ragStatuses.length > 0) {
-      query.andWhere('plan.ragStatus IN (:...ragStatuses)', { ragStatuses: filters.ragStatuses });
+      query.andWhere('plan.ragStatus IN (:...ragStatuses)', {
+        ragStatuses: filters.ragStatuses,
+      });
     }
 
     return query.getMany();
@@ -750,8 +932,18 @@ export class FinanceReportingService {
     return UtilizationStatus.GREEN;
   }
 
-  private aggregateByCpl(allocations: BudgetAllocation[]): Array<{ cplId: string; cplName: string; onInvoice: BudgetSummary; offInvoice: BudgetSummary }> {
-    const map = new Map<string, { onInvoice: number[]; offInvoice: number[] }>();
+  private aggregateByCpl(
+    allocations: BudgetAllocation[],
+  ): Array<{
+    cplId: string;
+    cplName: string;
+    onInvoice: BudgetSummary;
+    offInvoice: BudgetSummary;
+  }> {
+    const map = new Map<
+      string,
+      { onInvoice: number[]; offInvoice: number[] }
+    >();
 
     for (const alloc of allocations) {
       if (!alloc.cplId) continue;
@@ -759,23 +951,52 @@ export class FinanceReportingService {
         map.set(alloc.cplId, { onInvoice: [], offInvoice: [] });
       }
       const entry = map.get(alloc.cplId)!;
-      entry.onInvoice.push(Number(alloc.onInvoiceBudget) || 0, Number(alloc.onInvoiceUtilized) || 0, Number(alloc.onInvoiceReserved) || 0);
-      entry.offInvoice.push(Number(alloc.offInvoiceBudget) || 0, Number(alloc.offInvoiceUtilized) || 0, Number(alloc.offInvoiceReserved) || 0);
+      entry.onInvoice.push(
+        Number(alloc.onInvoiceBudget) || 0,
+        Number(alloc.onInvoiceUtilized) || 0,
+        Number(alloc.onInvoiceReserved) || 0,
+      );
+      entry.offInvoice.push(
+        Number(alloc.offInvoiceBudget) || 0,
+        Number(alloc.offInvoiceUtilized) || 0,
+        Number(alloc.offInvoiceReserved) || 0,
+      );
     }
 
     // TODO: Resolve CPL names from repository
     return Array.from(map.entries()).map(([cplId, data]) => {
-      const onInvoiceAllocated = data.onInvoice.filter((_, i) => i % 3 === 0).reduce((sum, v) => sum + v, 0);
-      const onInvoiceUtilized = data.onInvoice.filter((_, i) => i % 3 === 1).reduce((sum, v) => sum + v, 0);
-      const onInvoiceReserved = data.onInvoice.filter((_, i) => i % 3 === 2).reduce((sum, v) => sum + v, 0);
-      const onInvoiceAvailable = onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
-      const onInvoicePercent = onInvoiceAllocated > 0 ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100 : 0;
+      const onInvoiceAllocated = data.onInvoice
+        .filter((_, i) => i % 3 === 0)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceUtilized = data.onInvoice
+        .filter((_, i) => i % 3 === 1)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceReserved = data.onInvoice
+        .filter((_, i) => i % 3 === 2)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceAvailable =
+        onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
+      const onInvoicePercent =
+        onInvoiceAllocated > 0
+          ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100
+          : 0;
 
-      const offInvoiceAllocated = data.offInvoice.filter((_, i) => i % 3 === 0).reduce((sum, v) => sum + v, 0);
-      const offInvoiceUtilized = data.offInvoice.filter((_, i) => i % 3 === 1).reduce((sum, v) => sum + v, 0);
-      const offInvoiceReserved = data.offInvoice.filter((_, i) => i % 3 === 2).reduce((sum, v) => sum + v, 0);
-      const offInvoiceAvailable = offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
-      const offInvoicePercent = offInvoiceAllocated > 0 ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) * 100 : 0;
+      const offInvoiceAllocated = data.offInvoice
+        .filter((_, i) => i % 3 === 0)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceUtilized = data.offInvoice
+        .filter((_, i) => i % 3 === 1)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceReserved = data.offInvoice
+        .filter((_, i) => i % 3 === 2)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceAvailable =
+        offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
+      const offInvoicePercent =
+        offInvoiceAllocated > 0
+          ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) *
+            100
+          : 0;
 
       return {
         cplId,
@@ -800,9 +1021,18 @@ export class FinanceReportingService {
     });
   }
 
-  private aggregateByChannel(allocations: BudgetAllocation[]): Array<{ channel: string; onInvoice: BudgetSummary; offInvoice: BudgetSummary }> {
+  private aggregateByChannel(
+    allocations: BudgetAllocation[],
+  ): Array<{
+    channel: string;
+    onInvoice: BudgetSummary;
+    offInvoice: BudgetSummary;
+  }> {
     // Similar to aggregateByCpl but by channel
-    const map = new Map<string, { onInvoice: number[]; offInvoice: number[] }>();
+    const map = new Map<
+      string,
+      { onInvoice: number[]; offInvoice: number[] }
+    >();
 
     for (const alloc of allocations) {
       if (!alloc.channel) continue;
@@ -810,22 +1040,51 @@ export class FinanceReportingService {
         map.set(alloc.channel, { onInvoice: [], offInvoice: [] });
       }
       const entry = map.get(alloc.channel)!;
-      entry.onInvoice.push(Number(alloc.onInvoiceBudget) || 0, Number(alloc.onInvoiceUtilized) || 0, Number(alloc.onInvoiceReserved) || 0);
-      entry.offInvoice.push(Number(alloc.offInvoiceBudget) || 0, Number(alloc.offInvoiceUtilized) || 0, Number(alloc.offInvoiceReserved) || 0);
+      entry.onInvoice.push(
+        Number(alloc.onInvoiceBudget) || 0,
+        Number(alloc.onInvoiceUtilized) || 0,
+        Number(alloc.onInvoiceReserved) || 0,
+      );
+      entry.offInvoice.push(
+        Number(alloc.offInvoiceBudget) || 0,
+        Number(alloc.offInvoiceUtilized) || 0,
+        Number(alloc.offInvoiceReserved) || 0,
+      );
     }
 
     return Array.from(map.entries()).map(([channel, data]) => {
-      const onInvoiceAllocated = data.onInvoice.filter((_, i) => i % 3 === 0).reduce((sum, v) => sum + v, 0);
-      const onInvoiceUtilized = data.onInvoice.filter((_, i) => i % 3 === 1).reduce((sum, v) => sum + v, 0);
-      const onInvoiceReserved = data.onInvoice.filter((_, i) => i % 3 === 2).reduce((sum, v) => sum + v, 0);
-      const onInvoiceAvailable = onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
-      const onInvoicePercent = onInvoiceAllocated > 0 ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100 : 0;
+      const onInvoiceAllocated = data.onInvoice
+        .filter((_, i) => i % 3 === 0)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceUtilized = data.onInvoice
+        .filter((_, i) => i % 3 === 1)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceReserved = data.onInvoice
+        .filter((_, i) => i % 3 === 2)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceAvailable =
+        onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
+      const onInvoicePercent =
+        onInvoiceAllocated > 0
+          ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100
+          : 0;
 
-      const offInvoiceAllocated = data.offInvoice.filter((_, i) => i % 3 === 0).reduce((sum, v) => sum + v, 0);
-      const offInvoiceUtilized = data.offInvoice.filter((_, i) => i % 3 === 1).reduce((sum, v) => sum + v, 0);
-      const offInvoiceReserved = data.offInvoice.filter((_, i) => i % 3 === 2).reduce((sum, v) => sum + v, 0);
-      const offInvoiceAvailable = offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
-      const offInvoicePercent = offInvoiceAllocated > 0 ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) * 100 : 0;
+      const offInvoiceAllocated = data.offInvoice
+        .filter((_, i) => i % 3 === 0)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceUtilized = data.offInvoice
+        .filter((_, i) => i % 3 === 1)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceReserved = data.offInvoice
+        .filter((_, i) => i % 3 === 2)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceAvailable =
+        offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
+      const offInvoicePercent =
+        offInvoiceAllocated > 0
+          ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) *
+            100
+          : 0;
 
       return {
         channel,
@@ -849,9 +1108,18 @@ export class FinanceReportingService {
     });
   }
 
-  private aggregateByCategory(allocations: BudgetAllocation[]): Array<{ category: string; onInvoice: BudgetSummary; offInvoice: BudgetSummary }> {
+  private aggregateByCategory(
+    allocations: BudgetAllocation[],
+  ): Array<{
+    category: string;
+    onInvoice: BudgetSummary;
+    offInvoice: BudgetSummary;
+  }> {
     // Similar to aggregateByChannel but by category
-    const map = new Map<string, { onInvoice: number[]; offInvoice: number[] }>();
+    const map = new Map<
+      string,
+      { onInvoice: number[]; offInvoice: number[] }
+    >();
 
     for (const alloc of allocations) {
       if (!alloc.category) continue;
@@ -859,22 +1127,51 @@ export class FinanceReportingService {
         map.set(alloc.category, { onInvoice: [], offInvoice: [] });
       }
       const entry = map.get(alloc.category)!;
-      entry.onInvoice.push(Number(alloc.onInvoiceBudget) || 0, Number(alloc.onInvoiceUtilized) || 0, Number(alloc.onInvoiceReserved) || 0);
-      entry.offInvoice.push(Number(alloc.offInvoiceBudget) || 0, Number(alloc.offInvoiceUtilized) || 0, Number(alloc.offInvoiceReserved) || 0);
+      entry.onInvoice.push(
+        Number(alloc.onInvoiceBudget) || 0,
+        Number(alloc.onInvoiceUtilized) || 0,
+        Number(alloc.onInvoiceReserved) || 0,
+      );
+      entry.offInvoice.push(
+        Number(alloc.offInvoiceBudget) || 0,
+        Number(alloc.offInvoiceUtilized) || 0,
+        Number(alloc.offInvoiceReserved) || 0,
+      );
     }
 
     return Array.from(map.entries()).map(([category, data]) => {
-      const onInvoiceAllocated = data.onInvoice.filter((_, i) => i % 3 === 0).reduce((sum, v) => sum + v, 0);
-      const onInvoiceUtilized = data.onInvoice.filter((_, i) => i % 3 === 1).reduce((sum, v) => sum + v, 0);
-      const onInvoiceReserved = data.onInvoice.filter((_, i) => i % 3 === 2).reduce((sum, v) => sum + v, 0);
-      const onInvoiceAvailable = onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
-      const onInvoicePercent = onInvoiceAllocated > 0 ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100 : 0;
+      const onInvoiceAllocated = data.onInvoice
+        .filter((_, i) => i % 3 === 0)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceUtilized = data.onInvoice
+        .filter((_, i) => i % 3 === 1)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceReserved = data.onInvoice
+        .filter((_, i) => i % 3 === 2)
+        .reduce((sum, v) => sum + v, 0);
+      const onInvoiceAvailable =
+        onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
+      const onInvoicePercent =
+        onInvoiceAllocated > 0
+          ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100
+          : 0;
 
-      const offInvoiceAllocated = data.offInvoice.filter((_, i) => i % 3 === 0).reduce((sum, v) => sum + v, 0);
-      const offInvoiceUtilized = data.offInvoice.filter((_, i) => i % 3 === 1).reduce((sum, v) => sum + v, 0);
-      const offInvoiceReserved = data.offInvoice.filter((_, i) => i % 3 === 2).reduce((sum, v) => sum + v, 0);
-      const offInvoiceAvailable = offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
-      const offInvoicePercent = offInvoiceAllocated > 0 ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) * 100 : 0;
+      const offInvoiceAllocated = data.offInvoice
+        .filter((_, i) => i % 3 === 0)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceUtilized = data.offInvoice
+        .filter((_, i) => i % 3 === 1)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceReserved = data.offInvoice
+        .filter((_, i) => i % 3 === 2)
+        .reduce((sum, v) => sum + v, 0);
+      const offInvoiceAvailable =
+        offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
+      const offInvoicePercent =
+        offInvoiceAllocated > 0
+          ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) *
+            100
+          : 0;
 
       return {
         category,

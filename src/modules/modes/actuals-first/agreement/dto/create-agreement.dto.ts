@@ -24,12 +24,17 @@ export class CreateAgreementDto {
   @MaxLength(200)
   agreementName?: string;
 
-  @ApiPropertyOptional({ description: 'Agreement description and scope details' })
+  @ApiPropertyOptional({
+    description: 'Agreement description and scope details',
+  })
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiProperty({ enum: AgreementType, description: 'STA (≤30 days) or LTA (>30 days)' })
+  @ApiProperty({
+    enum: AgreementType,
+    description: 'STA (≤30 days) or LTA (>30 days)',
+  })
   @IsEnum(AgreementType)
   agreementType!: AgreementType;
 
@@ -48,7 +53,9 @@ export class CreateAgreementDto {
   @IsUUID()
   regionId?: string;
 
-  @ApiPropertyOptional({ description: 'Category ID (Hair Care, Skin Care, etc.)' })
+  @ApiPropertyOptional({
+    description: 'Category ID (Hair Care, Skin Care, etc.)',
+  })
   @IsOptional()
   @IsUUID()
   categoryId?: string;
@@ -63,7 +70,10 @@ export class CreateAgreementDto {
   @IsUUID()
   guId?: string;
 
-  @ApiPropertyOptional({ description: 'SKU scope: GU, FU, SKU, ALL', default: 'FU' })
+  @ApiPropertyOptional({
+    description: 'SKU scope: GU, FU, SKU, ALL',
+    default: 'FU',
+  })
   @IsOptional()
   @IsString()
   skuScope?: string;
@@ -78,7 +88,9 @@ export class CreateAgreementDto {
   @IsNotEmpty()
   mechanicId!: string;
 
-  @ApiPropertyOptional({ description: 'Mechanic value (e.g., 15.00 TL per unit or 10.5%)' })
+  @ApiPropertyOptional({
+    description: 'Mechanic value (e.g., 15.00 TL per unit or 10.5%)',
+  })
   @IsOptional()
   @IsNumber()
   mechanicValue?: number;
@@ -106,7 +118,10 @@ export class CreateAgreementDto {
   @IsDateString()
   endDate!: string;
 
-  @ApiPropertyOptional({ enum: ReconciliationPeriod, description: 'Reconciliation period: WEEKLY, MONTHLY, QUARTERLY, YEARLY' })
+  @ApiPropertyOptional({
+    enum: ReconciliationPeriod,
+    description: 'Reconciliation period: WEEKLY, MONTHLY, QUARTERLY, YEARLY',
+  })
   @IsOptional()
   @IsEnum(ReconciliationPeriod)
   reconciliationPeriod?: ReconciliationPeriod;
@@ -126,9 +141,9 @@ export class CreateAgreementDto {
   @IsString()
   currency?: string;
 
-  @ApiPropertyOptional({ description: 'Additional dynamic parameters for specific tactics' })
+  @ApiPropertyOptional({
+    description: 'Additional dynamic parameters for specific tactics',
+  })
   @IsOptional()
   additionalParams?: Record<string, any>;
 }
-
-

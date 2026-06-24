@@ -18,10 +18,22 @@ export class LTAPlanOverride extends BaseEntity {
   @Column({ name: 'lta_agreement_id', type: 'uuid' })
   ltaAgreementId!: string;
 
-  @Column({ name: 'override_on_invoice_pct', type: 'decimal', precision: 5, scale: 2, nullable: true })
+  @Column({
+    name: 'override_on_invoice_pct',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
   overrideOnInvoicePct?: number; // null means use default
 
-  @Column({ name: 'override_off_invoice_pct', type: 'decimal', precision: 5, scale: 2, nullable: true })
+  @Column({
+    name: 'override_off_invoice_pct',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
   overrideOffInvoicePct?: number; // null means use default
 
   @Column({ name: 'override_reason', type: 'text', nullable: true })
@@ -42,7 +54,9 @@ export class LTAPlanOverride extends BaseEntity {
   @JoinColumn({ name: 'lta_rate_id' })
   ltaRate!: LTARate;
 
-  @ManyToOne('LTAAgreement', (agreement: any) => agreement.planOverrides, { onDelete: 'CASCADE' })
+  @ManyToOne('LTAAgreement', (agreement: any) => agreement.planOverrides, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'lta_agreement_id' })
   ltaAgreement!: any;
 

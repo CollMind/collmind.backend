@@ -2,7 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CustomerService } from './customer.service';
 import { CustomerRepository } from './customer.repository';
 import { FileParserService } from './services/file-parser.service';
-import { Customer, CustomerStatus, CustomerChannel } from '../../database/entities/customer.entity';
+import {
+  Customer,
+  CustomerStatus,
+  CustomerChannel,
+} from '../../database/entities/customer.entity';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerFilterDto } from './dto/customer-filter.dto';
@@ -65,8 +69,12 @@ describe('CustomerService', () => {
     }).compile();
 
     service = module.get<CustomerService>(CustomerService);
-    customerRepository = module.get(CustomerRepository) as jest.Mocked<CustomerRepository>;
-    fileParserService = module.get(FileParserService) as jest.Mocked<FileParserService>;
+    customerRepository = module.get(
+      CustomerRepository,
+    ) as jest.Mocked<CustomerRepository>;
+    fileParserService = module.get(
+      FileParserService,
+    ) as jest.Mocked<FileParserService>;
   });
 
   afterEach(() => {
@@ -99,9 +107,9 @@ describe('CustomerService', () => {
     it('should throw ConflictException if customer with code already exists', async () => {
       customerRepository.findByCode.mockResolvedValue(mockCustomer);
 
-      await expect(service.create(mockTenantId, createCustomerDto)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.create(mockTenantId, createCustomerDto),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('should convert date fields correctly', async () => {
@@ -129,7 +137,11 @@ describe('CustomerService', () => {
   describe('createBulk', () => {
     const customers: CreateCustomerDto[] = [
       { code: 'CUST001', name: 'Customer 1', channel: CustomerChannel.RETAIL },
-      { code: 'CUST002', name: 'Customer 2', channel: CustomerChannel.WHOLESALE },
+      {
+        code: 'CUST002',
+        name: 'Customer 2',
+        channel: CustomerChannel.WHOLESALE,
+      },
     ];
 
     it('should create multiple customers successfully', async () => {
@@ -165,7 +177,9 @@ describe('CustomerService', () => {
 
       const result = await service.findAll(mockTenantId);
 
-      expect(customerRepository.findAllByTenant).toHaveBeenCalledWith(mockTenantId);
+      expect(customerRepository.findAllByTenant).toHaveBeenCalledWith(
+        mockTenantId,
+      );
       expect(result).toEqual(customers);
     });
 
@@ -198,7 +212,9 @@ describe('CustomerService', () => {
 
       const result = await service.findAll(mockTenantId, filters);
 
-      expect(customerRepository.findAllByTenant).toHaveBeenCalledWith(mockTenantId);
+      expect(customerRepository.findAllByTenant).toHaveBeenCalledWith(
+        mockTenantId,
+      );
       expect(customerRepository.findWithFilters).not.toHaveBeenCalled();
     });
   });
@@ -218,9 +234,9 @@ describe('CustomerService', () => {
     it('should throw NotFoundException if customer not found', async () => {
       customerRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.findOne(mockTenantId, mockCustomerId)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.findOne(mockTenantId, mockCustomerId),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -230,7 +246,10 @@ describe('CustomerService', () => {
 
       const result = await service.findByCode(mockTenantId, 'CUST001');
 
-      expect(customerRepository.findByCode).toHaveBeenCalledWith(mockTenantId, 'CUST001');
+      expect(customerRepository.findByCode).toHaveBeenCalledWith(
+        mockTenantId,
+        'CUST001',
+      );
       expect(result).toEqual(mockCustomer);
     });
 
@@ -250,9 +269,16 @@ describe('CustomerService', () => {
 
     it('should update customer successfully', async () => {
       customerRepository.findOne.mockResolvedValue(mockCustomer);
-      customerRepository.save.mockResolvedValue({ ...mockCustomer, ...updateCustomerDto } as any);
+      customerRepository.save.mockResolvedValue({
+        ...mockCustomer,
+        ...updateCustomerDto,
+      } as any);
 
-      const result = await service.update(mockTenantId, mockCustomerId, updateCustomerDto);
+      const result = await service.update(
+        mockTenantId,
+        mockCustomerId,
+        updateCustomerDto,
+      );
 
       expect(customerRepository.findOne).toHaveBeenCalled();
       expect(customerRepository.save).toHaveBeenCalled();
@@ -262,7 +288,11 @@ describe('CustomerService', () => {
     it('should check code uniqueness when updating code', async () => {
       const updateDto: UpdateCustomerDto = { code: 'NEWCODE' };
       const existingCustomer = { ...mockCustomer, code: 'OLDCODE' };
-      const conflictingCustomer = { ...mockCustomer, id: 'other-id', code: 'NEWCODE' };
+      const conflictingCustomer = {
+        ...mockCustomer,
+        id: 'other-id',
+        code: 'NEWCODE',
+      };
 
       customerRepository.findOne.mockResolvedValue(existingCustomer);
       customerRepository.findByCode.mockResolvedValue(conflictingCustomer);
@@ -286,7 +316,10 @@ describe('CustomerService', () => {
 
   describe('activate', () => {
     it('should activate customer', async () => {
-      const inactiveCustomer = { ...mockCustomer, status: CustomerStatus.INACTIVE };
+      const inactiveCustomer = {
+        ...mockCustomer,
+        status: CustomerStatus.INACTIVE,
+      };
       customerRepository.findOne.mockResolvedValue(inactiveCustomer);
       customerRepository.save.mockResolvedValue({
         ...inactiveCustomer,
@@ -318,9 +351,15 @@ describe('CustomerService', () => {
       const customers = [mockCustomer];
       customerRepository.findByChannel.mockResolvedValue(customers as any);
 
-      const result = await service.findByChannel(mockTenantId, CustomerChannel.RETAIL);
+      const result = await service.findByChannel(
+        mockTenantId,
+        CustomerChannel.RETAIL,
+      );
 
-      expect(customerRepository.findByChannel).toHaveBeenCalledWith(mockTenantId, CustomerChannel.RETAIL);
+      expect(customerRepository.findByChannel).toHaveBeenCalledWith(
+        mockTenantId,
+        CustomerChannel.RETAIL,
+      );
       expect(result).toEqual(customers);
     });
   });
@@ -328,11 +367,15 @@ describe('CustomerService', () => {
   describe('findVipCustomers', () => {
     it('should return VIP customers', async () => {
       const vipCustomers = [mockCustomer];
-      customerRepository.findVipCustomers.mockResolvedValue(vipCustomers as any);
+      customerRepository.findVipCustomers.mockResolvedValue(
+        vipCustomers as any,
+      );
 
       const result = await service.findVipCustomers(mockTenantId);
 
-      expect(customerRepository.findVipCustomers).toHaveBeenCalledWith(mockTenantId);
+      expect(customerRepository.findVipCustomers).toHaveBeenCalledWith(
+        mockTenantId,
+      );
       expect(result).toEqual(vipCustomers);
     });
   });
@@ -362,7 +405,8 @@ describe('CustomerService', () => {
   describe('importFromFile', () => {
     const mockFile: Express.Multer.File = {
       originalname: 'customers.xlsx',
-      mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      mimetype:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       buffer: Buffer.from('mock file content'),
       size: 1024,
       fieldname: 'file',
@@ -376,11 +420,19 @@ describe('CustomerService', () => {
     it('should import customers from Excel file successfully', async () => {
       const parsedCustomers = [
         {
-          dto: { code: 'CUST001', name: 'Customer 1', channel: CustomerChannel.RETAIL },
+          dto: {
+            code: 'CUST001',
+            name: 'Customer 1',
+            channel: CustomerChannel.RETAIL,
+          },
           originalRowNumber: 2,
         },
         {
-          dto: { code: 'CUST002', name: 'Customer 2', channel: CustomerChannel.WHOLESALE },
+          dto: {
+            code: 'CUST002',
+            name: 'Customer 2',
+            channel: CustomerChannel.WHOLESALE,
+          },
           originalRowNumber: 3,
         },
       ];
@@ -420,31 +472,43 @@ describe('CustomerService', () => {
     });
 
     it('should throw BadRequestException if file is not provided', async () => {
-      await expect(service.importFromFile(mockTenantId, null as any)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.importFromFile(mockTenantId, null as any),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw BadRequestException for unsupported file format', async () => {
       const unsupportedFile = { ...mockFile, originalname: 'customers.pdf' };
 
-      await expect(service.importFromFile(mockTenantId, unsupportedFile)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.importFromFile(mockTenantId, unsupportedFile),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should validate customer data and return errors for invalid rows', async () => {
       const parsedCustomers = [
         {
-          dto: { code: '', name: 'Customer 1', channel: CustomerChannel.RETAIL }, // Missing code
+          dto: {
+            code: '',
+            name: 'Customer 1',
+            channel: CustomerChannel.RETAIL,
+          }, // Missing code
           originalRowNumber: 2,
         },
         {
-          dto: { code: 'CUST002', name: '', channel: CustomerChannel.WHOLESALE }, // Missing name
+          dto: {
+            code: 'CUST002',
+            name: '',
+            channel: CustomerChannel.WHOLESALE,
+          }, // Missing name
           originalRowNumber: 3,
         },
         {
-          dto: { code: 'CUST003', name: 'Customer 3', channel: CustomerChannel.RETAIL }, // Valid
+          dto: {
+            code: 'CUST003',
+            name: 'Customer 3',
+            channel: CustomerChannel.RETAIL,
+          }, // Valid
           originalRowNumber: 4,
         },
       ];
@@ -465,11 +529,19 @@ describe('CustomerService', () => {
     it('should detect duplicate codes in file', async () => {
       const parsedCustomers = [
         {
-          dto: { code: 'CUST001', name: 'Customer 1', channel: CustomerChannel.RETAIL },
+          dto: {
+            code: 'CUST001',
+            name: 'Customer 1',
+            channel: CustomerChannel.RETAIL,
+          },
           originalRowNumber: 2,
         },
         {
-          dto: { code: 'CUST001', name: 'Customer 2', channel: CustomerChannel.WHOLESALE }, // Duplicate
+          dto: {
+            code: 'CUST001',
+            name: 'Customer 2',
+            channel: CustomerChannel.WHOLESALE,
+          }, // Duplicate
           originalRowNumber: 3,
         },
       ];
@@ -481,7 +553,9 @@ describe('CustomerService', () => {
 
       const result = await service.importFromFile(mockTenantId, mockFile);
 
-      expect(result.errors.some((e) => e.error_type === 'DUPLICATE_IN_FILE')).toBe(true);
+      expect(
+        result.errors.some((e) => e.error_type === 'DUPLICATE_IN_FILE'),
+      ).toBe(true);
     });
 
     it('should skip customers that already exist in database', async () => {
@@ -501,7 +575,9 @@ describe('CustomerService', () => {
 
       expect(result.created).toBe(0);
       expect(result.skipped).toBe(1);
-      expect(result.errors.some((e) => e.error_type === 'ALREADY_EXISTS')).toBe(true);
+      expect(result.errors.some((e) => e.error_type === 'ALREADY_EXISTS')).toBe(
+        true,
+      );
     });
 
     it('should validate date formats', async () => {
@@ -521,7 +597,9 @@ describe('CustomerService', () => {
 
       const result = await service.importFromFile(mockTenantId, mockFile);
 
-      expect(result.errors.some((e) => e.error_type === 'INVALID_DATE')).toBe(true);
+      expect(result.errors.some((e) => e.error_type === 'INVALID_DATE')).toBe(
+        true,
+      );
     });
 
     it('should validate email format', async () => {
@@ -541,7 +619,9 @@ describe('CustomerService', () => {
 
       const result = await service.importFromFile(mockTenantId, mockFile);
 
-      expect(result.errors.some((e) => e.error_type === 'INVALID_EMAIL')).toBe(true);
+      expect(result.errors.some((e) => e.error_type === 'INVALID_EMAIL')).toBe(
+        true,
+      );
     });
   });
 
@@ -562,7 +642,11 @@ describe('CustomerService', () => {
 
       const result = await service.getCplList(mockTenantId);
 
-      expect(customerRepository.getCplList).toHaveBeenCalledWith(mockTenantId, undefined, undefined);
+      expect(customerRepository.getCplList).toHaveBeenCalledWith(
+        mockTenantId,
+        undefined,
+        undefined,
+      );
       expect(result).toEqual(cplList);
     });
 
@@ -577,7 +661,11 @@ describe('CustomerService', () => {
       }> = [];
       customerRepository.getCplList.mockResolvedValue(cplList);
 
-      const result = await service.getCplList(mockTenantId, CustomerChannel.RETAIL, 'cat-1');
+      const result = await service.getCplList(
+        mockTenantId,
+        CustomerChannel.RETAIL,
+        'cat-1',
+      );
 
       expect(customerRepository.getCplList).toHaveBeenCalledWith(
         mockTenantId,

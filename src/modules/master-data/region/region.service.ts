@@ -12,8 +12,14 @@ import { Region } from '../../../database/entities/region.entity';
 export class RegionService {
   constructor(private readonly regionRepository: RegionRepository) {}
 
-  async create(tenantId: string, createRegionDto: CreateRegionDto): Promise<Region> {
-    const existing = await this.regionRepository.findByCode(tenantId, createRegionDto.code);
+  async create(
+    tenantId: string,
+    createRegionDto: CreateRegionDto,
+  ): Promise<Region> {
+    const existing = await this.regionRepository.findByCode(
+      tenantId,
+      createRegionDto.code,
+    );
     if (existing) {
       throw new ConflictException('Region with this code already exists');
     }
@@ -65,7 +71,10 @@ export class RegionService {
     const region = await this.findOne(tenantId, id);
 
     if (updateRegionDto.code && updateRegionDto.code !== region.code) {
-      const existing = await this.regionRepository.findByCode(tenantId, updateRegionDto.code);
+      const existing = await this.regionRepository.findByCode(
+        tenantId,
+        updateRegionDto.code,
+      );
       if (existing && existing.id !== id) {
         throw new ConflictException('Region with this code already exists');
       }

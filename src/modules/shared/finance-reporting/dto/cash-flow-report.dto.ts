@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsString, IsArray, IsObject, IsOptional } from 'class-validator';
+import {
+  IsNumber,
+  IsString,
+  IsArray,
+  IsObject,
+  IsOptional,
+} from 'class-validator';
 
 export class CashFlowProjection {
   @ApiProperty({ description: 'Month (YYYY-MM)' })
@@ -39,7 +45,10 @@ export class CashFlowReport {
   @IsString()
   endDate!: string;
 
-  @ApiProperty({ description: 'Monthly projections', type: [CashFlowProjection] })
+  @ApiProperty({
+    description: 'Monthly projections',
+    type: [CashFlowProjection],
+  })
   @IsArray()
   projections!: CashFlowProjection[];
 

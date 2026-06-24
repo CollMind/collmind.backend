@@ -1,6 +1,14 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { AgreementTransactionRepository } from './agreement-transaction.repository';
-import { CreateAgreementTransactionDto, BatchImportDto, BatchImportResultDto } from './dto';
+import {
+  CreateAgreementTransactionDto,
+  BatchImportDto,
+  BatchImportResultDto,
+} from './dto';
 import { AgreementTransaction } from '../../../../database/entities/agreement-transaction.entity';
 import { LedgerService } from '../ledger/ledger.service';
 import { AgreementService } from '../agreement/agreement.service';
@@ -29,13 +37,22 @@ export class AgreementTransactionService {
     rowNumber?: number,
   ): Promise<AgreementTransaction> {
     // Validate agreement exists and is in correct status
-    const agreement = await this.agreementService.findById(dto.agreementId, tenantId);
-    
+    const agreement = await this.agreementService.findById(
+      dto.agreementId,
+      tenantId,
+    );
+
     if (!agreement) {
-      throw new NotFoundException(`Agreement with ID ${dto.agreementId} not found`);
+      throw new NotFoundException(
+        `Agreement with ID ${dto.agreementId} not found`,
+      );
     }
-    
-    if (![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(agreement.status)) {
+
+    if (
+      ![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(
+        agreement.status,
+      )
+    ) {
       throw new BadRequestException(
         'Off-invoice entries can only be added to APPROVED or ACTIVE agreements',
       );
@@ -43,7 +60,10 @@ export class AgreementTransactionService {
 
     // Validate invoice date within agreement period
     const invoiceDate = new Date(dto.invoiceDate);
-    if (invoiceDate < new Date(agreement.startDate) || invoiceDate > new Date(agreement.endDate)) {
+    if (
+      invoiceDate < new Date(agreement.startDate) ||
+      invoiceDate > new Date(agreement.endDate)
+    ) {
       throw new BadRequestException(
         `Invoice date must be within agreement period (${agreement.startDate.toISOString().split('T')[0]} to ${agreement.endDate.toISOString().split('T')[0]})`,
       );
@@ -51,18 +71,24 @@ export class AgreementTransactionService {
 
     // Format invoice date for idempotency key (YYYY-MM-DD)
     const invoiceDateStr = invoiceDate.toISOString().split('T')[0];
-    
+
     // Generate idempotency key: {agreement_id}|{invoice_no}|{invoice_date}
     const idempotencyKey = `${dto.agreementId}|${dto.invoiceNo}|${invoiceDateStr}`;
 
     // Check if already exists (idempotency)
-    const existing = await this.txRepo.findByIdempotencyKey(idempotencyKey, tenantId);
+    const existing = await this.txRepo.findByIdempotencyKey(
+      idempotencyKey,
+      tenantId,
+    );
     if (existing) {
       return existing; // Idempotent: return existing
     }
 
     // Validate cap not exceeded
-    const currentTotal = await this.txRepo.sumByAgreementId(dto.agreementId, tenantId);
+    const currentTotal = await this.txRepo.sumByAgreementId(
+      dto.agreementId,
+      tenantId,
+    );
     if (currentTotal + dto.amount > Number(agreement.capTotalAmount)) {
       throw new BadRequestException(
         `Transaction would exceed agreement cap. Cap: ${agreement.capTotalAmount}, Current: ${currentTotal}, Requested: ${dto.amount}`,
@@ -111,7 +137,7 @@ export class AgreementTransactionService {
       throw new BadRequestException('Agreement channel relation is not loaded');
     }
     const channelCode = agreement.channel.code;
-    
+
     // Use fiscal period for envelope matching (as per BRD: "Bütçe buradan düşülür")
     const envelope = await this.budgetService.findEnvelopeByDimensions(
       tenantId,
@@ -169,13 +195,20 @@ export class AgreementTransactionService {
 
       try {
         // Create transaction (includes validation) with batch info
-        const transaction = await this.create(txDto, tenantId, userId, batchId, rowNumber);
+        const transaction = await this.create(
+          txDto,
+          tenantId,
+          userId,
+          batchId,
+          rowNumber,
+        );
 
         result.successCount++;
         result.createdTransactions.push(transaction.id);
       } catch (error) {
         result.errorCount++;
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
         result.errors.push({
           rowNumber,
           invoiceNo: txDto.invoiceNo,
@@ -195,25 +228,37 @@ export class AgreementTransactionService {
     return tx;
   }
 
-  async findByAgreementId(agreementId: string, tenantId: string): Promise<AgreementTransaction[]> {
+  async findByAgreementId(
+    agreementId: string,
+    tenantId: string,
+  ): Promise<AgreementTransaction[]> {
     return this.txRepo.findByAgreementId(agreementId, tenantId);
   }
 
-  async findByBatchId(batchId: string, tenantId: string): Promise<AgreementTransaction[]> {
+  async findByBatchId(
+    batchId: string,
+    tenantId: string,
+  ): Promise<AgreementTransaction[]> {
     return this.txRepo.findByBatchId(batchId, tenantId);
   }
 
-  async findAll(tenantId: string, filters?: {
-    agreementId?: string;
-    batchId?: string;
-    invoiceDateFrom?: Date;
-    invoiceDateTo?: Date;
-    cplId?: string;
-  }): Promise<AgreementTransaction[]> {
+  async findAll(
+    tenantId: string,
+    filters?: {
+      agreementId?: string;
+      batchId?: string;
+      invoiceDateFrom?: Date;
+      invoiceDateTo?: Date;
+      cplId?: string;
+    },
+  ): Promise<AgreementTransaction[]> {
     return this.txRepo.findAll(tenantId, filters);
   }
 
-  async getTotalByAgreement(agreementId: string, tenantId: string): Promise<number> {
+  async getTotalByAgreement(
+    agreementId: string,
+    tenantId: string,
+  ): Promise<number> {
     return this.txRepo.sumByAgreementId(agreementId, tenantId);
   }
 
@@ -221,4 +266,3 @@ export class AgreementTransactionService {
     return this.txRepo.count(tenantId);
   }
 }
-

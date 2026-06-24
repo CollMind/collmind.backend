@@ -12,7 +12,12 @@ import {
   HttpStatus,
   Request,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { MechanicService } from './mechanic.service';
 import { CreateMechanicDto } from './dto/create-mechanic.dto';
 import { UpdateMechanicDto } from './dto/update-mechanic.dto';
@@ -37,7 +42,11 @@ export class MechanicController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new mechanic' })
-  @ApiResponse({ status: 201, description: 'Mechanic created successfully', type: Mechanic })
+  @ApiResponse({
+    status: 201,
+    description: 'Mechanic created successfully',
+    type: Mechanic,
+  })
   create(
     @TenantId() tenantId: string,
     @Body() createMechanicDto: CreateMechanicDto,
@@ -56,13 +65,21 @@ export class MechanicController {
 
   @Get()
   @ApiOperation({ summary: 'Get all mechanics' })
-  @ApiResponse({ status: 200, description: 'List of mechanics', type: [Mechanic] })
+  @ApiResponse({
+    status: 200,
+    description: 'List of mechanics',
+    type: [Mechanic],
+  })
   findAll(
     @TenantId() tenantId: string,
     @Query('activeOnly') activeOnly?: string,
     @Query('tacticId') tacticId?: string,
   ) {
-    return this.mechanicService.findAll(tenantId, activeOnly === 'true', tacticId);
+    return this.mechanicService.findAll(
+      tenantId,
+      activeOnly === 'true',
+      tacticId,
+    );
   }
 
   @Get(':id')
@@ -75,7 +92,11 @@ export class MechanicController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update mechanic' })
-  @ApiResponse({ status: 200, description: 'Mechanic updated successfully', type: Mechanic })
+  @ApiResponse({
+    status: 200,
+    description: 'Mechanic updated successfully',
+    type: Mechanic,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,
@@ -84,7 +105,14 @@ export class MechanicController {
     @Request() req: any,
   ) {
     const ipAddress = req.ip || req.connection?.remoteAddress;
-    return this.mechanicService.update(tenantId, id, updateMechanicDto, user?.sub, user?.email, ipAddress);
+    return this.mechanicService.update(
+      tenantId,
+      id,
+      updateMechanicDto,
+      user?.sub,
+      user?.email,
+      ipAddress,
+    );
   }
 
   @Delete(':id')
@@ -99,22 +127,39 @@ export class MechanicController {
     @Request() req: any,
   ) {
     const ipAddress = req.ip || req.connection?.remoteAddress;
-    return this.mechanicService.remove(tenantId, id, user?.sub, user?.email, ipAddress);
+    return this.mechanicService.remove(
+      tenantId,
+      id,
+      user?.sub,
+      user?.email,
+      ipAddress,
+    );
   }
 
   @Post('validate-formula')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Validate calculation formula' })
-  @ApiResponse({ status: 200, description: 'Formula validation result', type: ValidationResult })
+  @ApiResponse({
+    status: 200,
+    description: 'Formula validation result',
+    type: ValidationResult,
+  })
   validateFormula(
     @Body() body: { formula: string; testContext?: Record<string, any> },
   ): Promise<ValidationResult> {
-    return this.mechanicService.validateFormula(body.formula, body.testContext || {});
+    return this.mechanicService.validateFormula(
+      body.formula,
+      body.testContext || {},
+    );
   }
 
   @Post('applicable')
   @ApiOperation({ summary: 'Get applicable mechanics for plan context' })
-  @ApiResponse({ status: 200, description: 'List of applicable mechanics', type: [Mechanic] })
+  @ApiResponse({
+    status: 200,
+    description: 'List of applicable mechanics',
+    type: [Mechanic],
+  })
   getApplicableMechanics(
     @TenantId() tenantId: string,
     @Body() planContext: PlanContextDto,
@@ -124,18 +169,29 @@ export class MechanicController {
 
   @Post('check-combination')
   @ApiOperation({ summary: 'Check if mechanic combination is valid' })
-  @ApiResponse({ status: 200, description: 'Combination check result', type: CombinationCheckResult })
+  @ApiResponse({
+    status: 200,
+    description: 'Combination check result',
+    type: CombinationCheckResult,
+  })
   checkCombination(
     @TenantId() tenantId: string,
     @Body() body: { mechanicCodes: string[] },
   ): Promise<CombinationCheckResult> {
-    return this.mechanicService.checkCombinationValidity(tenantId, body.mechanicCodes);
+    return this.mechanicService.checkCombinationValidity(
+      tenantId,
+      body.mechanicCodes,
+    );
   }
 
   @Post(':id/clone')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Clone a mechanic' })
-  @ApiResponse({ status: 201, description: 'Mechanic cloned successfully', type: Mechanic })
+  @ApiResponse({
+    status: 201,
+    description: 'Mechanic cloned successfully',
+    type: Mechanic,
+  })
   cloneMechanic(
     @TenantId() tenantId: string,
     @Param('id') id: string,
@@ -144,6 +200,13 @@ export class MechanicController {
     @Request() req: any,
   ) {
     const ipAddress = req.ip || req.connection?.remoteAddress;
-    return this.mechanicService.cloneMechanic(tenantId, id, overrides, user?.sub, user?.email, ipAddress);
+    return this.mechanicService.cloneMechanic(
+      tenantId,
+      id,
+      overrides,
+      user?.sub,
+      user?.email,
+      ipAddress,
+    );
   }
 }

@@ -2,7 +2,10 @@ import { DataSource } from 'typeorm';
 import { User, UserRole, UserStatus } from '../entities/user.entity';
 import * as bcrypt from 'bcrypt';
 
-export async function seedUsers(dataSource: DataSource, tenantId: string): Promise<User[]> {
+export async function seedUsers(
+  dataSource: DataSource,
+  tenantId: string,
+): Promise<User[]> {
   const userRepository = dataSource.getRepository(User);
 
   const users = [
@@ -123,7 +126,7 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
           jobTitle: userData.jobTitle,
           passwordHash: userData.passwordHash,
           emailVerified: userData.emailVerified,
-        }
+        },
       );
       const updated = await userRepository.findOne({
         where: { tenantId: userData.tenantId, email: userData.email },
@@ -136,4 +139,3 @@ export async function seedUsers(dataSource: DataSource, tenantId: string): Promi
   console.log(`✅ Seeded ${created.length} users`);
   return created;
 }
-

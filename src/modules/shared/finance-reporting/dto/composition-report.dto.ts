@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsString, IsArray, IsObject, IsOptional } from 'class-validator';
+import {
+  IsNumber,
+  IsString,
+  IsArray,
+  IsObject,
+  IsOptional,
+} from 'class-validator';
 
 export class CompositionSlice {
   @ApiProperty({ description: 'Mechanic code' })
@@ -29,11 +35,17 @@ export class CompositionSlice {
 }
 
 export class CompositionReport {
-  @ApiProperty({ description: 'On-Invoice composition', type: [CompositionSlice] })
+  @ApiProperty({
+    description: 'On-Invoice composition',
+    type: [CompositionSlice],
+  })
   @IsArray()
   onInvoice!: CompositionSlice[];
 
-  @ApiProperty({ description: 'Off-Invoice composition', type: [CompositionSlice] })
+  @ApiProperty({
+    description: 'Off-Invoice composition',
+    type: [CompositionSlice],
+  })
   @IsArray()
   offInvoice!: CompositionSlice[];
 

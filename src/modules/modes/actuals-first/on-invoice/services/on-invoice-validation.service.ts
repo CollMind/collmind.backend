@@ -4,7 +4,12 @@ import { SkuService } from '../../../../master-data/sku/sku.service';
 import { BudgetService } from '../../../../shared/budget/budget.service';
 import { ParsedOnInvoiceRow } from './on-invoice-file-parser.service';
 import { OnInvoiceRepository } from '../on-invoice.repository';
-import { ValidationResponseDto, ValidationErrorDto, BudgetImpactItemDto, DiscountDistributionDto } from '../dto/validation-response.dto';
+import {
+  ValidationResponseDto,
+  ValidationErrorDto,
+  BudgetImpactItemDto,
+  DiscountDistributionDto,
+} from '../dto/validation-response.dto';
 import { OnInvoiceDiscountType } from '../../../../../database/entities/on-invoice-entry.entity';
 import { CustomerStatus } from '../../../../../database/entities/customer.entity';
 
@@ -65,7 +70,10 @@ export class OnInvoiceValidationService {
     // 2. Customer var mı ve aktif mi?
     let customer;
     try {
-      customer = await this.customerService.findByCode(tenantId, row.dto.customerCode);
+      customer = await this.customerService.findByCode(
+        tenantId,
+        row.dto.customerCode,
+      );
     } catch (error) {
       errors.push({
         rowNumber: row.originalRowNumber,
@@ -206,7 +214,11 @@ export class OnInvoiceValidationService {
     }
 
     // 8. Quantity kontrolü
-    if (row.dto.quantity === null || row.dto.quantity === undefined || row.dto.quantity <= 0) {
+    if (
+      row.dto.quantity === null ||
+      row.dto.quantity === undefined ||
+      row.dto.quantity <= 0
+    ) {
       errors.push({
         rowNumber: row.originalRowNumber,
         field: 'quantity',
@@ -217,7 +229,11 @@ export class OnInvoiceValidationService {
     }
 
     // 9. List Price kontrolü
-    if (row.dto.listPrice === null || row.dto.listPrice === undefined || row.dto.listPrice <= 0) {
+    if (
+      row.dto.listPrice === null ||
+      row.dto.listPrice === undefined ||
+      row.dto.listPrice <= 0
+    ) {
       errors.push({
         rowNumber: row.originalRowNumber,
         field: 'list_price',
@@ -228,7 +244,11 @@ export class OnInvoiceValidationService {
     }
 
     // 10. Actual Price kontrolü
-    if (row.dto.actualPrice === null || row.dto.actualPrice === undefined || row.dto.actualPrice < 0) {
+    if (
+      row.dto.actualPrice === null ||
+      row.dto.actualPrice === undefined ||
+      row.dto.actualPrice < 0
+    ) {
       errors.push({
         rowNumber: row.originalRowNumber,
         field: 'actual_price',
@@ -269,11 +289,21 @@ export class OnInvoiceValidationService {
     }
 
     // 13. Duplicate kontrolü (idempotency)
-    if (row.dto.customerCode && row.dto.invoiceNo && row.dto.invoiceDate && row.dto.skuCode) {
-      const invoiceDateStr = new Date(row.dto.invoiceDate).toISOString().split('T')[0];
+    if (
+      row.dto.customerCode &&
+      row.dto.invoiceNo &&
+      row.dto.invoiceDate &&
+      row.dto.skuCode
+    ) {
+      const invoiceDateStr = new Date(row.dto.invoiceDate)
+        .toISOString()
+        .split('T')[0];
       const idempotencyKey = `${row.dto.customerCode}|${row.dto.invoiceNo}|${invoiceDateStr}|${row.dto.skuCode}|${row.originalRowNumber}`;
-      const existing = await this.repository.findByIdempotencyKey(idempotencyKey, tenantId);
-      
+      const existing = await this.repository.findByIdempotencyKey(
+        idempotencyKey,
+        tenantId,
+      );
+
       if (existing) {
         errors.push({
           rowNumber: row.originalRowNumber,
@@ -316,7 +346,7 @@ export class OnInvoiceValidationService {
     tenantId: string,
   ): Promise<ValidationResult[]> {
     const results: ValidationResult[] = [];
-    
+
     for (const row of rows) {
       const result = await this.validateRow(row, tenantId);
       results.push(result);
@@ -335,12 +365,17 @@ export class OnInvoiceValidationService {
   ): Promise<ValidationResponseDto> {
     // Satır Analizi
     const totalRows = rows.length;
-    const validRows = validationResults.filter(r => r.isValid).length;
-    const errorRows = validationResults.filter(r => !r.isValid).length;
+    const validRows = validationResults.filter((r) => r.isValid).length;
+    const errorRows = validationResults.filter((r) => !r.isValid).length;
 
     // Finansal Özet
-    const validRowsData = rows.filter((_, index) => validationResults[index]?.isValid);
-    const totalDiscount = validRowsData.reduce((sum, row) => sum + (row.dto.discount || 0), 0);
+    const validRowsData = rows.filter(
+      (_, index) => validationResults[index]?.isValid,
+    );
+    const totalDiscount = validRowsData.reduce(
+      (sum, row) => sum + (row.dto.discount || 0),
+      0,
+    );
 
     // İndirim Dağılımı
     const discountDistribution: DiscountDistributionDto = {
@@ -355,19 +390,28 @@ export class OnInvoiceValidationService {
         discountDistribution.cppOnInvoice!.amount += discount;
       } else if (row.dto.discountType === OnInvoiceDiscountType.LTA_ON) {
         discountDistribution.ltaOnInvoice!.amount += discount;
-      } else if (row.dto.discountType === OnInvoiceDiscountType.PROMO_DISCOUNT) {
+      } else if (
+        row.dto.discountType === OnInvoiceDiscountType.PROMO_DISCOUNT
+      ) {
         discountDistribution.promoDiscount!.amount += discount;
       }
     });
 
     if (totalDiscount > 0) {
-      discountDistribution.cppOnInvoice!.percentage = (discountDistribution.cppOnInvoice!.amount / totalDiscount) * 100;
-      discountDistribution.ltaOnInvoice!.percentage = (discountDistribution.ltaOnInvoice!.amount / totalDiscount) * 100;
-      discountDistribution.promoDiscount!.percentage = (discountDistribution.promoDiscount!.amount / totalDiscount) * 100;
+      discountDistribution.cppOnInvoice!.percentage =
+        (discountDistribution.cppOnInvoice!.amount / totalDiscount) * 100;
+      discountDistribution.ltaOnInvoice!.percentage =
+        (discountDistribution.ltaOnInvoice!.amount / totalDiscount) * 100;
+      discountDistribution.promoDiscount!.percentage =
+        (discountDistribution.promoDiscount!.amount / totalDiscount) * 100;
     }
 
     // Bütçe Etkisi Simülasyonu
-    const budgetImpact = await this.simulateBudgetImpact(validRowsData, validationResults, tenantId);
+    const budgetImpact = await this.simulateBudgetImpact(
+      validRowsData,
+      validationResults,
+      tenantId,
+    );
 
     // Hatalar
     const errors: ValidationErrorDto[] = [];
@@ -382,7 +426,9 @@ export class OnInvoiceValidationService {
     });
 
     // Kritik envelope sayısı (RED seviyesine düşecek)
-    const criticalEnvelopesCount = budgetImpact.filter(bi => bi.status === 'RED').length;
+    const criticalEnvelopesCount = budgetImpact.filter(
+      (bi) => bi.status === 'RED',
+    ).length;
 
     return {
       lineAnalysis: {
@@ -409,14 +455,17 @@ export class OnInvoiceValidationService {
     tenantId: string,
   ): Promise<BudgetImpactItemDto[]> {
     // Envelope bazlı grupla
-    const envelopeMap = new Map<string, {
-      envelopeCode: string;
-      current: number;
-      thisUpload: number;
-      channel?: string;
-      category?: string;
-      fiscalPeriod?: string;
-    }>();
+    const envelopeMap = new Map<
+      string,
+      {
+        envelopeCode: string;
+        current: number;
+        thisUpload: number;
+        channel?: string;
+        category?: string;
+        fiscalPeriod?: string;
+      }
+    >();
 
     validRows.forEach((row, index) => {
       const result = validationResults[index];
@@ -466,7 +515,8 @@ export class OnInvoiceValidationService {
           // Status belirleme (RAG)
           let status: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
           const allocated = Number(foundEnvelope.allocatedAmount) || 0;
-          const utilizationAfter = allocated > 0 ? ((allocated - after) / allocated) * 100 : 0;
+          const utilizationAfter =
+            allocated > 0 ? ((allocated - after) / allocated) * 100 : 0;
 
           if (utilizationAfter >= 100 || after < 0) {
             status = 'RED';

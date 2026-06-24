@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateKpis1704068200000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -77,7 +83,13 @@ export class CreateKpis1704068200000 implements MigrationInterface {
           {
             name: 'formula_type',
             type: 'enum',
-            enum: ['expression', 'conditional', 'user_input', 'external', 'javascript'],
+            enum: [
+              'expression',
+              'conditional',
+              'user_input',
+              'external',
+              'javascript',
+            ],
             enumName: 'kpis_formula_type_enum',
           },
           {
@@ -226,9 +238,17 @@ export class CreateKpis1704068200000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropTable('main.kpis');
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."kpis_aggregation_method_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."kpis_display_format_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."kpis_calculation_level_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."kpis_formula_type_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."kpis_aggregation_method_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."kpis_display_format_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."kpis_calculation_level_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."kpis_formula_type_enum"`,
+    );
   }
 }

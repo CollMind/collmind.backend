@@ -94,5 +94,3 @@ export class BudgetTransaction extends BaseEntity {
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }
-
-

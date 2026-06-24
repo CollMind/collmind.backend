@@ -42,7 +42,11 @@ export class ApprovalRequest extends BaseEntity {
   @Column({ name: 'requested_by_id', type: 'uuid' })
   requestedById!: string;
 
-  @Column({ name: 'requested_at', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({
+    name: 'requested_at',
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   requestedAt!: Date;
 
   // Policy & routing
@@ -114,5 +118,3 @@ export class ApprovalRequest extends BaseEntity {
   @JoinColumn({ name: 'rejected_by_id' })
   rejectedBy?: User;
 }
-
-

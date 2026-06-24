@@ -1,4 +1,11 @@
-import { IsString, IsNumber, IsDateString, IsEnum, IsOptional, Min } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  Min,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { OnInvoiceDiscountType } from '../../../../../database/entities/on-invoice-entry.entity';
 

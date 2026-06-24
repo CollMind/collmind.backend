@@ -12,13 +12,19 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BudgetEnvelopeStatus } from '../../../../database/entities/budget-envelope.entity';
 
 export class CreateBudgetEnvelopeDto {
-  @ApiPropertyOptional({ example: 'NKA/Hair/Jan', description: 'Budget envelope code (auto-generated if not provided)' })
+  @ApiPropertyOptional({
+    example: 'NKA/Hair/Jan',
+    description: 'Budget envelope code (auto-generated if not provided)',
+  })
   @IsString()
   @IsOptional()
   @MaxLength(100)
   code?: string;
 
-  @ApiPropertyOptional({ example: 'NKA Hair Care January Budget', description: 'Budget envelope name (auto-generated if not provided)' })
+  @ApiPropertyOptional({
+    example: 'NKA Hair Care January Budget',
+    description: 'Budget envelope name (auto-generated if not provided)',
+  })
   @IsString()
   @IsOptional()
   @MaxLength(200)
@@ -47,27 +53,42 @@ export class CreateBudgetEnvelopeDto {
   @IsPositive()
   allocatedAmount!: number;
 
-  @ApiPropertyOptional({ enum: BudgetEnvelopeStatus, default: BudgetEnvelopeStatus.DRAFT })
+  @ApiPropertyOptional({
+    enum: BudgetEnvelopeStatus,
+    default: BudgetEnvelopeStatus.DRAFT,
+  })
   @IsEnum(BudgetEnvelopeStatus)
   @IsOptional()
   status?: BudgetEnvelopeStatus;
 
-  @ApiPropertyOptional({ example: 'user-uuid', description: 'Budget owner user ID' })
+  @ApiPropertyOptional({
+    example: 'user-uuid',
+    description: 'Budget owner user ID',
+  })
   @IsUUID()
   @IsOptional()
   budgetOwnerId?: string;
 
-  @ApiPropertyOptional({ example: 'owner@example.com', description: 'Budget owner email' })
+  @ApiPropertyOptional({
+    example: 'owner@example.com',
+    description: 'Budget owner email',
+  })
   @IsString()
   @IsOptional()
   budgetOwnerEmail?: string;
 
-  @ApiPropertyOptional({ example: 'John Doe', description: 'Budget owner name' })
+  @ApiPropertyOptional({
+    example: 'John Doe',
+    description: 'Budget owner name',
+  })
   @IsString()
   @IsOptional()
   budgetOwnerName?: string;
 
-  @ApiPropertyOptional({ example: 'NKA', description: 'Channel code (NKA, ECOM, DT, TT, etc.)' })
+  @ApiPropertyOptional({
+    example: 'NKA',
+    description: 'Channel code (NKA, ECOM, DT, TT, etc.)',
+  })
   @IsString()
   @IsOptional()
   @MaxLength(50)
@@ -103,4 +124,3 @@ export class CreateBudgetEnvelopeDto {
   @IsOptional()
   metadata?: Record<string, any>;
 }
-

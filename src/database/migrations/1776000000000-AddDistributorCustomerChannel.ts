@@ -21,7 +21,7 @@ export class AddDistributorCustomerChannel1776000000000 implements MigrationInte
     // DISTRIBUTOR değeri rollback sonrası enum'da kalır — beklenen davranış.
     console.warn(
       '⚠️  down() no-op: PostgreSQL enum değeri kaldıramaz; ' +
-      "'DISTRIBUTOR' customers_channel_enum içinde kalır.",
+        "'DISTRIBUTOR' customers_channel_enum içinde kalır.",
     );
   }
 }

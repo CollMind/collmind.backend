@@ -57,7 +57,11 @@ export class AdminAuditLog {
   @Column({ name: 'alert_sent', type: 'boolean', default: false })
   alertSent!: boolean;
 
-  @Column({ name: 'created_at', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({
+    name: 'created_at',
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt!: Date;
 
   // Relations
@@ -65,5 +69,3 @@ export class AdminAuditLog {
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }
-
-

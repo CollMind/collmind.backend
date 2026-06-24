@@ -84,8 +84,10 @@ describe('Plan Entity - Approval Workflow Fields', () => {
       planSku.promoOnInvoiceSpend = 200;
       planSku.promoOffInvoiceSpend = 150;
 
-      const totalOnInvoice = planSku.plannedLtaOnInvoiceSpend + planSku.promoOnInvoiceSpend;
-      const totalOffInvoice = planSku.plannedLtaOffInvoiceSpend + planSku.promoOffInvoiceSpend;
+      const totalOnInvoice =
+        planSku.plannedLtaOnInvoiceSpend + planSku.promoOnInvoiceSpend;
+      const totalOffInvoice =
+        planSku.plannedLtaOffInvoiceSpend + planSku.promoOffInvoiceSpend;
 
       expect(totalOnInvoice).toBe(320);
       expect(totalOffInvoice).toBe(210);

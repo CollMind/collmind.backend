@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsString, IsArray, IsBoolean, IsNumber, IsObject, IsUUID } from 'class-validator';
+import {
+  IsEnum,
+  IsString,
+  IsArray,
+  IsBoolean,
+  IsNumber,
+  IsObject,
+  IsUUID,
+} from 'class-validator';
 
 export enum ErrorSeverity {
   ERROR = 'ERROR',
@@ -28,7 +36,9 @@ export class ValidationError {
   @IsString()
   message!: string;
 
-  @ApiPropertyOptional({ description: 'Field or mechanic code that caused the error' })
+  @ApiPropertyOptional({
+    description: 'Field or mechanic code that caused the error',
+  })
   @IsString()
   field?: string;
 
@@ -54,7 +64,10 @@ export class InputValidationResult {
   @IsBoolean()
   isValid!: boolean;
 
-  @ApiProperty({ description: 'List of validation errors', type: [ValidationError] })
+  @ApiProperty({
+    description: 'List of validation errors',
+    type: [ValidationError],
+  })
   @IsArray()
   errors!: ValidationError[];
 

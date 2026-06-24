@@ -25,4 +25,3 @@ export class CreateApprovalRequestDto {
     status: string;
   }>;
 }
-

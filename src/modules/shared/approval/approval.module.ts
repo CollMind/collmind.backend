@@ -7,9 +7,9 @@ import { ApprovalRepository } from './approval.repository';
 
 /**
  * Shared Approval Module
- * 
+ *
  * Provides approval workflow functionality for both Actuals-First and Planning-First modes.
- * 
+ *
  * Key Features:
  * - Multi-level approval workflows
  * - Policy-driven approval routing
@@ -23,5 +23,3 @@ import { ApprovalRepository } from './approval.repository';
   exports: [ApprovalService, ApprovalRepository],
 })
 export class ApprovalModule {}
-
-

@@ -1,6 +1,21 @@
-import { IsString, IsNotEmpty, IsEnum, IsOptional, IsNumber, IsBoolean, IsArray, Min, Max } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsEnum,
+  IsOptional,
+  IsNumber,
+  IsBoolean,
+  IsArray,
+  Min,
+  Max,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { FormulaType, CalculationLevel, DisplayFormat, AggregationMethod } from '../../../../database/entities/kpi.entity';
+import {
+  FormulaType,
+  CalculationLevel,
+  DisplayFormat,
+  AggregationMethod,
+} from '../../../../database/entities/kpi.entity';
 
 export class CreateKpiDto {
   @ApiProperty({ example: 'INCR_VOL' })

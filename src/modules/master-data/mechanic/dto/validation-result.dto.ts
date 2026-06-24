@@ -2,7 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { FormulaValidationStatus } from '../../../../database/entities/mechanic.entity';
 
 export class ValidationResult {
-  @ApiProperty({ description: 'Validation status', enum: FormulaValidationStatus })
+  @ApiProperty({
+    description: 'Validation status',
+    enum: FormulaValidationStatus,
+  })
   status!: FormulaValidationStatus;
 
   @ApiProperty({ description: 'Is valid', type: Boolean })

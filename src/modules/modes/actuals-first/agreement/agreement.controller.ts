@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { AgreementService } from './agreement.service';
 import { CreateAgreementDto, UpdateAgreementDto } from './dto';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
@@ -27,7 +32,7 @@ import { AgreementStatus } from '../../../../database/entities/agreement.entity'
 @Controller('agreements')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AgreementController {
-  constructor(private readonly agreementService: AgreementService) { }
+  constructor(private readonly agreementService: AgreementService) {}
 
   @Post()
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
@@ -44,7 +49,13 @@ export class AgreementController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get all agreements' })
   @ApiResponse({ status: 200, description: 'List of agreements' })
   findAll(
@@ -60,27 +71,49 @@ export class AgreementController {
   @Get('pending-approvals')
   @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
   @ApiOperation({ summary: 'Get pending approval agreements' })
-  @ApiResponse({ status: 200, description: 'List of pending approval agreements' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of pending approval agreements',
+  })
   findPendingApprovals(@TenantId() tenantId: string) {
     return this.agreementService.findPendingApprovals(tenantId);
   }
 
   @Get('tactics/available')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get available tactics for channel and category' })
-  @ApiResponse({ status: 200, description: 'List of available tactics with their mechanics' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of available tactics with their mechanics',
+  })
   getAvailableTactics(
     @TenantId() tenantId: string,
     @Query('channelId') channelId?: string,
     @Query('channel') channel?: string, // Legacy support for channel code
     @Query('categoryId') categoryId?: string,
   ) {
-    return this.agreementService.getAvailableTactics(tenantId, channelId || channel, categoryId);
+    return this.agreementService.getAvailableTactics(
+      tenantId,
+      channelId || channel,
+      categoryId,
+    );
   }
 
   // Parametrik route en sonda olmalı
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get agreement by ID' })
   @ApiResponse({ status: 200, description: 'Agreement details' })
   @ApiResponse({ status: 404, description: 'Agreement not found' })
@@ -92,7 +125,10 @@ export class AgreementController {
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @ApiOperation({ summary: 'Update agreement (DRAFT only)' })
   @ApiResponse({ status: 200, description: 'Agreement updated successfully' })
-  @ApiResponse({ status: 400, description: 'Only DRAFT agreements can be edited' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only DRAFT agreements can be edited',
+  })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateAgreementDto,
@@ -107,7 +143,10 @@ export class AgreementController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Submit agreement for approval' })
   @ApiResponse({ status: 200, description: 'Agreement submitted successfully' })
-  @ApiResponse({ status: 400, description: 'Only DRAFT agreements can be submitted' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only DRAFT agreements can be submitted',
+  })
   submit(
     @Param('id') id: string,
     @TenantId() tenantId: string,
@@ -121,7 +160,10 @@ export class AgreementController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Approve agreement' })
   @ApiResponse({ status: 200, description: 'Agreement approved successfully' })
-  @ApiResponse({ status: 400, description: 'Only PENDING agreements can be approved' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only PENDING agreements can be approved',
+  })
   approve(
     @Param('id') id: string,
     @Body('comments') comments: string,
@@ -136,7 +178,10 @@ export class AgreementController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject agreement' })
   @ApiResponse({ status: 200, description: 'Agreement rejected successfully' })
-  @ApiResponse({ status: 400, description: 'Only PENDING agreements can be rejected' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only PENDING agreements can be rejected',
+  })
   reject(
     @Param('id') id: string,
     @Body('reason') reason: string,
@@ -151,7 +196,10 @@ export class AgreementController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel agreement (releases reserved budget)' })
   @ApiResponse({ status: 200, description: 'Agreement cancelled successfully' })
-  @ApiResponse({ status: 400, description: 'Only APPROVED or ACTIVE agreements can be cancelled' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only APPROVED or ACTIVE agreements can be cancelled',
+  })
   cancel(
     @Param('id') id: string,
     @Body('reason') reason: string,
@@ -166,7 +214,10 @@ export class AgreementController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete agreement (DRAFT only)' })
   @ApiResponse({ status: 204, description: 'Agreement deleted successfully' })
-  @ApiResponse({ status: 400, description: 'Only DRAFT agreements can be deleted' })
+  @ApiResponse({
+    status: 400,
+    description: 'Only DRAFT agreements can be deleted',
+  })
   delete(
     @Param('id') id: string,
     @TenantId() tenantId: string,
@@ -175,7 +226,3 @@ export class AgreementController {
     return this.agreementService.delete(id, tenantId, user.id);
   }
 }
-
-
-
-

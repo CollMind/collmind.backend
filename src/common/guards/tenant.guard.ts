@@ -1,4 +1,9 @@
-import { Injectable, CanActivate, ExecutionContext, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  NotFoundException,
+} from '@nestjs/common';
 import { TenantRepository } from '../../modules/tenant/tenant.repository';
 
 @Injectable()
@@ -27,4 +32,3 @@ export class TenantGuard implements CanActivate {
     return true;
   }
 }
-

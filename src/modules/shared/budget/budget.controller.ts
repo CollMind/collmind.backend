@@ -9,7 +9,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { BudgetService } from './budget.service';
 import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
 import { ReserveBudgetDto } from './dto/reserve-budget.dto';
@@ -30,7 +35,10 @@ export class BudgetController {
   @Post('envelopes')
   @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Create a new budget envelope' })
-  @ApiResponse({ status: 201, description: 'Budget envelope created successfully' })
+  @ApiResponse({
+    status: 201,
+    description: 'Budget envelope created successfully',
+  })
   createEnvelope(
     @TenantId() tenantId: string,
     @Body() createDto: CreateBudgetEnvelopeDto,
@@ -55,9 +63,15 @@ export class BudgetController {
   @Post('reserve')
   @Roles(UserRole.PLANNER, UserRole.ADMIN)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Reserve budget from an envelope (Event-sourced: creates RESERVE transaction)' })
+  @ApiOperation({
+    summary:
+      'Reserve budget from an envelope (Event-sourced: creates RESERVE transaction)',
+  })
   @ApiResponse({ status: 201, description: 'Budget reserved successfully' })
-  @ApiResponse({ status: 400, description: 'Insufficient budget or invalid request' })
+  @ApiResponse({
+    status: 400,
+    description: 'Insufficient budget or invalid request',
+  })
   async reserveBudget(
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string },
@@ -74,9 +88,14 @@ export class BudgetController {
   }
 
   @Get('envelopes/:id/reserved')
-  @ApiOperation({ summary: 'Get reserved amount for an envelope (computed from transactions)' })
+  @ApiOperation({
+    summary: 'Get reserved amount for an envelope (computed from transactions)',
+  })
   @ApiResponse({ status: 200, description: 'Reserved amount' })
-  async getReservedAmount(@TenantId() tenantId: string, @Param('id') id: string) {
+  async getReservedAmount(
+    @TenantId() tenantId: string,
+    @Param('id') id: string,
+  ) {
     const amount = await this.budgetService.getReservedAmount(tenantId, id);
     return { envelopeId: id, reservedAmount: amount };
   }
@@ -84,20 +103,30 @@ export class BudgetController {
   @Get('envelopes/:id/transactions')
   @ApiOperation({ summary: 'Get all transactions for an envelope' })
   @ApiResponse({ status: 200, description: 'List of transactions' })
-  getTransactionsByEnvelope(@TenantId() tenantId: string, @Param('id') id: string) {
+  getTransactionsByEnvelope(
+    @TenantId() tenantId: string,
+    @Param('id') id: string,
+  ) {
     return this.budgetService.getTransactionsByEnvelope(tenantId, id);
   }
 
   @Get('status')
   @ApiOperation({ summary: 'Get budget status for channel and category' })
-  @ApiResponse({ status: 200, description: 'Budget status with available and planned amounts' })
+  @ApiResponse({
+    status: 200,
+    description: 'Budget status with available and planned amounts',
+  })
   async getBudgetStatus(
     @TenantId() tenantId: string,
     @Query('channel') channel: string,
     @Query('categoryId') categoryId?: string,
     @Query('periodMonth') periodMonth?: string,
   ) {
-    return this.budgetService.getBudgetStatus(tenantId, channel, categoryId, periodMonth);
+    return this.budgetService.getBudgetStatus(
+      tenantId,
+      channel,
+      categoryId,
+      periodMonth,
+    );
   }
 }
-

@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsArray, IsString, IsEnum, IsOptional, IsUUID } from 'class-validator';
+import {
+  IsDateString,
+  IsArray,
+  IsString,
+  IsEnum,
+  IsOptional,
+  IsUUID,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum ReportGranularity {
@@ -43,19 +50,28 @@ export class ReportFilters {
   @IsOptional()
   categories?: string[];
 
-  @ApiPropertyOptional({ description: 'Plan statuses to filter', type: [String] })
+  @ApiPropertyOptional({
+    description: 'Plan statuses to filter',
+    type: [String],
+  })
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
   planStatuses?: string[];
 
-  @ApiPropertyOptional({ description: 'RAG statuses to filter', type: [String] })
+  @ApiPropertyOptional({
+    description: 'RAG statuses to filter',
+    type: [String],
+  })
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
   ragStatuses?: string[];
 
-  @ApiPropertyOptional({ description: 'Mechanic codes to filter', type: [String] })
+  @ApiPropertyOptional({
+    description: 'Mechanic codes to filter',
+    type: [String],
+  })
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
@@ -83,7 +99,11 @@ export class PaginationParams {
   @IsOptional()
   sortBy?: string;
 
-  @ApiPropertyOptional({ description: 'Sort order', enum: ['ASC', 'DESC'], default: 'DESC' })
+  @ApiPropertyOptional({
+    description: 'Sort order',
+    enum: ['ASC', 'DESC'],
+    default: 'DESC',
+  })
   @IsEnum(['ASC', 'DESC'])
   @IsOptional()
   sortOrder?: 'ASC' | 'DESC' = 'DESC';

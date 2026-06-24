@@ -8,7 +8,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { NotificationService } from './notification.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -30,7 +35,11 @@ export class NotificationController {
     @CurrentUser() user: { id: string },
     @Query('limit') limit?: number,
   ) {
-    return this.notificationService.getAllNotifications(tenantId, user.id, limit ? parseInt(limit.toString()) : 30);
+    return this.notificationService.getAllNotifications(
+      tenantId,
+      user.id,
+      limit ? parseInt(limit.toString()) : 30,
+    );
   }
 
   @Get('unread')
@@ -47,12 +56,7 @@ export class NotificationController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark notification as read' })
   @ApiResponse({ status: 200, description: 'Notification marked as read' })
-  markAsRead(
-    @TenantId() tenantId: string,
-    @Param('id') id: string,
-  ) {
+  markAsRead(@TenantId() tenantId: string, @Param('id') id: string) {
     return this.notificationService.markAsRead(tenantId, id);
   }
 }
-
-

@@ -37,7 +37,7 @@ describe('LTAAgreement Entity', () => {
     const lta = new LTAAgreement();
     lta.status = LTAAgreementStatus.ACTIVE;
     expect(lta.status).toBe(LTAAgreementStatus.ACTIVE);
-    
+
     lta.status = LTAAgreementStatus.EXPIRED;
     expect(lta.status).toBe(LTAAgreementStatus.EXPIRED);
   });

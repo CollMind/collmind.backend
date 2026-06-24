@@ -14,7 +14,10 @@ export class RegionRepository {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false): Promise<Region[]> {
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+  ): Promise<Region[]> {
     const where: any = { tenantId };
     if (activeOnly) {
       where.isActive = true;

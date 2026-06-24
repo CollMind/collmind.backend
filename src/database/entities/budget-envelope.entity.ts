@@ -1,4 +1,11 @@
-import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Tenant } from './tenant.entity';
 
@@ -26,13 +33,29 @@ export class BudgetEnvelope extends BaseEntity {
   @Column({ length: 50 })
   period!: string; // e.g., "Jan", "Q1", "2024"
 
-  @Column({ name: 'allocated_amount', type: 'decimal', precision: 15, scale: 2 })
+  @Column({
+    name: 'allocated_amount',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+  })
   allocatedAmount!: number;
 
-  @Column({ name: 'consumed_amount', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'consumed_amount',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   consumedAmount!: number;
 
-  @Column({ name: 'available_amount', type: 'decimal', precision: 15, scale: 2 })
+  @Column({
+    name: 'available_amount',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+  })
   availableAmount!: number;
 
   @Column({
@@ -78,5 +101,3 @@ export class BudgetEnvelope extends BaseEntity {
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }
-
-

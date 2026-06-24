@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { TacticService } from './tactic.service';
 import { CreateTacticDto } from './dto/create-tactic.dto';
 import { UpdateTacticDto } from './dto/update-tactic.dto';
@@ -32,8 +37,15 @@ export class TacticController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new tactic' })
-  @ApiResponse({ status: 201, description: 'Tactic created successfully', type: Tactic })
-  create(@TenantId() tenantId: string, @Body() createTacticDto: CreateTacticDto) {
+  @ApiResponse({
+    status: 201,
+    description: 'Tactic created successfully',
+    type: Tactic,
+  })
+  create(
+    @TenantId() tenantId: string,
+    @Body() createTacticDto: CreateTacticDto,
+  ) {
     return this.tacticService.create(tenantId, createTacticDto);
   }
 
@@ -57,7 +69,11 @@ export class TacticController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update tactic' })
-  @ApiResponse({ status: 200, description: 'Tactic updated successfully', type: Tactic })
+  @ApiResponse({
+    status: 200,
+    description: 'Tactic updated successfully',
+    type: Tactic,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,

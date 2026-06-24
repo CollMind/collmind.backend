@@ -1,7 +1,13 @@
 import { DataSource } from 'typeorm';
-import { BudgetEnvelope, BudgetEnvelopeStatus } from '../entities/budget-envelope.entity';
+import {
+  BudgetEnvelope,
+  BudgetEnvelopeStatus,
+} from '../entities/budget-envelope.entity';
 
-export async function seedBudgetEnvelopes(dataSource: DataSource, tenantId: string): Promise<BudgetEnvelope[]> {
+export async function seedBudgetEnvelopes(
+  dataSource: DataSource,
+  tenantId: string,
+): Promise<BudgetEnvelope[]> {
   const repo = dataSource.getRepository(BudgetEnvelope);
 
   const envelopes = [
@@ -65,7 +71,9 @@ export async function seedBudgetEnvelopes(dataSource: DataSource, tenantId: stri
 
   const created: BudgetEnvelope[] = [];
   for (const envelope of envelopes) {
-    const existing = await repo.findOne({ where: { code: envelope.code, tenantId } });
+    const existing = await repo.findOne({
+      where: { code: envelope.code, tenantId },
+    });
     if (!existing) {
       const entity = repo.create(envelope);
       created.push(await repo.save(entity));
@@ -77,4 +85,3 @@ export async function seedBudgetEnvelopes(dataSource: DataSource, tenantId: stri
   console.log(`✅ Seeded ${created.length} budget envelopes`);
   return created;
 }
-

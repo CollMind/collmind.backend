@@ -16,10 +16,18 @@ export class FuService {
     private readonly guRepository: GuRepository,
   ) {}
 
-  async create(tenantId: string, createFuDto: CreateFuDto): Promise<ForecastingUnit> {
-    const existing = await this.fuRepository.findByCode(tenantId, createFuDto.code);
+  async create(
+    tenantId: string,
+    createFuDto: CreateFuDto,
+  ): Promise<ForecastingUnit> {
+    const existing = await this.fuRepository.findByCode(
+      tenantId,
+      createFuDto.code,
+    );
     if (existing) {
-      throw new ConflictException('Forecasting Unit with this code already exists');
+      throw new ConflictException(
+        'Forecasting Unit with this code already exists',
+      );
     }
 
     // Validate GU exists
@@ -41,8 +49,18 @@ export class FuService {
     return this.fuRepository.save(fu);
   }
 
-  async findAll(tenantId: string, activeOnly = false, guId?: string, categoryId?: string): Promise<ForecastingUnit[]> {
-    return this.fuRepository.findAllByTenant(tenantId, activeOnly, guId, categoryId);
+  async findAll(
+    tenantId: string,
+    activeOnly = false,
+    guId?: string,
+    categoryId?: string,
+  ): Promise<ForecastingUnit[]> {
+    return this.fuRepository.findAllByTenant(
+      tenantId,
+      activeOnly,
+      guId,
+      categoryId,
+    );
   }
 
   async findOne(tenantId: string, id: string): Promise<ForecastingUnit> {
@@ -66,9 +84,14 @@ export class FuService {
     const fu = await this.findOne(tenantId, id);
 
     if (updateFuDto.code && updateFuDto.code !== fu.code) {
-      const existing = await this.fuRepository.findByCode(tenantId, updateFuDto.code);
+      const existing = await this.fuRepository.findByCode(
+        tenantId,
+        updateFuDto.code,
+      );
       if (existing && existing.id !== id) {
-        throw new ConflictException('Forecasting Unit with this code already exists');
+        throw new ConflictException(
+          'Forecasting Unit with this code already exists',
+        );
       }
     }
 

@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateBudgetTransactions1704067520000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -55,7 +61,14 @@ export class CreateBudgetTransactions1704067520000 implements MigrationInterface
           {
             name: 'tx_type',
             type: 'enum',
-            enum: ['ALLOCATE', 'COMMIT', 'RESERVE', 'RELEASE', 'TRANSFER', 'ADJUST'],
+            enum: [
+              'ALLOCATE',
+              'COMMIT',
+              'RESERVE',
+              'RELEASE',
+              'TRANSFER',
+              'ADJUST',
+            ],
             enumName: 'budget_transactions_tx_type_enum',
             isNullable: false,
           },
@@ -205,9 +218,14 @@ export class CreateBudgetTransactions1704067520000 implements MigrationInterface
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropTable('main.budget_transactions', true);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."budget_transactions_tx_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."budget_transactions_tx_status_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."budget_transactions_source_type_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."budget_transactions_tx_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."budget_transactions_tx_status_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."budget_transactions_source_type_enum"`,
+    );
   }
 }
-

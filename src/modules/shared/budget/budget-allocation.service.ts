@@ -7,11 +7,25 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { BudgetAllocation, PeriodType } from '../../../database/entities/budget-allocation.entity';
-import { BudgetTransactionLog, BudgetTransactionType } from '../../../database/entities/budget-transaction-log.entity';
+import {
+  BudgetAllocation,
+  PeriodType,
+} from '../../../database/entities/budget-allocation.entity';
+import {
+  BudgetTransactionLog,
+  BudgetTransactionType,
+} from '../../../database/entities/budget-transaction-log.entity';
 import { CreateBudgetAllocationDto } from './dto/create-budget-allocation.dto';
-import { BudgetCheckContext, AvailabilityResult } from './dto/budget-check-context.dto';
-import { BudgetReportFilters, BudgetReport, ForecastContext, BudgetForecast } from './dto/budget-report.dto';
+import {
+  BudgetCheckContext,
+  AvailabilityResult,
+} from './dto/budget-check-context.dto';
+import {
+  BudgetReportFilters,
+  BudgetReport,
+  ForecastContext,
+  BudgetForecast,
+} from './dto/budget-report.dto';
 import { SpendBreakdown } from '../spend-calculation/dto/spend-breakdown.dto';
 import { Plan } from '../../../database/entities/plan.entity';
 
@@ -38,7 +52,9 @@ export class BudgetAllocationService {
   ): Promise<BudgetAllocation> {
     // Validate at least one dimension is specified
     if (!dto.cplId && !dto.channel && !dto.category) {
-      throw new BadRequestException('At least one dimension (CPL, Channel, or Category) must be specified');
+      throw new BadRequestException(
+        'At least one dimension (CPL, Channel, or Category) must be specified',
+      );
     }
 
     // Validate date range
@@ -65,15 +81,24 @@ export class BudgetAllocationService {
         )`,
         { periodStart, periodEnd },
       )
-      .andWhere('(ba.cplId = :cplId OR (ba.cplId IS NULL AND :cplId IS NULL))', {
-        cplId: dto.cplId || null,
-      })
-      .andWhere('(ba.channel = :channel OR (ba.channel IS NULL AND :channel IS NULL))', {
-        channel: dto.channel || null,
-      })
-      .andWhere('(ba.category = :category OR (ba.category IS NULL AND :category IS NULL))', {
-        category: dto.category || null,
-      })
+      .andWhere(
+        '(ba.cplId = :cplId OR (ba.cplId IS NULL AND :cplId IS NULL))',
+        {
+          cplId: dto.cplId || null,
+        },
+      )
+      .andWhere(
+        '(ba.channel = :channel OR (ba.channel IS NULL AND :channel IS NULL))',
+        {
+          channel: dto.channel || null,
+        },
+      )
+      .andWhere(
+        '(ba.category = :category OR (ba.category IS NULL AND :category IS NULL))',
+        {
+          category: dto.category || null,
+        },
+      )
       .andWhere('ba.deletedAt IS NULL')
       .getMany();
 
@@ -140,7 +165,10 @@ export class BudgetAllocationService {
 
     // Check if utilized < current budget (can only increase if utilized < current)
     if (dto.onInvoiceBudget !== undefined) {
-      if (dto.onInvoiceBudget < allocation.onInvoiceUtilized + allocation.onInvoiceReserved) {
+      if (
+        dto.onInvoiceBudget <
+        allocation.onInvoiceUtilized + allocation.onInvoiceReserved
+      ) {
         throw new BadRequestException(
           `New on-invoice budget (${dto.onInvoiceBudget}) cannot be less than utilized + reserved (${allocation.onInvoiceUtilized + allocation.onInvoiceReserved})`,
         );
@@ -148,7 +176,10 @@ export class BudgetAllocationService {
     }
 
     if (dto.offInvoiceBudget !== undefined) {
-      if (dto.offInvoiceBudget < allocation.offInvoiceUtilized + allocation.offInvoiceReserved) {
+      if (
+        dto.offInvoiceBudget <
+        allocation.offInvoiceUtilized + allocation.offInvoiceReserved
+      ) {
         throw new BadRequestException(
           `New off-invoice budget (${dto.offInvoiceBudget}) cannot be less than utilized + reserved (${allocation.offInvoiceUtilized + allocation.offInvoiceReserved})`,
         );
@@ -190,12 +221,18 @@ export class BudgetAllocationService {
       }
     }
 
-    if (dto.alertThreshold80 !== undefined) allocation.alertThreshold80 = dto.alertThreshold80;
-    if (dto.alertThreshold95 !== undefined) allocation.alertThreshold95 = dto.alertThreshold95;
-    if (dto.alertThreshold100 !== undefined) allocation.alertThreshold100 = dto.alertThreshold100;
-    if (dto.alertRecipients !== undefined) allocation.alertRecipients = dto.alertRecipients;
-    if (dto.hardLimitMode !== undefined) allocation.hardLimitMode = dto.hardLimitMode;
-    if (dto.allowCarryForward !== undefined) allocation.allowCarryForward = dto.allowCarryForward;
+    if (dto.alertThreshold80 !== undefined)
+      allocation.alertThreshold80 = dto.alertThreshold80;
+    if (dto.alertThreshold95 !== undefined)
+      allocation.alertThreshold95 = dto.alertThreshold95;
+    if (dto.alertThreshold100 !== undefined)
+      allocation.alertThreshold100 = dto.alertThreshold100;
+    if (dto.alertRecipients !== undefined)
+      allocation.alertRecipients = dto.alertRecipients;
+    if (dto.hardLimitMode !== undefined)
+      allocation.hardLimitMode = dto.hardLimitMode;
+    if (dto.allowCarryForward !== undefined)
+      allocation.allowCarryForward = dto.allowCarryForward;
 
     allocation.updatedBy = userId;
     return this.budgetAllocationRepository.save(allocation);
@@ -226,20 +263,38 @@ export class BudgetAllocationService {
     const onInvoiceAvailable = Number(allocation.onInvoiceAvailable) || 0;
     const offInvoiceAvailable = Number(allocation.offInvoiceAvailable) || 0;
 
-    const onInvoiceSufficient = onInvoiceAvailable >= context.estimatedOnInvoiceSpend;
-    const offInvoiceSufficient = offInvoiceAvailable >= context.estimatedOffInvoiceSpend;
+    const onInvoiceSufficient =
+      onInvoiceAvailable >= context.estimatedOnInvoiceSpend;
+    const offInvoiceSufficient =
+      offInvoiceAvailable >= context.estimatedOffInvoiceSpend;
 
-    const onInvoiceShortfall = Math.max(0, context.estimatedOnInvoiceSpend - onInvoiceAvailable);
-    const offInvoiceShortfall = Math.max(0, context.estimatedOffInvoiceSpend - offInvoiceAvailable);
+    const onInvoiceShortfall = Math.max(
+      0,
+      context.estimatedOnInvoiceSpend - onInvoiceAvailable,
+    );
+    const offInvoiceShortfall = Math.max(
+      0,
+      context.estimatedOffInvoiceSpend - offInvoiceAvailable,
+    );
 
     const suggestions: string[] = [];
     if (!onInvoiceSufficient) {
-      const reduction = ((onInvoiceShortfall / context.estimatedOnInvoiceSpend) * 100).toFixed(1);
-      suggestions.push(`Reduce On-Invoice spend by ${reduction}% to fit budget`);
+      const reduction = (
+        (onInvoiceShortfall / context.estimatedOnInvoiceSpend) *
+        100
+      ).toFixed(1);
+      suggestions.push(
+        `Reduce On-Invoice spend by ${reduction}% to fit budget`,
+      );
     }
     if (!offInvoiceSufficient) {
-      const reduction = ((offInvoiceShortfall / context.estimatedOffInvoiceSpend) * 100).toFixed(1);
-      suggestions.push(`Reduce Off-Invoice spend by ${reduction}% to fit budget`);
+      const reduction = (
+        (offInvoiceShortfall / context.estimatedOffInvoiceSpend) *
+        100
+      ).toFixed(1);
+      suggestions.push(
+        `Reduce Off-Invoice spend by ${reduction}% to fit budget`,
+      );
     }
 
     return {
@@ -257,7 +312,12 @@ export class BudgetAllocationService {
   /**
    * Reserve budget for a plan (pending approval)
    */
-  async reserveBudget(tenantId: string, userId: string, planId: string, amounts: SpendBreakdown): Promise<void> {
+  async reserveBudget(
+    tenantId: string,
+    userId: string,
+    planId: string,
+    amounts: SpendBreakdown,
+  ): Promise<void> {
     const plan = await this.planRepository.findOne({
       where: { tenantId, id: planId },
       relations: ['cpl', 'channel', 'category'],
@@ -272,8 +332,12 @@ export class BudgetAllocationService {
       cplId: plan.cplId || '',
       channel: plan.channel?.code || '',
       category: plan.category?.code || '',
-      periodStart: plan.startDate?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0],
-      periodEnd: plan.endDate?.toISOString().split('T')[0] || new Date().toISOString().split('T')[0],
+      periodStart:
+        plan.startDate?.toISOString().split('T')[0] ||
+        new Date().toISOString().split('T')[0],
+      periodEnd:
+        plan.endDate?.toISOString().split('T')[0] ||
+        new Date().toISOString().split('T')[0],
       estimatedOnInvoiceSpend: amounts.planned.totalOnInvoice,
       estimatedOffInvoiceSpend: amounts.planned.totalOffInvoice,
     };
@@ -281,12 +345,17 @@ export class BudgetAllocationService {
     const allocation = await this.findMatchingAllocation(tenantId, context);
 
     if (!allocation) {
-      throw new NotFoundException('No budget allocation found for this plan context');
+      throw new NotFoundException(
+        'No budget allocation found for this plan context',
+      );
     }
 
     // Check availability
     const availability = await this.checkAvailability(tenantId, context);
-    if (!availability.onInvoiceSufficient || !availability.offInvoiceSufficient) {
+    if (
+      !availability.onInvoiceSufficient ||
+      !availability.offInvoiceSufficient
+    ) {
       if (allocation.hardLimitMode) {
         throw new BadRequestException(
           `Insufficient budget. On-Invoice shortfall: ${availability.onInvoiceShortfall}, Off-Invoice shortfall: ${availability.offInvoiceShortfall}`,
@@ -324,7 +393,11 @@ export class BudgetAllocationService {
   /**
    * Commit budget (plan approved - reserved → utilized)
    */
-  async commitBudget(tenantId: string, userId: string, planId: string): Promise<void> {
+  async commitBudget(
+    tenantId: string,
+    userId: string,
+    planId: string,
+  ): Promise<void> {
     // Find reservation transaction
     const reservation = await this.budgetTransactionLogRepository.findOne({
       where: {
@@ -335,7 +408,9 @@ export class BudgetAllocationService {
     });
 
     if (!reservation) {
-      throw new NotFoundException(`No budget reservation found for plan ${planId}`);
+      throw new NotFoundException(
+        `No budget reservation found for plan ${planId}`,
+      );
     }
 
     const allocation = reservation.budgetAllocation;
@@ -369,7 +444,11 @@ export class BudgetAllocationService {
   /**
    * Release reserved budget (plan rejected/withdrawn)
    */
-  async releaseBudget(tenantId: string, userId: string, planId: string): Promise<void> {
+  async releaseBudget(
+    tenantId: string,
+    userId: string,
+    planId: string,
+  ): Promise<void> {
     const reservation = await this.budgetTransactionLogRepository.findOne({
       where: {
         planId,
@@ -379,7 +458,9 @@ export class BudgetAllocationService {
     });
 
     if (!reservation) {
-      this.logger.warn(`No budget reservation found for plan ${planId} to release`);
+      this.logger.warn(
+        `No budget reservation found for plan ${planId} to release`,
+      );
       return;
     }
 
@@ -426,14 +507,18 @@ export class BudgetAllocationService {
     });
 
     if (!existingCommit) {
-      throw new NotFoundException(`No committed budget found for plan ${planId}`);
+      throw new NotFoundException(
+        `No committed budget found for plan ${planId}`,
+      );
     }
 
     const allocation = existingCommit.budgetAllocation;
 
     // Calculate difference
-    const onInvoiceDiff = newAmounts.planned.totalOnInvoice - existingCommit.onInvoiceAmount;
-    const offInvoiceDiff = newAmounts.planned.totalOffInvoice - existingCommit.offInvoiceAmount;
+    const onInvoiceDiff =
+      newAmounts.planned.totalOnInvoice - existingCommit.onInvoiceAmount;
+    const offInvoiceDiff =
+      newAmounts.planned.totalOffInvoice - existingCommit.offInvoiceAmount;
 
     // Adjust utilization
     allocation.onInvoiceUtilized += onInvoiceDiff;
@@ -467,10 +552,14 @@ export class BudgetAllocationService {
       .andWhere('ba.deletedAt IS NULL');
 
     if (filters.periodType) {
-      query.andWhere('ba.periodType = :periodType', { periodType: filters.periodType });
+      query.andWhere('ba.periodType = :periodType', {
+        periodType: filters.periodType,
+      });
     }
     if (filters.fiscalYear) {
-      query.andWhere('ba.fiscalYear = :fiscalYear', { fiscalYear: filters.fiscalYear });
+      query.andWhere('ba.fiscalYear = :fiscalYear', {
+        fiscalYear: filters.fiscalYear,
+      });
     }
     if (filters.cplId) {
       query.andWhere('ba.cplId = :cplId', { cplId: filters.cplId });
@@ -516,16 +605,38 @@ export class BudgetAllocationService {
         return acc;
       },
       {
-        onInvoice: { budget: 0, utilized: 0, reserved: 0, available: 0, utilizationPercent: 0 },
-        offInvoice: { budget: 0, utilized: 0, reserved: 0, available: 0, utilizationPercent: 0 },
-        total: { budget: 0, utilized: 0, reserved: 0, available: 0, utilizationPercent: 0 },
+        onInvoice: {
+          budget: 0,
+          utilized: 0,
+          reserved: 0,
+          available: 0,
+          utilizationPercent: 0,
+        },
+        offInvoice: {
+          budget: 0,
+          utilized: 0,
+          reserved: 0,
+          available: 0,
+          utilizationPercent: 0,
+        },
+        total: {
+          budget: 0,
+          utilized: 0,
+          reserved: 0,
+          available: 0,
+          utilizationPercent: 0,
+        },
       },
     );
 
-    breakdown.total.budget = breakdown.onInvoice.budget + breakdown.offInvoice.budget;
-    breakdown.total.utilized = breakdown.onInvoice.utilized + breakdown.offInvoice.utilized;
-    breakdown.total.reserved = breakdown.onInvoice.reserved + breakdown.offInvoice.reserved;
-    breakdown.total.available = breakdown.onInvoice.available + breakdown.offInvoice.available;
+    breakdown.total.budget =
+      breakdown.onInvoice.budget + breakdown.offInvoice.budget;
+    breakdown.total.utilized =
+      breakdown.onInvoice.utilized + breakdown.offInvoice.utilized;
+    breakdown.total.reserved =
+      breakdown.onInvoice.reserved + breakdown.offInvoice.reserved;
+    breakdown.total.available =
+      breakdown.onInvoice.available + breakdown.offInvoice.available;
 
     // Calculate utilization percentages
     breakdown.onInvoice.utilizationPercent =
@@ -537,14 +648,18 @@ export class BudgetAllocationService {
         ? (breakdown.offInvoice.utilized / breakdown.offInvoice.budget) * 100
         : 0;
     breakdown.total.utilizationPercent =
-      breakdown.total.budget > 0 ? (breakdown.total.utilized / breakdown.total.budget) * 100 : 0;
+      breakdown.total.budget > 0
+        ? (breakdown.total.utilized / breakdown.total.budget) * 100
+        : 0;
 
     // Get top consuming plans
     const topPlans = await this.budgetTransactionLogRepository
       .createQueryBuilder('tx')
       .leftJoinAndSelect('tx.budgetAllocation', 'ba')
       .where('ba.tenantId = :tenantId', { tenantId })
-      .andWhere('tx.transactionType = :type', { type: BudgetTransactionType.COMMIT })
+      .andWhere('tx.transactionType = :type', {
+        type: BudgetTransactionType.COMMIT,
+      })
       .andWhere('tx.planId IS NOT NULL')
       .orderBy('tx.onInvoiceAmount + tx.offInvoiceAmount', 'DESC')
       .limit(10)
@@ -573,7 +688,10 @@ export class BudgetAllocationService {
   /**
    * Get budget forecast
    */
-  async getForecastReport(tenantId: string, context: ForecastContext): Promise<BudgetForecast> {
+  async getForecastReport(
+    tenantId: string,
+    context: ForecastContext,
+  ): Promise<BudgetForecast> {
     const allocation = await this.findMatchingAllocation(tenantId, {
       ...context,
       estimatedOnInvoiceSpend: 0,
@@ -581,7 +699,9 @@ export class BudgetAllocationService {
     });
 
     if (!allocation) {
-      throw new NotFoundException('No budget allocation found for forecast context');
+      throw new NotFoundException(
+        'No budget allocation found for forecast context',
+      );
     }
 
     // Get pending plans (reserved but not committed)
@@ -589,7 +709,9 @@ export class BudgetAllocationService {
       .createQueryBuilder('tx')
       .leftJoinAndSelect('tx.budgetAllocation', 'ba')
       .where('ba.id = :allocationId', { allocationId: allocation.id })
-      .andWhere('tx.transactionType = :type', { type: BudgetTransactionType.RESERVATION })
+      .andWhere('tx.transactionType = :type', {
+        type: BudgetTransactionType.RESERVATION,
+      })
       .andWhere('tx.planId IS NOT NULL')
       .getMany();
 
@@ -605,20 +727,30 @@ export class BudgetAllocationService {
 
     const forecastedRemaining = {
       onInvoice: Number(allocation.onInvoiceAvailable) - plannedSpend.onInvoice,
-      offInvoice: Number(allocation.offInvoiceAvailable) - plannedSpend.offInvoice,
-      total: Number(allocation.onInvoiceAvailable) + Number(allocation.offInvoiceAvailable) - plannedSpend.total,
+      offInvoice:
+        Number(allocation.offInvoiceAvailable) - plannedSpend.offInvoice,
+      total:
+        Number(allocation.onInvoiceAvailable) +
+        Number(allocation.offInvoiceAvailable) -
+        plannedSpend.total,
     };
 
     // Estimate additional plans (simplified - average plan size)
-    const avgPlanSize = pendingReservations.length > 0
-      ? plannedSpend.total / pendingReservations.length
-      : 10000; // Default estimate
+    const avgPlanSize =
+      pendingReservations.length > 0
+        ? plannedSpend.total / pendingReservations.length
+        : 10000; // Default estimate
 
     const estimatedAdditionalPlans = {
       onInvoice: Math.floor(forecastedRemaining.onInvoice / (avgPlanSize / 2)),
-      offInvoice: Math.floor(forecastedRemaining.offInvoice / (avgPlanSize / 2)),
+      offInvoice: Math.floor(
+        forecastedRemaining.offInvoice / (avgPlanSize / 2),
+      ),
       conservative: Math.floor(
-        Math.min(forecastedRemaining.onInvoice, forecastedRemaining.offInvoice) / avgPlanSize,
+        Math.min(
+          forecastedRemaining.onInvoice,
+          forecastedRemaining.offInvoice,
+        ) / avgPlanSize,
       ),
     };
 
@@ -627,7 +759,11 @@ export class BudgetAllocationService {
       onInvoice: 0,
       offInvoice: 0,
       total: 0,
-      plans: [] as Array<{ planId: string; planName: string; riskAmount: number }>,
+      plans: [] as Array<{
+        planId: string;
+        planName: string;
+        riskAmount: number;
+      }>,
     };
 
     return {
@@ -639,7 +775,9 @@ export class BudgetAllocationService {
           available: Number(allocation.onInvoiceAvailable),
           utilizationPercent:
             Number(allocation.onInvoiceBudget) > 0
-              ? (Number(allocation.onInvoiceUtilized) / Number(allocation.onInvoiceBudget)) * 100
+              ? (Number(allocation.onInvoiceUtilized) /
+                  Number(allocation.onInvoiceBudget)) *
+                100
               : 0,
         },
         offInvoice: {
@@ -649,17 +787,26 @@ export class BudgetAllocationService {
           available: Number(allocation.offInvoiceAvailable),
           utilizationPercent:
             Number(allocation.offInvoiceBudget) > 0
-              ? (Number(allocation.offInvoiceUtilized) / Number(allocation.offInvoiceBudget)) * 100
+              ? (Number(allocation.offInvoiceUtilized) /
+                  Number(allocation.offInvoiceBudget)) *
+                100
               : 0,
         },
         total: {
           budget: Number(allocation.totalBudget),
-          utilized: Number(allocation.onInvoiceUtilized) + Number(allocation.offInvoiceUtilized),
-          reserved: Number(allocation.onInvoiceReserved) + Number(allocation.offInvoiceReserved),
-          available: Number(allocation.onInvoiceAvailable) + Number(allocation.offInvoiceAvailable),
+          utilized:
+            Number(allocation.onInvoiceUtilized) +
+            Number(allocation.offInvoiceUtilized),
+          reserved:
+            Number(allocation.onInvoiceReserved) +
+            Number(allocation.offInvoiceReserved),
+          available:
+            Number(allocation.onInvoiceAvailable) +
+            Number(allocation.offInvoiceAvailable),
           utilizationPercent:
             Number(allocation.totalBudget) > 0
-              ? ((Number(allocation.onInvoiceUtilized) + Number(allocation.offInvoiceUtilized)) /
+              ? ((Number(allocation.onInvoiceUtilized) +
+                  Number(allocation.offInvoiceUtilized)) /
                   Number(allocation.totalBudget)) *
                 100
               : 0,
@@ -687,9 +834,15 @@ export class BudgetAllocationService {
       .where('ba.tenantId = :tenantId', { tenantId })
       .andWhere('ba.periodStart <= :periodEnd', { periodEnd })
       .andWhere('ba.periodEnd >= :periodStart', { periodStart })
-      .andWhere('(ba.cplId = :cplId OR ba.cplId IS NULL)', { cplId: context.cplId || null })
-      .andWhere('(ba.channel = :channel OR ba.channel IS NULL)', { channel: context.channel || null })
-      .andWhere('(ba.category = :category OR ba.category IS NULL)', { category: context.category || null })
+      .andWhere('(ba.cplId = :cplId OR ba.cplId IS NULL)', {
+        cplId: context.cplId || null,
+      })
+      .andWhere('(ba.channel = :channel OR ba.channel IS NULL)', {
+        channel: context.channel || null,
+      })
+      .andWhere('(ba.category = :category OR ba.category IS NULL)', {
+        category: context.category || null,
+      })
       .andWhere('ba.deletedAt IS NULL')
       .orderBy('ba.periodStart', 'DESC')
       .getOne();
@@ -727,32 +880,48 @@ export class BudgetAllocationService {
   /**
    * Check and send alerts based on thresholds
    */
-  private async checkAndSendAlerts(tenantId: string, allocation: BudgetAllocation): Promise<void> {
+  private async checkAndSendAlerts(
+    tenantId: string,
+    allocation: BudgetAllocation,
+  ): Promise<void> {
     const onUtilizationPercent =
       Number(allocation.onInvoiceBudget) > 0
-        ? (Number(allocation.onInvoiceUtilized) / Number(allocation.onInvoiceBudget)) * 100
+        ? (Number(allocation.onInvoiceUtilized) /
+            Number(allocation.onInvoiceBudget)) *
+          100
         : 0;
     const offUtilizationPercent =
       Number(allocation.offInvoiceBudget) > 0
-        ? (Number(allocation.offInvoiceUtilized) / Number(allocation.offInvoiceBudget)) * 100
+        ? (Number(allocation.offInvoiceUtilized) /
+            Number(allocation.offInvoiceBudget)) *
+          100
         : 0;
 
     // Check thresholds and send alerts (implementation would integrate with notification service)
-    if (allocation.alertThreshold80 && (onUtilizationPercent >= 80 || offUtilizationPercent >= 80)) {
+    if (
+      allocation.alertThreshold80 &&
+      (onUtilizationPercent >= 80 || offUtilizationPercent >= 80)
+    ) {
       this.logger.warn(
         `Budget 80% threshold reached for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
       );
       // TODO: Send email to Finance Manager
     }
 
-    if (allocation.alertThreshold95 && (onUtilizationPercent >= 95 || offUtilizationPercent >= 95)) {
+    if (
+      allocation.alertThreshold95 &&
+      (onUtilizationPercent >= 95 || offUtilizationPercent >= 95)
+    ) {
       this.logger.error(
         `Budget 95% threshold reached for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
       );
       // TODO: Send critical alert to Finance Manager + Category Manager
     }
 
-    if (allocation.alertThreshold100 && (onUtilizationPercent >= 100 || offUtilizationPercent >= 100)) {
+    if (
+      allocation.alertThreshold100 &&
+      (onUtilizationPercent >= 100 || offUtilizationPercent >= 100)
+    ) {
       this.logger.error(
         `Budget 100% threshold exceeded for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
       );

@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { KpiService } from './kpi.service';
 import { CreateKpiDto } from './dto/create-kpi.dto';
 import { UpdateKpiDto } from './dto/update-kpi.dto';
@@ -32,7 +37,11 @@ export class KpiController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new KPI definition' })
-  @ApiResponse({ status: 201, description: 'KPI created successfully', type: Kpi })
+  @ApiResponse({
+    status: 201,
+    description: 'KPI created successfully',
+    type: Kpi,
+  })
   create(@TenantId() tenantId: string, @Body() createKpiDto: CreateKpiDto) {
     return this.kpiService.create(tenantId, createKpiDto);
   }
@@ -48,9 +57,14 @@ export class KpiController {
   }
 
   @Get('grid/:planId')
-  @ApiOperation({ summary: 'Get KPIs visible in planning grid for a specific plan' })
+  @ApiOperation({
+    summary: 'Get KPIs visible in planning grid for a specific plan',
+  })
   @ApiResponse({ status: 200, description: 'Grid KPIs for plan', type: [Kpi] })
-  getGridKpisForPlan(@TenantId() tenantId: string, @Param('planId') planId: string) {
+  getGridKpisForPlan(
+    @TenantId() tenantId: string,
+    @Param('planId') planId: string,
+  ) {
     return this.kpiService.getGridKpisForPlan(planId, tenantId);
   }
 
@@ -78,7 +92,11 @@ export class KpiController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update KPI definition' })
-  @ApiResponse({ status: 200, description: 'KPI updated successfully', type: Kpi })
+  @ApiResponse({
+    status: 200,
+    description: 'KPI updated successfully',
+    type: Kpi,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,

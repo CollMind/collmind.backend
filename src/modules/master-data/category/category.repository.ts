@@ -14,7 +14,10 @@ export class CategoryRepository {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false): Promise<Category[]> {
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+  ): Promise<Category[]> {
     const where: any = { tenantId };
     if (activeOnly) {
       where.isActive = true;

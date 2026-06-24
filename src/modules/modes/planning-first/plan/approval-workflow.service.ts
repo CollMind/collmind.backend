@@ -7,7 +7,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Plan, PlanStatus } from '../../../../database/entities/plan.entity';
-import { PlanApprovalHistory, ApprovalHistoryAction } from '../../../../database/entities/plan-approval-history.entity';
+import {
+  PlanApprovalHistory,
+  ApprovalHistoryAction,
+} from '../../../../database/entities/plan-approval-history.entity';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { PlanRepository } from './plan.repository';
@@ -20,12 +23,12 @@ import {
   ReviewDecision,
   ReviewResult,
 } from './dto/review-plan.dto';
-import {
-  ApprovalFilters,
-  PendingPlan,
-} from './dto/approval-queue.dto';
+import { ApprovalFilters, PendingPlan } from './dto/approval-queue.dto';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
-import { BudgetTransactionType, BudgetTransactionSourceType } from '../../../../database/entities/budget-transaction.entity';
+import {
+  BudgetTransactionType,
+  BudgetTransactionSourceType,
+} from '../../../../database/entities/budget-transaction.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
 
 @Injectable()
@@ -68,14 +71,18 @@ export class ApprovalWorkflowService {
     } else {
       for (const planFu of plan.planFus) {
         if (!planFu.tactics || Object.keys(planFu.tactics).length === 0) {
-          validationErrors.push(`FU ${planFu.fu?.code || planFu.fuId} has no tactics defined`);
+          validationErrors.push(
+            `FU ${planFu.fu?.code || planFu.fuId} has no tactics defined`,
+          );
         }
       }
     }
 
     // 2. Check RAG status
     if (plan.ragStatus === 'RED') {
-      warnings.push('Plan has RED RAG status. Please review before submission.');
+      warnings.push(
+        'Plan has RED RAG status. Please review before submission.',
+      );
     }
 
     // 3. Calculate On-Invoice/Off-Invoice spend breakdown
@@ -96,7 +103,7 @@ export class ApprovalWorkflowService {
     if (!budgetCheck.overallSufficient) {
       validationErrors.push(
         `Insufficient budget. On-Invoice: ${budgetCheck.onInvoice.available} available, ${budgetCheck.onInvoice.requested} requested. ` +
-        `Off-Invoice: ${budgetCheck.offInvoice.available} available, ${budgetCheck.offInvoice.requested} requested.`
+          `Off-Invoice: ${budgetCheck.offInvoice.available} available, ${budgetCheck.offInvoice.requested} requested.`,
       );
     }
 
@@ -212,7 +219,10 @@ export class ApprovalWorkflowService {
     }
 
     // Check if reviewer has permission
-    if (plan.status !== PlanStatus.PENDING_APPROVAL && plan.status !== PlanStatus.PENDING_FINANCE_REVIEW) {
+    if (
+      plan.status !== PlanStatus.PENDING_APPROVAL &&
+      plan.status !== PlanStatus.PENDING_FINANCE_REVIEW
+    ) {
       throw new BadRequestException(
         `Plan is not in a reviewable state. Current status: ${plan.status}`,
       );
@@ -233,19 +243,39 @@ export class ApprovalWorkflowService {
         if (!dto.rejectionReason) {
           throw new BadRequestException('Rejection reason is required');
         }
-        return await this.rejectPlan(plan, tenantId, reviewerId, dto.rejectionReason, dto.comments);
+        return await this.rejectPlan(
+          plan,
+          tenantId,
+          reviewerId,
+          dto.rejectionReason,
+          dto.comments,
+        );
 
       case ReviewDecision.REQUEST_CHANGES:
         if (!dto.comments) {
-          throw new BadRequestException('Comments are required when requesting changes');
+          throw new BadRequestException(
+            'Comments are required when requesting changes',
+          );
         }
-        return await this.requestChanges(plan, tenantId, reviewerId, dto.comments, dto.specificChanges);
+        return await this.requestChanges(
+          plan,
+          tenantId,
+          reviewerId,
+          dto.comments,
+          dto.specificChanges,
+        );
 
       case ReviewDecision.ESCALATE:
         if (!dto.escalationReason) {
           throw new BadRequestException('Escalation reason is required');
         }
-        await this.escalateToFinance(plan.id, tenantId, reviewerId, dto.escalationReason, dto.comments);
+        await this.escalateToFinance(
+          plan.id,
+          tenantId,
+          reviewerId,
+          dto.escalationReason,
+          dto.comments,
+        );
         return {
           success: true,
           planId: plan.id,
@@ -441,18 +471,25 @@ export class ApprovalWorkflowService {
     }
 
     if (plan.status !== PlanStatus.PENDING_APPROVAL) {
-      throw new BadRequestException('Only PENDING_APPROVAL plans can be escalated');
+      throw new BadRequestException(
+        'Only PENDING_APPROVAL plans can be escalated',
+      );
     }
 
     // Update plan status
-    await this.planRepo.updateStatus(plan.id, tenantId, PlanStatus.PENDING_FINANCE_REVIEW, {
-      pendingFinanceReview: true,
-      escalationReason: reason,
-      escalatedAt: new Date(),
-      escalatedById: escalatedById,
-      comments: comments,
-      updatedBy: escalatedById,
-    });
+    await this.planRepo.updateStatus(
+      plan.id,
+      tenantId,
+      PlanStatus.PENDING_FINANCE_REVIEW,
+      {
+        pendingFinanceReview: true,
+        escalationReason: reason,
+        escalatedAt: new Date(),
+        escalatedById: escalatedById,
+        comments: comments,
+        updatedBy: escalatedById,
+      },
+    );
 
     // Create history entry
     await this.createHistoryEntry(
@@ -477,10 +514,11 @@ export class ApprovalWorkflowService {
   ): Promise<PendingPlan[]> {
     // TODO: Implement role-based filtering
     // For now, return all pending plans (both PENDING_APPROVAL and PENDING_FINANCE_REVIEW)
-    const statusFilter = filters.status && filters.status.length > 0
-      ? filters.status
-      : [PlanStatus.PENDING_APPROVAL, PlanStatus.PENDING_FINANCE_REVIEW];
-    
+    const statusFilter =
+      filters.status && filters.status.length > 0
+        ? filters.status
+        : [PlanStatus.PENDING_APPROVAL, PlanStatus.PENDING_FINANCE_REVIEW];
+
     const allPlans: Plan[] = [];
     const seenPlanIds = new Set<string>();
     for (const status of statusFilter) {
@@ -575,29 +613,39 @@ export class ApprovalWorkflowService {
       where: { tenantId },
       select: ['code', 'spendType', 'tacticType'],
     });
-    const tacticMap = new Map((allTactics || []).map(t => [t.code, t]));
+    const tacticMap = new Map((allTactics || []).map((t) => [t.code, t]));
 
     for (const planFu of plan.planFus || []) {
       if (planFu.tactics) {
         for (const [tacticCode, value] of Object.entries(planFu.tactics)) {
           const tactic = tacticMap.get(tacticCode);
-          
+
           let isOffInvoice = false;
           if (tactic?.spendType === 'OFF_INVOICE') {
             isOffInvoice = true;
           } else if (tactic?.spendType === 'ON_INVOICE') {
             isOffInvoice = false;
           } else {
-            isOffInvoice = tacticCode.includes('OFF') || 
-                          tacticCode.includes('DISPLAY') || 
-                          tacticCode.includes('LUMP');
+            isOffInvoice =
+              tacticCode.includes('OFF') ||
+              tacticCode.includes('DISPLAY') ||
+              tacticCode.includes('LUMP');
           }
-          
+
           let tacticSpend = 0;
-          if (tactic?.tacticType === 'DISCOUNT' || tacticCode.includes('PCT') || tacticCode.includes('%')) {
-            const plannedTurnover = planFu.planSkus?.reduce((sum, sku) => {
-              return sum + ((Number(sku.plannedVolume) || 0) * (Number(sku.sku?.unitPrice) || 0));
-            }, 0) || 0;
+          if (
+            tactic?.tacticType === 'DISCOUNT' ||
+            tacticCode.includes('PCT') ||
+            tacticCode.includes('%')
+          ) {
+            const plannedTurnover =
+              planFu.planSkus?.reduce((sum, sku) => {
+                return (
+                  sum +
+                  (Number(sku.plannedVolume) || 0) *
+                    (Number(sku.sku?.unitPrice) || 0)
+                );
+              }, 0) || 0;
             tacticSpend = plannedTurnover * (value / 100);
           } else {
             tacticSpend = value;
@@ -636,8 +684,16 @@ export class ApprovalWorkflowService {
 
     if (!envelope) {
       return {
-        onInvoice: { available: 0, requested: onInvoiceAmount, sufficient: false },
-        offInvoice: { available: 0, requested: offInvoiceAmount, sufficient: false },
+        onInvoice: {
+          available: 0,
+          requested: onInvoiceAmount,
+          sufficient: false,
+        },
+        offInvoice: {
+          available: 0,
+          requested: offInvoiceAmount,
+          sufficient: false,
+        },
         overallSufficient: false,
       };
     }

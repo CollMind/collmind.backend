@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { CplService } from './cpl.service';
 import { CreateCplDto } from './dto/create-cpl.dto';
 import { UpdateCplDto } from './dto/update-cpl.dto';
@@ -32,7 +37,11 @@ export class CplController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new CPL' })
-  @ApiResponse({ status: 201, description: 'CPL created successfully', type: Cpl })
+  @ApiResponse({
+    status: 201,
+    description: 'CPL created successfully',
+    type: Cpl,
+  })
   create(@TenantId() tenantId: string, @Body() createCplDto: CreateCplDto) {
     return this.cplService.create(tenantId, createCplDto);
   }
@@ -58,7 +67,11 @@ export class CplController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update CPL' })
-  @ApiResponse({ status: 200, description: 'CPL updated successfully', type: Cpl })
+  @ApiResponse({
+    status: 200,
+    description: 'CPL updated successfully',
+    type: Cpl,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,

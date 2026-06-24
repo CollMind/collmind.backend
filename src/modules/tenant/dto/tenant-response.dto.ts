@@ -1,5 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { TenantStatus, TenantPlan } from '../../../database/entities/tenant.entity';
+import {
+  TenantStatus,
+  TenantPlan,
+} from '../../../database/entities/tenant.entity';
 
 export class TenantResponseDto {
   @ApiProperty()
@@ -56,4 +59,3 @@ export class TenantResponseDto {
   @ApiProperty()
   updatedAt!: Date;
 }
-

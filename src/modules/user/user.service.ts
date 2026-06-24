@@ -14,10 +14,20 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { User, UserStatus, UserRole } from '../../database/entities/user.entity';
+import {
+  User,
+  UserStatus,
+  UserRole,
+} from '../../database/entities/user.entity';
 import { Plan, PlanStatus } from '../../database/entities/plan.entity';
-import { Agreement, AgreementStatus } from '../../database/entities/agreement.entity';
-import { BudgetEnvelope, BudgetEnvelopeStatus } from '../../database/entities/budget-envelope.entity';
+import {
+  Agreement,
+  AgreementStatus,
+} from '../../database/entities/agreement.entity';
+import {
+  BudgetEnvelope,
+  BudgetEnvelopeStatus,
+} from '../../database/entities/budget-envelope.entity';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -34,7 +44,10 @@ export class UserService {
   ) {}
 
   async create(tenantId: string, createUserDto: CreateUserDto): Promise<User> {
-    const existing = await this.userRepository.findByEmail(tenantId, createUserDto.email);
+    const existing = await this.userRepository.findByEmail(
+      tenantId,
+      createUserDto.email,
+    );
     if (existing) {
       throw new ConflictException('User with this email already exists');
     }
@@ -51,7 +64,10 @@ export class UserService {
   }
 
   async login(tenantId: string, loginDto: LoginDto): Promise<LoginResponseDto> {
-    const user = await this.userRepository.findByEmail(tenantId, loginDto.email);
+    const user = await this.userRepository.findByEmail(
+      tenantId,
+      loginDto.email,
+    );
 
     if (!user || !(await user.validatePassword(loginDto.password))) {
       throw new UnauthorizedException('Invalid credentials');
@@ -66,7 +82,12 @@ export class UserService {
     }
 
     // Generate tokens
-    const payload = { sub: user.id, email: user.email, role: user.role, tenantId: user.tenantId };
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      tenantId: user.tenantId,
+    };
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
@@ -131,11 +152,15 @@ export class UserService {
     if (updateUserDto.role && updateUserDto.role !== user.role) {
       // Non-admin users cannot change any role (including their own)
       if (currentUserRole !== UserRole.ADMIN) {
-        throw new ForbiddenException('Only administrators can change user roles');
+        throw new ForbiddenException(
+          'Only administrators can change user roles',
+        );
       }
       // Admins cannot modify their own role
       if (currentUserId === id) {
-        throw new ForbiddenException('Admins cannot modify their own role permissions');
+        throw new ForbiddenException(
+          'Admins cannot modify their own role permissions',
+        );
       }
       // Log high-risk action
       console.warn('EA-001: Admin attempting role change', {
@@ -148,7 +173,10 @@ export class UserService {
 
     // Check email uniqueness if changing
     if (updateUserDto.email && updateUserDto.email !== user.email) {
-      const existing = await this.userRepository.findByEmail(tenantId, updateUserDto.email);
+      const existing = await this.userRepository.findByEmail(
+        tenantId,
+        updateUserDto.email,
+      );
       if (existing) {
         throw new ConflictException('User with this email already exists');
       }
@@ -170,7 +198,9 @@ export class UserService {
   ): Promise<void> {
     const user = await this.findOne(tenantId, id);
 
-    const isValid = await user.validatePassword(changePasswordDto.currentPassword);
+    const isValid = await user.validatePassword(
+      changePasswordDto.currentPassword,
+    );
     if (!isValid) {
       throw new UnauthorizedException('Current password is incorrect');
     }
@@ -216,7 +246,9 @@ export class UserService {
       };
 
       const accessToken = this.jwtService.sign(newPayload);
-      const newRefreshToken = this.jwtService.sign(newPayload, { expiresIn: '7d' });
+      const newRefreshToken = this.jwtService.sign(newPayload, {
+        expiresIn: '7d',
+      });
 
       user.refreshToken = newRefreshToken;
       await this.userRepository.save(user);
@@ -263,17 +295,23 @@ export class UserService {
     // Calculate active operations (APPROVED plans + ACTIVE/APPROVED agreements)
     const activePlans = plans.filter((p) => p.status === PlanStatus.APPROVED);
     const activeAgreements = agreements.filter(
-      (a) => a.status === AgreementStatus.ACTIVE || a.status === AgreementStatus.APPROVED,
+      (a) =>
+        a.status === AgreementStatus.ACTIVE ||
+        a.status === AgreementStatus.APPROVED,
     );
     const activeOperations = activePlans.length + activeAgreements.length;
 
     // Calculate drafts (DRAFT plans + DRAFT agreements)
     const draftPlans = plans.filter((p) => p.status === PlanStatus.DRAFT);
-    const draftAgreements = agreements.filter((a) => a.status === AgreementStatus.DRAFT);
+    const draftAgreements = agreements.filter(
+      (a) => a.status === AgreementStatus.DRAFT,
+    );
     const drafts = draftPlans.length + draftAgreements.length;
 
     // Calculate managed budget (total allocated amount from all active envelopes)
-    const activeEnvelopes = envelopes.filter((e) => e.status === BudgetEnvelopeStatus.ACTIVE);
+    const activeEnvelopes = envelopes.filter(
+      (e) => e.status === BudgetEnvelopeStatus.ACTIVE,
+    );
     const managedBudget = activeEnvelopes.reduce(
       (sum, e) => sum + Number(e.allocatedAmount || 0),
       0,
@@ -310,4 +348,3 @@ export class UserService {
     };
   }
 }
-

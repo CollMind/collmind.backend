@@ -11,7 +11,10 @@ import {
   IsDateString,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TenantStatus, TenantPlan } from '../../../database/entities/tenant.entity';
+import {
+  TenantStatus,
+  TenantPlan,
+} from '../../../database/entities/tenant.entity';
 
 export class CreateTenantDto {
   @ApiProperty({ example: 'Acme Corporation', description: 'Tenant name' })
@@ -20,7 +23,10 @@ export class CreateTenantDto {
   @MaxLength(200)
   name!: string;
 
-  @ApiPropertyOptional({ example: 'acme.tsp.com', description: 'Custom domain' })
+  @ApiPropertyOptional({
+    example: 'acme.tsp.com',
+    description: 'Custom domain',
+  })
   @IsString()
   @IsOptional()
   @MaxLength(100)
@@ -119,4 +125,3 @@ export class CreateTenantDto {
   @IsOptional()
   notes?: string;
 }
-

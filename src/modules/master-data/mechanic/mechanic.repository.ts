@@ -14,7 +14,11 @@ export class MechanicRepository {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false, tacticId?: string): Promise<Mechanic[]> {
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+    tacticId?: string,
+  ): Promise<Mechanic[]> {
     const where: any = { tenantId };
     if (activeOnly) {
       where.isActive = true;

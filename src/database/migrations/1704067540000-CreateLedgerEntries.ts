@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateLedgerEntries1704067540000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -244,8 +250,11 @@ export class CreateLedgerEntries1704067540000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropTable('main.ledger_entries', true);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."ledger_entries_entry_direction_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."ledger_entries_spend_type_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."ledger_entries_entry_direction_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."ledger_entries_spend_type_enum"`,
+    );
   }
 }
-

@@ -16,6 +16,3 @@ export class AddNumberOfBranchesToCustomers1704067380000 implements MigrationInt
     await queryRunner.dropColumn('main.customers', 'number_of_branches');
   }
 }
-
-
-

@@ -14,8 +14,15 @@ export class SkuRepository {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false, fuId?: string, brandId?: string, categoryId?: string): Promise<Sku[]> {
-    const query = this.repository.createQueryBuilder('sku')
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+    fuId?: string,
+    brandId?: string,
+    categoryId?: string,
+  ): Promise<Sku[]> {
+    const query = this.repository
+      .createQueryBuilder('sku')
       .leftJoinAndSelect('sku.genericUnit', 'gu')
       .leftJoinAndSelect('gu.brand', 'brand')
       .leftJoinAndSelect('gu.category', 'category')

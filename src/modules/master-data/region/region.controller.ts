@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { RegionService } from './region.service';
 import { CreateRegionDto } from './dto/create-region.dto';
 import { UpdateRegionDto } from './dto/update-region.dto';
@@ -32,8 +37,15 @@ export class RegionController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new region' })
-  @ApiResponse({ status: 201, description: 'Region created successfully', type: Region })
-  create(@TenantId() tenantId: string, @Body() createRegionDto: CreateRegionDto) {
+  @ApiResponse({
+    status: 201,
+    description: 'Region created successfully',
+    type: Region,
+  })
+  create(
+    @TenantId() tenantId: string,
+    @Body() createRegionDto: CreateRegionDto,
+  ) {
     return this.regionService.create(tenantId, createRegionDto);
   }
 
@@ -57,7 +69,11 @@ export class RegionController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update region' })
-  @ApiResponse({ status: 200, description: 'Region updated successfully', type: Region })
+  @ApiResponse({
+    status: 200,
+    description: 'Region updated successfully',
+    type: Region,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,

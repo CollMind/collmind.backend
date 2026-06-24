@@ -42,7 +42,9 @@ describe('TenantService', () => {
     }).compile();
 
     service = module.get<TenantService>(TenantService);
-    tenantRepository = module.get(TenantRepository) as jest.Mocked<TenantRepository>;
+    tenantRepository = module.get(
+      TenantRepository,
+    ) as jest.Mocked<TenantRepository>;
   });
 
   afterEach(() => {
@@ -63,8 +65,12 @@ describe('TenantService', () => {
 
       const result = await service.create(createTenantDto);
 
-      expect(tenantRepository.findByName).toHaveBeenCalledWith(createTenantDto.name);
-      expect(tenantRepository.findByDomain).toHaveBeenCalledWith(createTenantDto.domain);
+      expect(tenantRepository.findByName).toHaveBeenCalledWith(
+        createTenantDto.name,
+      );
+      expect(tenantRepository.findByDomain).toHaveBeenCalledWith(
+        createTenantDto.domain,
+      );
       expect(tenantRepository.create).toHaveBeenCalled();
       expect(tenantRepository.save).toHaveBeenCalled();
       expect(result).toEqual(mockTenant);
@@ -73,16 +79,24 @@ describe('TenantService', () => {
     it('should throw ConflictException if tenant with name already exists', async () => {
       tenantRepository.findByName.mockResolvedValue(mockTenant);
 
-      await expect(service.create(createTenantDto)).rejects.toThrow(ConflictException);
-      expect(tenantRepository.findByName).toHaveBeenCalledWith(createTenantDto.name);
+      await expect(service.create(createTenantDto)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(tenantRepository.findByName).toHaveBeenCalledWith(
+        createTenantDto.name,
+      );
     });
 
     it('should throw ConflictException if domain is already taken', async () => {
       tenantRepository.findByName.mockResolvedValue(null);
       tenantRepository.findByDomain.mockResolvedValue(mockTenant);
 
-      await expect(service.create(createTenantDto)).rejects.toThrow(ConflictException);
-      expect(tenantRepository.findByDomain).toHaveBeenCalledWith(createTenantDto.domain);
+      await expect(service.create(createTenantDto)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(tenantRepository.findByDomain).toHaveBeenCalledWith(
+        createTenantDto.domain,
+      );
     });
 
     it('should convert date strings to Date objects', async () => {
@@ -153,7 +167,9 @@ describe('TenantService', () => {
     it('should throw NotFoundException if tenant not found', async () => {
       tenantRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.findOne(mockTenantId)).rejects.toThrow(NotFoundException);
+      await expect(service.findOne(mockTenantId)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -164,7 +180,10 @@ describe('TenantService', () => {
 
     it('should update tenant successfully', async () => {
       tenantRepository.findOne.mockResolvedValue(mockTenant);
-      tenantRepository.save.mockResolvedValue({ ...mockTenant, ...updateTenantDto } as any);
+      tenantRepository.save.mockResolvedValue({
+        ...mockTenant,
+        ...updateTenantDto,
+      } as any);
 
       const result = await service.update(mockTenantId, updateTenantDto);
 
@@ -176,7 +195,11 @@ describe('TenantService', () => {
     it('should check name uniqueness when updating name', async () => {
       const updateDto: UpdateTenantDto = { name: 'New Name' };
       const existingTenant = { ...mockTenant, name: 'Old Name' };
-      const conflictingTenant = { ...mockTenant, id: 'other-id', name: 'New Name' };
+      const conflictingTenant = {
+        ...mockTenant,
+        id: 'other-id',
+        name: 'New Name',
+      };
 
       tenantRepository.findOne.mockResolvedValue(existingTenant);
       tenantRepository.findByName.mockResolvedValue(conflictingTenant);
@@ -189,7 +212,11 @@ describe('TenantService', () => {
     it('should check domain uniqueness when updating domain', async () => {
       const updateDto: UpdateTenantDto = { domain: 'new-domain' };
       const existingTenant = { ...mockTenant, domain: 'old-domain' };
-      const conflictingTenant = { ...mockTenant, id: 'other-id', domain: 'new-domain' };
+      const conflictingTenant = {
+        ...mockTenant,
+        id: 'other-id',
+        domain: 'new-domain',
+      };
 
       tenantRepository.findOne.mockResolvedValue(existingTenant);
       tenantRepository.findByDomain.mockResolvedValue(conflictingTenant);
@@ -203,7 +230,10 @@ describe('TenantService', () => {
       const updateDto: UpdateTenantDto = { status: TenantStatus.SUSPENDED };
 
       tenantRepository.findOne.mockResolvedValue(mockTenant);
-      tenantRepository.save.mockResolvedValue({ ...mockTenant, ...updateDto } as any);
+      tenantRepository.save.mockResolvedValue({
+        ...mockTenant,
+        ...updateDto,
+      } as any);
 
       const result = await service.update(mockTenantId, updateDto);
 
@@ -270,7 +300,9 @@ describe('TenantService', () => {
 
       const result = await service.getStats(mockTenantId);
 
-      expect(tenantRepository.getTenantStats).toHaveBeenCalledWith(mockTenantId);
+      expect(tenantRepository.getTenantStats).toHaveBeenCalledWith(
+        mockTenantId,
+      );
       expect(result).toEqual(stats);
     });
   });

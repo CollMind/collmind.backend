@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ApprovalService } from './approval.service';
 import { ApproveRequestDto, RejectRequestDto } from './dto';
@@ -25,7 +33,11 @@ export class ApprovalController {
     @Query('requestType') requestType?: string,
     @Query('entityType') entityType?: string,
   ) {
-    return this.approvalService.findAll(tenantId, { status, requestType, entityType });
+    return this.approvalService.findAll(tenantId, {
+      status,
+      requestType,
+      entityType,
+    });
   }
 
   @Get('pending')
@@ -36,14 +48,29 @@ export class ApprovalController {
   }
 
   @Get('my-requests')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get approval requests created by current user' })
-  findMyRequests(@TenantId() tenantId: string, @CurrentUser('id') userId: string) {
+  findMyRequests(
+    @TenantId() tenantId: string,
+    @CurrentUser('id') userId: string,
+  ) {
     return this.approvalService.findMyRequests(userId, tenantId);
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get approval request by ID' })
   findOne(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.approvalService.findById(id, tenantId);
@@ -76,8 +103,11 @@ export class ApprovalController {
   @Post(':id/cancel')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @ApiOperation({ summary: 'Cancel own pending request' })
-  cancel(@Param('id') id: string, @TenantId() tenantId: string, @CurrentUser('id') userId: string) {
+  cancel(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser('id') userId: string,
+  ) {
     return this.approvalService.cancel(id, tenantId, userId);
   }
 }
-

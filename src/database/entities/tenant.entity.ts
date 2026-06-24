@@ -114,7 +114,13 @@ export class Tenant {
   @Column({ name: 'max_storage_gb', type: 'int', default: 10 })
   maxStorageGB!: number;
 
-  @Column({ name: 'current_storage_gb', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({
+    name: 'current_storage_gb',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    default: 0,
+  })
   currentStorageGB!: number;
 
   // Metadata
@@ -138,4 +144,3 @@ export class Tenant {
   @OneToMany(() => User, (user) => user.tenant)
   users!: User[];
 }
-

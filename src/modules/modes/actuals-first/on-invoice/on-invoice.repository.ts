@@ -19,7 +19,11 @@ export class OnInvoiceRepository {
     return this.batchRepo.save(batch);
   }
 
-  async updateBatch(id: string, data: Partial<OnInvoiceBatch>, tenantId: string): Promise<OnInvoiceBatch> {
+  async updateBatch(
+    id: string,
+    data: Partial<OnInvoiceBatch>,
+    tenantId: string,
+  ): Promise<OnInvoiceBatch> {
     await this.batchRepo.update(id, data);
     const batch = await this.findById(id, tenantId);
     if (!batch) {
@@ -35,23 +39,32 @@ export class OnInvoiceRepository {
     });
   }
 
-  async findByBatchCode(batchCode: string, tenantId: string): Promise<OnInvoiceBatch | null> {
+  async findByBatchCode(
+    batchCode: string,
+    tenantId: string,
+  ): Promise<OnInvoiceBatch | null> {
     return this.batchRepo.findOne({
       where: { batchCode, tenantId, deletedAt: IsNull() },
       relations: ['entries'],
     });
   }
 
-  async findAllBatches(tenantId: string, filters?: {
-    fiscalPeriod?: string;
-    status?: string;
-  }): Promise<OnInvoiceBatch[]> {
-    const query = this.batchRepo.createQueryBuilder('batch')
+  async findAllBatches(
+    tenantId: string,
+    filters?: {
+      fiscalPeriod?: string;
+      status?: string;
+    },
+  ): Promise<OnInvoiceBatch[]> {
+    const query = this.batchRepo
+      .createQueryBuilder('batch')
       .where('batch.tenantId = :tenantId', { tenantId })
       .andWhere('batch.deletedAt IS NULL');
 
     if (filters?.fiscalPeriod) {
-      query.andWhere('batch.fiscalPeriod = :fiscalPeriod', { fiscalPeriod: filters.fiscalPeriod });
+      query.andWhere('batch.fiscalPeriod = :fiscalPeriod', {
+        fiscalPeriod: filters.fiscalPeriod,
+      });
     }
     if (filters?.status) {
       query.andWhere('batch.status = :status', { status: filters.status });
@@ -66,19 +79,27 @@ export class OnInvoiceRepository {
     return this.entryRepo.save(entry);
   }
 
-  async createEntriesBatch(data: Partial<OnInvoiceEntry>[]): Promise<OnInvoiceEntry[]> {
+  async createEntriesBatch(
+    data: Partial<OnInvoiceEntry>[],
+  ): Promise<OnInvoiceEntry[]> {
     const entries = this.entryRepo.create(data);
     return this.entryRepo.save(entries);
   }
 
-  async findEntryById(id: string, tenantId: string): Promise<OnInvoiceEntry | null> {
+  async findEntryById(
+    id: string,
+    tenantId: string,
+  ): Promise<OnInvoiceEntry | null> {
     return this.entryRepo.findOne({
       where: { id, tenantId, deletedAt: IsNull() },
       relations: ['customer', 'sku', 'batch', 'budgetEnvelope'],
     });
   }
 
-  async findEntriesByBatchId(batchId: string, tenantId: string): Promise<OnInvoiceEntry[]> {
+  async findEntriesByBatchId(
+    batchId: string,
+    tenantId: string,
+  ): Promise<OnInvoiceEntry[]> {
     return this.entryRepo.find({
       where: { batchId, tenantId, deletedAt: IsNull() },
       relations: ['customer', 'sku'],
@@ -86,24 +107,31 @@ export class OnInvoiceRepository {
     });
   }
 
-  async findByIdempotencyKey(key: string, tenantId: string): Promise<OnInvoiceEntry | null> {
+  async findByIdempotencyKey(
+    key: string,
+    tenantId: string,
+  ): Promise<OnInvoiceEntry | null> {
     return this.entryRepo.findOne({
       where: { idempotencyKey: key, tenantId, deletedAt: IsNull() },
     });
   }
 
-  async findAllEntries(tenantId: string, filters?: {
-    batchId?: string;
-    customerId?: string;
-    skuId?: string;
-    fiscalPeriod?: string;
-    discountType?: string;
-    invoiceDateFrom?: Date;
-    invoiceDateTo?: Date;
-    status?: string;
-  }): Promise<OnInvoiceEntry[]> {
+  async findAllEntries(
+    tenantId: string,
+    filters?: {
+      batchId?: string;
+      customerId?: string;
+      skuId?: string;
+      fiscalPeriod?: string;
+      discountType?: string;
+      invoiceDateFrom?: Date;
+      invoiceDateTo?: Date;
+      status?: string;
+    },
+  ): Promise<OnInvoiceEntry[]> {
     try {
-      const query = this.entryRepo.createQueryBuilder('entry')
+      const query = this.entryRepo
+        .createQueryBuilder('entry')
         .leftJoinAndSelect('entry.customer', 'customer')
         .leftJoinAndSelect('entry.sku', 'sku')
         .leftJoinAndSelect('entry.batch', 'batch')
@@ -111,25 +139,37 @@ export class OnInvoiceRepository {
         .andWhere('entry.deletedAt IS NULL');
 
       if (filters?.batchId) {
-        query.andWhere('entry.batchId = :batchId', { batchId: filters.batchId });
+        query.andWhere('entry.batchId = :batchId', {
+          batchId: filters.batchId,
+        });
       }
       if (filters?.customerId) {
-        query.andWhere('entry.customerId = :customerId', { customerId: filters.customerId });
+        query.andWhere('entry.customerId = :customerId', {
+          customerId: filters.customerId,
+        });
       }
       if (filters?.skuId) {
         query.andWhere('entry.skuId = :skuId', { skuId: filters.skuId });
       }
       if (filters?.fiscalPeriod) {
-        query.andWhere('entry.fiscalPeriod = :fiscalPeriod', { fiscalPeriod: filters.fiscalPeriod });
+        query.andWhere('entry.fiscalPeriod = :fiscalPeriod', {
+          fiscalPeriod: filters.fiscalPeriod,
+        });
       }
       if (filters?.discountType) {
-        query.andWhere('entry.discountType = :discountType', { discountType: filters.discountType });
+        query.andWhere('entry.discountType = :discountType', {
+          discountType: filters.discountType,
+        });
       }
       if (filters?.invoiceDateFrom) {
-        query.andWhere('entry.invoiceDate >= :invoiceDateFrom', { invoiceDateFrom: filters.invoiceDateFrom });
+        query.andWhere('entry.invoiceDate >= :invoiceDateFrom', {
+          invoiceDateFrom: filters.invoiceDateFrom,
+        });
       }
       if (filters?.invoiceDateTo) {
-        query.andWhere('entry.invoiceDate <= :invoiceDateTo', { invoiceDateTo: filters.invoiceDateTo });
+        query.andWhere('entry.invoiceDate <= :invoiceDateTo', {
+          invoiceDateTo: filters.invoiceDateTo,
+        });
       }
       if (filters?.status) {
         query.andWhere('entry.status = :status', { status: filters.status });
@@ -154,13 +194,20 @@ export class OnInvoiceRepository {
     return parseFloat(result.total) || 0;
   }
 
-  async countByBatchAndStatus(batchId: string, status: string, tenantId: string): Promise<number> {
+  async countByBatchAndStatus(
+    batchId: string,
+    status: string,
+    tenantId: string,
+  ): Promise<number> {
     return this.entryRepo.count({
       where: { batchId, status: status as any, tenantId, deletedAt: IsNull() },
     });
   }
 
-  async updateEntry(id: string, data: Partial<OnInvoiceEntry>): Promise<OnInvoiceEntry> {
+  async updateEntry(
+    id: string,
+    data: Partial<OnInvoiceEntry>,
+  ): Promise<OnInvoiceEntry> {
     await this.entryRepo.update(id, data);
     const entry = await this.entryRepo.findOne({ where: { id } });
     if (!entry) {

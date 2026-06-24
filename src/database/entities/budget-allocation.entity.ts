@@ -1,4 +1,11 @@
-import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Cpl } from './cpl.entity';
 
@@ -9,10 +16,21 @@ export enum PeriodType {
 }
 
 @Entity({ name: 'budget_allocations', schema: 'main' })
-@Index(['tenantId', 'periodType', 'periodStart', 'periodEnd', 'cplId', 'channel', 'category'], {
-  unique: true,
-  where: 'deleted_at IS NULL',
-})
+@Index(
+  [
+    'tenantId',
+    'periodType',
+    'periodStart',
+    'periodEnd',
+    'cplId',
+    'channel',
+    'category',
+  ],
+  {
+    unique: true,
+    where: 'deleted_at IS NULL',
+  },
+)
 @Index(['periodType', 'fiscalYear'])
 @Index(['cplId'])
 @Index(['periodStart', 'periodEnd'])
@@ -43,10 +61,22 @@ export class BudgetAllocation extends BaseEntity {
   category?: string; // Nullable - tüm kategoriler için
 
   // Budget amounts
-  @Column({ name: 'on_invoice_budget', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'on_invoice_budget',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   onInvoiceBudget!: number;
 
-  @Column({ name: 'off_invoice_budget', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'off_invoice_budget',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   offInvoiceBudget!: number;
 
   // Total budget (computed: on + off)
@@ -61,17 +91,41 @@ export class BudgetAllocation extends BaseEntity {
   totalBudget!: number;
 
   // Utilization tracking
-  @Column({ name: 'on_invoice_utilized', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'on_invoice_utilized',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   onInvoiceUtilized!: number;
 
-  @Column({ name: 'off_invoice_utilized', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'off_invoice_utilized',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   offInvoiceUtilized!: number;
 
   // Reservation tracking (pending approval plans)
-  @Column({ name: 'on_invoice_reserved', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'on_invoice_reserved',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   onInvoiceReserved!: number;
 
-  @Column({ name: 'off_invoice_reserved', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'off_invoice_reserved',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   offInvoiceReserved!: number;
 
   // Available budget (computed: budget - utilized - reserved)
@@ -81,7 +135,8 @@ export class BudgetAllocation extends BaseEntity {
     precision: 15,
     scale: 2,
     generatedType: 'STORED',
-    asExpression: 'on_invoice_budget - on_invoice_utilized - on_invoice_reserved',
+    asExpression:
+      'on_invoice_budget - on_invoice_utilized - on_invoice_reserved',
   })
   onInvoiceAvailable!: number;
 
@@ -91,7 +146,8 @@ export class BudgetAllocation extends BaseEntity {
     precision: 15,
     scale: 2,
     generatedType: 'STORED',
-    asExpression: 'off_invoice_budget - off_invoice_utilized - off_invoice_reserved',
+    asExpression:
+      'off_invoice_budget - off_invoice_utilized - off_invoice_reserved',
   })
   offInvoiceAvailable!: number;
 

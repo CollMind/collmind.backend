@@ -7,7 +7,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LTAAgreementRepository } from './lta-agreement.repository';
-import { LTAAgreement, LTAAgreementStatus } from '../../../database/entities/lta-agreement.entity';
+import {
+  LTAAgreement,
+  LTAAgreementStatus,
+} from '../../../database/entities/lta-agreement.entity';
 import { LTARate } from '../../../database/entities/lta-rate.entity';
 import { CreateLTAAgreementDto } from './dto/create-lta-agreement.dto';
 import { UpdateLTAAgreementDto } from './dto/update-lta-agreement.dto';
@@ -32,9 +35,14 @@ export class LTAAgreementService {
     await this.cplService.findOne(tenantId, dto.cplId);
 
     // Validate code uniqueness
-    const existing = await this.ltaRepository.findByCode(tenantId, dto.agreementCode);
+    const existing = await this.ltaRepository.findByCode(
+      tenantId,
+      dto.agreementCode,
+    );
     if (existing) {
-      throw new ConflictException(`LTA Agreement with code '${dto.agreementCode}' already exists`);
+      throw new ConflictException(
+        `LTA Agreement with code '${dto.agreementCode}' already exists`,
+      );
     }
 
     // Validate dates
@@ -44,7 +52,9 @@ export class LTAAgreementService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (effectiveDate < today) {
-      throw new BadRequestException('Effective date must be today or in the future');
+      throw new BadRequestException(
+        'Effective date must be today or in the future',
+      );
     }
 
     if (expiryDate && expiryDate <= effectiveDate) {
@@ -85,9 +95,11 @@ export class LTAAgreementService {
     // Create rates
     const rates = dto.rates.map((rateDto) => {
       // If channel is "ALL", set channelId to null
-      const channelId = rateDto.channel === 'ALL' ? undefined : rateDto.channelId;
+      const channelId =
+        rateDto.channel === 'ALL' ? undefined : rateDto.channelId;
       // If category is "ALL", set categoryId to null
-      const categoryId = rateDto.category === 'ALL' ? undefined : rateDto.categoryId;
+      const categoryId =
+        rateDto.category === 'ALL' ? undefined : rateDto.categoryId;
 
       return this.ltaRateRepository.create({
         tenantId,
@@ -107,7 +119,10 @@ export class LTAAgreementService {
 
     await this.ltaRateRepository.save(rates);
 
-    return this.ltaRepository.findById(tenantId, savedAgreement.id) as Promise<LTAAgreement>;
+    return this.ltaRepository.findById(
+      tenantId,
+      savedAgreement.id,
+    ) as Promise<LTAAgreement>;
   }
 
   async updateAgreement(
@@ -136,19 +151,30 @@ export class LTAAgreementService {
 
     // Validate code uniqueness if changed
     if (dto.agreementCode && dto.agreementCode !== agreement.agreementCode) {
-      const existing = await this.ltaRepository.findByCode(tenantId, dto.agreementCode);
+      const existing = await this.ltaRepository.findByCode(
+        tenantId,
+        dto.agreementCode,
+      );
       if (existing) {
-        throw new ConflictException(`LTA Agreement with code '${dto.agreementCode}' already exists`);
+        throw new ConflictException(
+          `LTA Agreement with code '${dto.agreementCode}' already exists`,
+        );
       }
     }
 
     // Validate dates if changed
     if (dto.effectiveDate || dto.expiryDate) {
-      const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : agreement.effectiveDate;
-      const expiryDate = dto.expiryDate ? new Date(dto.expiryDate) : agreement.expiryDate;
+      const effectiveDate = dto.effectiveDate
+        ? new Date(dto.effectiveDate)
+        : agreement.effectiveDate;
+      const expiryDate = dto.expiryDate
+        ? new Date(dto.expiryDate)
+        : agreement.expiryDate;
 
       if (expiryDate && expiryDate <= effectiveDate) {
-        throw new BadRequestException('Expiry date must be after effective date');
+        throw new BadRequestException(
+          'Expiry date must be after effective date',
+        );
       }
 
       // Validate no overlapping agreements
@@ -170,9 +196,14 @@ export class LTAAgreementService {
     Object.assign(agreement, {
       agreementName: dto.agreementName ?? agreement.agreementName,
       agreementCode: dto.agreementCode ?? agreement.agreementCode,
-      effectiveDate: dto.effectiveDate ? new Date(dto.effectiveDate) : agreement.effectiveDate,
-      expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : agreement.expiryDate,
-      totalAgreementValue: dto.totalAgreementValue ?? agreement.totalAgreementValue,
+      effectiveDate: dto.effectiveDate
+        ? new Date(dto.effectiveDate)
+        : agreement.effectiveDate,
+      expiryDate: dto.expiryDate
+        ? new Date(dto.expiryDate)
+        : agreement.expiryDate,
+      totalAgreementValue:
+        dto.totalAgreementValue ?? agreement.totalAgreementValue,
       notes: dto.notes ?? agreement.notes,
     });
 
@@ -184,9 +215,11 @@ export class LTAAgreementService {
       // Create new rates
       const rates = dto.rates.map((rateDto) => {
         // If channel is "ALL", set channelId to null
-        const channelId = rateDto.channel === 'ALL' ? undefined : rateDto.channelId;
+        const channelId =
+          rateDto.channel === 'ALL' ? undefined : rateDto.channelId;
         // If category is "ALL", set categoryId to null
-        const categoryId = rateDto.category === 'ALL' ? undefined : rateDto.categoryId;
+        const categoryId =
+          rateDto.category === 'ALL' ? undefined : rateDto.categoryId;
 
         return this.ltaRateRepository.create({
           tenantId,
@@ -237,7 +270,11 @@ export class LTAAgreementService {
     await this.ltaRepository.save(agreement);
   }
 
-  async terminateAgreement(tenantId: string, id: string, reason: string): Promise<void> {
+  async terminateAgreement(
+    tenantId: string,
+    id: string,
+    reason: string,
+  ): Promise<void> {
     const agreement = await this.ltaRepository.findById(tenantId, id);
     if (!agreement) {
       throw new NotFoundException(`LTA Agreement with ID ${id} not found`);
@@ -269,7 +306,11 @@ export class LTAAgreementService {
     category: string,
     date: Date = new Date(),
   ): Promise<LTARate | null> {
-    const agreement = await this.getActiveAgreementForCPL(tenantId, cplId, date);
+    const agreement = await this.getActiveAgreementForCPL(
+      tenantId,
+      cplId,
+      date,
+    );
     if (!agreement || !agreement.rates || agreement.rates.length === 0) {
       return null;
     }
@@ -339,7 +380,11 @@ export class LTAAgreementService {
     }
 
     const date = new Date(); // Use plan's date if available, otherwise current date
-    const agreement = await this.getActiveAgreementForCPL(tenantId, planContext.cplId, date);
+    const agreement = await this.getActiveAgreementForCPL(
+      tenantId,
+      planContext.cplId,
+      date,
+    );
     if (!agreement || !agreement.rates) {
       return null;
     }
@@ -347,7 +392,13 @@ export class LTAAgreementService {
     const channel = planContext.channelCode || planContext.channelId || '';
     const category = planContext.categoryCode || planContext.categoryId || '';
 
-    const rate = await this.getRatesForContext(tenantId, planContext.cplId, channel, category, date);
+    const rate = await this.getRatesForContext(
+      tenantId,
+      planContext.cplId,
+      channel,
+      category,
+      date,
+    );
     if (!rate) {
       return null;
     }
@@ -368,7 +419,8 @@ export class LTAAgreementService {
 
     // Use override if exists, otherwise use default
     const finalOnInvoicePct = overrideOnInvoicePct ?? rate.onInvoicePercentage;
-    const finalOffInvoicePct = overrideOffInvoicePct ?? rate.offInvoicePercentage;
+    const finalOffInvoicePct =
+      overrideOffInvoicePct ?? rate.offInvoicePercentage;
 
     return {
       agreement,
@@ -380,7 +432,10 @@ export class LTAAgreementService {
     };
   }
 
-  async findAll(tenantId: string, status?: LTAAgreementStatus): Promise<LTAAgreement[]> {
+  async findAll(
+    tenantId: string,
+    status?: LTAAgreementStatus,
+  ): Promise<LTAAgreement[]> {
     return this.ltaRepository.findAllByTenant(tenantId, status);
   }
 

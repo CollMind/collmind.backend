@@ -1,4 +1,12 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsEnum, IsArray, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsBoolean,
+  IsEnum,
+  IsArray,
+  MaxLength,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TacticType } from '../../../../database/entities/tactic.entity';
 
@@ -24,7 +32,10 @@ export class CreateTacticDto {
   @IsEnum(TacticType)
   tacticType!: TacticType;
 
-  @ApiPropertyOptional({ description: 'Spend type', enum: ['ON_INVOICE', 'OFF_INVOICE', 'BOTH'] })
+  @ApiPropertyOptional({
+    description: 'Spend type',
+    enum: ['ON_INVOICE', 'OFF_INVOICE', 'BOTH'],
+  })
   @IsEnum(['ON_INVOICE', 'OFF_INVOICE', 'BOTH'])
   @IsOptional()
   spendType?: 'ON_INVOICE' | 'OFF_INVOICE' | 'BOTH';

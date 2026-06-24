@@ -1,4 +1,14 @@
-import { IsString, IsUUID, IsEnum, IsNumber, IsDateString, IsOptional, Min, MaxLength, Matches } from 'class-validator';
+import {
+  IsString,
+  IsUUID,
+  IsEnum,
+  IsNumber,
+  IsDateString,
+  IsOptional,
+  Min,
+  MaxLength,
+  Matches,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SpendType } from '../../../../../database/entities/ledger-entry.entity';
 
@@ -40,7 +50,9 @@ export class CreateLedgerEntryDto {
   @ApiProperty({ description: 'Format: YYYY-MM' })
   @IsString()
   @MaxLength(7)
-  @Matches(/^\d{4}-\d{2}$/, { message: 'periodMonth must be in YYYY-MM format' })
+  @Matches(/^\d{4}-\d{2}$/, {
+    message: 'periodMonth must be in YYYY-MM format',
+  })
   periodMonth!: string;
 
   @ApiProperty()
@@ -81,4 +93,3 @@ export class CreateLedgerEntryDto {
   @IsString()
   description?: string;
 }
-

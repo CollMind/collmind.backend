@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { CategoryService } from './category.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -32,14 +37,25 @@ export class CategoryController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new category' })
-  @ApiResponse({ status: 201, description: 'Category created successfully', type: Category })
-  create(@TenantId() tenantId: string, @Body() createCategoryDto: CreateCategoryDto) {
+  @ApiResponse({
+    status: 201,
+    description: 'Category created successfully',
+    type: Category,
+  })
+  create(
+    @TenantId() tenantId: string,
+    @Body() createCategoryDto: CreateCategoryDto,
+  ) {
     return this.categoryService.create(tenantId, createCategoryDto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Get all categories' })
-  @ApiResponse({ status: 200, description: 'List of categories', type: [Category] })
+  @ApiResponse({
+    status: 200,
+    description: 'List of categories',
+    type: [Category],
+  })
   findAll(
     @TenantId() tenantId: string,
     @Query('activeOnly') activeOnly?: string,
@@ -57,7 +73,11 @@ export class CategoryController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update category' })
-  @ApiResponse({ status: 200, description: 'Category updated successfully', type: Category })
+  @ApiResponse({
+    status: 200,
+    description: 'Category updated successfully',
+    type: Category,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,

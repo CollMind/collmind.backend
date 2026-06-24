@@ -68,7 +68,7 @@ import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.
             statement_timeout: 30000,
           },
         };
-        
+
         console.log('Database configuration:', {
           host: dbConfig.host,
           port: dbConfig.port,
@@ -76,54 +76,54 @@ import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.
           schema: dbConfig.schema,
           username: dbConfig.username,
         });
-        
+
         return {
           ...dbConfig,
-        entities: [
-          // Shared entities
-          User,
-          Tenant,
-          Customer,
-          BudgetEnvelope,
-          BudgetTransaction,
-          Notification,
-          AdminAuditLog,
-          // View entities
-          BudgetSummaryView,
-          // Actuals-First entities
-          Agreement,
-          ApprovalRequest,
-          LedgerEntry,
-          AgreementTransaction,
-          OnInvoiceEntry,
-          OnInvoiceBatch,
-          // Master Data entities
-          Brand,
-          Category,
-          Channel,
-          Cpl,
-          ForecastingUnit,
-          GenericUnit,
-          Mechanic,
-          Region,
-          Sku,
-          Tactic,
-          // KPI and User Scope entities
-          Kpi,
-          UserScope,
-          // Planning-First entities
-          Plan,
-          PlanFu,
-          PlanSku,
-          PlanMechanicValue,
-          MechanicSpendBreakdown,
-          LTAAgreement,
-          LTARate,
-          LTAPlanOverride,
-          BudgetAllocation,
-          BudgetTransactionLog,
-          BudgetAlertConfiguration,
-        ],
+          entities: [
+            // Shared entities
+            User,
+            Tenant,
+            Customer,
+            BudgetEnvelope,
+            BudgetTransaction,
+            Notification,
+            AdminAuditLog,
+            // View entities
+            BudgetSummaryView,
+            // Actuals-First entities
+            Agreement,
+            ApprovalRequest,
+            LedgerEntry,
+            AgreementTransaction,
+            OnInvoiceEntry,
+            OnInvoiceBatch,
+            // Master Data entities
+            Brand,
+            Category,
+            Channel,
+            Cpl,
+            ForecastingUnit,
+            GenericUnit,
+            Mechanic,
+            Region,
+            Sku,
+            Tactic,
+            // KPI and User Scope entities
+            Kpi,
+            UserScope,
+            // Planning-First entities
+            Plan,
+            PlanFu,
+            PlanSku,
+            PlanMechanicValue,
+            MechanicSpendBreakdown,
+            LTAAgreement,
+            LTARate,
+            LTAPlanOverride,
+            BudgetAllocation,
+            BudgetTransactionLog,
+            BudgetAlertConfiguration,
+          ],
           synchronize: false,
           logging: configService.get('NODE_ENV') === 'development',
           namingStrategy: new SnakeCaseNamingStrategy(),
@@ -134,5 +134,3 @@ import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.
   ],
 })
 export class DatabaseModule {}
-
-

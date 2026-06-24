@@ -10,11 +10,17 @@ export class GuRepository {
     private readonly repository: Repository<GenericUnit>,
   ) {}
 
-  async findByCode(tenantId: string, code: string): Promise<GenericUnit | null> {
+  async findByCode(
+    tenantId: string,
+    code: string,
+  ): Promise<GenericUnit | null> {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false): Promise<GenericUnit[]> {
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+  ): Promise<GenericUnit[]> {
     const where: any = { tenantId };
     if (activeOnly) {
       where.isActive = true;

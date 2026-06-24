@@ -25,16 +25,38 @@ export class LTARate extends BaseEntity {
   @Column({ name: 'category', length: 100 })
   category!: string; // Dairy, Beverages, etc. or "ALL"
 
-  @Column({ name: 'on_invoice_percentage', type: 'decimal', precision: 5, scale: 2 })
+  @Column({
+    name: 'on_invoice_percentage',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+  })
   onInvoicePercentage!: number; // 0-100
 
-  @Column({ name: 'off_invoice_percentage', type: 'decimal', precision: 5, scale: 2 })
+  @Column({
+    name: 'off_invoice_percentage',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+  })
   offInvoicePercentage!: number; // 0-100
 
-  @Column({ name: 'minimum_volume_commitment', type: 'decimal', precision: 18, scale: 3, nullable: true })
+  @Column({
+    name: 'minimum_volume_commitment',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    nullable: true,
+  })
   minimumVolumeCommitment?: number; // Optional minimum volume commitment
 
-  @Column({ name: 'maximum_discount_cap', type: 'decimal', precision: 18, scale: 2, nullable: true })
+  @Column({
+    name: 'maximum_discount_cap',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
   maximumDiscountCap?: number; // Optional maximum discount cap
 
   @Column({ name: 'payment_terms', length: 50, nullable: true })
@@ -44,7 +66,9 @@ export class LTARate extends BaseEntity {
   isActive!: boolean;
 
   // Relations
-  @ManyToOne(() => LTAAgreement, (agreement) => agreement.rates, { onDelete: 'CASCADE' })
+  @ManyToOne(() => LTAAgreement, (agreement) => agreement.rates, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'lta_agreement_id' })
   ltaAgreement!: LTAAgreement;
 

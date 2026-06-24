@@ -16,7 +16,14 @@ import {
   Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { CustomerService } from './customer.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -38,64 +45,114 @@ export class CustomerController {
   @Post()
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @ApiOperation({ summary: 'Create a new customer' })
-  @ApiResponse({ status: 201, description: 'Customer created successfully', type: CustomerResponseDto })
-  create(@TenantId() tenantId: string, @Body() createCustomerDto: CreateCustomerDto) {
+  @ApiResponse({
+    status: 201,
+    description: 'Customer created successfully',
+    type: CustomerResponseDto,
+  })
+  create(
+    @TenantId() tenantId: string,
+    @Body() createCustomerDto: CreateCustomerDto,
+  ) {
     return this.customerService.create(tenantId, createCustomerDto);
   }
 
   @Post('bulk')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @ApiOperation({ summary: 'Create multiple customers' })
-  @ApiResponse({ status: 201, description: 'Customers created successfully', type: [CustomerResponseDto] })
-  createBulk(@TenantId() tenantId: string, @Body('customers') customers: CreateCustomerDto[]) {
+  @ApiResponse({
+    status: 201,
+    description: 'Customers created successfully',
+    type: [CustomerResponseDto],
+  })
+  createBulk(
+    @TenantId() tenantId: string,
+    @Body('customers') customers: CreateCustomerDto[],
+  ) {
     return this.customerService.createBulk(tenantId, customers);
   }
 
   @Get()
   @ApiOperation({ summary: 'Get all customers' })
-  @ApiResponse({ status: 200, description: 'List of customers', type: [CustomerResponseDto] })
+  @ApiResponse({
+    status: 200,
+    description: 'List of customers',
+    type: [CustomerResponseDto],
+  })
   findAll(@TenantId() tenantId: string, @Query() filters: CustomerFilterDto) {
     return this.customerService.findAll(tenantId, filters);
   }
 
   @Get('search')
   @ApiOperation({ summary: 'Search customers' })
-  @ApiResponse({ status: 200, description: 'Search results', type: [CustomerResponseDto] })
+  @ApiResponse({
+    status: 200,
+    description: 'Search results',
+    type: [CustomerResponseDto],
+  })
   search(@TenantId() tenantId: string, @Query('q') searchTerm: string) {
-    return this.customerService.findAll(tenantId, { search: searchTerm } as CustomerFilterDto);
+    return this.customerService.findAll(tenantId, {
+      search: searchTerm,
+    } as CustomerFilterDto);
   }
 
   @Get('channel/:channel')
   @ApiOperation({ summary: 'Get customers by channel' })
-  @ApiResponse({ status: 200, description: 'List of customers', type: [CustomerResponseDto] })
-  findByChannel(@TenantId() tenantId: string, @Param('channel') channel: string) {
+  @ApiResponse({
+    status: 200,
+    description: 'List of customers',
+    type: [CustomerResponseDto],
+  })
+  findByChannel(
+    @TenantId() tenantId: string,
+    @Param('channel') channel: string,
+  ) {
     return this.customerService.findByChannel(tenantId, channel);
   }
 
   @Get('channel-id/:channelId')
   @ApiOperation({ summary: 'Get customers by channel ID' })
-  @ApiResponse({ status: 200, description: 'List of customers', type: [CustomerResponseDto] })
-  findByChannelId(@TenantId() tenantId: string, @Param('channelId') channelId: string) {
+  @ApiResponse({
+    status: 200,
+    description: 'List of customers',
+    type: [CustomerResponseDto],
+  })
+  findByChannelId(
+    @TenantId() tenantId: string,
+    @Param('channelId') channelId: string,
+  ) {
     return this.customerService.findByChannelId(tenantId, channelId);
   }
 
   @Get('city/:city')
   @ApiOperation({ summary: 'Get customers by city' })
-  @ApiResponse({ status: 200, description: 'List of customers', type: [CustomerResponseDto] })
+  @ApiResponse({
+    status: 200,
+    description: 'List of customers',
+    type: [CustomerResponseDto],
+  })
   findByCity(@TenantId() tenantId: string, @Param('city') city: string) {
     return this.customerService.findByCity(tenantId, city);
   }
 
   @Get('vip')
   @ApiOperation({ summary: 'Get VIP customers' })
-  @ApiResponse({ status: 200, description: 'List of VIP customers', type: [CustomerResponseDto] })
+  @ApiResponse({
+    status: 200,
+    description: 'List of VIP customers',
+    type: [CustomerResponseDto],
+  })
   findVipCustomers(@TenantId() tenantId: string) {
     return this.customerService.findVipCustomers(tenantId);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get customer by ID' })
-  @ApiResponse({ status: 200, description: 'Customer details', type: CustomerResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Customer details',
+    type: CustomerResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   findOne(@TenantId() tenantId: string, @Param('id') id: string) {
     return this.customerService.findOne(tenantId, id);
@@ -103,7 +160,11 @@ export class CustomerController {
 
   @Get('code/:code')
   @ApiOperation({ summary: 'Get customer by code' })
-  @ApiResponse({ status: 200, description: 'Customer details', type: CustomerResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Customer details',
+    type: CustomerResponseDto,
+  })
   findByCode(@TenantId() tenantId: string, @Param('code') code: string) {
     return this.customerService.findByCode(tenantId, code);
   }
@@ -111,7 +172,11 @@ export class CustomerController {
   @Patch(':id')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @ApiOperation({ summary: 'Update customer' })
-  @ApiResponse({ status: 200, description: 'Customer updated successfully', type: CustomerResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Customer updated successfully',
+    type: CustomerResponseDto,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,
@@ -153,7 +218,9 @@ export class CustomerController {
   }
 
   @Get('cpl/list')
-  @ApiOperation({ summary: 'Get CPL list with statistics (customer count, active agreements)' })
+  @ApiOperation({
+    summary: 'Get CPL list with statistics (customer count, active agreements)',
+  })
   @ApiResponse({ status: 200, description: 'CPL list with statistics' })
   getCplList(
     @TenantId() tenantId: string,
@@ -196,14 +263,26 @@ export class CustomerController {
             properties: {
               row: { type: 'number', description: 'Row number in file' },
               code: { type: 'string', description: 'Customer code' },
-              error_type: { 
-                type: 'string', 
-                description: 'Error type: MISSING_FIELD, INVALID_DATE, INVALID_AMOUNT, ALREADY_EXISTS, DUPLICATE_IN_FILE, DATABASE_ERROR, INVALID_EMAIL',
-                enum: ['MISSING_FIELD', 'INVALID_DATE', 'INVALID_AMOUNT', 'ALREADY_EXISTS', 'DUPLICATE_IN_FILE', 'DATABASE_ERROR', 'INVALID_EMAIL'],
+              error_type: {
+                type: 'string',
+                description:
+                  'Error type: MISSING_FIELD, INVALID_DATE, INVALID_AMOUNT, ALREADY_EXISTS, DUPLICATE_IN_FILE, DATABASE_ERROR, INVALID_EMAIL',
+                enum: [
+                  'MISSING_FIELD',
+                  'INVALID_DATE',
+                  'INVALID_AMOUNT',
+                  'ALREADY_EXISTS',
+                  'DUPLICATE_IN_FILE',
+                  'DATABASE_ERROR',
+                  'INVALID_EMAIL',
+                ],
               },
-              error_message: { type: 'string', description: 'Human-readable error message' },
-              original_row_data: { 
-                type: 'object', 
+              error_message: {
+                type: 'string',
+                description: 'Human-readable error message',
+              },
+              original_row_data: {
+                type: 'object',
                 description: 'Original row data from file',
                 additionalProperties: true,
               },
@@ -215,7 +294,8 @@ export class CustomerController {
   })
   @ApiResponse({
     status: 400,
-    description: 'No customers were created (all failed validation, already exist, or file processing error)',
+    description:
+      'No customers were created (all failed validation, already exist, or file processing error)',
   })
   async importFromFile(
     @TenantId() tenantId: string,
@@ -229,7 +309,9 @@ export class CustomerController {
     // Security: File size validation to prevent DoS attacks (10MB max)
     const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
     if (file.size > MAX_FILE_SIZE) {
-      throw new BadRequestException('Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.');
+      throw new BadRequestException(
+        'Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.',
+      );
     }
 
     const allowedMimeTypes = [
@@ -268,4 +350,3 @@ export class CustomerController {
     }
   }
 }
-

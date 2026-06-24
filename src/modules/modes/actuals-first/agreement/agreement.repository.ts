@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Agreement, AgreementStatus, AgreementType } from '../../../../database/entities/agreement.entity';
+import {
+  Agreement,
+  AgreementStatus,
+  AgreementType,
+} from '../../../../database/entities/agreement.entity';
 
 @Injectable()
 export class AgreementRepository {
@@ -18,28 +22,44 @@ export class AgreementRepository {
   async findById(id: string, tenantId: string): Promise<Agreement | null> {
     return this.repo.findOne({
       where: { id, tenantId },
-      relations: ['cpl', 'channel', 'category', 'forecastingUnit', 'tactic', 'mechanic'],
+      relations: [
+        'cpl',
+        'channel',
+        'category',
+        'forecastingUnit',
+        'tactic',
+        'mechanic',
+      ],
     });
   }
 
-  async findByCode(code: string, tenantId: string, includeDeleted = false): Promise<Agreement | null> {
-    const query = this.repo.createQueryBuilder('agreement')
+  async findByCode(
+    code: string,
+    tenantId: string,
+    includeDeleted = false,
+  ): Promise<Agreement | null> {
+    const query = this.repo
+      .createQueryBuilder('agreement')
       .where('agreement.agreementCode = :code', { code })
       .andWhere('agreement.tenantId = :tenantId', { tenantId });
-    
+
     if (!includeDeleted) {
       query.andWhere('agreement.deletedAt IS NULL');
     }
-    
+
     return query.getOne();
   }
 
-  async findAll(tenantId: string, filters?: {
-    status?: AgreementStatus;
-    cplId?: string;
-    channelId?: string;
-  }): Promise<Agreement[]> {
-    const query = this.repo.createQueryBuilder('agreement')
+  async findAll(
+    tenantId: string,
+    filters?: {
+      status?: AgreementStatus;
+      cplId?: string;
+      channelId?: string;
+    },
+  ): Promise<Agreement[]> {
+    const query = this.repo
+      .createQueryBuilder('agreement')
       .where('agreement.tenantId = :tenantId', { tenantId })
       .andWhere('agreement.deletedAt IS NULL');
 
@@ -50,13 +70,19 @@ export class AgreementRepository {
       query.andWhere('agreement.cplId = :cplId', { cplId: filters.cplId });
     }
     if (filters?.channelId) {
-      query.andWhere('agreement.channelId = :channelId', { channelId: filters.channelId });
+      query.andWhere('agreement.channelId = :channelId', {
+        channelId: filters.channelId,
+      });
     }
 
     return query.orderBy('agreement.createdAt', 'DESC').getMany();
   }
 
-  async update(id: string, tenantId: string, data: Partial<Agreement>): Promise<Agreement> {
+  async update(
+    id: string,
+    tenantId: string,
+    data: Partial<Agreement>,
+  ): Promise<Agreement> {
     await this.repo.update({ id, tenantId }, data);
     const updated = await this.findById(id, tenantId);
     if (!updated) {
@@ -79,10 +105,13 @@ export class AgreementRepository {
     await this.repo.softDelete({ id, tenantId });
   }
 
-  async generateAgreementCode(tenantId: string, type: AgreementType): Promise<string> {
+  async generateAgreementCode(
+    tenantId: string,
+    type: AgreementType,
+  ): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `${type}-${year}-`;
-    
+
     // Find the highest sequence number for this type and year
     // Include ALL records (including soft-deleted) to avoid code conflicts with unique constraint
     // The unique constraint applies to all records regardless of deletedAt
@@ -90,7 +119,9 @@ export class AgreementRepository {
       .createQueryBuilder('agreement')
       .where('agreement.tenantId = :tenantId', { tenantId })
       .andWhere('agreement.agreementType = :type', { type })
-      .andWhere('agreement.agreementCode LIKE :prefix', { prefix: `${prefix}%` })
+      .andWhere('agreement.agreementCode LIKE :prefix', {
+        prefix: `${prefix}%`,
+      })
       .orderBy('agreement.agreementCode', 'DESC')
       .limit(1)
       .getOne();
@@ -111,4 +142,3 @@ export class AgreementRepository {
     return `${prefix}${sequenceStr}`;
   }
 }
-

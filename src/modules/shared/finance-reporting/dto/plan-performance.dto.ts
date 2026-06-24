@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsString, IsEnum, IsUUID, IsDateString } from 'class-validator';
+import {
+  IsNumber,
+  IsString,
+  IsEnum,
+  IsUUID,
+  IsDateString,
+} from 'class-validator';
 
 export class PlanPerformanceRow {
   @ApiProperty({ description: 'Plan ID' })
@@ -68,7 +74,10 @@ export class PlanPerformanceRow {
 }
 
 export class PaginatedPlanReport {
-  @ApiProperty({ description: 'Plan performance rows', type: [PlanPerformanceRow] })
+  @ApiProperty({
+    description: 'Plan performance rows',
+    type: [PlanPerformanceRow],
+  })
   rows!: PlanPerformanceRow[];
 
   @ApiProperty({ description: 'Total count' })

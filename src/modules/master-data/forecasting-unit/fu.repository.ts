@@ -10,12 +10,21 @@ export class FuRepository {
     private readonly repository: Repository<ForecastingUnit>,
   ) {}
 
-  async findByCode(tenantId: string, code: string): Promise<ForecastingUnit | null> {
+  async findByCode(
+    tenantId: string,
+    code: string,
+  ): Promise<ForecastingUnit | null> {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false, guId?: string, categoryId?: string): Promise<ForecastingUnit[]> {
-    const query = this.repository.createQueryBuilder('fu')
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+    guId?: string,
+    categoryId?: string,
+  ): Promise<ForecastingUnit[]> {
+    const query = this.repository
+      .createQueryBuilder('fu')
       .leftJoinAndSelect('fu.genericUnit', 'gu')
       .leftJoinAndSelect('gu.category', 'category')
       .leftJoinAndSelect('gu.brand', 'brand')

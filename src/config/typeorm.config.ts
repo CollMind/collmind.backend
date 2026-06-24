@@ -125,32 +125,58 @@ export const dataSourceOptions: DataSourceOptions = {
     // Development: src/database/migrations/**/*.ts
     // Production: dist/database/migrations/**/*.js
     const isProduction = getEnvVar('NODE_ENV') === 'production';
-    
+
     if (isProduction) {
       // Production: use compiled JS files with glob pattern from dist
       // __dirname in production is dist/config, so we go up one level to dist, then to database/migrations
-      const migrationsPath = join(__dirname, '..', 'database', 'migrations', '**', '*.js');
-      console.log(`🔍 Config: Production mode - Loading migrations from: ${migrationsPath}`);
+      const migrationsPath = join(
+        __dirname,
+        '..',
+        'database',
+        'migrations',
+        '**',
+        '*.js',
+      );
+      console.log(
+        `🔍 Config: Production mode - Loading migrations from: ${migrationsPath}`,
+      );
       console.log(`🔍 Config: __dirname=${__dirname}`);
-      
+
       // Verify migrations directory exists (for debugging)
       const fs = require('fs');
       const migrationsDir = join(__dirname, '..', 'database', 'migrations');
       if (fs.existsSync(migrationsDir)) {
-        const files = fs.readdirSync(migrationsDir).filter((f: string) => f.endsWith('.js'));
-        console.log(`🔍 Config: Found ${files.length} migration files in ${migrationsDir}`);
+        const files = fs
+          .readdirSync(migrationsDir)
+          .filter((f: string) => f.endsWith('.js'));
+        console.log(
+          `🔍 Config: Found ${files.length} migration files in ${migrationsDir}`,
+        );
         if (files.length === 0) {
-          console.error('❌ Config: WARNING - No .js migration files found in production!');
+          console.error(
+            '❌ Config: WARNING - No .js migration files found in production!',
+          );
         }
       } else {
-        console.error(`❌ Config: ERROR - Migrations directory does not exist: ${migrationsDir}`);
+        console.error(
+          `❌ Config: ERROR - Migrations directory does not exist: ${migrationsDir}`,
+        );
       }
-      
+
       return [migrationsPath];
     } else {
       // Development: use TS files with glob pattern from src
-      const migrationsPath = join(__dirname, '..', 'database', 'migrations', '**', '*.ts');
-      console.log(`🔍 Config: Development mode - Loading migrations from: ${migrationsPath}`);
+      const migrationsPath = join(
+        __dirname,
+        '..',
+        'database',
+        'migrations',
+        '**',
+        '*.ts',
+      );
+      console.log(
+        `🔍 Config: Development mode - Loading migrations from: ${migrationsPath}`,
+      );
       return [migrationsPath];
     }
   })(),
@@ -163,4 +189,3 @@ export const dataSourceOptions: DataSourceOptions = {
 
 const dataSource = new DataSource(dataSourceOptions);
 export default dataSource;
-

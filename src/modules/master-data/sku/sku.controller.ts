@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { SkuService } from './sku.service';
 import { CreateSkuDto } from './dto/create-sku.dto';
 import { UpdateSkuDto } from './dto/update-sku.dto';
@@ -32,7 +37,11 @@ export class SkuController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new SKU' })
-  @ApiResponse({ status: 201, description: 'SKU created successfully', type: Sku })
+  @ApiResponse({
+    status: 201,
+    description: 'SKU created successfully',
+    type: Sku,
+  })
   create(@TenantId() tenantId: string, @Body() createSkuDto: CreateSkuDto) {
     return this.skuService.create(tenantId, createSkuDto);
   }
@@ -47,7 +56,13 @@ export class SkuController {
     @Query('brandId') brandId?: string,
     @Query('categoryId') categoryId?: string,
   ) {
-    return this.skuService.findAll(tenantId, activeOnly === 'true', fuId, brandId, categoryId);
+    return this.skuService.findAll(
+      tenantId,
+      activeOnly === 'true',
+      fuId,
+      brandId,
+      categoryId,
+    );
   }
 
   @Get(':id')
@@ -60,7 +75,11 @@ export class SkuController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update SKU' })
-  @ApiResponse({ status: 200, description: 'SKU updated successfully', type: Sku })
+  @ApiResponse({
+    status: 200,
+    description: 'SKU updated successfully',
+    type: Sku,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,

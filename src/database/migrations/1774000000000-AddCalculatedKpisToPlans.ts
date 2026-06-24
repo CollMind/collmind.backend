@@ -1,4 +1,9 @@
-import { MigrationInterface, QueryRunner, TableColumn, TableIndex } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  TableColumn,
+  TableIndex,
+} from 'typeorm';
 
 export class AddCalculatedKpisToPlans1774000000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {

@@ -17,12 +17,9 @@ import { MasterDataModule } from '../../../master-data/master-data.module';
     ApprovalModule,
     KpiEngineModule,
     MasterDataModule,
-
   ],
   controllers: [AgreementController],
   providers: [AgreementService, AgreementRepository],
   exports: [AgreementService, AgreementRepository],
 })
-export class AgreementModule { }
-
-
+export class AgreementModule {}

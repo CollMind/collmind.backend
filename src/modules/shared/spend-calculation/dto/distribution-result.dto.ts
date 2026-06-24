@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsUUID, IsString, IsEnum, IsArray, IsObject, IsBoolean } from 'class-validator';
+import {
+  IsNumber,
+  IsUUID,
+  IsString,
+  IsEnum,
+  IsArray,
+  IsObject,
+  IsBoolean,
+} from 'class-validator';
 
 export enum DistributionStatus {
   SUCCESS = 'success',
@@ -46,7 +54,10 @@ export class DistributionResult {
   @IsNumber()
   difference!: number;
 
-  @ApiProperty({ description: 'SKU-level distributions', type: [SKUDistribution] })
+  @ApiProperty({
+    description: 'SKU-level distributions',
+    type: [SKUDistribution],
+  })
   @IsArray()
   skuDistributions!: SKUDistribution[];
 
@@ -111,12 +122,17 @@ export class DistributionValidationResult {
   @IsNumber()
   tolerance!: number;
 
-  @ApiPropertyOptional({ description: 'Mechanics with validation issues', type: [String] })
+  @ApiPropertyOptional({
+    description: 'Mechanics with validation issues',
+    type: [String],
+  })
   @IsArray()
   @IsString({ each: true })
   invalidMechanics?: string[];
 
-  @ApiPropertyOptional({ description: 'Adjustments made to fix rounding errors' })
+  @ApiPropertyOptional({
+    description: 'Adjustments made to fix rounding errors',
+  })
   @IsObject()
   adjustments?: Record<string, number>;
 }

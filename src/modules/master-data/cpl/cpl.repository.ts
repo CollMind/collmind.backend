@@ -14,7 +14,11 @@ export class CplRepository {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false, channelId?: string): Promise<Cpl[]> {
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+    channelId?: string,
+  ): Promise<Cpl[]> {
     const where: any = { tenantId };
     if (activeOnly) {
       where.status = 'ACTIVE';

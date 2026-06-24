@@ -3,16 +3,30 @@ import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
 import { CreateCustomerDto } from '../dto/create-customer.dto';
-import { CustomerChannel, CustomerType, CustomerStatus } from '../../../database/entities/customer.entity';
+import {
+  CustomerChannel,
+  CustomerType,
+  CustomerStatus,
+} from '../../../database/entities/customer.entity';
 
 @Injectable()
 export class FileParserService {
-  async parseExcel(file: Express.Multer.File): Promise<Array<{ dto: CreateCustomerDto; originalRowNumber: number; originalRowData?: Record<string, any> }>> {
+  async parseExcel(
+    file: Express.Multer.File,
+  ): Promise<
+    Array<{
+      dto: CreateCustomerDto;
+      originalRowNumber: number;
+      originalRowData?: Record<string, any>;
+    }>
+  > {
     try {
       // Security: Limit file size to prevent DoS attacks (10MB max)
       const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
       if (file.buffer.length > MAX_FILE_SIZE) {
-        throw new BadRequestException('Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.');
+        throw new BadRequestException(
+          'Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.',
+        );
       }
 
       // Security: Limit sheet processing to prevent ReDoS (CVE-2024-22363 mitigation)
@@ -50,17 +64,28 @@ export class FileParserService {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Bilinmeyen hata';
       throw new BadRequestException(`Excel dosyası okunamadı: ${errorMessage}`);
     }
   }
 
-  async parseCSV(file: Express.Multer.File): Promise<Array<{ dto: CreateCustomerDto; originalRowNumber: number; originalRowData?: Record<string, any> }>> {
+  async parseCSV(
+    file: Express.Multer.File,
+  ): Promise<
+    Array<{
+      dto: CreateCustomerDto;
+      originalRowNumber: number;
+      originalRowData?: Record<string, any>;
+    }>
+  > {
     try {
       // Security: Limit file size to prevent DoS attacks (10MB max) - same as parseExcel
       const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
       if (file.buffer.length > MAX_FILE_SIZE) {
-        throw new BadRequestException('Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.');
+        throw new BadRequestException(
+          'Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.',
+        );
       }
 
       // Security: Limit row count to prevent DoS attacks (10000 data rows max, same as Excel parser)
@@ -79,7 +104,11 @@ export class FileParserService {
             // Security: Stop processing if row limit exceeded
             if (rowCount > MAX_ROWS) {
               stream.destroy();
-              reject(new BadRequestException(`CSV dosyası çok fazla satır içeriyor. Maksimum ${MAX_ROWS} satır işlenebilir.`));
+              reject(
+                new BadRequestException(
+                  `CSV dosyası çok fazla satır içeriyor. Maksimum ${MAX_ROWS} satır işlenebilir.`,
+                ),
+              );
               return;
             }
             results.push(data);
@@ -96,25 +125,40 @@ export class FileParserService {
                 reject(error);
                 return;
               }
-              const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-              reject(new BadRequestException(`CSV dosyası işlenemedi: ${errorMessage}`));
+              const errorMessage =
+                error instanceof Error ? error.message : 'Bilinmeyen hata';
+              reject(
+                new BadRequestException(
+                  `CSV dosyası işlenemedi: ${errorMessage}`,
+                ),
+              );
             }
           })
           .on('error', (error: Error) => {
-            const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-            reject(new BadRequestException(`CSV dosyası okunamadı: ${errorMessage}`));
+            const errorMessage =
+              error instanceof Error ? error.message : 'Bilinmeyen hata';
+            reject(
+              new BadRequestException(`CSV dosyası okunamadı: ${errorMessage}`),
+            );
           });
       });
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Bilinmeyen hata';
       throw new BadRequestException(`CSV dosyası işlenemedi: ${errorMessage}`);
     }
   }
 
-  private mapToCustomerDtos(data: any[]): Array<{ dto: CreateCustomerDto; originalRowNumber: number; originalRowData?: Record<string, any> }> {
+  private mapToCustomerDtos(
+    data: any[],
+  ): Array<{
+    dto: CreateCustomerDto;
+    originalRowNumber: number;
+    originalRowData?: Record<string, any>;
+  }> {
     // Önce her satıra orijinal satır numarasını ekle (header + 1-based index)
     const dataWithRowNumbers = data.map((row, index) => ({
       ...row,
@@ -126,46 +170,165 @@ export class FileParserService {
       .filter((row) => row.code || row.name) // Boş satırları filtrele
       .map((row) => {
         const dto: CreateCustomerDto = {
-          code: this.getStringValue(row.code || row.Code || row.CODE || `AUTO_${row._originalRowNumber}`),
+          code: this.getStringValue(
+            row.code ||
+              row.Code ||
+              row.CODE ||
+              `AUTO_${row._originalRowNumber}`,
+          ),
           name: this.getStringValue(row.name || row.Name || row.NAME || ''),
-          channel: this.getChannel(row.channel || row.Channel || row.CHANNEL || 'RETAIL'),
+          channel: this.getChannel(
+            row.channel || row.Channel || row.CHANNEL || 'RETAIL',
+          ),
           type: this.getType(row.type || row.Type || row.TYPE),
           status: this.getStatus(row.status || row.Status || row.STATUS),
           city: this.getOptionalString(row.city || row.City || row.CITY),
-          district: this.getOptionalString(row.district || row.District || row.DISTRICT),
-          region: this.getOptionalString(row.region || row.Region || row.REGION),
-          country: this.getOptionalString(row.country || row.Country || row.COUNTRY),
-          address: this.getOptionalString(row.address || row.Address || row.ADDRESS),
-          postalCode: this.getOptionalString(row.postalCode || row.postal_code || row.PostalCode || row.POSTAL_CODE),
-          taxNumber: this.getOptionalString(row.taxNumber || row.tax_number || row.TaxNumber || row.TAX_NUMBER),
-          taxOffice: this.getOptionalString(row.taxOffice || row.tax_office || row.TaxOffice || row.TAX_OFFICE),
+          district: this.getOptionalString(
+            row.district || row.District || row.DISTRICT,
+          ),
+          region: this.getOptionalString(
+            row.region || row.Region || row.REGION,
+          ),
+          country: this.getOptionalString(
+            row.country || row.Country || row.COUNTRY,
+          ),
+          address: this.getOptionalString(
+            row.address || row.Address || row.ADDRESS,
+          ),
+          postalCode: this.getOptionalString(
+            row.postalCode ||
+              row.postal_code ||
+              row.PostalCode ||
+              row.POSTAL_CODE,
+          ),
+          taxNumber: this.getOptionalString(
+            row.taxNumber || row.tax_number || row.TaxNumber || row.TAX_NUMBER,
+          ),
+          taxOffice: this.getOptionalString(
+            row.taxOffice || row.tax_office || row.TaxOffice || row.TAX_OFFICE,
+          ),
           companyRegistrationNumber: this.getOptionalString(
             row.companyRegistrationNumber ||
               row.company_registration_number ||
               row.CompanyRegistrationNumber ||
               row.COMPANY_REGISTRATION_NUMBER,
           ),
-          contactPerson: this.getOptionalString(row.contactPerson || row.contact_person || row.ContactPerson || row.CONTACT_PERSON),
-          contactEmail: this.getOptionalString(row.contactEmail || row.contact_email || row.ContactEmail || row.CONTACT_EMAIL),
-          contactPhone: this.getOptionalString(row.contactPhone || row.contact_phone || row.ContactPhone || row.CONTACT_PHONE),
-          contactMobile: this.getOptionalString(row.contactMobile || row.contact_mobile || row.ContactMobile || row.CONTACT_MOBILE),
-          paymentTerms: this.getOptionalString(row.paymentTerms || row.payment_terms || row.PaymentTerms || row.PAYMENT_TERMS),
-          creditLimit: this.getOptionalNumber(row.creditLimit || row.credit_limit || row.CreditLimit || row.CREDIT_LIMIT),
-          currency: this.getOptionalString(row.currency || row.Currency || row.CURRENCY) || 'TRY',
-          salesRepresentative: this.getOptionalString(row.salesRepresentative || row.sales_representative || row.SalesRepresentative || row.SALES_REPRESENTATIVE),
-          accountManager: this.getOptionalString(row.accountManager || row.account_manager || row.AccountManager || row.ACCOUNT_MANAGER),
-          customerGroup: this.getOptionalString(row.customerGroup || row.customer_group || row.CustomerGroup || row.CUSTOMER_GROUP),
-          customerSegment: this.getOptionalString(row.customerSegment || row.customer_segment || row.CustomerSegment || row.CUSTOMER_SEGMENT),
-          customerTier: this.getOptionalString(row.customerTier || row.customer_tier || row.CustomerTier || row.CUSTOMER_TIER),
-          businessSize: this.getOptionalString(row.businessSize || row.business_size || row.BusinessSize || row.BUSINESS_SIZE),
-          annualRevenue: this.getOptionalNumber(row.annualRevenue || row.annual_revenue || row.AnnualRevenue || row.ANNUAL_REVENUE),
-          lastOrderDate: this.getOptionalDate(row.lastOrderDate || row.last_order_date || row.LastOrderDate || row.LAST_ORDER_DATE),
-          firstOrderDate: this.getOptionalDate(row.firstOrderDate || row.first_order_date || row.FirstOrderDate || row.FIRST_ORDER_DATE),
-          numberOfBranches: this.getOptionalNumber(row.numberOfBranches || row.number_of_branches || row.NumberOfBranches || row.NUMBER_OF_BRANCHES),
+          contactPerson: this.getOptionalString(
+            row.contactPerson ||
+              row.contact_person ||
+              row.ContactPerson ||
+              row.CONTACT_PERSON,
+          ),
+          contactEmail: this.getOptionalString(
+            row.contactEmail ||
+              row.contact_email ||
+              row.ContactEmail ||
+              row.CONTACT_EMAIL,
+          ),
+          contactPhone: this.getOptionalString(
+            row.contactPhone ||
+              row.contact_phone ||
+              row.ContactPhone ||
+              row.CONTACT_PHONE,
+          ),
+          contactMobile: this.getOptionalString(
+            row.contactMobile ||
+              row.contact_mobile ||
+              row.ContactMobile ||
+              row.CONTACT_MOBILE,
+          ),
+          paymentTerms: this.getOptionalString(
+            row.paymentTerms ||
+              row.payment_terms ||
+              row.PaymentTerms ||
+              row.PAYMENT_TERMS,
+          ),
+          creditLimit: this.getOptionalNumber(
+            row.creditLimit ||
+              row.credit_limit ||
+              row.CreditLimit ||
+              row.CREDIT_LIMIT,
+          ),
+          currency:
+            this.getOptionalString(
+              row.currency || row.Currency || row.CURRENCY,
+            ) || 'TRY',
+          salesRepresentative: this.getOptionalString(
+            row.salesRepresentative ||
+              row.sales_representative ||
+              row.SalesRepresentative ||
+              row.SALES_REPRESENTATIVE,
+          ),
+          accountManager: this.getOptionalString(
+            row.accountManager ||
+              row.account_manager ||
+              row.AccountManager ||
+              row.ACCOUNT_MANAGER,
+          ),
+          customerGroup: this.getOptionalString(
+            row.customerGroup ||
+              row.customer_group ||
+              row.CustomerGroup ||
+              row.CUSTOMER_GROUP,
+          ),
+          customerSegment: this.getOptionalString(
+            row.customerSegment ||
+              row.customer_segment ||
+              row.CustomerSegment ||
+              row.CUSTOMER_SEGMENT,
+          ),
+          customerTier: this.getOptionalString(
+            row.customerTier ||
+              row.customer_tier ||
+              row.CustomerTier ||
+              row.CUSTOMER_TIER,
+          ),
+          businessSize: this.getOptionalString(
+            row.businessSize ||
+              row.business_size ||
+              row.BusinessSize ||
+              row.BUSINESS_SIZE,
+          ),
+          annualRevenue: this.getOptionalNumber(
+            row.annualRevenue ||
+              row.annual_revenue ||
+              row.AnnualRevenue ||
+              row.ANNUAL_REVENUE,
+          ),
+          lastOrderDate: this.getOptionalDate(
+            row.lastOrderDate ||
+              row.last_order_date ||
+              row.LastOrderDate ||
+              row.LAST_ORDER_DATE,
+          ),
+          firstOrderDate: this.getOptionalDate(
+            row.firstOrderDate ||
+              row.first_order_date ||
+              row.FirstOrderDate ||
+              row.FIRST_ORDER_DATE,
+          ),
+          numberOfBranches: this.getOptionalNumber(
+            row.numberOfBranches ||
+              row.number_of_branches ||
+              row.NumberOfBranches ||
+              row.NUMBER_OF_BRANCHES,
+          ),
           notes: this.getOptionalString(row.notes || row.Notes || row.NOTES),
-          isVip: this.getOptionalBoolean(row.isVip || row.is_vip || row.IsVip || row.IS_VIP),
-          contractStartDate: this.getOptionalDate(row.contractStartDate || row.contract_start_date || row.ContractStartDate || row.CONTRACT_START_DATE),
-          contractEndDate: this.getOptionalDate(row.contractEndDate || row.contract_end_date || row.ContractEndDate || row.CONTRACT_END_DATE),
+          isVip: this.getOptionalBoolean(
+            row.isVip || row.is_vip || row.IsVip || row.IS_VIP,
+          ),
+          contractStartDate: this.getOptionalDate(
+            row.contractStartDate ||
+              row.contract_start_date ||
+              row.ContractStartDate ||
+              row.CONTRACT_START_DATE,
+          ),
+          contractEndDate: this.getOptionalDate(
+            row.contractEndDate ||
+              row.contract_end_date ||
+              row.ContractEndDate ||
+              row.CONTRACT_END_DATE,
+          ),
         };
 
         // Metadata objesi oluştur
@@ -183,9 +346,21 @@ export class FileParserService {
           row.INDUSTRY
         ) {
           dto.metadata = {
-            storeSize: this.getOptionalNumber(row.storeSize || row.store_size || row.StoreSize || row.STORE_SIZE),
-            numberOfEmployees: this.getOptionalNumber(row.numberOfEmployees || row.number_of_employees || row.NumberOfEmployees || row.NUMBER_OF_EMPLOYEES),
-            industry: this.getOptionalString(row.industry || row.Industry || row.INDUSTRY),
+            storeSize: this.getOptionalNumber(
+              row.storeSize ||
+                row.store_size ||
+                row.StoreSize ||
+                row.STORE_SIZE,
+            ),
+            numberOfEmployees: this.getOptionalNumber(
+              row.numberOfEmployees ||
+                row.number_of_employees ||
+                row.NumberOfEmployees ||
+                row.NUMBER_OF_EMPLOYEES,
+            ),
+            industry: this.getOptionalString(
+              row.industry || row.Industry || row.INDUSTRY,
+            ),
           };
         }
 
@@ -247,21 +422,26 @@ export class FileParserService {
     if (!value) return CustomerChannel.RETAIL;
     const channel = String(value).toUpperCase().trim();
     const validChannels = Object.values(CustomerChannel);
-    return validChannels.includes(channel as CustomerChannel) ? (channel as CustomerChannel) : CustomerChannel.RETAIL;
+    return validChannels.includes(channel as CustomerChannel)
+      ? (channel as CustomerChannel)
+      : CustomerChannel.RETAIL;
   }
 
   private getType(value: any): CustomerType | undefined {
     if (!value) return undefined;
     const type = String(value).toUpperCase().trim();
     const validTypes = Object.values(CustomerType);
-    return validTypes.includes(type as CustomerType) ? (type as CustomerType) : undefined;
+    return validTypes.includes(type as CustomerType)
+      ? (type as CustomerType)
+      : undefined;
   }
 
   private getStatus(value: any): CustomerStatus | undefined {
     if (!value) return undefined;
     const status = String(value).toUpperCase().trim();
     const validStatuses = Object.values(CustomerStatus);
-    return validStatuses.includes(status as CustomerStatus) ? (status as CustomerStatus) : undefined;
+    return validStatuses.includes(status as CustomerStatus)
+      ? (status as CustomerStatus)
+      : undefined;
   }
 }
-

@@ -6,7 +6,13 @@ import {
 import { KpiRepository } from './kpi.repository';
 import { CreateKpiDto } from './dto/create-kpi.dto';
 import { UpdateKpiDto } from './dto/update-kpi.dto';
-import { Kpi, FormulaType, CalculationLevel, DisplayFormat, AggregationMethod } from '../../../database/entities/kpi.entity';
+import {
+  Kpi,
+  FormulaType,
+  CalculationLevel,
+  DisplayFormat,
+  AggregationMethod,
+} from '../../../database/entities/kpi.entity';
 import { PlanRepository } from '../../modes/planning-first/plan/plan.repository';
 
 @Injectable()
@@ -17,13 +23,18 @@ export class KpiService {
   ) {}
 
   async create(tenantId: string, createKpiDto: CreateKpiDto): Promise<Kpi> {
-    const existing = await this.kpiRepository.findByCode(tenantId, createKpiDto.kpiCode);
+    const existing = await this.kpiRepository.findByCode(
+      tenantId,
+      createKpiDto.kpiCode,
+    );
     if (existing) {
       throw new ConflictException('Bu KPI kodu zaten mevcut');
     }
 
     // Auto-extract dependencies from formula if not provided
-    const dependsOnKpis = createKpiDto.dependsOnKpis || this.extractDependencies(createKpiDto.formulaText);
+    const dependsOnKpis =
+      createKpiDto.dependsOnKpis ||
+      this.extractDependencies(createKpiDto.formulaText);
 
     const kpi = this.kpiRepository.create({
       ...createKpiDto,
@@ -90,11 +101,18 @@ export class KpiService {
     return this.kpiRepository.findCalculableKpis(tenantId);
   }
 
-  async update(tenantId: string, id: string, updateKpiDto: UpdateKpiDto): Promise<Kpi> {
+  async update(
+    tenantId: string,
+    id: string,
+    updateKpiDto: UpdateKpiDto,
+  ): Promise<Kpi> {
     const kpi = await this.findOne(tenantId, id);
 
     if (updateKpiDto.kpiCode && updateKpiDto.kpiCode !== kpi.kpiCode) {
-      const existing = await this.kpiRepository.findByCode(tenantId, updateKpiDto.kpiCode);
+      const existing = await this.kpiRepository.findByCode(
+        tenantId,
+        updateKpiDto.kpiCode,
+      );
       if (existing && existing.id !== id) {
         throw new ConflictException('Bu KPI kodu zaten mevcut');
       }
@@ -102,7 +120,9 @@ export class KpiService {
 
     // Auto-extract dependencies if formula changed
     if (updateKpiDto.formulaText && !updateKpiDto.dependsOnKpis) {
-      updateKpiDto.dependsOnKpis = this.extractDependencies(updateKpiDto.formulaText);
+      updateKpiDto.dependsOnKpis = this.extractDependencies(
+        updateKpiDto.formulaText,
+      );
     }
 
     Object.assign(kpi, updateKpiDto);
@@ -117,7 +137,10 @@ export class KpiService {
   /**
    * Validate a formula string and return validation result
    */
-  validateFormula(formula: string, formulaType: string): {
+  validateFormula(
+    formula: string,
+    formulaType: string,
+  ): {
     isValid: boolean;
     errors: string[];
     warnings: string[];
@@ -132,7 +155,14 @@ export class KpiService {
     }
 
     // Check for dangerous patterns
-    const dangerousPatterns = ['eval', 'require', 'import', 'process', 'global', 'window'];
+    const dangerousPatterns = [
+      'eval',
+      'require',
+      'import',
+      'process',
+      'global',
+      'window',
+    ];
     for (const pattern of dangerousPatterns) {
       if (formula.toLowerCase().includes(pattern)) {
         errors.push(`Güvenlik: "${pattern}" kullanılamaz`);
@@ -317,7 +347,10 @@ export class KpiService {
 
     const created: Kpi[] = [];
     for (const def of defaults) {
-      const existing = await this.kpiRepository.findByCode(tenantId, def.kpiCode!);
+      const existing = await this.kpiRepository.findByCode(
+        tenantId,
+        def.kpiCode!,
+      );
       if (!existing) {
         const kpi = this.kpiRepository.create({
           ...def,
@@ -336,7 +369,17 @@ export class KpiService {
    * Matches UPPERCASE_WITH_UNDERSCORES patterns, excluding known functions
    */
   private extractDependencies(formulaText: string): string[] {
-    const functionNames = new Set(['IF', 'SUM', 'AVG', 'MIN', 'MAX', 'ABS', 'ROUND', 'FLOOR', 'CEIL']);
+    const functionNames = new Set([
+      'IF',
+      'SUM',
+      'AVG',
+      'MIN',
+      'MAX',
+      'ABS',
+      'ROUND',
+      'FLOOR',
+      'CEIL',
+    ]);
     const variablePattern = /\b([A-Z][A-Z0-9_]+)\b/g;
     const matches = new Set<string>();
 

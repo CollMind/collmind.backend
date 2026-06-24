@@ -36,7 +36,9 @@ export class LTACalculationService {
       .getOne();
 
     if (!planSku) {
-      throw new Error(`Plan SKU not found for planId: ${planId}, skuId: ${skuId}`);
+      throw new Error(
+        `Plan SKU not found for planId: ${planId}, skuId: ${skuId}`,
+      );
     }
 
     const sku = planSku.sku;
@@ -47,7 +49,11 @@ export class LTACalculationService {
     const baseGsv = baseVolume * listPrice;
 
     // Get LTA context (with planId for override check)
-    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(tenantId, planContext, planId);
+    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(
+      tenantId,
+      planContext,
+      planId,
+    );
 
     if (!ltaContext) {
       // No LTA, return zeros
@@ -66,11 +72,13 @@ export class LTACalculationService {
 
     // Calculate Base LTA On-Invoice
     // Base GSV * On-Invoice % = Base LTA On-Invoice
-    const baseLtaOnInvoiceSpend = (baseGsv * ltaContext.finalOnInvoicePct) / 100;
+    const baseLtaOnInvoiceSpend =
+      (baseGsv * ltaContext.finalOnInvoicePct) / 100;
 
     // Calculate Base LTA Off-Invoice
     // (Base GSV - Base LTA On-Invoice) * Off-Invoice % = Base LTA Off-Invoice
-    const baseLtaOffInvoiceSpend = ((baseGsv - baseLtaOnInvoiceSpend) * ltaContext.finalOffInvoicePct) / 100;
+    const baseLtaOffInvoiceSpend =
+      ((baseGsv - baseLtaOnInvoiceSpend) * ltaContext.finalOffInvoicePct) / 100;
 
     return {
       baseLtaOnInvoiceSpend,
@@ -103,7 +111,9 @@ export class LTACalculationService {
       .getOne();
 
     if (!planSku) {
-      throw new Error(`Plan SKU not found for planId: ${planId}, skuId: ${skuId}`);
+      throw new Error(
+        `Plan SKU not found for planId: ${planId}, skuId: ${skuId}`,
+      );
     }
 
     const sku = planSku.sku;
@@ -114,7 +124,11 @@ export class LTACalculationService {
     const plannedGsv = plannedVolume * listPrice;
 
     // Get LTA context (with planId for override check)
-    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(tenantId, planContext, planId);
+    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(
+      tenantId,
+      planContext,
+      planId,
+    );
 
     if (!ltaContext) {
       // No LTA, return zeros
@@ -133,12 +147,15 @@ export class LTACalculationService {
 
     // Calculate Planned LTA On-Invoice
     // Planned GSV * On-Invoice % = Planned LTA On-Invoice
-    const plannedLtaOnInvoiceSpend = (plannedGsv * ltaContext.finalOnInvoicePct) / 100;
+    const plannedLtaOnInvoiceSpend =
+      (plannedGsv * ltaContext.finalOnInvoicePct) / 100;
 
     // Calculate Planned LTA Off-Invoice
     // (Planned GSV - Planned LTA On-Invoice) * Off-Invoice % = Planned LTA Off-Invoice
     const plannedLtaOffInvoiceSpend =
-      ((plannedGsv - plannedLtaOnInvoiceSpend) * ltaContext.finalOffInvoicePct) / 100;
+      ((plannedGsv - plannedLtaOnInvoiceSpend) *
+        ltaContext.finalOffInvoicePct) /
+      100;
 
     return {
       baseLtaOnInvoiceSpend: 0, // Will be calculated separately
@@ -153,7 +170,10 @@ export class LTACalculationService {
     };
   }
 
-  async getLTAForPlanContext(tenantId: string, planContext: PlanContextDto): Promise<LTAContext | null> {
+  async getLTAForPlanContext(
+    tenantId: string,
+    planContext: PlanContextDto,
+  ): Promise<LTAContext | null> {
     return this.ltaAgreementService.getLTAForPlanContext(tenantId, planContext);
   }
 }

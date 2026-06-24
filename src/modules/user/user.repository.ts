@@ -57,4 +57,3 @@ export class UserRepository {
     return this.repository.softRemove(entity);
   }
 }
-

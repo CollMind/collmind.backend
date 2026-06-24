@@ -14,7 +14,10 @@ export class ChannelRepository {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false): Promise<Channel[]> {
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+  ): Promise<Channel[]> {
     const where: any = { tenantId };
     if (activeOnly) {
       where.isActive = true;

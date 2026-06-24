@@ -1,4 +1,11 @@
-import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Cpl } from './cpl.entity';
 
@@ -38,7 +45,13 @@ export class LTAAgreement extends BaseEntity {
   })
   status!: LTAAgreementStatus;
 
-  @Column({ name: 'total_agreement_value', type: 'decimal', precision: 18, scale: 2, nullable: true })
+  @Column({
+    name: 'total_agreement_value',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
   totalAgreementValue?: number; // Optional total agreement value
 
   @Column({ type: 'text', nullable: true })

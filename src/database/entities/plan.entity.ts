@@ -1,4 +1,11 @@
-import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Tenant } from './tenant.entity';
 import { User } from './user.entity';
@@ -114,23 +121,59 @@ export class Plan extends BaseEntity {
   escalatedById?: string;
 
   // Budget breakdown (cached for approval workflow)
-  @Column({ name: 'on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'on_invoice_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   onInvoiceSpend!: number;
 
-  @Column({ name: 'off_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'off_invoice_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   offInvoiceSpend!: number;
 
   // Calculated totals (cached for performance)
-  @Column({ name: 'total_planned_volume', type: 'decimal', precision: 18, scale: 3, default: 0 })
+  @Column({
+    name: 'total_planned_volume',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    default: 0,
+  })
   totalPlannedVolume!: number;
 
-  @Column({ name: 'total_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'total_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   totalSpend!: number;
 
-  @Column({ name: 'total_gp', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'total_gp',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   totalGp!: number; // Gross Profit
 
-  @Column({ name: 'overall_roi', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'overall_roi',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   overallRoi?: number; // Overall GP ROI %
 
   @Column({ name: 'rag_status', length: 10, nullable: true })
@@ -193,16 +236,40 @@ export class PlanFu extends BaseEntity {
   tactics?: Record<string, number>; // { 'CPP_ON_PCT': 10, 'DISPLAY_FEE': 5000, ... }
 
   // Calculated values (cached)
-  @Column({ name: 'total_planned_volume', type: 'decimal', precision: 18, scale: 3, default: 0 })
+  @Column({
+    name: 'total_planned_volume',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    default: 0,
+  })
   totalPlannedVolume!: number;
 
-  @Column({ name: 'total_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'total_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   totalSpend!: number;
 
-  @Column({ name: 'total_gp', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'total_gp',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   totalGp!: number;
 
-  @Column({ name: 'gp_roi', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'gp_roi',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   gpRoi?: number;
 
   @Column({ name: 'rag_status', length: 10, nullable: true })
@@ -210,13 +277,16 @@ export class PlanFu extends BaseEntity {
 
   // Calculated KPIs (stored as JSONB)
   @Column({ name: 'calculated_kpis', type: 'jsonb', nullable: true })
-  calculatedKpis?: Record<string, {
-    value: number | null;
-    displayFormat: string;
-    decimalPlaces: number;
-    ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
-    calculatedAt?: string;
-  }>;
+  calculatedKpis?: Record<
+    string,
+    {
+      value: number | null;
+      displayFormat: string;
+      decimalPlaces: number;
+      ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
+      calculatedAt?: string;
+    }
+  >;
 
   // Relations
   @ManyToOne(() => Plan, (plan) => plan.planFus, { onDelete: 'CASCADE' })
@@ -246,26 +316,68 @@ export class PlanSku extends BaseEntity {
   skuId!: string;
 
   // Volume planning
-  @Column({ name: 'base_volume', type: 'decimal', precision: 18, scale: 3, nullable: true })
+  @Column({
+    name: 'base_volume',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    nullable: true,
+  })
   baseVolume?: number; // Historical baseline
 
-  @Column({ name: 'planned_volume', type: 'decimal', precision: 18, scale: 3, nullable: true })
+  @Column({
+    name: 'planned_volume',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    nullable: true,
+  })
   plannedVolume?: number; // Planned volume for this SKU
 
   // Calculated values (cached)
-  @Column({ name: 'incremental_volume', type: 'decimal', precision: 18, scale: 3, default: 0 })
+  @Column({
+    name: 'incremental_volume',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    default: 0,
+  })
   incrementalVolume!: number; // plannedVolume - baseVolume
 
-  @Column({ name: 'planned_turnover', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'planned_turnover',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   plannedTurnover!: number; // plannedVolume * unitPrice
 
-  @Column({ name: 'tactic_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'tactic_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   tacticSpend!: number; // Distributed from FU level
 
-  @Column({ name: 'planned_gp', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'planned_gp',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   plannedGp!: number; // Gross Profit
 
-  @Column({ name: 'gp_roi', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'gp_roi',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   gpRoi?: number; // GP ROI %
 
   @Column({ name: 'rag_status', length: 10, nullable: true })
@@ -273,32 +385,71 @@ export class PlanSku extends BaseEntity {
 
   // Calculated KPIs (stored as JSONB)
   @Column({ name: 'calculated_kpis', type: 'jsonb', nullable: true })
-  calculatedKpis?: Record<string, {
-    value: number | null;
-    displayFormat: string;
-    decimalPlaces: number;
-    ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
-    calculatedAt?: string;
-  }>;
+  calculatedKpis?: Record<
+    string,
+    {
+      value: number | null;
+      displayFormat: string;
+      decimalPlaces: number;
+      ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
+      calculatedAt?: string;
+    }
+  >;
 
   // LTA spend alanları
-  @Column({ name: 'base_lta_on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'base_lta_on_invoice_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   baseLtaOnInvoiceSpend!: number;
 
-  @Column({ name: 'base_lta_off_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'base_lta_off_invoice_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   baseLtaOffInvoiceSpend!: number;
 
-  @Column({ name: 'planned_lta_on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'planned_lta_on_invoice_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   plannedLtaOnInvoiceSpend!: number;
 
-  @Column({ name: 'planned_lta_off_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'planned_lta_off_invoice_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   plannedLtaOffInvoiceSpend!: number;
 
   // Promo spend alanları (tüm on-invoice ve off-invoice mekaniklerin toplamı)
-  @Column({ name: 'promo_on_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'promo_on_invoice_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   promoOnInvoiceSpend!: number;
 
-  @Column({ name: 'promo_off_invoice_spend', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'promo_off_invoice_spend',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   promoOffInvoiceSpend!: number;
 
   // Relations

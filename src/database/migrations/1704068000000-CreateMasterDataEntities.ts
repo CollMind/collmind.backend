@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateMasterDataEntities1704068000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -981,7 +987,14 @@ export class CreateMasterDataEntities1704068000000 implements MigrationInterface
           {
             name: 'tactic_type',
             type: 'enum',
-            enum: ['DISCOUNT', 'LUMP_SUM', 'VOLUME_REBATE', 'CO_OP', 'LISTING_FEE', 'OTHER'],
+            enum: [
+              'DISCOUNT',
+              'LUMP_SUM',
+              'VOLUME_REBATE',
+              'CO_OP',
+              'LISTING_FEE',
+              'OTHER',
+            ],
             enumName: 'tactics_tactic_type_enum',
           },
           {
@@ -1422,8 +1435,14 @@ export class CreateMasterDataEntities1704068000000 implements MigrationInterface
 
     // Drop enum types
     await queryRunner.query(`DROP TYPE IF EXISTS "main"."cpls_status_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."mechanics_mechanic_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."tactics_spend_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."tactics_tactic_type_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."mechanics_mechanic_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."tactics_spend_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."tactics_tactic_type_enum"`,
+    );
   }
 }

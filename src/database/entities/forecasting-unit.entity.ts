@@ -1,4 +1,11 @@
-import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { GenericUnit } from './generic-unit.entity';
 import { Sku } from './sku.entity';
@@ -28,10 +35,22 @@ export class ForecastingUnit extends BaseEntity {
   @Column({ name: 'is_plannable', type: 'boolean', default: true })
   isPlannable!: boolean;
 
-  @Column({ name: 'default_base_volume', type: 'decimal', precision: 18, scale: 3, nullable: true })
+  @Column({
+    name: 'default_base_volume',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    nullable: true,
+  })
   defaultBaseVolume?: number; // Historical baseline for planning
 
-  @Column({ name: 'base_price', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'base_price',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   basePrice?: number;
 
   @Column({ length: 3, default: 'TRY' })

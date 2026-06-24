@@ -1,8 +1,24 @@
 import {
-  Controller, Get, Post, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, Res, BadRequestException,
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  Res,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { Response } from 'express';
 import { AgreementTransactionService } from './agreement-transaction.service';
 import { CreateAgreementTransactionDto, BatchImportDto } from './dto';
@@ -70,17 +86,17 @@ export class AgreementTransactionController {
     @Param('agreementId') agreementId: string,
     @TenantId() tenantId: string,
   ) {
-    const total = await this.txService.getTotalByAgreement(agreementId, tenantId);
+    const total = await this.txService.getTotalByAgreement(
+      agreementId,
+      tenantId,
+    );
     return { agreementId, total };
   }
 
   @Get('batch/:batchId')
   @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Get transactions by batch ID' })
-  findByBatch(
-    @Param('batchId') batchId: string,
-    @TenantId() tenantId: string,
-  ) {
+  findByBatch(@Param('batchId') batchId: string, @TenantId() tenantId: string) {
     return this.txService.findByBatchId(batchId, tenantId);
   }
 
@@ -111,21 +127,26 @@ export class AgreementTransactionController {
 
   @Get('budget-impact/:agreementId')
   @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
-  @ApiOperation({ summary: 'Get budget impact for agreement and fiscal period' })
+  @ApiOperation({
+    summary: 'Get budget impact for agreement and fiscal period',
+  })
   async getBudgetImpact(
     @Param('agreementId') agreementId: string,
     @Query('fiscalPeriod') fiscalPeriod: string,
     @TenantId() tenantId: string,
   ) {
     // Agreement repository already loads relations
-    const agreement = await this.agreementService.findById(agreementId, tenantId);
-    
+    const agreement = await this.agreementService.findById(
+      agreementId,
+      tenantId,
+    );
+
     if (!agreement.channel) {
       throw new BadRequestException('Agreement channel relation is not loaded');
     }
-    
+
     const channelCode = agreement.channel.code;
-    
+
     // Get category from agreement or FU
     let categoryCode: string | undefined;
     if (agreement.category) {
@@ -138,7 +159,7 @@ export class AgreementTransactionController {
         categoryCode = undefined; // Will be matched by envelope
       }
     }
-    
+
     const envelope = await this.budgetService.findEnvelopeByDimensions(
       tenantId,
       channelCode,
@@ -195,20 +216,26 @@ export class AgreementTransactionController {
     if (invoiceDateTo) {
       filters.invoiceDateTo = new Date(invoiceDateTo);
     }
-    
+
     const transactions = await this.txService.findAll(tenantId, filters);
-    
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todayTransactions = transactions.filter(tx => {
+    const todayTransactions = transactions.filter((tx) => {
       const txDate = new Date(tx.invoiceDate);
       txDate.setHours(0, 0, 0, 0);
       return txDate.getTime() === today.getTime();
     });
 
-    const totalAmount = transactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
-    const todayAmount = todayTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
-    
+    const totalAmount = transactions.reduce(
+      (sum, tx) => sum + Number(tx.amount),
+      0,
+    );
+    const todayAmount = todayTransactions.reduce(
+      (sum, tx) => sum + Number(tx.amount),
+      0,
+    );
+
     // Off-Invoice ve On-Invoice ayrımı (şimdilik hepsi Off-Invoice)
     const offInvoiceCount = transactions.length;
     const offInvoiceAmount = totalAmount;
@@ -283,11 +310,16 @@ export class AgreementTransactionController {
     } else if (fileExtension === 'csv') {
       parsedRows = await this.fileParserService.parseCSV(file);
     } else {
-      throw new BadRequestException('Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.');
+      throw new BadRequestException(
+        'Desteklenmeyen dosya formatı. Sadece Excel (.xlsx, .xls) veya CSV (.csv) dosyaları kabul edilir.',
+      );
     }
 
     // Validasyon yap
-    const validationResults = await this.validationService.validateBatch(parsedRows, tenantId);
+    const validationResults = await this.validationService.validateBatch(
+      parsedRows,
+      tenantId,
+    );
 
     // Sonuçları grupla
     const validRows: any[] = [];
@@ -332,7 +364,7 @@ export class AgreementTransactionController {
       warningRows,
       summary: {
         totalAmount: validRows.reduce((sum, row) => sum + (row.amount || 0), 0),
-        affectedAgreements: new Set(validRows.map(r => r.agreementId)).size,
+        affectedAgreements: new Set(validRows.map((r) => r.agreementId)).size,
       },
     };
   }
@@ -363,8 +395,14 @@ export class AgreementTransactionController {
   @ApiOperation({ summary: 'Download Excel template' })
   async downloadExcelTemplate(@Res() res: Response) {
     const buffer = this.fileParserService.generateExcelTemplate();
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=off-invoice-template.xlsx');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=off-invoice-template.xlsx',
+    );
     res.send(buffer);
   }
 
@@ -374,8 +412,10 @@ export class AgreementTransactionController {
   async downloadCSVTemplate(@Res() res: Response) {
     const csv = this.fileParserService.generateCSVTemplate();
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=off-invoice-template.csv');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=off-invoice-template.csv',
+    );
     res.send(csv);
   }
 }
-

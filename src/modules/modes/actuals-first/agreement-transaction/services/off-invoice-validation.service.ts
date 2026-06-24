@@ -41,7 +41,7 @@ export class OffInvoiceValidationService {
         rowNumber: row.originalRowNumber,
         field: 'agreement_id',
         severity: 'ERROR',
-        message: 'Anlaşma ID\'si zorunludur',
+        message: "Anlaşma ID'si zorunludur",
         originalRowData: row.originalRowData,
       });
       return {
@@ -56,12 +56,21 @@ export class OffInvoiceValidationService {
     let agreement;
     try {
       // Önce ID ile dene (UUID formatında mı?)
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.dto.agreementId);
+      const isUUID =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          row.dto.agreementId,
+        );
       if (isUUID) {
-        agreement = await this.agreementService.findById(row.dto.agreementId, tenantId);
+        agreement = await this.agreementService.findById(
+          row.dto.agreementId,
+          tenantId,
+        );
       } else {
         // UUID değilse code ile dene
-        agreement = await this.agreementService.findByCode(row.dto.agreementId, tenantId);
+        agreement = await this.agreementService.findByCode(
+          row.dto.agreementId,
+          tenantId,
+        );
       }
     } catch (error) {
       // Agreement bulunamadı
@@ -97,7 +106,11 @@ export class OffInvoiceValidationService {
     }
 
     // 3. Agreement durumu kontrolü
-    if (![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(agreement.status)) {
+    if (
+      ![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(
+        agreement.status,
+      )
+    ) {
       errors.push({
         rowNumber: row.originalRowNumber,
         field: 'agreement_id',
@@ -193,9 +206,12 @@ export class OffInvoiceValidationService {
         if (row.dto.invoiceDate) {
           const invoiceDate = new Date(row.dto.invoiceDate);
           const invoiceYear = invoiceDate.getFullYear();
-          const invoiceMonth = String(invoiceDate.getMonth() + 1).padStart(2, '0');
+          const invoiceMonth = String(invoiceDate.getMonth() + 1).padStart(
+            2,
+            '0',
+          );
           const invoicePeriod = `${invoiceYear}-${invoiceMonth}`;
-          
+
           if (row.fiscalPeriod !== invoicePeriod) {
             warnings.push({
               rowNumber: row.originalRowNumber,
@@ -229,7 +245,10 @@ export class OffInvoiceValidationService {
       });
     } else {
       // Cap kontrolü (Warning)
-      const currentTotal = await this.txRepository.sumByAgreementId(agreement.id, tenantId);
+      const currentTotal = await this.txRepository.sumByAgreementId(
+        agreement.id,
+        tenantId,
+      );
       if (currentTotal + row.dto.amount > Number(agreement.capTotalAmount)) {
         warnings.push({
           rowNumber: row.originalRowNumber,
@@ -243,10 +262,15 @@ export class OffInvoiceValidationService {
 
     // 8. Duplicate kontrolü (idempotency)
     if (row.dto.agreementId && row.dto.invoiceNo && row.dto.invoiceDate) {
-      const invoiceDateStr = new Date(row.dto.invoiceDate).toISOString().split('T')[0];
+      const invoiceDateStr = new Date(row.dto.invoiceDate)
+        .toISOString()
+        .split('T')[0];
       const idempotencyKey = `${agreement.id}|${row.dto.invoiceNo}|${invoiceDateStr}`;
-      const existing = await this.txRepository.findByIdempotencyKey(idempotencyKey, tenantId);
-      
+      const existing = await this.txRepository.findByIdempotencyKey(
+        idempotencyKey,
+        tenantId,
+      );
+
       if (existing) {
         errors.push({
           rowNumber: row.originalRowNumber,
@@ -273,7 +297,7 @@ export class OffInvoiceValidationService {
     tenantId: string,
   ): Promise<ValidationResult[]> {
     const results: ValidationResult[] = [];
-    
+
     for (const row of rows) {
       const result = await this.validateRow(row, tenantId);
       results.push(result);

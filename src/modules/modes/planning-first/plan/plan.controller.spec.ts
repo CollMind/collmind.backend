@@ -108,9 +108,15 @@ describe('PlanController', () => {
         },
       ];
 
-      approvalWorkflowService.getApprovalQueue.mockResolvedValue(mockQueue as any);
+      approvalWorkflowService.getApprovalQueue.mockResolvedValue(
+        mockQueue as any,
+      );
 
-      const result = await controller.getApprovalQueue(filters, mockTenantId, mockUser);
+      const result = await controller.getApprovalQueue(
+        filters,
+        mockTenantId,
+        mockUser,
+      );
 
       expect(approvalWorkflowService.getApprovalQueue).toHaveBeenCalledWith(
         mockUser.id,
@@ -138,7 +144,12 @@ describe('PlanController', () => {
 
       approvalWorkflowService.reviewPlan.mockResolvedValue(mockResult);
 
-      const result = await controller.reviewPlan(planId, dto, mockTenantId, mockUser);
+      const result = await controller.reviewPlan(
+        planId,
+        dto,
+        mockTenantId,
+        mockUser,
+      );
 
       expect(approvalWorkflowService.reviewPlan).toHaveBeenCalledWith(
         planId,
@@ -166,7 +177,12 @@ describe('PlanController', () => {
 
       approvalWorkflowService.reviewPlan.mockResolvedValue(mockResult);
 
-      const result = await controller.reviewPlan(planId, dto, mockTenantId, mockUser);
+      const result = await controller.reviewPlan(
+        planId,
+        dto,
+        mockTenantId,
+        mockUser,
+      );
 
       expect(approvalWorkflowService.reviewPlan).toHaveBeenCalledWith(
         planId,
@@ -212,14 +228,15 @@ describe('PlanController', () => {
         },
       ];
 
-      approvalWorkflowService.getPlanApprovalHistory.mockResolvedValue(mockHistory as any);
+      approvalWorkflowService.getPlanApprovalHistory.mockResolvedValue(
+        mockHistory as any,
+      );
 
       const result = await controller.getApprovalHistory(planId, mockTenantId);
 
-      expect(approvalWorkflowService.getPlanApprovalHistory).toHaveBeenCalledWith(
-        planId,
-        mockTenantId,
-      );
+      expect(
+        approvalWorkflowService.getPlanApprovalHistory,
+      ).toHaveBeenCalledWith(planId, mockTenantId);
       expect(result).toEqual(mockHistory);
     });
   });

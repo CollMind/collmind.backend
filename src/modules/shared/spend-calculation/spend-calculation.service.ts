@@ -2,9 +2,20 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlanSku, PlanFu } from '../../../database/entities/plan.entity';
-import { Mechanic, MechanicCategory, SpendingType, MechanicType } from '../../../database/entities/mechanic.entity';
-import { PlanMechanicValue, DistributionMethod } from '../../../database/entities/plan-mechanic-value.entity';
-import { MechanicSpendBreakdown, DistributionBasis } from '../../../database/entities/mechanic-spend-breakdown.entity';
+import {
+  Mechanic,
+  MechanicCategory,
+  SpendingType,
+  MechanicType,
+} from '../../../database/entities/mechanic.entity';
+import {
+  PlanMechanicValue,
+  DistributionMethod,
+} from '../../../database/entities/plan-mechanic-value.entity';
+import {
+  MechanicSpendBreakdown,
+  DistributionBasis,
+} from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { LTAAgreementService } from '../lta/lta-agreement.service';
 import { PlanContextDto } from '../../master-data/mechanic/dto/plan-context.dto';
 import {
@@ -76,19 +87,31 @@ export class SpendCalculationService {
     const plannedGsv = skuContext.plannedVolume * skuContext.listPrice;
 
     // Get LTA values (already calculated)
-    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(tenantId, {
-      cplId: skuContext.cplId,
-      channelCode: skuContext.channelCode,
-      categoryCode: skuContext.categoryCode,
-    }, context.planId);
+    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(
+      tenantId,
+      {
+        cplId: skuContext.cplId,
+        channelCode: skuContext.channelCode,
+        categoryCode: skuContext.categoryCode,
+      },
+      context.planId,
+    );
 
-    const plannedLtaOnInv = plannedGsv * (ltaContext?.finalOnInvoicePct || 0) / 100;
-    const plannedLtaOffInv = (plannedGsv - plannedLtaOnInv) * (ltaContext?.finalOffInvoicePct || 0) / 100;
+    const plannedLtaOnInv =
+      (plannedGsv * (ltaContext?.finalOnInvoicePct || 0)) / 100;
+    const plannedLtaOffInv =
+      ((plannedGsv - plannedLtaOnInv) * (ltaContext?.finalOffInvoicePct || 0)) /
+      100;
 
     // Calculate based on mechanic category and type
     switch (mechanic.category) {
       case MechanicCategory.ON_INVOICE_DISCOUNT:
-        return this.calculateOnInvoiceDiscount(mechanic, enteredValue, plannedGsv, plannedLtaOnInv);
+        return this.calculateOnInvoiceDiscount(
+          mechanic,
+          enteredValue,
+          plannedGsv,
+          plannedLtaOnInv,
+        );
 
       case MechanicCategory.OFF_INVOICE_DISCOUNT:
         return this.calculateOffInvoiceDiscount(
@@ -102,7 +125,11 @@ export class SpendCalculationService {
         );
 
       case MechanicCategory.PER_UNIT_SUPPORT:
-        return this.calculatePerUnitSupport(mechanic, enteredValue, skuContext.plannedVolume);
+        return this.calculatePerUnitSupport(
+          mechanic,
+          enteredValue,
+          skuContext.plannedVolume,
+        );
 
       case MechanicCategory.LUMPSUM_SPEND:
         // Lumpsum is calculated at FU level and distributed
@@ -141,19 +168,26 @@ export class SpendCalculationService {
     allOnInvoicePromoSpends: Record<string, number>,
   ): number {
     // Off-invoice mekanikler: (PLANNED_GSV - PLANNED_LTA_ON_INV - PLANNED_LTA_OFF_INV - On-Invoice Promos) * PCT / 100
-    const totalOnInvoicePromos = Object.values(allOnInvoicePromoSpends).reduce((a, b) => a + b, 0);
-    const baseAmount = plannedGsv - plannedLtaOnInv - plannedLtaOffInv - totalOnInvoicePromos;
+    const totalOnInvoicePromos = Object.values(allOnInvoicePromoSpends).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    const baseAmount =
+      plannedGsv - plannedLtaOnInv - plannedLtaOffInv - totalOnInvoicePromos;
     return (baseAmount * enteredValue) / 100;
   }
 
   /**
    * Calculate per-unit support spend
    */
-  private calculatePerUnitSupport(mechanic: Mechanic, enteredValue: number, plannedVolume: number): number {
+  private calculatePerUnitSupport(
+    mechanic: Mechanic,
+    enteredValue: number,
+    plannedVolume: number,
+  ): number {
     // Per-unit: PRICE_SUPPORT_PER_UNIT * PLANNED_VOLUME
     return enteredValue * plannedVolume;
   }
-
 
   /**
    * Distribute spend to SKUs based on distribution method
@@ -180,12 +214,16 @@ export class SpendCalculationService {
       case DistributionMethod.PERCENTAGE:
         // Each SKU gets same percentage - distribute based on GSV
         const totalGsv = planFu.planSkus.reduce(
-          (sum, ps) => sum + (Number(ps.plannedVolume) || 0) * (Number(ps.sku?.unitPrice) || 0),
+          (sum, ps) =>
+            sum +
+            (Number(ps.plannedVolume) || 0) * (Number(ps.sku?.unitPrice) || 0),
           0,
         );
 
         for (const planSku of planFu.planSkus) {
-          const skuGsv = (Number(planSku.plannedVolume) || 0) * (Number(planSku.sku?.unitPrice) || 0);
+          const skuGsv =
+            (Number(planSku.plannedVolume) || 0) *
+            (Number(planSku.sku?.unitPrice) || 0);
           const ratio = totalGsv > 0 ? skuGsv / totalGsv : 0;
           distributions.push({
             skuId: planSku.skuId,
@@ -223,7 +261,8 @@ export class SpendCalculationService {
 
         for (const planSku of planFu.planSkus) {
           const skuBaseVolume = Number(planSku.baseVolume) || 0;
-          const ratio = totalBaseVolume > 0 ? skuBaseVolume / totalBaseVolume : 0;
+          const ratio =
+            totalBaseVolume > 0 ? skuBaseVolume / totalBaseVolume : 0;
           distributions.push({
             skuId: planSku.skuId,
             amount: totalSpend * ratio,
@@ -251,11 +290,15 @@ export class SpendCalculationService {
     const plannedGsv = skuContext.plannedVolume * skuContext.listPrice;
 
     // SEVIYE 2: LTA calculations
-    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(tenantId, {
-      cplId: skuContext.cplId,
-      channelCode: skuContext.channelCode,
-      categoryCode: skuContext.categoryCode,
-    }, context.planId);
+    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(
+      tenantId,
+      {
+        cplId: skuContext.cplId,
+        channelCode: skuContext.channelCode,
+        categoryCode: skuContext.categoryCode,
+      },
+      context.planId,
+    );
 
     const ltaOnInvoicePct = ltaContext?.finalOnInvoicePct || 0;
     const ltaOffInvoicePct = ltaContext?.finalOffInvoicePct || 0;
@@ -264,7 +307,8 @@ export class SpendCalculationService {
     const baseLtaOffInv = ((baseGsv - baseLtaOnInv) * ltaOffInvoicePct) / 100;
 
     const plannedLtaOnInv = (plannedGsv * ltaOnInvoicePct) / 100;
-    const plannedLtaOffInv = ((plannedGsv - plannedLtaOnInv) * ltaOffInvoicePct) / 100;
+    const plannedLtaOffInv =
+      ((plannedGsv - plannedLtaOnInv) * ltaOffInvoicePct) / 100;
 
     // SEVIYE 3: Promo Mechanic Spend calculations
     // First pass: Calculate all on-invoice spends
@@ -284,8 +328,16 @@ export class SpendCalculationService {
       const enteredValue = context.mechanicValues[mechanic.code] || 0;
       if (!enteredValue) continue;
 
-      if (mechanic.spendingType === SpendingType.ON_INVOICE || mechanic.category === MechanicCategory.ON_INVOICE_DISCOUNT) {
-        const spend = await this.calculateMechanicSpend(tenantId, mechanic.code, context, skuContext);
+      if (
+        mechanic.spendingType === SpendingType.ON_INVOICE ||
+        mechanic.category === MechanicCategory.ON_INVOICE_DISCOUNT
+      ) {
+        const spend = await this.calculateMechanicSpend(
+          tenantId,
+          mechanic.code,
+          context,
+          skuContext,
+        );
         promoOnInvoice[mechanic.code] = spend;
         totalPromoOnInv += spend;
       }
@@ -309,7 +361,13 @@ export class SpendCalculationService {
             filteredPromoOnInvoice[key] = value;
           }
         }
-        const spend = await this.calculateMechanicSpend(tenantId, mechanic.code, context, skuContext, filteredPromoOnInvoice);
+        const spend = await this.calculateMechanicSpend(
+          tenantId,
+          mechanic.code,
+          context,
+          skuContext,
+          filteredPromoOnInvoice,
+        );
         promoOffInvoice[mechanic.code] = spend;
         totalPromoOffInv += spend;
       }
@@ -358,7 +416,9 @@ export class SpendCalculationService {
 
     const duration = Date.now() - startTime;
     if (duration > 50) {
-      this.logger.warn(`SKU spend calculation took ${duration}ms (target: <50ms)`);
+      this.logger.warn(
+        `SKU spend calculation took ${duration}ms (target: <50ms)`,
+      );
     }
 
     return breakdown;
@@ -367,12 +427,21 @@ export class SpendCalculationService {
   /**
    * Calculate all spends for a FU
    */
-  async calculateAllSpendsForFU(tenantId: string, fuId: string): Promise<FUSpendBreakdown> {
+  async calculateAllSpendsForFU(
+    tenantId: string,
+    fuId: string,
+  ): Promise<FUSpendBreakdown> {
     const startTime = Date.now();
 
     const planFu = await this.planFuRepository.findOne({
       where: { id: fuId },
-      relations: ['plan', 'planSkus', 'planSkus.sku', 'planMechanicValues', 'planMechanicValues.mechanic'],
+      relations: [
+        'plan',
+        'planSkus',
+        'planSkus.sku',
+        'planMechanicValues',
+        'planMechanicValues.mechanic',
+      ],
     });
 
     if (!planFu) {
@@ -416,54 +485,105 @@ export class SpendCalculationService {
         cplId: planFu.plan?.cplId,
       };
 
-      const breakdown = await this.calculateAllSpendsForSKU(tenantId, skuContext, context);
+      const breakdown = await this.calculateAllSpendsForSKU(
+        tenantId,
+        skuContext,
+        context,
+      );
       skuBreakdowns.push(breakdown);
     }
 
     // Aggregate to FU level
     const aggregatedBase: BaseSpendBreakdown = {
-      ltaOnInvoice: skuBreakdowns.reduce((sum, b) => sum + b.base.ltaOnInvoice, 0),
-      ltaOffInvoice: skuBreakdowns.reduce((sum, b) => sum + b.base.ltaOffInvoice, 0),
-      totalOnInvoice: skuBreakdowns.reduce((sum, b) => sum + b.base.totalOnInvoice, 0),
-      totalOffInvoice: skuBreakdowns.reduce((sum, b) => sum + b.base.totalOffInvoice, 0),
+      ltaOnInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.base.ltaOnInvoice,
+        0,
+      ),
+      ltaOffInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.base.ltaOffInvoice,
+        0,
+      ),
+      totalOnInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.base.totalOnInvoice,
+        0,
+      ),
+      totalOffInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.base.totalOffInvoice,
+        0,
+      ),
       totalSpend: skuBreakdowns.reduce((sum, b) => sum + b.base.totalSpend, 0),
     };
 
     const aggregatedPlanned: PlannedSpendBreakdown = {
-      ltaOnInvoice: skuBreakdowns.reduce((sum, b) => sum + b.planned.ltaOnInvoice, 0),
-      ltaOffInvoice: skuBreakdowns.reduce((sum, b) => sum + b.planned.ltaOffInvoice, 0),
+      ltaOnInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.planned.ltaOnInvoice,
+        0,
+      ),
+      ltaOffInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.planned.ltaOffInvoice,
+        0,
+      ),
       promoOnInvoice: {},
       promoOffInvoice: {},
-      totalPromoOnInvoice: skuBreakdowns.reduce((sum, b) => sum + b.planned.totalPromoOnInvoice, 0),
-      totalPromoOffInvoice: skuBreakdowns.reduce((sum, b) => sum + b.planned.totalPromoOffInvoice, 0),
-      totalOnInvoice: skuBreakdowns.reduce((sum, b) => sum + b.planned.totalOnInvoice, 0),
-      totalOffInvoice: skuBreakdowns.reduce((sum, b) => sum + b.planned.totalOffInvoice, 0),
-      totalSpend: skuBreakdowns.reduce((sum, b) => sum + b.planned.totalSpend, 0),
+      totalPromoOnInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.planned.totalPromoOnInvoice,
+        0,
+      ),
+      totalPromoOffInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.planned.totalPromoOffInvoice,
+        0,
+      ),
+      totalOnInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.planned.totalOnInvoice,
+        0,
+      ),
+      totalOffInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.planned.totalOffInvoice,
+        0,
+      ),
+      totalSpend: skuBreakdowns.reduce(
+        (sum, b) => sum + b.planned.totalSpend,
+        0,
+      ),
     };
 
     // Aggregate mechanic spends
     for (const breakdown of skuBreakdowns) {
-      for (const [code, value] of Object.entries(breakdown.planned.promoOnInvoice)) {
+      for (const [code, value] of Object.entries(
+        breakdown.planned.promoOnInvoice,
+      )) {
         if (value) {
-          aggregatedPlanned.promoOnInvoice[code] = (aggregatedPlanned.promoOnInvoice[code] || 0) + value;
+          aggregatedPlanned.promoOnInvoice[code] =
+            (aggregatedPlanned.promoOnInvoice[code] || 0) + value;
         }
       }
-      for (const [code, value] of Object.entries(breakdown.planned.promoOffInvoice)) {
+      for (const [code, value] of Object.entries(
+        breakdown.planned.promoOffInvoice,
+      )) {
         if (value) {
-          aggregatedPlanned.promoOffInvoice[code] = (aggregatedPlanned.promoOffInvoice[code] || 0) + value;
+          aggregatedPlanned.promoOffInvoice[code] =
+            (aggregatedPlanned.promoOffInvoice[code] || 0) + value;
         }
       }
     }
 
     const aggregatedIncremental: IncrementalSpendBreakdown = {
-      onInvoice: skuBreakdowns.reduce((sum, b) => sum + b.incremental.onInvoice, 0),
-      offInvoice: skuBreakdowns.reduce((sum, b) => sum + b.incremental.offInvoice, 0),
+      onInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.incremental.onInvoice,
+        0,
+      ),
+      offInvoice: skuBreakdowns.reduce(
+        (sum, b) => sum + b.incremental.offInvoice,
+        0,
+      ),
       total: skuBreakdowns.reduce((sum, b) => sum + b.incremental.total, 0),
     };
 
     const duration = Date.now() - startTime;
     if (duration > 100) {
-      this.logger.warn(`FU spend calculation took ${duration}ms (target: <100ms)`);
+      this.logger.warn(
+        `FU spend calculation took ${duration}ms (target: <100ms)`,
+      );
     }
 
     return {
@@ -478,7 +598,10 @@ export class SpendCalculationService {
   /**
    * Validate spend calculations for a plan
    */
-  async validateSpendCalculations(tenantId: string, planId: string): Promise<ValidationResult> {
+  async validateSpendCalculations(
+    tenantId: string,
+    planId: string,
+  ): Promise<ValidationResult> {
     const errors: string[] = [];
     const warnings: string[] = [];
 
@@ -496,12 +619,18 @@ export class SpendCalculationService {
 
         // Check min/max constraints
         if (pmv.enteredValue !== null && pmv.enteredValue !== undefined) {
-          if (mechanic.minValue !== null && pmv.enteredValue < mechanic.minValue) {
+          if (
+            mechanic.minValue !== null &&
+            pmv.enteredValue < mechanic.minValue
+          ) {
             errors.push(
               `Mechanic ${mechanic.code} value ${pmv.enteredValue} is below minimum ${mechanic.minValue} for FU ${planFu.id}`,
             );
           }
-          if (mechanic.maxValue !== null && pmv.enteredValue > mechanic.maxValue) {
+          if (
+            mechanic.maxValue !== null &&
+            pmv.enteredValue > mechanic.maxValue
+          ) {
             errors.push(
               `Mechanic ${mechanic.code} value ${pmv.enteredValue} exceeds maximum ${mechanic.maxValue} for FU ${planFu.id}`,
             );
@@ -526,7 +655,11 @@ export class SpendCalculationService {
     context: CalculationContext,
   ): Promise<CompleteSKUFinancialMetrics> {
     // Get spend breakdown first
-    const spendBreakdown = await this.calculateAllSpendsForSKU(tenantId, skuContext, context);
+    const spendBreakdown = await this.calculateAllSpendsForSKU(
+      tenantId,
+      skuContext,
+      context,
+    );
 
     // SEVIYE 5: NIV and Turnover calculations
     const baseGsv = skuContext.baseVolume * skuContext.listPrice;
@@ -574,8 +707,14 @@ export class SpendCalculationService {
     };
 
     const margin: MarginMetrics = {
-      plannedGmPct: turnover.plannedTo > 0 ? (profit.plannedGp / turnover.plannedTo) * 100 : null,
-      incrementalGmPct: turnover.incrementalTo > 0 ? (profit.incrementalGp / turnover.incrementalTo) * 100 : null,
+      plannedGmPct:
+        turnover.plannedTo > 0
+          ? (profit.plannedGp / turnover.plannedTo) * 100
+          : null,
+      incrementalGmPct:
+        turnover.incrementalTo > 0
+          ? (profit.incrementalGp / turnover.incrementalTo) * 100
+          : null,
     };
 
     return {

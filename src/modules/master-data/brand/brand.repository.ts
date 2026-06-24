@@ -14,7 +14,10 @@ export class BrandRepository {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false): Promise<Brand[]> {
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+  ): Promise<Brand[]> {
     const where: any = { tenantId };
     if (activeOnly) {
       where.isActive = true;

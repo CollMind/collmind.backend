@@ -30,10 +30,22 @@ export class BudgetTransactionLog extends BaseEntity {
   transactionType!: BudgetTransactionType;
 
   // On-invoice and off-invoice amounts (separate)
-  @Column({ name: 'on_invoice_amount', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'on_invoice_amount',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   onInvoiceAmount!: number;
 
-  @Column({ name: 'off_invoice_amount', type: 'decimal', precision: 15, scale: 2, default: 0 })
+  @Column({
+    name: 'off_invoice_amount',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    default: 0,
+  })
   offInvoiceAmount!: number;
 
   // Related plan (if applicable)
@@ -52,7 +64,9 @@ export class BudgetTransactionLog extends BaseEntity {
   idempotencyKey?: string;
 
   // Relations
-  @ManyToOne(() => BudgetAllocation, (allocation) => allocation.transactions, { onDelete: 'CASCADE' })
+  @ManyToOne(() => BudgetAllocation, (allocation) => allocation.transactions, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'budget_allocation_id' })
   budgetAllocation!: BudgetAllocation;
 

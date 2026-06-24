@@ -120,8 +120,11 @@ export class CreateBudgetSummaryView1704067740000 implements MigrationInterface 
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP VIEW IF EXISTS main.v_budget_summary;`);
-    await queryRunner.query(`DROP INDEX IF EXISTS main.idx_budget_transactions_envelope_status;`);
-    await queryRunner.query(`DROP INDEX IF EXISTS main.idx_ledger_entries_envelope;`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS main.idx_budget_transactions_envelope_status;`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS main.idx_ledger_entries_envelope;`,
+    );
   }
 }
-

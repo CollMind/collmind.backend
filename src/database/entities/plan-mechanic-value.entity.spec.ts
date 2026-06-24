@@ -1,4 +1,7 @@
-import { PlanMechanicValue, DistributionMethod } from './plan-mechanic-value.entity';
+import {
+  PlanMechanicValue,
+  DistributionMethod,
+} from './plan-mechanic-value.entity';
 
 describe('PlanMechanicValue Entity', () => {
   it('should have all required fields', () => {
@@ -7,15 +10,15 @@ describe('PlanMechanicValue Entity', () => {
     pmv.tenantId = 'tenant-id';
     pmv.planFuId = 'plan-fu-id';
     pmv.mechanicId = 'mechanic-id';
-    pmv.calculatedSpend = 1000.50;
-    pmv.onInvoiceAmount = 600.30;
-    pmv.offInvoiceAmount = 400.20;
+    pmv.calculatedSpend = 1000.5;
+    pmv.onInvoiceAmount = 600.3;
+    pmv.offInvoiceAmount = 400.2;
 
     expect(pmv.planFuId).toBe('plan-fu-id');
     expect(pmv.mechanicId).toBe('mechanic-id');
-    expect(pmv.calculatedSpend).toBe(1000.50);
-    expect(pmv.onInvoiceAmount).toBe(600.30);
-    expect(pmv.offInvoiceAmount).toBe(400.20);
+    expect(pmv.calculatedSpend).toBe(1000.5);
+    expect(pmv.onInvoiceAmount).toBe(600.3);
+    expect(pmv.offInvoiceAmount).toBe(400.2);
   });
 
   it('should support optional entered_value', () => {
@@ -52,6 +55,8 @@ describe('PlanMechanicValue Entity', () => {
     pmv.offInvoiceAmount = 300;
     pmv.calculatedSpend = 800;
 
-    expect(pmv.onInvoiceAmount + pmv.offInvoiceAmount).toBe(pmv.calculatedSpend);
+    expect(pmv.onInvoiceAmount + pmv.offInvoiceAmount).toBe(
+      pmv.calculatedSpend,
+    );
   });
 });

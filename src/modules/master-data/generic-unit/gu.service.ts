@@ -18,8 +18,14 @@ export class GuService {
     private readonly categoryRepository: CategoryRepository,
   ) {}
 
-  async create(tenantId: string, createGuDto: CreateGuDto): Promise<GenericUnit> {
-    const existing = await this.guRepository.findByCode(tenantId, createGuDto.code);
+  async create(
+    tenantId: string,
+    createGuDto: CreateGuDto,
+  ): Promise<GenericUnit> {
+    const existing = await this.guRepository.findByCode(
+      tenantId,
+      createGuDto.code,
+    );
     if (existing) {
       throw new ConflictException('Generic Unit with this code already exists');
     }
@@ -74,9 +80,14 @@ export class GuService {
     const gu = await this.findOne(tenantId, id);
 
     if (updateGuDto.code && updateGuDto.code !== gu.code) {
-      const existing = await this.guRepository.findByCode(tenantId, updateGuDto.code);
+      const existing = await this.guRepository.findByCode(
+        tenantId,
+        updateGuDto.code,
+      );
       if (existing && existing.id !== id) {
-        throw new ConflictException('Generic Unit with this code already exists');
+        throw new ConflictException(
+          'Generic Unit with this code already exists',
+        );
       }
     }
 

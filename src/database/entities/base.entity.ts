@@ -30,4 +30,3 @@ export abstract class BaseEntity {
   @Column({ name: 'updated_by', type: 'uuid', nullable: true })
   updatedBy?: string;
 }
-

@@ -12,8 +12,14 @@ import { Category } from '../../../database/entities/category.entity';
 export class CategoryService {
   constructor(private readonly categoryRepository: CategoryRepository) {}
 
-  async create(tenantId: string, createCategoryDto: CreateCategoryDto): Promise<Category> {
-    const existing = await this.categoryRepository.findByCode(tenantId, createCategoryDto.code);
+  async create(
+    tenantId: string,
+    createCategoryDto: CreateCategoryDto,
+  ): Promise<Category> {
+    const existing = await this.categoryRepository.findByCode(
+      tenantId,
+      createCategoryDto.code,
+    );
     if (existing) {
       throw new ConflictException('Category with this code already exists');
     }
@@ -65,7 +71,10 @@ export class CategoryService {
     const category = await this.findOne(tenantId, id);
 
     if (updateCategoryDto.code && updateCategoryDto.code !== category.code) {
-      const existing = await this.categoryRepository.findByCode(tenantId, updateCategoryDto.code);
+      const existing = await this.categoryRepository.findByCode(
+        tenantId,
+        updateCategoryDto.code,
+      );
       if (existing && existing.id !== id) {
         throw new ConflictException('Category with this code already exists');
       }

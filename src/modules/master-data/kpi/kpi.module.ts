@@ -7,10 +7,7 @@ import { KpiRepository } from './kpi.repository';
 import { PlanModule } from '../../modes/planning-first/plan/plan.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([Kpi]),
-    forwardRef(() => PlanModule),
-  ],
+  imports: [TypeOrmModule.forFeature([Kpi]), forwardRef(() => PlanModule)],
   controllers: [KpiController],
   providers: [KpiService, KpiRepository],
   exports: [KpiService, KpiRepository],

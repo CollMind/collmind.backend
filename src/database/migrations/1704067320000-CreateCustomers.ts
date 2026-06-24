@@ -1,10 +1,16 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateCustomers1704067320000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Create schema if not exists
     await queryRunner.query(`CREATE SCHEMA IF NOT EXISTS "main"`);
-    
+
     // Create enum types if not exists
     await queryRunner.query(`
       DO $$ BEGIN
@@ -57,12 +63,26 @@ export class CreateCustomers1704067320000 implements MigrationInterface {
           {
             name: 'channel',
             type: 'enum',
-            enum: ['NKA', 'TRADITIONAL_TRADE', 'E_COMMERCE', 'EXPORT', 'WHOLESALE', 'RETAIL', 'HORECA'],
+            enum: [
+              'NKA',
+              'TRADITIONAL_TRADE',
+              'E_COMMERCE',
+              'EXPORT',
+              'WHOLESALE',
+              'RETAIL',
+              'HORECA',
+            ],
           },
           {
             name: 'type',
             type: 'enum',
-            enum: ['DIRECT', 'DISTRIBUTOR', 'WHOLESALER', 'RETAILER', 'END_CUSTOMER'],
+            enum: [
+              'DIRECT',
+              'DISTRIBUTOR',
+              'WHOLESALER',
+              'RETAILER',
+              'END_CUSTOMER',
+            ],
             default: "'DIRECT'",
           },
           {
@@ -342,9 +362,12 @@ export class CreateCustomers1704067320000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropTable('main.customers');
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."customers_channel_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."customers_channel_enum"`,
+    );
     await queryRunner.query(`DROP TYPE IF EXISTS "main"."customers_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."customers_status_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."customers_status_enum"`,
+    );
   }
 }
-

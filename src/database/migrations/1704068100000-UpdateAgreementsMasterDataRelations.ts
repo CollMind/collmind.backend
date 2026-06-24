@@ -64,7 +64,9 @@ export class UpdateAgreementsMasterDataRelations1704068100000 implements Migrati
               `DELETE FROM ${tableName} WHERE id = ANY($1::uuid[])`,
               [ids],
             );
-            console.log(`✅ Cleaned up ${invalidRecords.length} invalid references for ${columnNames.join(', ')}`);
+            console.log(
+              `✅ Cleaned up ${invalidRecords.length} invalid references for ${columnNames.join(', ')}`,
+            );
           }
         }
 
@@ -78,7 +80,9 @@ export class UpdateAgreementsMasterDataRelations1704068100000 implements Migrati
               fk.referencedTableName === referencedTableName,
           );
           if (existingFk) {
-            console.log(`ℹ️  Foreign key for ${columnNames.join(', ')} already exists`);
+            console.log(
+              `ℹ️  Foreign key for ${columnNames.join(', ')} already exists`,
+            );
             return true;
           }
         }
@@ -97,7 +101,10 @@ export class UpdateAgreementsMasterDataRelations1704068100000 implements Migrati
         return true;
       } catch (error: any) {
         // If it's a constraint violation, it means invalid data still exists
-        if (error?.code === '23503' || error?.message?.includes('violates foreign key constraint')) {
+        if (
+          error?.code === '23503' ||
+          error?.message?.includes('violates foreign key constraint')
+        ) {
           console.error(
             `❌ Cannot create foreign key for ${columnNames.join(', ')}: Invalid data exists. ` +
               `Please clean up invalid ${columnNames.join(', ')} values manually.`,
@@ -105,19 +112,24 @@ export class UpdateAgreementsMasterDataRelations1704068100000 implements Migrati
           return false;
         }
         // Other errors (e.g., table doesn't exist, FK already exists)
-        console.log(`⚠️  Foreign key creation skipped for ${columnNames.join(', ')}:`, error.message);
+        console.log(
+          `⚠️  Foreign key creation skipped for ${columnNames.join(', ')}:`,
+          error.message,
+        );
         return false;
       }
     };
 
     // Add foreign keys for master data entities
     // Note: These will only be created if the referenced tables exist
-    
+
     // First, drop any existing foreign key on cpl_id that might reference customers
     const table = await queryRunner.getTable('main.agreements');
     if (table) {
       const existingCustomerFk = table.foreignKeys.find(
-        (fk) => fk.columnNames.indexOf('cpl_id') !== -1 && fk.referencedTableName === 'main.customers',
+        (fk) =>
+          fk.columnNames.indexOf('cpl_id') !== -1 &&
+          fk.referencedTableName === 'main.customers',
       );
       if (existingCustomerFk) {
         await queryRunner.dropForeignKey('main.agreements', existingCustomerFk);
@@ -295,13 +307,41 @@ export class UpdateAgreementsMasterDataRelations1704068100000 implements Migrati
     // Drop foreign keys
     const foreignKeys = [
       { table: 'main.agreements', column: 'cpl_id', refTable: 'main.cpls' },
-      { table: 'main.agreements', column: 'channel_id', refTable: 'main.channels' },
-      { table: 'main.agreements', column: 'region_id', refTable: 'main.regions' },
-      { table: 'main.agreements', column: 'category_id', refTable: 'main.categories' },
-      { table: 'main.agreements', column: 'gu_id', refTable: 'main.generic_units' },
-      { table: 'main.agreements', column: 'fu_id', refTable: 'main.forecasting_units' },
-      { table: 'main.agreements', column: 'tactic_id', refTable: 'main.tactics' },
-      { table: 'main.agreements', column: 'mechanic_id', refTable: 'main.mechanics' },
+      {
+        table: 'main.agreements',
+        column: 'channel_id',
+        refTable: 'main.channels',
+      },
+      {
+        table: 'main.agreements',
+        column: 'region_id',
+        refTable: 'main.regions',
+      },
+      {
+        table: 'main.agreements',
+        column: 'category_id',
+        refTable: 'main.categories',
+      },
+      {
+        table: 'main.agreements',
+        column: 'gu_id',
+        refTable: 'main.generic_units',
+      },
+      {
+        table: 'main.agreements',
+        column: 'fu_id',
+        refTable: 'main.forecasting_units',
+      },
+      {
+        table: 'main.agreements',
+        column: 'tactic_id',
+        refTable: 'main.tactics',
+      },
+      {
+        table: 'main.agreements',
+        column: 'mechanic_id',
+        refTable: 'main.mechanics',
+      },
     ];
 
     for (const fk of foreignKeys) {

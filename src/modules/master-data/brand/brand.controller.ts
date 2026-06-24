@@ -11,7 +11,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { BrandService } from './brand.service';
 import { CreateBrandDto } from './dto/create-brand.dto';
 import { UpdateBrandDto } from './dto/update-brand.dto';
@@ -32,7 +37,11 @@ export class BrandController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new brand' })
-  @ApiResponse({ status: 201, description: 'Brand created successfully', type: Brand })
+  @ApiResponse({
+    status: 201,
+    description: 'Brand created successfully',
+    type: Brand,
+  })
   create(@TenantId() tenantId: string, @Body() createBrandDto: CreateBrandDto) {
     return this.brandService.create(tenantId, createBrandDto);
   }
@@ -57,7 +66,11 @@ export class BrandController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update brand' })
-  @ApiResponse({ status: 200, description: 'Brand updated successfully', type: Brand })
+  @ApiResponse({
+    status: 200,
+    description: 'Brand updated successfully',
+    type: Brand,
+  })
   update(
     @TenantId() tenantId: string,
     @Param('id') id: string,

@@ -12,4 +12,3 @@ import { Tenant } from '../../database/entities/tenant.entity';
   exports: [TenantService, TenantRepository],
 })
 export class TenantModule {}
-

@@ -49,4 +49,3 @@ export async function seedTenants(dataSource: DataSource): Promise<Tenant[]> {
   console.log(`✅ Seeded ${created.length} tenants`);
   return created;
 }
-

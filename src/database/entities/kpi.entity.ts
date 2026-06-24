@@ -98,10 +98,22 @@ export class Kpi extends BaseEntity {
   aggregationMethodFu?: AggregationMethod;
 
   // RAG Configuration (for KPIs that use thresholds)
-  @Column({ name: 'rag_green_threshold', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'rag_green_threshold',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   ragGreenThreshold?: number;
 
-  @Column({ name: 'rag_amber_threshold', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'rag_amber_threshold',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   ragAmberThreshold?: number;
 
   // Status

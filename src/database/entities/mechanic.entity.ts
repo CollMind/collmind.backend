@@ -86,10 +86,22 @@ export class Mechanic extends BaseEntity {
   @Column({ name: 'input_constraints', type: 'jsonb', nullable: true })
   inputConstraints?: Record<string, any>; // min/max değerler, validasyon kuralları
 
-  @Column({ name: 'min_value', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'min_value',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   minValue?: number;
 
-  @Column({ name: 'max_value', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'max_value',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   maxValue?: number;
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
@@ -113,10 +125,22 @@ export class Mechanic extends BaseEntity {
   })
   inputType?: InputType;
 
-  @Column({ name: 'default_value', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'default_value',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   defaultValue?: number;
 
-  @Column({ name: 'step_increment', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'step_increment',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   stepIncrement?: number;
 
   @Column({ name: 'decimal_places', type: 'int', nullable: true })
@@ -147,7 +171,12 @@ export class Mechanic extends BaseEntity {
   @Column({ name: 'applicable_categories', type: 'jsonb', nullable: true })
   applicableCategories?: string[]; // Dairy, Beverages, etc. or ["ALL"]
 
-  @Column({ name: 'applicable_cpls', type: 'uuid', array: true, nullable: true })
+  @Column({
+    name: 'applicable_cpls',
+    type: 'uuid',
+    array: true,
+    nullable: true,
+  })
   applicableCpls?: string[]; // Specific CPL restrictions
 
   @Column({ name: 'exclusion_rules', type: 'jsonb', nullable: true })
@@ -178,17 +207,34 @@ export class Mechanic extends BaseEntity {
   })
   budgetType?: BudgetType;
 
-  @Column({ name: 'requires_approval_threshold', type: 'decimal', precision: 18, scale: 2, nullable: true })
+  @Column({
+    name: 'requires_approval_threshold',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
   requiresApprovalThreshold?: number; // Amount threshold requiring approval
 
   @Column({ name: 'approval_flow', type: 'jsonb', nullable: true })
   approvalFlow?: Record<string, any>; // Who needs to approve
 
   // Combination and Constraint Rules
-  @Column({ name: 'mutually_exclusive_with', type: 'text', array: true, nullable: true })
+  @Column({
+    name: 'mutually_exclusive_with',
+    type: 'text',
+    array: true,
+    nullable: true,
+  })
   mutuallyExclusiveWith?: string[]; // Mechanic codes that cannot be used together
 
-  @Column({ name: 'max_combined_discount_percentage', type: 'decimal', precision: 5, scale: 2, nullable: true })
+  @Column({
+    name: 'max_combined_discount_percentage',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
   maxCombinedDiscountPercentage?: number; // Total discount limit
 
   @Column({ name: 'combination_warnings', type: 'jsonb', nullable: true })

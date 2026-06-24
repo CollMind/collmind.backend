@@ -10,7 +10,12 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { TenantService } from './tenant.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
@@ -30,7 +35,11 @@ export class TenantController {
   @Post()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create a new tenant' })
-  @ApiResponse({ status: 201, description: 'Tenant created successfully', type: TenantResponseDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Tenant created successfully',
+    type: TenantResponseDto,
+  })
   @ApiResponse({ status: 409, description: 'Tenant already exists' })
   create(@Body() createTenantDto: CreateTenantDto) {
     return this.tenantService.create(createTenantDto);
@@ -39,14 +48,22 @@ export class TenantController {
   @Get()
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Get all tenants' })
-  @ApiResponse({ status: 200, description: 'List of tenants', type: [TenantResponseDto] })
+  @ApiResponse({
+    status: 200,
+    description: 'List of tenants',
+    type: [TenantResponseDto],
+  })
   findAll() {
     return this.tenantService.findAll();
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get tenant by ID' })
-  @ApiResponse({ status: 200, description: 'Tenant details', type: TenantResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Tenant details',
+    type: TenantResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Tenant not found' })
   findOne(@Param('id') id: string) {
     return this.tenantService.findOne(id);
@@ -55,7 +72,11 @@ export class TenantController {
   @Patch(':id')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update tenant' })
-  @ApiResponse({ status: 200, description: 'Tenant updated successfully', type: TenantResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Tenant updated successfully',
+    type: TenantResponseDto,
+  })
   update(@Param('id') id: string, @Body() updateTenantDto: UpdateTenantDto) {
     return this.tenantService.update(id, updateTenantDto);
   }
@@ -92,4 +113,3 @@ export class TenantController {
     return this.tenantService.getStats(id);
   }
 }
-

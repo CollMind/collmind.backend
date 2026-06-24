@@ -1,4 +1,12 @@
-import { IsString, IsUUID, IsNumber, IsDateString, IsOptional, Min, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsUUID,
+  IsNumber,
+  IsDateString,
+  IsOptional,
+  Min,
+  MaxLength,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateAgreementTransactionDto {
@@ -15,7 +23,10 @@ export class CreateAgreementTransactionDto {
   @IsDateString()
   invoiceDate!: string;
 
-  @ApiProperty({ description: 'Fiscal period in YYYY-MM format (used for budget deduction)', example: '2026-01' })
+  @ApiProperty({
+    description: 'Fiscal period in YYYY-MM format (used for budget deduction)',
+    example: '2026-01',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(7)
@@ -37,4 +48,3 @@ export class CreateAgreementTransactionDto {
   @IsString()
   notes?: string;
 }
-

@@ -29,4 +29,3 @@ import { BudgetService } from '../../../shared/budget/budget.service';
   exports: [AgreementTransactionService, AgreementTransactionRepository],
 })
 export class AgreementTransactionModule {}
-

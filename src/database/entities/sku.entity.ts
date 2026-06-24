@@ -32,10 +32,22 @@ export class Sku extends BaseEntity {
   @Column({ length: 50, nullable: true })
   barcode?: string;
 
-  @Column({ name: 'unit_price', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'unit_price',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   unitPrice?: number;
 
-  @Column({ name: 'cogs', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'cogs',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   cogs?: number; // Cost of Goods Sold
 
   @Column({ length: 3, default: 'TRY' })

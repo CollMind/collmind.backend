@@ -8,11 +8,25 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { SpendDistributionService } from './spend-distribution.service';
 import { SpendValidationService } from './spend-validation.service';
-import { DistributionResult, FUDistributionBreakdown, DistributionValidationResult } from './dto/distribution-result.dto';
-import { InputValidationResult, CombinationValidationResult, BudgetValidationResult, PreSubmissionValidation } from './dto/validation-result.dto';
+import {
+  DistributionResult,
+  FUDistributionBreakdown,
+  DistributionValidationResult,
+} from './dto/distribution-result.dto';
+import {
+  InputValidationResult,
+  CombinationValidationResult,
+  BudgetValidationResult,
+  PreSubmissionValidation,
+} from './dto/validation-result.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
@@ -30,13 +44,21 @@ export class SpendCalculationController {
   @Post('distribute/:planFuId/:mechanicId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Distribute mechanic spend from FU to SKUs' })
-  @ApiResponse({ status: 200, description: 'Distribution result', type: DistributionResult })
+  @ApiResponse({
+    status: 200,
+    description: 'Distribution result',
+    type: DistributionResult,
+  })
   distributeMechanicSpend(
     @TenantId() tenantId: string,
     @Param('planFuId') planFuId: string,
     @Param('mechanicId') mechanicId: string,
   ) {
-    return this.distributionService.distributeMechanicSpend(tenantId, planFuId, mechanicId);
+    return this.distributionService.distributeMechanicSpend(
+      tenantId,
+      planFuId,
+      mechanicId,
+    );
   }
 
   @Post('recalculate-on-volume-change/:skuId')
@@ -48,22 +70,37 @@ export class SpendCalculationController {
     @Param('skuId') skuId: string,
     @Body() body: { newVolume: number },
   ) {
-    return this.distributionService.recalculateDistributionOnVolumeChange(tenantId, skuId, body.newVolume);
+    return this.distributionService.recalculateDistributionOnVolumeChange(
+      tenantId,
+      skuId,
+      body.newVolume,
+    );
   }
 
   @Get('breakdown/:planFuId')
   @ApiOperation({ summary: 'Get distribution breakdown for a FU' })
-  @ApiResponse({ status: 200, description: 'Distribution breakdown', type: FUDistributionBreakdown })
+  @ApiResponse({
+    status: 200,
+    description: 'Distribution breakdown',
+    type: FUDistributionBreakdown,
+  })
   getDistributionBreakdown(
     @TenantId() tenantId: string,
     @Param('planFuId') planFuId: string,
   ) {
-    return this.distributionService.getDistributionBreakdown(tenantId, planFuId);
+    return this.distributionService.getDistributionBreakdown(
+      tenantId,
+      planFuId,
+    );
   }
 
   @Get('validate-distribution/:planFuId')
   @ApiOperation({ summary: 'Validate distribution for a FU' })
-  @ApiResponse({ status: 200, description: 'Distribution validation result', type: DistributionValidationResult })
+  @ApiResponse({
+    status: 200,
+    description: 'Distribution validation result',
+    type: DistributionValidationResult,
+  })
   validateDistribution(
     @TenantId() tenantId: string,
     @Param('planFuId') planFuId: string,
@@ -73,7 +110,11 @@ export class SpendCalculationController {
 
   @Get('validate-inputs/:planFuId')
   @ApiOperation({ summary: 'Validate inputs for a FU' })
-  @ApiResponse({ status: 200, description: 'Input validation result', type: InputValidationResult })
+  @ApiResponse({
+    status: 200,
+    description: 'Input validation result',
+    type: InputValidationResult,
+  })
   validateInputs(
     @TenantId() tenantId: string,
     @Param('planFuId') planFuId: string,
@@ -83,7 +124,11 @@ export class SpendCalculationController {
 
   @Get('validate-combinations/:planFuId')
   @ApiOperation({ summary: 'Validate mechanic combinations for a FU' })
-  @ApiResponse({ status: 200, description: 'Combination validation result', type: CombinationValidationResult })
+  @ApiResponse({
+    status: 200,
+    description: 'Combination validation result',
+    type: CombinationValidationResult,
+  })
   validateCombinations(
     @TenantId() tenantId: string,
     @Param('planFuId') planFuId: string,
@@ -93,7 +138,11 @@ export class SpendCalculationController {
 
   @Get('validate-budget/:planId')
   @ApiOperation({ summary: 'Validate budget impact for a plan' })
-  @ApiResponse({ status: 200, description: 'Budget validation result', type: BudgetValidationResult })
+  @ApiResponse({
+    status: 200,
+    description: 'Budget validation result',
+    type: BudgetValidationResult,
+  })
   validateBudget(
     @TenantId() tenantId: string,
     @Param('planId') planId: string,
@@ -102,8 +151,14 @@ export class SpendCalculationController {
   }
 
   @Get('validate-before-submission/:planId')
-  @ApiOperation({ summary: 'Validate plan before submission (all validations)' })
-  @ApiResponse({ status: 200, description: 'Pre-submission validation result', type: PreSubmissionValidation })
+  @ApiOperation({
+    summary: 'Validate plan before submission (all validations)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Pre-submission validation result',
+    type: PreSubmissionValidation,
+  })
   validateBeforeSubmission(
     @TenantId() tenantId: string,
     @Param('planId') planId: string,

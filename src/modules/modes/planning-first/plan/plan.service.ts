@@ -5,12 +5,27 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PlanRepository } from './plan.repository';
-import { CreatePlanDto, UpdatePlanDto, AddFuDto, UpdateFuTacticDto, UpdateSkuVolumeDto } from './dto';
-import { Plan, PlanStatus, PlanFu, PlanSku } from '../../../../database/entities/plan.entity';
+import {
+  CreatePlanDto,
+  UpdatePlanDto,
+  AddFuDto,
+  UpdateFuTacticDto,
+  UpdateSkuVolumeDto,
+} from './dto';
+import {
+  Plan,
+  PlanStatus,
+  PlanFu,
+  PlanSku,
+} from '../../../../database/entities/plan.entity';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { BudgetEnvelopeStatus } from '../../../../database/entities/budget-envelope.entity';
 import { ApprovalService } from '../../../shared/approval/approval.service';
-import { KpiEngineService, CalculationResult, SkuCalculationContext } from '../../../shared/kpi-engine/kpi-engine.service';
+import {
+  KpiEngineService,
+  CalculationResult,
+  SkuCalculationContext,
+} from '../../../shared/kpi-engine/kpi-engine.service';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -60,7 +75,9 @@ export class PlanService {
         // Check if code already exists
         const existing = await this.planRepo.findByCode(planCode, tenantId);
         if (existing) {
-          await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
+          await new Promise((resolve) =>
+            setTimeout(resolve, 50 * (attempt + 1)),
+          );
           continue;
         }
 
@@ -82,22 +99,30 @@ export class PlanService {
         return plan;
       } catch (error: any) {
         lastError = error;
-        
-        if (error.code === '23505' || error.message?.includes('duplicate key')) {
+
+        if (
+          error.code === '23505' ||
+          error.message?.includes('duplicate key')
+        ) {
           if (attempt < maxAttempts - 1) {
-            await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+            await new Promise((resolve) =>
+              setTimeout(resolve, 100 * (attempt + 1)),
+            );
             continue;
           }
         }
-        
-        if (attempt === maxAttempts - 1 || (error.code !== '23505' && !error.message?.includes('duplicate key'))) {
+
+        if (
+          attempt === maxAttempts - 1 ||
+          (error.code !== '23505' && !error.message?.includes('duplicate key'))
+        ) {
           throw error;
         }
       }
     }
 
     throw new ConflictException(
-      `Unable to create plan: ${lastError?.message || 'Unknown error'}`
+      `Unable to create plan: ${lastError?.message || 'Unknown error'}`,
     );
   }
 
@@ -109,17 +134,22 @@ export class PlanService {
     return plan;
   }
 
-  async findAll(tenantId: string, filters?: {
-    status?: PlanStatus;
-    cplId?: string;
-    channelId?: string;
-    categoryId?: string;
-  }): Promise<Plan[]> {
+  async findAll(
+    tenantId: string,
+    filters?: {
+      status?: PlanStatus;
+      cplId?: string;
+      channelId?: string;
+      categoryId?: string;
+    },
+  ): Promise<Plan[]> {
     return this.planRepo.findAll(tenantId, filters);
   }
 
   async findPendingApprovals(tenantId: string): Promise<Plan[]> {
-    return this.planRepo.findAll(tenantId, { status: PlanStatus.PENDING_APPROVAL });
+    return this.planRepo.findAll(tenantId, {
+      status: PlanStatus.PENDING_APPROVAL,
+    });
   }
 
   async update(
@@ -134,9 +164,13 @@ export class PlanService {
       throw new BadRequestException('Only DRAFT plans can be edited');
     }
 
-    const { startDate: dtoStartDate, endDate: dtoEndDate, ...dtoWithoutDates } = dto;
+    const {
+      startDate: dtoStartDate,
+      endDate: dtoEndDate,
+      ...dtoWithoutDates
+    } = dto;
     const updateData: Partial<Plan> = { ...dtoWithoutDates, updatedBy: userId };
-    
+
     if (dtoStartDate) {
       const startDate = new Date(dtoStartDate);
       updateData.periodMonth = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
@@ -164,10 +198,14 @@ export class PlanService {
     // Verify FU exists and is plannable
     const fu = await this.fuRepo.findOne({ where: { id: dto.fuId, tenantId } });
     if (!fu) {
-      throw new NotFoundException(`Forecasting Unit with ID ${dto.fuId} not found`);
+      throw new NotFoundException(
+        `Forecasting Unit with ID ${dto.fuId} not found`,
+      );
     }
     if (!fu.isPlannable) {
-      throw new BadRequestException(`Forecasting Unit ${fu.code} is not plannable`);
+      throw new BadRequestException(
+        `Forecasting Unit ${fu.code} is not plannable`,
+      );
     }
 
     // Check if FU already added
@@ -177,10 +215,20 @@ export class PlanService {
     }
 
     // Add FU to plan
-    const planFu = await this.planRepo.addFu(planId, dto.fuId, tenantId, userId, dto.tactics);
+    const planFu = await this.planRepo.addFu(
+      planId,
+      dto.fuId,
+      tenantId,
+      userId,
+      dto.tactics,
+    );
 
     // Auto-add all SKUs for this FU
-    const skus = await this.skuRepo.findBy({ fuId: dto.fuId, tenantId, isActive: true });
+    const skus = await this.skuRepo.findBy({
+      fuId: dto.fuId,
+      tenantId,
+      isActive: true,
+    });
     for (const sku of skus) {
       await this.planRepo.addSku(planFu.id, sku.id, tenantId, userId);
     }
@@ -243,11 +291,12 @@ export class PlanService {
     }
 
     // Update volumes
-    const incrementalVolume = dto.plannedVolume && dto.baseVolume
-      ? dto.plannedVolume - dto.baseVolume
-      : dto.plannedVolume && planSku.baseVolume
-      ? dto.plannedVolume - planSku.baseVolume
-      : planSku.incrementalVolume;
+    const incrementalVolume =
+      dto.plannedVolume && dto.baseVolume
+        ? dto.plannedVolume - dto.baseVolume
+        : dto.plannedVolume && planSku.baseVolume
+          ? dto.plannedVolume - planSku.baseVolume
+          : planSku.incrementalVolume;
 
     await this.planRepo.updatePlanSku(planSku.id, {
       baseVolume: dto.baseVolume ?? planSku.baseVolume,
@@ -261,7 +310,11 @@ export class PlanService {
     return this.planRepo.findPlanSku(planFu.id, skuId) as Promise<PlanSku>;
   }
 
-  async removeFu(planId: string, fuId: string, tenantId: string): Promise<void> {
+  async removeFu(
+    planId: string,
+    fuId: string,
+    tenantId: string,
+  ): Promise<void> {
     const plan = await this.findById(planId, tenantId);
 
     if (plan.status !== PlanStatus.DRAFT) {
@@ -285,7 +338,9 @@ export class PlanService {
     }
 
     if (!plan.planFus || plan.planFus.length === 0) {
-      throw new BadRequestException('Plan must have at least one FU before submission');
+      throw new BadRequestException(
+        'Plan must have at least one FU before submission',
+      );
     }
 
     // Create approval request
@@ -299,16 +354,24 @@ export class PlanService {
       userId,
     );
 
-    return this.planRepo.updateStatus(id, tenantId, PlanStatus.PENDING_APPROVAL, {
-      approvalRequestId: approvalRequest.id,
-      updatedBy: userId,
-    });
+    return this.planRepo.updateStatus(
+      id,
+      tenantId,
+      PlanStatus.PENDING_APPROVAL,
+      {
+        approvalRequestId: approvalRequest.id,
+        updatedBy: userId,
+      },
+    );
   }
 
   /**
    * Check budget availability for a plan before approval
    */
-  async checkBudget(id: string, tenantId: string): Promise<{
+  async checkBudget(
+    id: string,
+    tenantId: string,
+  ): Promise<{
     hasBudget: boolean;
     planTotalSpend: number;
     channel: string;
@@ -381,7 +444,9 @@ export class PlanService {
     const plan = await this.findById(id, tenantId);
 
     if (plan.status !== PlanStatus.PENDING_APPROVAL) {
-      throw new BadRequestException('Only PENDING_APPROVAL plans can be approved');
+      throw new BadRequestException(
+        'Only PENDING_APPROVAL plans can be approved',
+      );
     }
 
     if (!plan.approvalRequestId) {
@@ -399,7 +464,8 @@ export class PlanService {
 
     if (!existingEnvelope && autoCreateBudget) {
       // Auto-create budget envelope
-      const allocatedAmount = budgetAmount || Math.max(Number(plan.totalSpend) * 2, 100000);
+      const allocatedAmount =
+        budgetAmount || Math.max(Number(plan.totalSpend) * 2, 100000);
       const periodLabel = plan.periodMonth; // e.g., "2026-01"
       const fiscalYear = plan.periodMonth.substring(0, 4);
 
@@ -435,8 +501,11 @@ export class PlanService {
         userId,
       );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Budget reservation failed: ${errorMessage}`);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(
+        `Budget reservation failed: ${errorMessage}`,
+      );
     }
 
     // Update approval request
@@ -463,7 +532,9 @@ export class PlanService {
     const plan = await this.findById(id, tenantId);
 
     if (plan.status !== PlanStatus.PENDING_APPROVAL) {
-      throw new BadRequestException('Only PENDING_APPROVAL plans can be rejected');
+      throw new BadRequestException(
+        'Only PENDING_APPROVAL plans can be rejected',
+      );
     }
 
     if (!plan.approvalRequestId) {
@@ -503,13 +574,16 @@ export class PlanService {
    * Full KPI engine recalculation for the entire plan
    * Follows BRD hierarchy: SKU → FU → PLAN
    */
-  async recalculatePlanWithKpiEngine(planId: string, tenantId: string): Promise<void> {
+  async recalculatePlanWithKpiEngine(
+    planId: string,
+    tenantId: string,
+  ): Promise<void> {
     const plan = await this.findById(planId, tenantId);
     if (!plan.planFus || plan.planFus.length === 0) return;
 
     // Get all tactics for tactic spend calculation
     const allTactics = await this.tacticRepo.find({ where: { tenantId } });
-    const tacticMap = new Map(allTactics.map(t => [t.code, t]));
+    const tacticMap = new Map(allTactics.map((t) => [t.code, t]));
 
     const allFuResults: Array<Record<string, CalculationResult>> = [];
 
@@ -527,9 +601,13 @@ export class PlanService {
         const cogs = Number(sku.cogs) || 0;
 
         // Distribute FU tactic spend proportionally across SKUs
-        const fuPlannedVolume = planFu.planSkus?.reduce((sum, s) =>
-          sum + (Number(s.plannedVolume) || 0), 0) || 0;
-        const skuShareRatio = fuPlannedVolume > 0 ? planVol / fuPlannedVolume : 0;
+        const fuPlannedVolume =
+          planFu.planSkus?.reduce(
+            (sum, s) => sum + (Number(s.plannedVolume) || 0),
+            0,
+          ) || 0;
+        const skuShareRatio =
+          fuPlannedVolume > 0 ? planVol / fuPlannedVolume : 0;
         const skuTacticSpend = fuTacticTotalSpend * skuShareRatio;
 
         // Build context for KPI engine
@@ -544,7 +622,7 @@ export class PlanService {
           TACTIC_SPEND: skuTacticSpend,
           BASE_TURNOVER: baseVol * unitPrice,
           PLAN_COGS: planVol * cogs,
-          GP: (planVol * unitPrice) - (planVol * cogs) - skuTacticSpend,
+          GP: planVol * unitPrice - planVol * cogs - skuTacticSpend,
         };
 
         // Try KPI engine first
@@ -561,9 +639,13 @@ export class PlanService {
         // Extract values from KPI results or fallback
         const incrementalVolume = planVol - baseVol;
         const plannedTurnover = planVol * unitPrice;
-        const plannedGp = kpiResults['GP']?.value ?? ((planVol * unitPrice) - (planVol * cogs) - skuTacticSpend);
-        const gpRoi = kpiResults['GP_ROI_PCT']?.value ?? (skuTacticSpend > 0 ? (plannedGp / skuTacticSpend) * 100 : null);
-        
+        const plannedGp =
+          kpiResults['GP']?.value ??
+          planVol * unitPrice - planVol * cogs - skuTacticSpend;
+        const gpRoi =
+          kpiResults['GP_ROI_PCT']?.value ??
+          (skuTacticSpend > 0 ? (plannedGp / skuTacticSpend) * 100 : null);
+
         // RAG from KPI engine or fallback
         let ragStatus = kpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
         if (!kpiResults['GP_ROI_PCT']) {
@@ -614,15 +696,22 @@ export class PlanService {
 
       for (const planSku of planFu.planSkus || []) {
         // Re-read to get updated values
-        const updated = await this.planRepo.findPlanSku(planFu.id, planSku.skuId);
+        const updated = await this.planRepo.findPlanSku(
+          planFu.id,
+          planSku.skuId,
+        );
         if (updated) {
           fuTotalPlannedVolume += Number(updated.plannedVolume) || 0;
           fuTotalGp += Number(updated.plannedGp) || 0;
         }
       }
 
-      const fuGpRoi = fuKpiResults['GP_ROI_PCT']?.value ?? (fuTacticTotalSpend > 0 ? (fuTotalGp / fuTacticTotalSpend) * 100 : null);
-      
+      const fuGpRoi =
+        fuKpiResults['GP_ROI_PCT']?.value ??
+        (fuTacticTotalSpend > 0
+          ? (fuTotalGp / fuTacticTotalSpend) * 100
+          : null);
+
       let fuRagStatus = fuKpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
       if (!fuKpiResults['GP_ROI_PCT']) {
         if (fuGpRoi !== null) {
@@ -671,16 +760,22 @@ export class PlanService {
     // Plan-level KPI calculation
     let planKpiResults: Record<string, CalculationResult>;
     try {
-      planKpiResults = await this.kpiEngine.calculatePlan(tenantId, allFuResults);
+      planKpiResults = await this.kpiEngine.calculatePlan(
+        tenantId,
+        allFuResults,
+      );
     } catch {
       planKpiResults = {};
     }
 
-    const overallRoi = planKpiResults['GP_ROI_PCT']?.value ?? (planTotalSpend > 0 ? (planTotalGp / planTotalSpend) * 100 : null);
+    const overallRoi =
+      planKpiResults['GP_ROI_PCT']?.value ??
+      (planTotalSpend > 0 ? (planTotalGp / planTotalSpend) * 100 : null);
 
     let planRagStatus = planKpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
     if (!planKpiResults['GP_ROI_PCT']) {
-      const fuRags = updatedPlan.planFus?.map(f => f.ragStatus).filter(Boolean) || [];
+      const fuRags =
+        updatedPlan.planFus?.map((f) => f.ragStatus).filter(Boolean) || [];
       if (fuRags.includes('RED')) planRagStatus = 'RED';
       else if (fuRags.includes('AMBER')) planRagStatus = 'AMBER';
     }
@@ -709,11 +804,20 @@ export class PlanService {
       const tactic = tacticMap.get(tacticCode);
 
       // Calculate based on tactic type
-      if (tactic?.tacticType === 'DISCOUNT' || tacticCode.includes('PCT') || tacticCode.includes('%')) {
+      if (
+        tactic?.tacticType === 'DISCOUNT' ||
+        tacticCode.includes('PCT') ||
+        tacticCode.includes('%')
+      ) {
         // Percentage-based tactic: % of planned turnover
-        const plannedTurnover = planFu.planSkus?.reduce((sum, sku) => {
-          return sum + ((Number(sku.plannedVolume) || 0) * (Number(sku.sku?.unitPrice) || 0));
-        }, 0) || 0;
+        const plannedTurnover =
+          planFu.planSkus?.reduce((sum, sku) => {
+            return (
+              sum +
+              (Number(sku.plannedVolume) || 0) *
+                (Number(sku.sku?.unitPrice) || 0)
+            );
+          }, 0) || 0;
         totalTacticSpend += plannedTurnover * (value / 100);
       } else {
         // Lumpsum tactic
@@ -727,18 +831,29 @@ export class PlanService {
   /**
    * Calculate KPIs for a plan and return results (API endpoint)
    */
-  async calculateKpis(planId: string, tenantId: string): Promise<{
+  async calculateKpis(
+    planId: string,
+    tenantId: string,
+  ): Promise<{
     planKpis: Record<string, CalculationResult>;
-    fuKpis: Array<{ fuId: string; fuName: string; kpis: Record<string, CalculationResult> }>;
+    fuKpis: Array<{
+      fuId: string;
+      fuName: string;
+      kpis: Record<string, CalculationResult>;
+    }>;
   }> {
     // Trigger full recalculation
     await this.recalculatePlanWithKpiEngine(planId, tenantId);
 
     const plan = await this.findById(planId, tenantId);
     const allTactics = await this.tacticRepo.find({ where: { tenantId } });
-    const tacticMap = new Map(allTactics.map(t => [t.code, t]));
+    const tacticMap = new Map(allTactics.map((t) => [t.code, t]));
 
-    const fuKpis: Array<{ fuId: string; fuName: string; kpis: Record<string, CalculationResult> }> = [];
+    const fuKpis: Array<{
+      fuId: string;
+      fuName: string;
+      kpis: Record<string, CalculationResult>;
+    }> = [];
 
     const allFuResults: Array<Record<string, CalculationResult>> = [];
 
@@ -754,9 +869,13 @@ export class PlanService {
         const unitPrice = Number(sku.unitPrice) || 0;
         const cogsVal = Number(sku.cogs) || 0;
 
-        const fuPlannedVolume = planFu.planSkus?.reduce((sum, s) =>
-          sum + (Number(s.plannedVolume) || 0), 0) || 0;
-        const skuShareRatio = fuPlannedVolume > 0 ? planVol / fuPlannedVolume : 0;
+        const fuPlannedVolume =
+          planFu.planSkus?.reduce(
+            (sum, s) => sum + (Number(s.plannedVolume) || 0),
+            0,
+          ) || 0;
+        const skuShareRatio =
+          fuPlannedVolume > 0 ? planVol / fuPlannedVolume : 0;
         const skuTacticSpend = fuTacticTotalSpend * skuShareRatio;
 
         const context: SkuCalculationContext = {
@@ -769,11 +888,14 @@ export class PlanService {
           TACTIC_SPEND: skuTacticSpend,
           BASE_TURNOVER: baseVol * unitPrice,
           PLAN_COGS: planVol * cogsVal,
-          GP: (planVol * unitPrice) - (planVol * cogsVal) - skuTacticSpend,
+          GP: planVol * unitPrice - planVol * cogsVal - skuTacticSpend,
         };
 
         try {
-          const kpiResults = await this.kpiEngine.calculateSku(tenantId, context);
+          const kpiResults = await this.kpiEngine.calculateSku(
+            tenantId,
+            context,
+          );
           skuResults.push(kpiResults);
         } catch {
           skuResults.push({});
@@ -809,7 +931,10 @@ export class PlanService {
     return { planKpis, fuKpis };
   }
 
-  async getAnalysis(planId: string, tenantId: string): Promise<{
+  async getAnalysis(
+    planId: string,
+    tenantId: string,
+  ): Promise<{
     gpRoiPerformance: {
       currentRoi: number | null;
       targetRoi: number;
@@ -862,22 +987,23 @@ export class PlanService {
         const unitPrice = Number(sku.unitPrice) || 0;
         const cogs = Number(sku.cogs) || 0;
         baseVolume += baseVol;
-        baseGp += (baseVol * unitPrice) - (baseVol * cogs);
+        baseGp += baseVol * unitPrice - baseVol * cogs;
       }
     }
 
     const incrementalGp = Number(plan.totalGp) - baseGp;
     const currentRoi = plan.overallRoi ? Number(plan.overallRoi) : null;
-    
+
     // Target ROI from KPI engine thresholds (if defined) or default 20%
     const targetRoi = 20.0;
-    const status = currentRoi === null 
-      ? 'BELOW_TARGET' 
-      : currentRoi >= targetRoi 
-        ? 'ABOVE_TARGET' 
-        : currentRoi >= targetRoi * 0.5 
-          ? 'ON_TARGET' 
-          : 'BELOW_TARGET';
+    const status =
+      currentRoi === null
+        ? 'BELOW_TARGET'
+        : currentRoi >= targetRoi
+          ? 'ABOVE_TARGET'
+          : currentRoi >= targetRoi * 0.5
+            ? 'ON_TARGET'
+            : 'BELOW_TARGET';
 
     // Calculate ON/OFF Invoice split from tactics
     let onInvoiceSpend = 0;
@@ -888,30 +1014,40 @@ export class PlanService {
       where: { tenantId },
       select: ['code', 'name', 'spendType', 'tacticType'],
     });
-    const tacticMap = new Map(allTactics.map(t => [t.code, t]));
+    const tacticMap = new Map(allTactics.map((t) => [t.code, t]));
 
     for (const planFu of plan.planFus || []) {
       if (planFu.tactics) {
         for (const [tacticCode, value] of Object.entries(planFu.tactics)) {
           const tactic = tacticMap.get(tacticCode);
           const tacticName = tactic?.name || tacticCode;
-          
+
           let isOffInvoice = false;
           if (tactic?.spendType === 'OFF_INVOICE') {
             isOffInvoice = true;
           } else if (tactic?.spendType === 'ON_INVOICE') {
             isOffInvoice = false;
           } else {
-            isOffInvoice = tacticCode.includes('OFF') || 
-                          tacticCode.includes('DISPLAY') || 
-                          tacticCode.includes('LUMP');
+            isOffInvoice =
+              tacticCode.includes('OFF') ||
+              tacticCode.includes('DISPLAY') ||
+              tacticCode.includes('LUMP');
           }
-          
+
           let tacticSpend = 0;
-          if (tactic?.tacticType === 'DISCOUNT' || tacticCode.includes('PCT') || tacticCode.includes('%')) {
-            const plannedTurnover = planFu.planSkus?.reduce((sum, sku) => {
-              return sum + ((Number(sku.plannedVolume) || 0) * (Number(sku.sku.unitPrice) || 0));
-            }, 0) || 0;
+          if (
+            tactic?.tacticType === 'DISCOUNT' ||
+            tacticCode.includes('PCT') ||
+            tacticCode.includes('%')
+          ) {
+            const plannedTurnover =
+              planFu.planSkus?.reduce((sum, sku) => {
+                return (
+                  sum +
+                  (Number(sku.plannedVolume) || 0) *
+                    (Number(sku.sku.unitPrice) || 0)
+                );
+              }, 0) || 0;
             tacticSpend = plannedTurnover * (value / 100);
           } else {
             tacticSpend = value;
@@ -927,49 +1063,64 @@ export class PlanService {
           if (existing) {
             existing.spend += tacticSpend;
           } else {
-            tacticSpendMap.set(tacticCode, { spend: tacticSpend, name: tacticName });
+            tacticSpendMap.set(tacticCode, {
+              spend: tacticSpend,
+              name: tacticName,
+            });
           }
         }
       }
     }
 
-    const fuRoiComparison = (plan.planFus || []).map(planFu => ({
+    const fuRoiComparison = (plan.planFus || []).map((planFu) => ({
       fuId: planFu.fuId,
       fuName: planFu.fu?.name || planFu.fuId,
       roi: planFu.gpRoi ? Number(planFu.gpRoi) : null,
     }));
 
-    const totalSpendForBreakdown = Array.from(tacticSpendMap.values()).reduce((sum, val) => sum + val.spend, 0);
-    const spendBreakdown = Array.from(tacticSpendMap.entries()).map(([tacticCode, data]) => ({
-      tacticCode,
-      tacticName: data.name,
-      spend: data.spend,
-      percentage: totalSpendForBreakdown > 0 ? (data.spend / totalSpendForBreakdown) * 100 : 0,
-    }));
+    const totalSpendForBreakdown = Array.from(tacticSpendMap.values()).reduce(
+      (sum, val) => sum + val.spend,
+      0,
+    );
+    const spendBreakdown = Array.from(tacticSpendMap.entries()).map(
+      ([tacticCode, data]) => ({
+        tacticCode,
+        tacticName: data.name,
+        spend: data.spend,
+        percentage:
+          totalSpendForBreakdown > 0
+            ? (data.spend / totalSpendForBreakdown) * 100
+            : 0,
+      }),
+    );
 
     let plannedVolume = 0;
-    const fuDetails = (plan.planFus || []).map(planFu => {
+    const fuDetails = (plan.planFus || []).map((planFu) => {
       let fuBaseVolume = 0;
       let fuPlannedVolume = 0;
-      
+
       for (const planSku of planFu.planSkus || []) {
         fuBaseVolume += Number(planSku.baseVolume) || 0;
         fuPlannedVolume += Number(planSku.plannedVolume) || 0;
       }
-      
+
       plannedVolume += fuPlannedVolume;
-      
+
       return {
         fuId: planFu.fuId,
         fuName: planFu.fu?.name || planFu.fuId,
         baseVolume: fuBaseVolume,
         plannedVolume: fuPlannedVolume,
-        uplift: fuBaseVolume > 0 ? ((fuPlannedVolume - fuBaseVolume) / fuBaseVolume) * 100 : 0,
+        uplift:
+          fuBaseVolume > 0
+            ? ((fuPlannedVolume - fuBaseVolume) / fuBaseVolume) * 100
+            : 0,
       };
     });
 
     const incrementalVolume = plannedVolume - baseVolume;
-    const upliftPercentage = baseVolume > 0 ? (incrementalVolume / baseVolume) * 100 : 0;
+    const upliftPercentage =
+      baseVolume > 0 ? (incrementalVolume / baseVolume) * 100 : 0;
 
     return {
       gpRoiPerformance: {

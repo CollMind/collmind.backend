@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateApprovalRequests1704067810000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -289,7 +295,7 @@ export class CreateApprovalRequests1704067810000 implements MigrationInterface {
     if (!agreementsTable) {
       agreementsTable = await queryRunner.getTable('main.agreements');
     }
-    
+
     if (agreementsTable) {
       // Find FK by column name (more reliable than table name matching)
       // TypeORM may store referencedTableName in different formats (with/without schema)
@@ -302,9 +308,11 @@ export class CreateApprovalRequests1704067810000 implements MigrationInterface {
     }
 
     await queryRunner.dropTable('main.approval_requests', true);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."approval_requests_request_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."approval_requests_status_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."approval_requests_request_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."approval_requests_status_enum"`,
+    );
   }
 }
-
-

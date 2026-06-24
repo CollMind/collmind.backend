@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateAgreements1704067800000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -176,7 +182,15 @@ export class CreateAgreements1704067800000 implements MigrationInterface {
           {
             name: 'status',
             type: 'enum',
-            enum: ['DRAFT', 'PENDING', 'APPROVED', 'ACTIVE', 'CLOSED', 'REJECTED', 'CANCELLED'],
+            enum: [
+              'DRAFT',
+              'PENDING',
+              'APPROVED',
+              'ACTIVE',
+              'CLOSED',
+              'REJECTED',
+              'CANCELLED',
+            ],
             enumName: 'agreements_agreement_status_enum',
             default: "'DRAFT'",
             isNullable: false,
@@ -415,13 +429,21 @@ export class CreateAgreements1704067800000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Drop partial index explicitly (created with raw SQL)
-    await queryRunner.query(`DROP INDEX IF EXISTS "main"."IDX_AGREEMENTS_APPROVAL_REQUEST_ID"`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "main"."IDX_AGREEMENTS_APPROVAL_REQUEST_ID"`,
+    );
     await queryRunner.dropTable('main.agreements', true);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."agreements_agreement_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."agreements_agreement_status_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."agreements_spend_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."agreements_mechanic_type_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."agreements_agreement_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."agreements_agreement_status_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."agreements_spend_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."agreements_mechanic_type_enum"`,
+    );
   }
 }
-
-

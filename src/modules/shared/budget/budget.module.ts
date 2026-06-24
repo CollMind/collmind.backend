@@ -14,10 +14,10 @@ import { Plan } from '../../../database/entities/plan.entity';
 
 /**
  * Shared Budget Module
- * 
+ *
  * Provides budget envelope management and budget transaction (event-sourced) operations.
  * Used by both Actuals-First and Planning-First modes.
- * 
+ *
  * Key Features:
  * - Budget envelope CRUD
  * - Budget reservation (RESERVE transaction)
@@ -40,4 +40,3 @@ import { Plan } from '../../../database/entities/plan.entity';
   exports: [BudgetService, BudgetAllocationService, BudgetRepository],
 })
 export class BudgetModule {}
-

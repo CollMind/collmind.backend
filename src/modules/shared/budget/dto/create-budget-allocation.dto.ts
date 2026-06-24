@@ -32,18 +32,26 @@ export class CreateBudgetAllocationDto {
   @IsInt()
   fiscalYear!: number;
 
-  @ApiPropertyOptional({ description: 'CPL ID (optional - for general budget)' })
+  @ApiPropertyOptional({
+    description: 'CPL ID (optional - for general budget)',
+  })
   @IsUUID()
   @IsOptional()
   cplId?: string;
 
-  @ApiPropertyOptional({ description: 'Channel code (optional)', maxLength: 50 })
+  @ApiPropertyOptional({
+    description: 'Channel code (optional)',
+    maxLength: 50,
+  })
   @IsString()
   @IsOptional()
   @MaxLength(50)
   channel?: string;
 
-  @ApiPropertyOptional({ description: 'Category code (optional)', maxLength: 100 })
+  @ApiPropertyOptional({
+    description: 'Category code (optional)',
+    maxLength: 100,
+  })
   @IsString()
   @IsOptional()
   @MaxLength(100)
@@ -59,28 +67,43 @@ export class CreateBudgetAllocationDto {
   @Min(0)
   offInvoiceBudget!: number;
 
-  @ApiPropertyOptional({ description: 'Alert threshold 80% enabled', default: true })
+  @ApiPropertyOptional({
+    description: 'Alert threshold 80% enabled',
+    default: true,
+  })
   @IsBoolean()
   @IsOptional()
   alertThreshold80?: boolean;
 
-  @ApiPropertyOptional({ description: 'Alert threshold 95% enabled', default: true })
+  @ApiPropertyOptional({
+    description: 'Alert threshold 95% enabled',
+    default: true,
+  })
   @IsBoolean()
   @IsOptional()
   alertThreshold95?: boolean;
 
-  @ApiPropertyOptional({ description: 'Alert threshold 100% enabled', default: true })
+  @ApiPropertyOptional({
+    description: 'Alert threshold 100% enabled',
+    default: true,
+  })
   @IsBoolean()
   @IsOptional()
   alertThreshold100?: boolean;
 
-  @ApiPropertyOptional({ description: 'Alert recipients (email list)', type: [String] })
+  @ApiPropertyOptional({
+    description: 'Alert recipients (email list)',
+    type: [String],
+  })
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
   alertRecipients?: string[];
 
-  @ApiPropertyOptional({ description: 'Hard limit mode (block on 100%)', default: false })
+  @ApiPropertyOptional({
+    description: 'Hard limit mode (block on 100%)',
+    default: false,
+  })
   @IsBoolean()
   @IsOptional()
   hardLimitMode?: boolean;

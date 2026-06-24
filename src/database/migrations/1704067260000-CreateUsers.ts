@@ -1,10 +1,16 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateUsers1704067260000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Create schema if not exists
     await queryRunner.query(`CREATE SCHEMA IF NOT EXISTS "main"`);
-    
+
     // Create enum types if not exists
     await queryRunner.query(`
       DO $$ BEGIN
@@ -249,4 +255,3 @@ export class CreateUsers1704067260000 implements MigrationInterface {
     await queryRunner.query(`DROP TYPE IF EXISTS "main"."users_status_enum"`);
   }
 }
-

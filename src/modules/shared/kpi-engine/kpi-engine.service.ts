@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Kpi, FormulaType, CalculationLevel, AggregationMethod } from '../../../database/entities/kpi.entity';
+import {
+  Kpi,
+  FormulaType,
+  CalculationLevel,
+  AggregationMethod,
+} from '../../../database/entities/kpi.entity';
 import { FormulaParserService, ParsedFormula } from './formula-parser.service';
 
 export interface SkuCalculationContext {
@@ -47,8 +52,10 @@ export class KpiEngineService {
     context: SkuCalculationContext,
   ): Promise<Record<string, CalculationResult>> {
     const kpis = await this.getActiveKpis(tenantId);
-    const skuKpis = kpis.filter(k => k.calculationLevel === CalculationLevel.SKU);
-    
+    const skuKpis = kpis.filter(
+      (k) => k.calculationLevel === CalculationLevel.SKU,
+    );
+
     const results: Record<string, CalculationResult> = {};
     const contextMap: Record<string, any> = { ...context };
 
@@ -56,14 +63,22 @@ export class KpiEngineService {
     for (const kpi of skuKpis) {
       const formula = this.getOrParseFormula(kpi);
       const value = formula.execute(contextMap);
-      
+
       // Store in context for dependent KPIs
       contextMap[kpi.kpiCode] = value;
 
       // Determine RAG status if thresholds defined
       let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-      if (kpi.ragGreenThreshold !== undefined && kpi.ragGreenThreshold !== null && value !== null) {
-        ragStatus = this.determineRagStatus(value, kpi.ragGreenThreshold, kpi.ragAmberThreshold);
+      if (
+        kpi.ragGreenThreshold !== undefined &&
+        kpi.ragGreenThreshold !== null &&
+        value !== null
+      ) {
+        ragStatus = this.determineRagStatus(
+          value,
+          kpi.ragGreenThreshold,
+          kpi.ragAmberThreshold,
+        );
       }
 
       results[kpi.kpiCode] = {
@@ -93,18 +108,25 @@ export class KpiEngineService {
       if (kpi.calculationLevel === CalculationLevel.SKU) {
         // Aggregate SKU values to FU using aggregation method
         const values = skuResults
-          .map(sr => sr[kpi.kpiCode]?.value)
+          .map((sr) => sr[kpi.kpiCode]?.value)
           .filter((v): v is number => v !== null && v !== undefined);
 
-        const aggregated = this.aggregate(values, kpi.aggregationMethodFu || AggregationMethod.SUM);
+        const aggregated = this.aggregate(
+          values,
+          kpi.aggregationMethodFu || AggregationMethod.SUM,
+        );
 
         let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (kpi.ragGreenThreshold !== undefined && kpi.ragGreenThreshold !== null && aggregated !== null) {
+        if (
+          kpi.ragGreenThreshold !== undefined &&
+          kpi.ragGreenThreshold !== null &&
+          aggregated !== null
+        ) {
           // FU RAG: use worst-case from SKUs
           const skuRags = skuResults
-            .map(sr => sr[kpi.kpiCode]?.ragStatus)
+            .map((sr) => sr[kpi.kpiCode]?.ragStatus)
             .filter(Boolean) as string[];
-          
+
           if (skuRags.includes('RED')) ragStatus = 'RED';
           else if (skuRags.includes('AMBER')) ragStatus = 'AMBER';
           else if (skuRags.length > 0) ragStatus = 'GREEN';
@@ -120,7 +142,7 @@ export class KpiEngineService {
       } else if (kpi.calculationLevel === CalculationLevel.FU) {
         // FU-level KPIs (calculated from aggregated SKU values + tactics)
         const contextMap: Record<string, any> = { ...tactics };
-        
+
         // Add aggregated SKU values to context
         for (const [code, result] of Object.entries(results)) {
           contextMap[code] = result.value;
@@ -130,8 +152,16 @@ export class KpiEngineService {
         const value = formula.execute(contextMap);
 
         let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (kpi.ragGreenThreshold !== undefined && kpi.ragGreenThreshold !== null && value !== null) {
-          ragStatus = this.determineRagStatus(value, kpi.ragGreenThreshold, kpi.ragAmberThreshold);
+        if (
+          kpi.ragGreenThreshold !== undefined &&
+          kpi.ragGreenThreshold !== null &&
+          value !== null
+        ) {
+          ragStatus = this.determineRagStatus(
+            value,
+            kpi.ragGreenThreshold,
+            kpi.ragAmberThreshold,
+          );
         }
 
         results[kpi.kpiCode] = {
@@ -161,7 +191,7 @@ export class KpiEngineService {
       if (kpi.calculationLevel === CalculationLevel.PLAN) {
         // Plan-level KPIs get aggregated FU values as context
         const contextMap: Record<string, any> = {};
-        
+
         // Sum all FU values for each KPI
         for (const fuResult of fuResults) {
           for (const [code, result] of Object.entries(fuResult)) {
@@ -174,8 +204,16 @@ export class KpiEngineService {
         const value = formula.execute(contextMap);
 
         let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (kpi.ragGreenThreshold !== undefined && kpi.ragGreenThreshold !== null && value !== null) {
-          ragStatus = this.determineRagStatus(value, kpi.ragGreenThreshold, kpi.ragAmberThreshold);
+        if (
+          kpi.ragGreenThreshold !== undefined &&
+          kpi.ragGreenThreshold !== null &&
+          value !== null
+        ) {
+          ragStatus = this.determineRagStatus(
+            value,
+            kpi.ragGreenThreshold,
+            kpi.ragAmberThreshold,
+          );
         }
 
         results[kpi.kpiCode] = {
@@ -188,17 +226,20 @@ export class KpiEngineService {
       } else {
         // Aggregate from FU level
         const values = fuResults
-          .map(fr => fr[kpi.kpiCode]?.value)
+          .map((fr) => fr[kpi.kpiCode]?.value)
           .filter((v): v is number => v !== null && v !== undefined);
 
-        const aggregated = this.aggregate(values, kpi.aggregationMethodFu || AggregationMethod.SUM);
+        const aggregated = this.aggregate(
+          values,
+          kpi.aggregationMethodFu || AggregationMethod.SUM,
+        );
 
         // Plan RAG: aggregate from FU RAGs
         let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
         const fuRags = fuResults
-          .map(fr => fr[kpi.kpiCode]?.ragStatus)
+          .map((fr) => fr[kpi.kpiCode]?.ragStatus)
           .filter(Boolean) as string[];
-        
+
         if (fuRags.includes('RED')) ragStatus = 'RED';
         else if (fuRags.includes('AMBER')) ragStatus = 'AMBER';
         else if (fuRags.length > 0) ragStatus = 'GREEN';
@@ -224,10 +265,18 @@ export class KpiEngineService {
     greenThreshold?: number,
     amberThreshold?: number,
   ): 'RED' | 'AMBER' | 'GREEN' {
-    if (greenThreshold !== undefined && greenThreshold !== null && value >= Number(greenThreshold)) {
+    if (
+      greenThreshold !== undefined &&
+      greenThreshold !== null &&
+      value >= Number(greenThreshold)
+    ) {
       return 'GREEN';
     }
-    if (amberThreshold !== undefined && amberThreshold !== null && value >= Number(amberThreshold)) {
+    if (
+      amberThreshold !== undefined &&
+      amberThreshold !== null &&
+      value >= Number(amberThreshold)
+    ) {
       return 'AMBER';
     }
     return 'RED';
@@ -236,7 +285,10 @@ export class KpiEngineService {
   /**
    * Aggregate an array of values using specified method
    */
-  private aggregate(values: number[], method: AggregationMethod): number | null {
+  private aggregate(
+    values: number[],
+    method: AggregationMethod,
+  ): number | null {
     if (values.length === 0) return null;
 
     switch (method) {
@@ -261,9 +313,12 @@ export class KpiEngineService {
    */
   private getOrParseFormula(kpi: Kpi): ParsedFormula {
     const cacheKey = `${kpi.id}:${kpi.formulaText}`;
-    
+
     if (!this.formulaCache.has(cacheKey)) {
-      const formula = this.formulaParser.parseFormula(kpi.formulaText, kpi.formulaType);
+      const formula = this.formulaParser.parseFormula(
+        kpi.formulaText,
+        kpi.formulaType,
+      );
       this.formulaCache.set(cacheKey, formula);
     }
 
@@ -276,7 +331,7 @@ export class KpiEngineService {
   private async getActiveKpis(tenantId: string): Promise<Kpi[]> {
     // Simple cache with 60-second TTL
     const cacheKey = `kpis:${tenantId}`;
-    
+
     if (!this.kpiCache.has(cacheKey)) {
       const kpis = await this.kpiRepo.find({
         where: { tenantId, isActive: true },

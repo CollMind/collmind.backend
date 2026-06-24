@@ -6,7 +6,7 @@ import { Category } from './category.entity';
 
 /**
  * User Scope Entity
- * 
+ *
  * Maps users to their authorized CPLs and Categories
  * Rule: Planner → sadece yetkili CPL + Category görür
  */

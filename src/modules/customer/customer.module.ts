@@ -13,4 +13,3 @@ import { Customer } from '../../database/entities/customer.entity';
   exports: [CustomerService, CustomerRepository],
 })
 export class CustomerModule {}
-

@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateNotifications1704067620000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -218,10 +224,17 @@ export class CreateNotifications1704067620000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropTable('main.notifications', true);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."notifications_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."notifications_channel_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."notifications_priority_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."notifications_status_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."notifications_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."notifications_channel_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."notifications_priority_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."notifications_status_enum"`,
+    );
   }
 }
-

@@ -1,10 +1,15 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { UserRole } from '../../database/entities/user.entity';
 
 /**
  * EA-001: Admin Role Restrictions Guard
- * 
+ *
  * Prevents admins from:
  * - Approving agreements they created
  * - Bypassing approval workflows
@@ -42,16 +47,20 @@ export class AdminRestrictionsGuard implements CanActivate {
     }
 
     // EA-001: Admins CANNOT create agreements (must use Planner role)
-    if ((methodName.includes('create') || route.includes('/create')) && 
-        (route.includes('/agreement') || route.includes('/agreements'))) {
+    if (
+      (methodName.includes('create') || route.includes('/create')) &&
+      (route.includes('/agreement') || route.includes('/agreements'))
+    ) {
       throw new ForbiddenException(
         'Admins cannot create agreements. Please use Planner role for this action.',
       );
     }
 
     // EA-001: Admins CANNOT commit budget (Finance role required)
-    if ((methodName.includes('commit') || route.includes('/commit')) && 
-        route.includes('/budget')) {
+    if (
+      (methodName.includes('commit') || route.includes('/commit')) &&
+      route.includes('/budget')
+    ) {
       throw new ForbiddenException(
         'Admins cannot commit budget. Finance role is required for this action.',
       );
@@ -60,5 +69,3 @@ export class AdminRestrictionsGuard implements CanActivate {
     return true;
   }
 }
-
-

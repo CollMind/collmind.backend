@@ -19,8 +19,21 @@ export class FormulaParserService {
 
   // Known function names to exclude from variable extraction
   private readonly FUNCTION_NAMES = new Set([
-    'IF', 'SUM', 'AVG', 'MIN', 'MAX', 'ABS', 'ROUND', 'FLOOR', 'CEIL',
-    'AND', 'OR', 'NOT', 'TRUE', 'FALSE', 'NULL',
+    'IF',
+    'SUM',
+    'AVG',
+    'MIN',
+    'MAX',
+    'ABS',
+    'ROUND',
+    'FLOOR',
+    'CEIL',
+    'AND',
+    'OR',
+    'NOT',
+    'TRUE',
+    'FALSE',
+    'NULL',
   ]);
 
   /**
@@ -68,7 +81,10 @@ export class FormulaParserService {
   /**
    * Validate a formula string
    */
-  validateFormula(formula: string, formulaType: string): FormulaValidationResult {
+  validateFormula(
+    formula: string,
+    formulaType: string,
+  ): FormulaValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
 
@@ -78,7 +94,17 @@ export class FormulaParserService {
     }
 
     // Check for dangerous patterns
-    const dangerousPatterns = ['eval', 'require', 'import', 'process', 'global', 'window', 'document', 'fetch', 'XMLHttpRequest'];
+    const dangerousPatterns = [
+      'eval',
+      'require',
+      'import',
+      'process',
+      'global',
+      'window',
+      'document',
+      'fetch',
+      'XMLHttpRequest',
+    ];
     for (const pattern of dangerousPatterns) {
       if (formula.toLowerCase().includes(pattern)) {
         errors.push(`Güvenlik: "${pattern}" kullanılamaz`);
@@ -121,7 +147,10 @@ export class FormulaParserService {
   /**
    * Parse a mathematical expression formula
    */
-  private parseExpression(formula: string, dependencies: string[]): ParsedFormula {
+  private parseExpression(
+    formula: string,
+    dependencies: string[],
+  ): ParsedFormula {
     return {
       type: 'expression',
       dependencies,
@@ -139,12 +168,17 @@ export class FormulaParserService {
           for (const dep of dependencies) {
             const value = Number(context[dep]);
             if (isNaN(value)) return null;
-            expression = expression.replace(new RegExp(`\\b${dep}\\b`, 'g'), String(value));
+            expression = expression.replace(
+              new RegExp(`\\b${dep}\\b`, 'g'),
+              String(value),
+            );
           }
 
           return this.safeEval(expression);
         } catch (error) {
-          this.logger.warn(`Expression evaluation error for "${formula}": ${error}`);
+          this.logger.warn(
+            `Expression evaluation error for "${formula}": ${error}`,
+          );
           return null;
         }
       },
@@ -155,7 +189,10 @@ export class FormulaParserService {
   /**
    * Parse a conditional (IF) formula
    */
-  private parseConditional(formula: string, dependencies: string[]): ParsedFormula {
+  private parseConditional(
+    formula: string,
+    dependencies: string[],
+  ): ParsedFormula {
     return {
       type: 'conditional',
       dependencies,
@@ -173,12 +210,17 @@ export class FormulaParserService {
           for (const dep of dependencies) {
             const value = Number(context[dep]);
             if (isNaN(value)) return null;
-            expression = expression.replace(new RegExp(`\\b${dep}\\b`, 'g'), String(value));
+            expression = expression.replace(
+              new RegExp(`\\b${dep}\\b`, 'g'),
+              String(value),
+            );
           }
 
           return this.evaluateConditional(expression);
         } catch (error) {
-          this.logger.warn(`Conditional evaluation error for "${formula}": ${error}`);
+          this.logger.warn(
+            `Conditional evaluation error for "${formula}": ${error}`,
+          );
           return null;
         }
       },
@@ -200,7 +242,10 @@ export class FormulaParserService {
       }
 
       // Division by zero check
-      if (/\/\s*0(?:\.\s*0*)?(?:[^0-9.]|$)/.test(sanitized) || /\/0$/.test(sanitized)) {
+      if (
+        /\/\s*0(?:\.\s*0*)?(?:[^0-9.]|$)/.test(sanitized) ||
+        /\/0$/.test(sanitized)
+      ) {
         return null;
       }
 
@@ -222,8 +267,9 @@ export class FormulaParserService {
    */
   private evaluateConditional(expression: string): any {
     // Handle nested IF statements
-    const ifPattern = /IF\s*\(([^,]+),\s*([^,)]+(?:\([^)]*\))?),\s*([^)]+(?:\([^)]*\))?)\)/i;
-    
+    const ifPattern =
+      /IF\s*\(([^,]+),\s*([^,)]+(?:\([^)]*\))?),\s*([^)]+(?:\([^)]*\))?)\)/i;
+
     let result = expression;
     let maxIterations = 10;
 
@@ -238,7 +284,7 @@ export class FormulaParserService {
 
     // Clean up string quotes
     result = result.replace(/^'|'$/g, '').replace(/^"|"$/g, '');
-    
+
     // Try to convert to number if possible
     const numResult = Number(result);
     return isNaN(numResult) ? result : numResult;
@@ -263,13 +309,20 @@ export class FormulaParserService {
     if (left === null || right === null) return false;
 
     switch (match[2]) {
-      case '>=': return left >= right;
-      case '<=': return left <= right;
-      case '>': return left > right;
-      case '<': return left < right;
-      case '==': return left === right;
-      case '!=': return left !== right;
-      default: return false;
+      case '>=':
+        return left >= right;
+      case '<=':
+        return left <= right;
+      case '>':
+        return left > right;
+      case '<':
+        return left < right;
+      case '==':
+        return left === right;
+      case '!=':
+        return left !== right;
+      default:
+        return false;
     }
   }
 }

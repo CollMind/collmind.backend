@@ -23,7 +23,10 @@ export class ChannelService {
     userEmail?: string,
     ipAddress?: string,
   ): Promise<Channel> {
-    const existing = await this.channelRepository.findByCode(tenantId, createChannelDto.code);
+    const existing = await this.channelRepository.findByCode(
+      tenantId,
+      createChannelDto.code,
+    );
     if (existing) {
       throw new ConflictException('Channel with this code already exists');
     }
@@ -81,10 +84,17 @@ export class ChannelService {
     ipAddress?: string,
   ): Promise<Channel> {
     const channel = await this.findOne(tenantId, id);
-    const beforeValues = { code: channel.code, name: channel.name, isActive: channel.isActive };
+    const beforeValues = {
+      code: channel.code,
+      name: channel.name,
+      isActive: channel.isActive,
+    };
 
     if (updateChannelDto.code && updateChannelDto.code !== channel.code) {
-      const existing = await this.channelRepository.findByCode(tenantId, updateChannelDto.code);
+      const existing = await this.channelRepository.findByCode(
+        tenantId,
+        updateChannelDto.code,
+      );
       if (existing && existing.id !== id) {
         throw new ConflictException('Channel with this code already exists');
       }
@@ -105,7 +115,11 @@ export class ChannelService {
         ipAddress,
         'SUCCESS',
         beforeValues,
-        { code: savedChannel.code, name: savedChannel.name, isActive: savedChannel.isActive },
+        {
+          code: savedChannel.code,
+          name: savedChannel.name,
+          isActive: savedChannel.isActive,
+        },
       );
     }
 

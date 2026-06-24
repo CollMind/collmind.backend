@@ -107,7 +107,13 @@ export class Customer extends BaseEntity {
   @Column({ name: 'payment_terms', length: 50, nullable: true })
   paymentTerms?: string; // NET30, NET60, etc.
 
-  @Column({ name: 'credit_limit', type: 'decimal', precision: 15, scale: 2, nullable: true })
+  @Column({
+    name: 'credit_limit',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    nullable: true,
+  })
   creditLimit?: number;
 
   @Column({ length: 3, default: 'TRY' })
@@ -133,7 +139,13 @@ export class Customer extends BaseEntity {
   businessSize?: string; // Small, Medium, Large
 
   // Financial
-  @Column({ name: 'annual_revenue', type: 'decimal', precision: 15, scale: 2, nullable: true })
+  @Column({
+    name: 'annual_revenue',
+    type: 'decimal',
+    precision: 15,
+    scale: 2,
+    nullable: true,
+  })
   annualRevenue?: number;
 
   @Column({ name: 'last_order_date', type: 'date', nullable: true })
@@ -188,4 +200,3 @@ export class Customer extends BaseEntity {
   @JoinColumn({ name: 'cpl_id' })
   cpl?: Cpl;
 }
-

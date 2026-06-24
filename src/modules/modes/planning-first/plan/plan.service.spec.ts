@@ -7,7 +7,12 @@ import { PlanRepository } from './plan.repository';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
-import { Plan, PlanStatus, PlanFu, PlanSku } from '../../../../database/entities/plan.entity';
+import {
+  Plan,
+  PlanStatus,
+  PlanFu,
+  PlanSku,
+} from '../../../../database/entities/plan.entity';
 import { ForecastingUnit } from '../../../../database/entities/forecasting-unit.entity';
 import { Sku } from '../../../../database/entities/sku.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
@@ -143,7 +148,9 @@ describe('PlanService', () => {
       };
 
       planRepo.findById.mockResolvedValue(planWithFus as Plan);
-      approvalService.createRequest.mockResolvedValue(mockApprovalRequest as any);
+      approvalService.createRequest.mockResolvedValue(
+        mockApprovalRequest as any,
+      );
       planRepo.updateStatus.mockResolvedValue({
         ...planWithFus,
         status: PlanStatus.PENDING_APPROVAL,
@@ -178,17 +185,17 @@ describe('PlanService', () => {
         status: PlanStatus.PENDING_APPROVAL,
       } as Plan);
 
-      await expect(service.submit(mockPlanId, mockTenantId, mockUserId)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.submit(mockPlanId, mockTenantId, mockUserId),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should fail if plan has no FUs', async () => {
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
 
-      await expect(service.submit(mockPlanId, mockTenantId, mockUserId)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.submit(mockPlanId, mockTenantId, mockUserId),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -212,7 +219,9 @@ describe('PlanService', () => {
       };
 
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
-      budgetService.findEnvelopeByDimensions.mockResolvedValue(mockEnvelope as any);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(
+        mockEnvelope as any,
+      );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
 
       const result = await service.checkBudget(mockPlanId, mockTenantId);
@@ -249,7 +258,9 @@ describe('PlanService', () => {
       };
 
       planRepo.findById.mockResolvedValue(pendingPlan as Plan);
-      budgetService.findEnvelopeByDimensions.mockResolvedValue(mockEnvelope as any);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(
+        mockEnvelope as any,
+      );
       budgetService.reserveForPlan.mockResolvedValue({} as any);
       approvalService.approve.mockResolvedValue({} as any);
       planRepo.updateStatus.mockResolvedValue({
@@ -259,7 +270,12 @@ describe('PlanService', () => {
         approvedById: mockUserId,
       } as Plan);
 
-      const result = await service.approve(mockPlanId, mockTenantId, mockUserId, 'Comments');
+      const result = await service.approve(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        'Comments',
+      );
 
       expect(result.status).toBe(PlanStatus.APPROVED);
       expect(budgetService.reserveForPlan).toHaveBeenCalled();
@@ -272,9 +288,9 @@ describe('PlanService', () => {
         status: PlanStatus.DRAFT,
       } as Plan);
 
-      await expect(service.approve(mockPlanId, mockTenantId, mockUserId)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.approve(mockPlanId, mockTenantId, mockUserId),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -296,7 +312,12 @@ describe('PlanService', () => {
         rejectionReason: 'Budget insufficient',
       } as Plan);
 
-      const result = await service.reject(mockPlanId, mockTenantId, mockUserId, 'Budget insufficient');
+      const result = await service.reject(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        'Budget insufficient',
+      );
 
       expect(result.status).toBe(PlanStatus.REJECTED);
       expect(approvalService.reject).toHaveBeenCalled();

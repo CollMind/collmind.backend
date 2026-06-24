@@ -59,8 +59,10 @@ async function bootstrap() {
 
     const port = process.env.PORT || 8080;
     // Use '0.0.0.0' for production/containers, 'localhost' for local development
-    const host = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
-    const displayHost = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+    const host =
+      process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+    const displayHost =
+      process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
     console.log(`==========================================`);
     console.log(`Starting server on port ${port}...`);
     console.log(`==========================================`);
@@ -69,20 +71,22 @@ async function bootstrap() {
     console.log(`✅ Swagger documentation: http://${displayHost}:${port}/api`);
     console.log(`✅ Health check: http://${displayHost}:${port}/`);
     console.log(`==========================================`);
-    console.log(`ℹ️  Note: Migrations should be run separately using: npm run migration:run:prod`);
+    console.log(
+      `ℹ️  Note: Migrations should be run separately using: npm run migration:run:prod`,
+    );
   } catch (error) {
     console.error('==========================================');
     console.error('❌ Fatal error during bootstrap:', error);
-    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error(
+      'Error stack:',
+      error instanceof Error ? error.stack : 'No stack trace',
+    );
     console.error('==========================================');
     throw error;
   }
 }
 
-
 bootstrap().catch((error) => {
   console.error('Failed to start application:', error);
   process.exit(1);
 });
-
-

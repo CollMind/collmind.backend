@@ -72,4 +72,3 @@ export class CreateUserDto {
   @IsOptional()
   permissions?: string[];
 }
-

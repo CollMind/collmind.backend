@@ -35,11 +35,17 @@ describe('Mechanic Entity', () => {
   it('should support optional fields', () => {
     const mechanic = new Mechanic();
     mechanic.calculationFormula = 'volume * price * 0.1';
-    mechanic.applicabilityRules = { channels: ['NKA'], categories: ['HAIR_CARE'] };
+    mechanic.applicabilityRules = {
+      channels: ['NKA'],
+      categories: ['HAIR_CARE'],
+    };
     mechanic.inputConstraints = { min: 0, max: 100, step: 0.5 };
 
     expect(mechanic.calculationFormula).toBe('volume * price * 0.1');
-    expect(mechanic.applicabilityRules).toEqual({ channels: ['NKA'], categories: ['HAIR_CARE'] });
+    expect(mechanic.applicabilityRules).toEqual({
+      channels: ['NKA'],
+      categories: ['HAIR_CARE'],
+    });
     expect(mechanic.inputConstraints).toEqual({ min: 0, max: 100, step: 0.5 });
   });
 

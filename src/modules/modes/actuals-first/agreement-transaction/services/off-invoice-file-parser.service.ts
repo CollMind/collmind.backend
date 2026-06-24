@@ -21,7 +21,9 @@ export class OffInvoiceFileParserService {
     try {
       // Dosya boyutu kontrolü
       if (file.buffer.length > this.MAX_FILE_SIZE) {
-        throw new BadRequestException('Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.');
+        throw new BadRequestException(
+          'Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.',
+        );
       }
 
       const workbook = XLSX.read(file.buffer, {
@@ -54,7 +56,9 @@ export class OffInvoiceFileParserService {
       }
 
       if (data.length > this.MAX_ROWS) {
-        throw new BadRequestException(`Excel dosyası çok fazla satır içeriyor. Maksimum ${this.MAX_ROWS} satır işlenebilir.`);
+        throw new BadRequestException(
+          `Excel dosyası çok fazla satır içeriyor. Maksimum ${this.MAX_ROWS} satır işlenebilir.`,
+        );
       }
 
       return this.mapToTransactionDtos(data);
@@ -62,7 +66,8 @@ export class OffInvoiceFileParserService {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Bilinmeyen hata';
       throw new BadRequestException(`Excel dosyası okunamadı: ${errorMessage}`);
     }
   }
@@ -70,7 +75,9 @@ export class OffInvoiceFileParserService {
   async parseCSV(file: Express.Multer.File): Promise<ParsedOffInvoiceRow[]> {
     try {
       if (file.buffer.length > this.MAX_FILE_SIZE) {
-        throw new BadRequestException('Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.');
+        throw new BadRequestException(
+          'Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.',
+        );
       }
 
       let rowCount = 0;
@@ -85,7 +92,11 @@ export class OffInvoiceFileParserService {
             rowCount++;
             if (rowCount > this.MAX_ROWS) {
               stream.destroy();
-              reject(new BadRequestException(`CSV dosyası çok fazla satır içeriyor. Maksimum ${this.MAX_ROWS} satır işlenebilir.`));
+              reject(
+                new BadRequestException(
+                  `CSV dosyası çok fazla satır içeriyor. Maksimum ${this.MAX_ROWS} satır işlenebilir.`,
+                ),
+              );
               return;
             }
             results.push(data);
@@ -102,20 +113,29 @@ export class OffInvoiceFileParserService {
                 reject(error);
                 return;
               }
-              const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-              reject(new BadRequestException(`CSV dosyası işlenemedi: ${errorMessage}`));
+              const errorMessage =
+                error instanceof Error ? error.message : 'Bilinmeyen hata';
+              reject(
+                new BadRequestException(
+                  `CSV dosyası işlenemedi: ${errorMessage}`,
+                ),
+              );
             }
           })
           .on('error', (error: Error) => {
-            const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-            reject(new BadRequestException(`CSV dosyası okunamadı: ${errorMessage}`));
+            const errorMessage =
+              error instanceof Error ? error.message : 'Bilinmeyen hata';
+            reject(
+              new BadRequestException(`CSV dosyası okunamadı: ${errorMessage}`),
+            );
           });
       });
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Bilinmeyen hata';
       throw new BadRequestException(`CSV dosyası işlenemedi: ${errorMessage}`);
     }
   }
@@ -128,35 +148,55 @@ export class OffInvoiceFileParserService {
       }))
       .filter((row) => {
         // Boş satırları filtrele - en azından agreement_id veya invoice_no olmalı
-        return row.agreement_id || row.agreementId || row.Agreement_ID || row.AgreementId || 
-               row.invoice_no || row.invoiceNo || row.Invoice_No || row.InvoiceNo;
+        return (
+          row.agreement_id ||
+          row.agreementId ||
+          row.Agreement_ID ||
+          row.AgreementId ||
+          row.invoice_no ||
+          row.invoiceNo ||
+          row.Invoice_No ||
+          row.InvoiceNo
+        );
       })
       .map((row) => {
         const dto: CreateAgreementTransactionDto = {
           agreementId: this.getStringValue(
-            row.agreement_id || row.agreementId || row.Agreement_ID || row.AgreementId
+            row.agreement_id ||
+              row.agreementId ||
+              row.Agreement_ID ||
+              row.AgreementId,
           ),
           invoiceNo: this.getStringValue(
-            row.invoice_no || row.invoiceNo || row.Invoice_No || row.InvoiceNo
+            row.invoice_no || row.invoiceNo || row.Invoice_No || row.InvoiceNo,
           ),
           invoiceDate: this.getDateValue(
-            row.invoice_date || row.invoiceDate || row.Invoice_Date || row.InvoiceDate
+            row.invoice_date ||
+              row.invoiceDate ||
+              row.Invoice_Date ||
+              row.InvoiceDate,
           ),
-          amount: this.getNumberValue(
-            row.amount || row.Amount || row.AMOUNT
-          ),
-          currency: this.getOptionalString(
-            row.currency || row.Currency || row.CURRENCY
-          ) || 'TRY',
+          amount: this.getNumberValue(row.amount || row.Amount || row.AMOUNT),
+          currency:
+            this.getOptionalString(
+              row.currency || row.Currency || row.CURRENCY,
+            ) || 'TRY',
           notes: this.getOptionalString(
-            row.description || row.Description || row.DESCRIPTION || 
-            row.notes || row.Notes || row.NOTES
+            row.description ||
+              row.Description ||
+              row.DESCRIPTION ||
+              row.notes ||
+              row.Notes ||
+              row.NOTES,
           ),
         };
 
         // Fiscal period (YYYY-MM formatında)
         const fiscalPeriod = this.getFiscalPeriod(
-          row.fiscal_period || row.fiscalPeriod || row.Fiscal_Period || row.FiscalPeriod
+          row.fiscal_period ||
+            row.fiscalPeriod ||
+            row.Fiscal_Period ||
+            row.FiscalPeriod,
         );
 
         return {
@@ -189,7 +229,9 @@ export class OffInvoiceFileParserService {
       throw new BadRequestException(`Geçersiz amount değeri: ${value}`);
     }
     if (num <= 0) {
-      throw new BadRequestException(`Amount değeri pozitif olmalıdır: ${value}`);
+      throw new BadRequestException(
+        `Amount değeri pozitif olmalıdır: ${value}`,
+      );
     }
     return num;
   }
@@ -209,9 +251,11 @@ export class OffInvoiceFileParserService {
     // String tarih formatlarını dene
     const str = String(value).trim();
     const date = new Date(str);
-    
+
     if (isNaN(date.getTime())) {
-      throw new BadRequestException(`Geçersiz tarih formatı: ${value}. YYYY-MM-DD formatında olmalıdır.`);
+      throw new BadRequestException(
+        `Geçersiz tarih formatı: ${value}. YYYY-MM-DD formatında olmalıdır.`,
+      );
     }
 
     // YYYY-MM-DD formatına çevir
@@ -223,9 +267,9 @@ export class OffInvoiceFileParserService {
 
   private getFiscalPeriod(value: any): string | undefined {
     if (value === null || value === undefined || value === '') return undefined;
-    
+
     const str = String(value).trim();
-    
+
     // YYYY-MM formatını kontrol et
     const fiscalPeriodRegex = /^\d{4}-\d{2}$/;
     if (fiscalPeriodRegex.test(str)) {
@@ -236,7 +280,7 @@ export class OffInvoiceFileParserService {
         return str;
       }
     }
-    
+
     // Excel serial date ise çevir
     if (typeof value === 'number') {
       const excelEpoch = new Date(1899, 11, 30);
@@ -263,13 +307,62 @@ export class OffInvoiceFileParserService {
   generateExcelTemplate(): Buffer {
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.aoa_to_sheet([
-      ['agreement_id', 'invoice_no', 'invoice_date', 'fiscal_period', 'amount', 'description'],
-      ['LTA-2026-GS-001', 'FF-Q1-001', '2026-01-15', '2026-01', '7250.00', 'Q1 Settlement - Price Difference Invoice'],
-      ['LTA-2026-GS-001', 'FF-Q1-002', '2026-01-20', '2026-01', '3500.00', 'Display Fee - January'],
-      ['LTA-2026-MK-002', 'FF-Q1-003', '2026-01-25', '2026-01', '12000.00', 'Turnover Bonus - Q1'],
-      ['STA-2026-CF-003', 'FTR-2026-001', '2026-01-10', '2026-01', '8500.00', 'Rebate Settlement'],
-      ['LTA-2026-GS-001', 'FF-Q1-004', '2026-01-30', '2026-01', '5500.00', 'Listing Fee - January'],
-      ['STA-2026-MK-004', 'FTR-2026-002', '2026-01-12', '2026-01', '6200.00', 'Co-op Advertising Fee'],
+      [
+        'agreement_id',
+        'invoice_no',
+        'invoice_date',
+        'fiscal_period',
+        'amount',
+        'description',
+      ],
+      [
+        'LTA-2026-GS-001',
+        'FF-Q1-001',
+        '2026-01-15',
+        '2026-01',
+        '7250.00',
+        'Q1 Settlement - Price Difference Invoice',
+      ],
+      [
+        'LTA-2026-GS-001',
+        'FF-Q1-002',
+        '2026-01-20',
+        '2026-01',
+        '3500.00',
+        'Display Fee - January',
+      ],
+      [
+        'LTA-2026-MK-002',
+        'FF-Q1-003',
+        '2026-01-25',
+        '2026-01',
+        '12000.00',
+        'Turnover Bonus - Q1',
+      ],
+      [
+        'STA-2026-CF-003',
+        'FTR-2026-001',
+        '2026-01-10',
+        '2026-01',
+        '8500.00',
+        'Rebate Settlement',
+      ],
+      [
+        'LTA-2026-GS-001',
+        'FF-Q1-004',
+        '2026-01-30',
+        '2026-01',
+        '5500.00',
+        'Listing Fee - January',
+      ],
+      [
+        'STA-2026-MK-004',
+        'FTR-2026-002',
+        '2026-01-12',
+        '2026-01',
+        '6200.00',
+        'Co-op Advertising Fee',
+      ],
     ]);
 
     // Kolon genişliklerini ayarla
@@ -283,7 +376,7 @@ export class OffInvoiceFileParserService {
     ];
 
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Off-Invoice');
-    
+
     return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
   }
 

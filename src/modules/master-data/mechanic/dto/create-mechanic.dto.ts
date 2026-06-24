@@ -26,7 +26,10 @@ import {
 } from '../../../../database/entities/mechanic.entity';
 
 export class CreateMechanicDto {
-  @ApiProperty({ description: 'Mechanic code (uppercase, alphanumeric with underscores)', example: 'CPP_ON_INV' })
+  @ApiProperty({
+    description: 'Mechanic code (uppercase, alphanumeric with underscores)',
+    example: 'CPP_ON_INV',
+  })
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
@@ -38,11 +41,15 @@ export class CreateMechanicDto {
     return value;
   })
   @Matches(/^[A-Z][A-Z0-9_]*$/, {
-    message: 'Mechanic code must start with uppercase letter and contain only uppercase letters, numbers, and underscores',
+    message:
+      'Mechanic code must start with uppercase letter and contain only uppercase letters, numbers, and underscores',
   })
   code!: string;
 
-  @ApiProperty({ description: 'Mechanic display name', example: 'CPP On-Invoice %' })
+  @ApiProperty({
+    description: 'Mechanic display name',
+    example: 'CPP On-Invoice %',
+  })
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
@@ -62,7 +69,10 @@ export class CreateMechanicDto {
   @IsEnum(MechanicType)
   mechanicType!: MechanicType;
 
-  @ApiPropertyOptional({ description: 'Mechanic category', enum: MechanicCategory })
+  @ApiPropertyOptional({
+    description: 'Mechanic category',
+    enum: MechanicCategory,
+  })
   @IsEnum(MechanicCategory)
   @IsOptional()
   category?: MechanicCategory;
@@ -100,14 +110,21 @@ export class CreateMechanicDto {
   @IsOptional()
   stepIncrement?: number;
 
-  @ApiPropertyOptional({ description: 'Decimal places for display', minimum: 0, maximum: 4 })
+  @ApiPropertyOptional({
+    description: 'Decimal places for display',
+    minimum: 0,
+    maximum: 4,
+  })
   @IsNumber()
   @IsOptional()
   @Min(0)
   @Max(4)
   decimalPlaces?: number;
 
-  @ApiPropertyOptional({ description: 'Unit symbol (%, $, pcs, etc.)', example: '%' })
+  @ApiPropertyOptional({
+    description: 'Unit symbol (%, $, pcs, etc.)',
+    example: '%',
+  })
   @IsString()
   @IsOptional()
   @MaxLength(10)
@@ -122,11 +139,17 @@ export class CreateMechanicDto {
   @IsOptional()
   calculationFormula?: string;
 
-  @ApiPropertyOptional({ description: 'Available formula variables', type: 'object' })
+  @ApiPropertyOptional({
+    description: 'Available formula variables',
+    type: 'object',
+  })
   @IsOptional()
   formulaVariables?: Record<string, any>;
 
-  @ApiPropertyOptional({ description: 'Test data for formula validation', type: 'object' })
+  @ApiPropertyOptional({
+    description: 'Test data for formula validation',
+    type: 'object',
+  })
   @IsOptional()
   testData?: Record<string, any>;
 
@@ -138,7 +161,9 @@ export class CreateMechanicDto {
   })
   @IsArray()
   @IsString({ each: true })
-  @ArrayMinSize(1, { message: 'At least one channel must be specified or use ["ALL"]' })
+  @ArrayMinSize(1, {
+    message: 'At least one channel must be specified or use ["ALL"]',
+  })
   @IsOptional()
   applicableChannels?: string[];
 
@@ -178,7 +203,10 @@ export class CreateMechanicDto {
   @IsOptional()
   gridColumnWidth?: number;
 
-  @ApiPropertyOptional({ description: 'Group header', example: 'On-Invoice Discounts' })
+  @ApiPropertyOptional({
+    description: 'Group header',
+    example: 'On-Invoice Discounts',
+  })
   @IsString()
   @IsOptional()
   @MaxLength(100)
@@ -200,7 +228,10 @@ export class CreateMechanicDto {
   @IsOptional()
   requiresApprovalThreshold?: number;
 
-  @ApiPropertyOptional({ description: 'Approval flow configuration', type: 'object' })
+  @ApiPropertyOptional({
+    description: 'Approval flow configuration',
+    type: 'object',
+  })
   @IsOptional()
   approvalFlow?: Record<string, any>;
 
@@ -215,7 +246,11 @@ export class CreateMechanicDto {
   @IsOptional()
   mutuallyExclusiveWith?: string[];
 
-  @ApiPropertyOptional({ description: 'Max combined discount percentage', minimum: 0, maximum: 100 })
+  @ApiPropertyOptional({
+    description: 'Max combined discount percentage',
+    minimum: 0,
+    maximum: 100,
+  })
   @IsNumber()
   @IsOptional()
   @Min(0)

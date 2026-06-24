@@ -1,4 +1,10 @@
-import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class CreateAdminAuditLogs1704067680000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -157,7 +163,8 @@ export class CreateAdminAuditLogs1704067680000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropTable('main.admin_audit_logs', true);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."admin_audit_logs_result_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."admin_audit_logs_result_enum"`,
+    );
   }
 }
-

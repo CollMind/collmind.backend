@@ -309,10 +309,16 @@ export class AddPromoMechanicsConfig1771201000000 implements MigrationInterface 
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Remove columns in reverse order
     await queryRunner.dropColumn('main.mechanics', 'combination_warnings');
-    await queryRunner.dropColumn('main.mechanics', 'max_combined_discount_percentage');
+    await queryRunner.dropColumn(
+      'main.mechanics',
+      'max_combined_discount_percentage',
+    );
     await queryRunner.dropColumn('main.mechanics', 'mutually_exclusive_with');
     await queryRunner.dropColumn('main.mechanics', 'approval_flow');
-    await queryRunner.dropColumn('main.mechanics', 'requires_approval_threshold');
+    await queryRunner.dropColumn(
+      'main.mechanics',
+      'requires_approval_threshold',
+    );
     await queryRunner.dropColumn('main.mechanics', 'budget_type');
     await queryRunner.dropColumn('main.mechanics', 'track_against_budget');
     await queryRunner.dropColumn('main.mechanics', 'group_header');
@@ -333,9 +339,17 @@ export class AddPromoMechanicsConfig1771201000000 implements MigrationInterface 
     await queryRunner.dropColumn('main.mechanics', 'category');
 
     // Drop enum types
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."mechanics_formula_validation_status_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."mechanics_budget_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."mechanics_input_type_enum"`);
-    await queryRunner.query(`DROP TYPE IF EXISTS "main"."mechanics_category_enum"`);
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."mechanics_formula_validation_status_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."mechanics_budget_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."mechanics_input_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE IF EXISTS "main"."mechanics_category_enum"`,
+    );
   }
 }

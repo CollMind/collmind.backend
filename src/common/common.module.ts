@@ -9,5 +9,3 @@ import { AdminAuditLog } from '../database/entities/admin-audit-log.entity';
   exports: [AdminAuditService],
 })
 export class CommonModule {}
-
-

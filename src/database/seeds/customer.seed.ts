@@ -21,8 +21,14 @@ const CHANNEL_CODE_TO_CUSTOMER: Record<
   { channel: CustomerChannel; type: CustomerType }
 > = {
   NKA: { channel: CustomerChannel.NKA, type: CustomerType.DIRECT },
-  DISTRIBUTOR: { channel: CustomerChannel.DISTRIBUTOR, type: CustomerType.DISTRIBUTOR },
-  E_COMMERCE: { channel: CustomerChannel.E_COMMERCE, type: CustomerType.DIRECT },
+  DISTRIBUTOR: {
+    channel: CustomerChannel.DISTRIBUTOR,
+    type: CustomerType.DISTRIBUTOR,
+  },
+  E_COMMERCE: {
+    channel: CustomerChannel.E_COMMERCE,
+    type: CustomerType.DIRECT,
+  },
 };
 
 export async function seedCustomers(
@@ -43,7 +49,9 @@ export async function seedCustomers(
   const created: Customer[] = [];
   for (const cpl of cpls) {
     const channelCode = channelCodeById.get(cpl.channelId);
-    const mapping = channelCode ? CHANNEL_CODE_TO_CUSTOMER[channelCode] : undefined;
+    const mapping = channelCode
+      ? CHANNEL_CODE_TO_CUSTOMER[channelCode]
+      : undefined;
     if (!mapping) {
       console.warn(
         `⚠️  CPL ${cpl.code} kanalı (${channelCode ?? cpl.channelId}) için müşteri eşlemesi yok, atlanıyor.`,
@@ -83,7 +91,9 @@ export async function seedCustomers(
       createdBy: createdByUserId,
     });
     created.push(await customerRepository.save(customer));
-    console.log(`✅ Created customer: ${customer.name} (${customer.code}) → CPL ${cpl.code}`);
+    console.log(
+      `✅ Created customer: ${customer.name} (${customer.code}) → CPL ${cpl.code}`,
+    );
   }
 
   console.log(`✅ Seeded ${created.length} customers (CPL-linked)`);

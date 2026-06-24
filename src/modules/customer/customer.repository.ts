@@ -9,7 +9,7 @@ export class CustomerRepository {
   constructor(
     @InjectRepository(Customer)
     private readonly repository: Repository<Customer>,
-  ) { }
+  ) {}
 
   async findByCode(tenantId: string, code: string): Promise<Customer | null> {
     return this.repository.findOne({ where: { tenantId, code } });
@@ -43,13 +43,16 @@ export class CustomerRepository {
   }
 
   async findWithFilters(tenantId: string, filters: CustomerFilterDto) {
-    const queryBuilder = this.repository.createQueryBuilder('customer')
+    const queryBuilder = this.repository
+      .createQueryBuilder('customer')
       .leftJoinAndSelect('customer.cpl', 'cpl')
       .where('customer.tenantId = :tenantId', { tenantId })
       .andWhere('customer.deletedAt IS NULL');
 
     if (filters.channel) {
-      queryBuilder.andWhere('customer.channel = :channel', { channel: filters.channel });
+      queryBuilder.andWhere('customer.channel = :channel', {
+        channel: filters.channel,
+      });
     }
 
     if (filters.city) {
@@ -57,19 +60,27 @@ export class CustomerRepository {
     }
 
     if (filters.region) {
-      queryBuilder.andWhere('customer.region = :region', { region: filters.region });
+      queryBuilder.andWhere('customer.region = :region', {
+        region: filters.region,
+      });
     }
 
     if (filters.status) {
-      queryBuilder.andWhere('customer.status = :status', { status: filters.status });
+      queryBuilder.andWhere('customer.status = :status', {
+        status: filters.status,
+      });
     }
 
     if (filters.tier) {
-      queryBuilder.andWhere('customer.customerTier = :tier', { tier: filters.tier });
+      queryBuilder.andWhere('customer.customerTier = :tier', {
+        tier: filters.tier,
+      });
     }
 
     if (filters.isVip !== undefined) {
-      queryBuilder.andWhere('customer.isVip = :isVip', { isVip: filters.isVip });
+      queryBuilder.andWhere('customer.isVip = :isVip', {
+        isVip: filters.isVip,
+      });
     }
 
     if (filters.search) {
@@ -108,7 +119,10 @@ export class CustomerRepository {
     });
   }
 
-  async findByChannelId(tenantId: string, channelId: string): Promise<Customer[]> {
+  async findByChannelId(
+    tenantId: string,
+    channelId: string,
+  ): Promise<Customer[]> {
     // First, get the channel to find its code
     const channel = await this.repository.manager
       .createQueryBuilder()
@@ -144,14 +158,20 @@ export class CustomerRepository {
     });
   }
 
-  async getCplList(tenantId: string, channel?: string, categoryId?: string): Promise<Array<{
-    id: string;
-    code: string;
-    name: string;
-    channel: string;
-    customerCount: number;
-    activeAgreementCount: number;
-  }>> {
+  async getCplList(
+    tenantId: string,
+    channel?: string,
+    categoryId?: string,
+  ): Promise<
+    Array<{
+      id: string;
+      code: string;
+      name: string;
+      channel: string;
+      customerCount: number;
+      activeAgreementCount: number;
+    }>
+  > {
     // Get distinct customers (CPLs) grouped by code
     const query = this.repository
       .createQueryBuilder('customer')
@@ -168,7 +188,10 @@ export class CustomerRepository {
 
     if (channel) {
       // Check if channel is a UUID (channelId) or an enum value
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(channel);
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          channel,
+        );
 
       if (isUuid) {
         // If it's a UUID, join with CPL table and filter by channelId
@@ -208,7 +231,10 @@ export class CustomerRepository {
           name: cpl.name,
           channel: cpl.channel,
           customerCount: customerCount || 0,
-          activeAgreementCount: parseInt(activeAgreementCount?.count || '0', 10),
+          activeAgreementCount: parseInt(
+            activeAgreementCount?.count || '0',
+            10,
+          ),
         };
       }),
     );
@@ -216,4 +242,3 @@ export class CustomerRepository {
     return result;
   }
 }
-

@@ -1,7 +1,17 @@
-import { IsOptional, IsEnum, IsString, IsBoolean, IsInt, Min } from 'class-validator';
+import {
+  IsOptional,
+  IsEnum,
+  IsString,
+  IsBoolean,
+  IsInt,
+  Min,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { CustomerChannel, CustomerStatus } from '../../../database/entities/customer.entity';
+import {
+  CustomerChannel,
+  CustomerStatus,
+} from '../../../database/entities/customer.entity';
 
 export class CustomerFilterDto {
   @ApiPropertyOptional({ enum: CustomerChannel })
@@ -64,4 +74,3 @@ export class CustomerFilterDto {
   @IsOptional()
   sortOrder?: 'ASC' | 'DESC' = 'ASC';
 }
-

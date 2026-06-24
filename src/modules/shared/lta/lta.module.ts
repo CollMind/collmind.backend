@@ -13,11 +13,21 @@ import { MasterDataModule } from '../../master-data/master-data.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([LTAAgreement, LTARate, LTAPlanOverride, PlanSku, Sku]),
+    TypeOrmModule.forFeature([
+      LTAAgreement,
+      LTARate,
+      LTAPlanOverride,
+      PlanSku,
+      Sku,
+    ]),
     MasterDataModule,
   ],
   controllers: [LTAAgreementController],
-  providers: [LTAAgreementService, LTACalculationService, LTAAgreementRepository],
+  providers: [
+    LTAAgreementService,
+    LTACalculationService,
+    LTAAgreementRepository,
+  ],
   exports: [LTAAgreementService, LTACalculationService],
 })
 export class LTAModule {}

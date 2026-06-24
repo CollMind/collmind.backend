@@ -19,7 +19,10 @@ export class SkuService {
   ) {}
 
   async create(tenantId: string, createSkuDto: CreateSkuDto): Promise<Sku> {
-    const existing = await this.skuRepository.findByCode(tenantId, createSkuDto.code);
+    const existing = await this.skuRepository.findByCode(
+      tenantId,
+      createSkuDto.code,
+    );
     if (existing) {
       throw new ConflictException('SKU with this code already exists');
     }
@@ -52,8 +55,20 @@ export class SkuService {
     return this.skuRepository.save(sku);
   }
 
-  async findAll(tenantId: string, activeOnly = false, fuId?: string, brandId?: string, categoryId?: string): Promise<Sku[]> {
-    return this.skuRepository.findAllByTenant(tenantId, activeOnly, fuId, brandId, categoryId);
+  async findAll(
+    tenantId: string,
+    activeOnly = false,
+    fuId?: string,
+    brandId?: string,
+    categoryId?: string,
+  ): Promise<Sku[]> {
+    return this.skuRepository.findAllByTenant(
+      tenantId,
+      activeOnly,
+      fuId,
+      brandId,
+      categoryId,
+    );
   }
 
   async findOne(tenantId: string, id: string): Promise<Sku> {
@@ -90,7 +105,10 @@ export class SkuService {
     const sku = await this.findOne(tenantId, id);
 
     if (updateSkuDto.code && updateSkuDto.code !== sku.code) {
-      const existing = await this.skuRepository.findByCode(tenantId, updateSkuDto.code);
+      const existing = await this.skuRepository.findByCode(
+        tenantId,
+        updateSkuDto.code,
+      );
       if (existing && existing.id !== id) {
         throw new ConflictException('SKU with this code already exists');
       }

@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Plan, PlanFu } from '../../../database/entities/plan.entity';
-import { Mechanic, MechanicCategory } from '../../../database/entities/mechanic.entity';
+import {
+  Mechanic,
+  MechanicCategory,
+} from '../../../database/entities/mechanic.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { BudgetAllocationService } from '../budget/budget-allocation.service';
 import { MechanicService } from '../../master-data/mechanic/mechanic.service';
@@ -43,7 +46,10 @@ export class SpendValidationService {
   /**
    * Validate all inputs for a FU
    */
-  async validateInputs(tenantId: string, planFuId: string): Promise<InputValidationResult> {
+  async validateInputs(
+    tenantId: string,
+    planFuId: string,
+  ): Promise<InputValidationResult> {
     const planFu = await this.planFuRepository.findOne({
       where: { id: planFuId, tenantId },
       relations: ['planMechanicValues', 'planMechanicValues.mechanic'],
@@ -160,8 +166,12 @@ export class SpendValidationService {
       }
     }
 
-    const errorCount = errors.filter((e) => e.severity === ErrorSeverity.ERROR).length;
-    const warningCount = errors.filter((e) => e.severity === ErrorSeverity.WARNING).length;
+    const errorCount = errors.filter(
+      (e) => e.severity === ErrorSeverity.ERROR,
+    ).length;
+    const warningCount = errors.filter(
+      (e) => e.severity === ErrorSeverity.WARNING,
+    ).length;
 
     return {
       isValid: errorCount === 0,
@@ -174,10 +184,18 @@ export class SpendValidationService {
   /**
    * Validate mechanic combinations
    */
-  async validateCombinations(tenantId: string, planFuId: string): Promise<CombinationValidationResult> {
+  async validateCombinations(
+    tenantId: string,
+    planFuId: string,
+  ): Promise<CombinationValidationResult> {
     const planFu = await this.planFuRepository.findOne({
       where: { id: planFuId, tenantId },
-      relations: ['planMechanicValues', 'planMechanicValues.mechanic', 'planSkus', 'planSkus.sku'],
+      relations: [
+        'planMechanicValues',
+        'planMechanicValues.mechanic',
+        'planSkus',
+        'planSkus.sku',
+      ],
     });
 
     if (!planFu) {
@@ -189,13 +207,21 @@ export class SpendValidationService {
 
     // Get all active mechanics for this FU
     const activeMechanics = (planFu.planMechanicValues || [])
-      .filter((pmv) => pmv.enteredValue !== null && pmv.enteredValue !== undefined && pmv.enteredValue !== 0)
+      .filter(
+        (pmv) =>
+          pmv.enteredValue !== null &&
+          pmv.enteredValue !== undefined &&
+          pmv.enteredValue !== 0,
+      )
       .map((pmv) => pmv.mechanic)
       .filter((m) => m !== null) as Mechanic[];
 
     // Check mutually exclusive mechanics
     for (const mechanic of activeMechanics) {
-      if (mechanic.mutuallyExclusiveWith && mechanic.mutuallyExclusiveWith.length > 0) {
+      if (
+        mechanic.mutuallyExclusiveWith &&
+        mechanic.mutuallyExclusiveWith.length > 0
+      ) {
         const conflictingCodes = activeMechanics
           .filter((m) => mechanic.mutuallyExclusiveWith?.includes(m.code))
           .map((m) => m.code);
@@ -234,7 +260,10 @@ export class SpendValidationService {
           totalOnInvoiceDiscount += pmv.enteredValue;
         } else {
           // Calculate percentage from amount
-          const percentage = totalPlannedGsv > 0 ? (pmv.calculatedSpend / totalPlannedGsv) * 100 : 0;
+          const percentage =
+            totalPlannedGsv > 0
+              ? (pmv.calculatedSpend / totalPlannedGsv) * 100
+              : 0;
           totalOnInvoiceDiscount += percentage;
         }
       } else if (
@@ -245,7 +274,10 @@ export class SpendValidationService {
         if (mechanic.mechanicType === 'PERCENT') {
           totalOffInvoiceDiscount += pmv.enteredValue;
         } else {
-          const percentage = totalPlannedGsv > 0 ? (pmv.calculatedSpend / totalPlannedGsv) * 100 : 0;
+          const percentage =
+            totalPlannedGsv > 0
+              ? (pmv.calculatedSpend / totalPlannedGsv) * 100
+              : 0;
           totalOffInvoiceDiscount += percentage;
         }
       }
@@ -286,7 +318,10 @@ export class SpendValidationService {
 
     // Check max combined discount per mechanic
     for (const mechanic of activeMechanics) {
-      if (mechanic.maxCombinedDiscountPercentage !== null && mechanic.maxCombinedDiscountPercentage !== undefined) {
+      if (
+        mechanic.maxCombinedDiscountPercentage !== null &&
+        mechanic.maxCombinedDiscountPercentage !== undefined
+      ) {
         if (combinedDiscount > mechanic.maxCombinedDiscountPercentage) {
           errors.push({
             severity: ErrorSeverity.ERROR,
@@ -301,7 +336,8 @@ export class SpendValidationService {
     }
 
     return {
-      isValid: errors.filter((e) => e.severity === ErrorSeverity.ERROR).length === 0,
+      isValid:
+        errors.filter((e) => e.severity === ErrorSeverity.ERROR).length === 0,
       totalOnInvoiceDiscount,
       totalOffInvoiceDiscount,
       combinedDiscount,
@@ -313,10 +349,20 @@ export class SpendValidationService {
   /**
    * Validate budget impact
    */
-  async validateBudgetImpact(tenantId: string, planId: string): Promise<BudgetValidationResult> {
+  async validateBudgetImpact(
+    tenantId: string,
+    planId: string,
+  ): Promise<BudgetValidationResult> {
     const plan = await this.planRepository.findOne({
       where: { id: planId, tenantId },
-      relations: ['planFus', 'planFus.planMechanicValues', 'planFus.planMechanicValues.mechanic', 'cpl', 'channel', 'category'],
+      relations: [
+        'planFus',
+        'planFus.planMechanicValues',
+        'planFus.planMechanicValues.mechanic',
+        'cpl',
+        'channel',
+        'category',
+      ],
     });
 
     if (!plan) {
@@ -351,7 +397,10 @@ export class SpendValidationService {
       estimatedOffInvoiceSpend: totalOffInvoiceSpend,
     };
 
-    const availability = await this.budgetAllocationService.checkAvailability(tenantId, context);
+    const availability = await this.budgetAllocationService.checkAvailability(
+      tenantId,
+      context,
+    );
 
     const errors: ValidationError[] = [];
     const suggestions: string[] = [];
@@ -361,11 +410,21 @@ export class SpendValidationService {
         severity: ErrorSeverity.ERROR,
         category: ErrorCategory.BUDGET_ERROR,
         message: `Insufficient On-Invoice budget. Shortfall: ${availability.onInvoiceShortfall.toFixed(2)}`,
-        suggestion: availability.suggestions.find((s: string) => s.includes('On-Invoice')) || 'Reduce On-Invoice spends',
+        suggestion:
+          availability.suggestions.find((s: string) =>
+            s.includes('On-Invoice'),
+          ) || 'Reduce On-Invoice spends',
       });
-      suggestions.push(...availability.suggestions.filter((s: string) => s.includes('On-Invoice')));
+      suggestions.push(
+        ...availability.suggestions.filter((s: string) =>
+          s.includes('On-Invoice'),
+        ),
+      );
     } else if (availability.onInvoiceAvailable > 0) {
-      const utilizationPercent = ((totalOnInvoiceSpend / (totalOnInvoiceSpend + availability.onInvoiceAvailable)) * 100);
+      const utilizationPercent =
+        (totalOnInvoiceSpend /
+          (totalOnInvoiceSpend + availability.onInvoiceAvailable)) *
+        100;
       if (utilizationPercent >= this.BUDGET_WARNING_THRESHOLD) {
         errors.push({
           severity: ErrorSeverity.WARNING,
@@ -380,11 +439,21 @@ export class SpendValidationService {
         severity: ErrorSeverity.ERROR,
         category: ErrorCategory.BUDGET_ERROR,
         message: `Insufficient Off-Invoice budget. Shortfall: ${availability.offInvoiceShortfall.toFixed(2)}`,
-        suggestion: availability.suggestions.find((s: string) => s.includes('Off-Invoice')) || 'Reduce Off-Invoice spends',
+        suggestion:
+          availability.suggestions.find((s: string) =>
+            s.includes('Off-Invoice'),
+          ) || 'Reduce Off-Invoice spends',
       });
-      suggestions.push(...availability.suggestions.filter((s: string) => s.includes('Off-Invoice')));
+      suggestions.push(
+        ...availability.suggestions.filter((s: string) =>
+          s.includes('Off-Invoice'),
+        ),
+      );
     } else if (availability.offInvoiceAvailable > 0) {
-      const utilizationPercent = ((totalOffInvoiceSpend / (totalOffInvoiceSpend + availability.offInvoiceAvailable)) * 100);
+      const utilizationPercent =
+        (totalOffInvoiceSpend /
+          (totalOffInvoiceSpend + availability.offInvoiceAvailable)) *
+        100;
       if (utilizationPercent >= this.BUDGET_WARNING_THRESHOLD) {
         errors.push({
           severity: ErrorSeverity.WARNING,
@@ -395,7 +464,8 @@ export class SpendValidationService {
     }
 
     return {
-      isSufficient: availability.onInvoiceSufficient && availability.offInvoiceSufficient,
+      isSufficient:
+        availability.onInvoiceSufficient && availability.offInvoiceSufficient,
       onInvoiceAvailable: availability.onInvoiceAvailable,
       offInvoiceAvailable: availability.offInvoiceAvailable,
       onInvoiceShortfall: availability.onInvoiceShortfall,
@@ -408,7 +478,10 @@ export class SpendValidationService {
   /**
    * Validate before submission (all validations)
    */
-  async validateBeforeSubmission(tenantId: string, planId: string): Promise<PreSubmissionValidation> {
+  async validateBeforeSubmission(
+    tenantId: string,
+    planId: string,
+  ): Promise<PreSubmissionValidation> {
     const plan = await this.planRepository.findOne({
       where: { id: planId, tenantId },
       relations: ['planFus'],
@@ -426,7 +499,10 @@ export class SpendValidationService {
       const inputValidation = await this.validateInputs(tenantId, planFu.id);
       inputValidations.push(inputValidation);
 
-      const combinationValidation = await this.validateCombinations(tenantId, planFu.id);
+      const combinationValidation = await this.validateCombinations(
+        tenantId,
+        planFu.id,
+      );
       combinationValidations.push(combinationValidation);
     }
 
@@ -438,8 +514,12 @@ export class SpendValidationService {
     combinationValidations.forEach((cv) => allErrors.push(...cv.errors));
     allErrors.push(...budgetValidation.errors);
 
-    const blockingErrors = allErrors.filter((e) => e.severity === ErrorSeverity.ERROR);
-    const warnings = allErrors.filter((e) => e.severity === ErrorSeverity.WARNING);
+    const blockingErrors = allErrors.filter(
+      (e) => e.severity === ErrorSeverity.ERROR,
+    );
+    const warnings = allErrors.filter(
+      (e) => e.severity === ErrorSeverity.WARNING,
+    );
 
     // Generate auto-fix suggestions
     const autoFixSuggestions: string[] = [];
@@ -459,16 +539,40 @@ export class SpendValidationService {
       hasBlockingErrors: blockingErrors.length > 0,
       inputValidation: {
         isValid: inputValidations.every((iv) => iv.isValid),
-        errors: allErrors.filter((e) => e.category === ErrorCategory.INPUT_ERROR),
-        errorCount: allErrors.filter((e) => e.category === ErrorCategory.INPUT_ERROR && e.severity === ErrorSeverity.ERROR).length,
-        warningCount: allErrors.filter((e) => e.category === ErrorCategory.INPUT_ERROR && e.severity === ErrorSeverity.WARNING).length,
+        errors: allErrors.filter(
+          (e) => e.category === ErrorCategory.INPUT_ERROR,
+        ),
+        errorCount: allErrors.filter(
+          (e) =>
+            e.category === ErrorCategory.INPUT_ERROR &&
+            e.severity === ErrorSeverity.ERROR,
+        ).length,
+        warningCount: allErrors.filter(
+          (e) =>
+            e.category === ErrorCategory.INPUT_ERROR &&
+            e.severity === ErrorSeverity.WARNING,
+        ).length,
       },
       combinationValidation: {
         isValid: combinationValidations.every((cv) => cv.isValid),
-        totalOnInvoiceDiscount: combinationValidations.reduce((sum, cv) => sum + cv.totalOnInvoiceDiscount, 0) / combinationValidations.length,
-        totalOffInvoiceDiscount: combinationValidations.reduce((sum, cv) => sum + cv.totalOffInvoiceDiscount, 0) / combinationValidations.length,
-        combinedDiscount: combinationValidations.reduce((sum, cv) => sum + cv.combinedDiscount, 0) / combinationValidations.length,
-        errors: allErrors.filter((e) => e.category === ErrorCategory.COMBINATION_ERROR),
+        totalOnInvoiceDiscount:
+          combinationValidations.reduce(
+            (sum, cv) => sum + cv.totalOnInvoiceDiscount,
+            0,
+          ) / combinationValidations.length,
+        totalOffInvoiceDiscount:
+          combinationValidations.reduce(
+            (sum, cv) => sum + cv.totalOffInvoiceDiscount,
+            0,
+          ) / combinationValidations.length,
+        combinedDiscount:
+          combinationValidations.reduce(
+            (sum, cv) => sum + cv.combinedDiscount,
+            0,
+          ) / combinationValidations.length,
+        errors: allErrors.filter(
+          (e) => e.category === ErrorCategory.COMBINATION_ERROR,
+        ),
         conflicts: combinationValidations.flatMap((cv) => cv.conflicts),
       },
       budgetValidation,

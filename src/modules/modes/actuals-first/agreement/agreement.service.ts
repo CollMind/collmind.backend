@@ -43,7 +43,7 @@ export class AgreementService {
     private readonly mechanicService: MechanicService,
     private readonly categoryService: CategoryService,
     private readonly forecastingUnitService: FuService,
-  ) { }
+  ) {}
 
   async create(
     dto: CreateAgreementDto,
@@ -62,7 +62,9 @@ export class AgreementService {
         throw new BadRequestException('STA agreements must be 30 days or less');
       }
       if (dto.agreementType === AgreementType.LTA && durationDays <= 30) {
-        throw new BadRequestException('LTA agreements must be more than 30 days');
+        throw new BadRequestException(
+          'LTA agreements must be more than 30 days',
+        );
       }
 
       // Validate foreign key references exist (these will throw NotFoundException if not found)
@@ -80,16 +82,20 @@ export class AgreementService {
         tenantId,
         dto.agreementType,
       );
-      
+
       // Check if code already exists (including soft-deleted records)
-      let existing = await this.agreementRepo.findByCode(agreementCode, tenantId, true);
+      let existing = await this.agreementRepo.findByCode(
+        agreementCode,
+        tenantId,
+        true,
+      );
       let attempts = 0;
       const maxAttempts = 10;
-      
+
       // If code exists, increment sequence until we find an available one
       while (existing && attempts < maxAttempts) {
         attempts++;
-        
+
         // Extract current sequence and increment it by 1
         const parts = agreementCode.split('-');
         if (parts.length >= 3) {
@@ -112,13 +118,17 @@ export class AgreementService {
             dto.agreementType,
           );
         }
-        
+
         // Check if new code exists
-        existing = await this.agreementRepo.findByCode(agreementCode, tenantId, true);
-        
+        existing = await this.agreementRepo.findByCode(
+          agreementCode,
+          tenantId,
+          true,
+        );
+
         if (attempts >= maxAttempts) {
           throw new ConflictException(
-            `Unable to generate unique agreement code after ${maxAttempts} attempts. Please try again.`
+            `Unable to generate unique agreement code after ${maxAttempts} attempts. Please try again.`,
           );
         }
       }
@@ -152,18 +162,21 @@ export class AgreementService {
           break; // Success, exit retry loop
         } catch (createError: any) {
           // Check if it's a unique constraint violation (PostgreSQL error code 23505)
-          const isUniqueConstraintError = 
+          const isUniqueConstraintError =
             createError?.code === '23505' ||
             createError?.driverError?.code === '23505' ||
-            (createError?.message && createError.message.includes('duplicate key')) ||
-            (createError?.message && createError.message.includes('IDX_AGREEMENTS_TENANT_CODE')) ||
-            (createError?.driverError?.constraint === 'IDX_AGREEMENTS_TENANT_CODE');
-            
+            (createError?.message &&
+              createError.message.includes('duplicate key')) ||
+            (createError?.message &&
+              createError.message.includes('IDX_AGREEMENTS_TENANT_CODE')) ||
+            createError?.driverError?.constraint ===
+              'IDX_AGREEMENTS_TENANT_CODE';
+
           if (isUniqueConstraintError) {
             createAttempts++;
             if (createAttempts >= maxCreateAttempts) {
               throw new ConflictException(
-                `Unable to create agreement after ${maxCreateAttempts} attempts due to code conflicts. Please try again.`
+                `Unable to create agreement after ${maxCreateAttempts} attempts due to code conflicts. Please try again.`,
               );
             }
 
@@ -191,12 +204,14 @@ export class AgreementService {
               );
             }
             agreementData.agreementCode = agreementCode;
-            
+
             // Wait a bit before retrying (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 100 * createAttempts));
+            await new Promise((resolve) =>
+              setTimeout(resolve, 100 * createAttempts),
+            );
             continue;
           }
-          
+
           // If it's not a unique constraint error, re-throw it
           throw createError;
         }
@@ -207,7 +222,9 @@ export class AgreementService {
         const kpiResults = await this.calculateKpis(agreement!, tenantId);
         if (kpiResults) {
           agreement!.kpiResults = kpiResults;
-          await this.agreementRepo.update(agreement!.id, tenantId, { kpiResults });
+          await this.agreementRepo.update(agreement!.id, tenantId, {
+            kpiResults,
+          });
         }
       } catch (error) {
         console.error('KPI calculation failed:', error);
@@ -217,7 +234,8 @@ export class AgreementService {
       return agreement!;
     } catch (error) {
       const logFile = path.join(process.cwd(), 'debug_agreement_error.log');
-      const errorMessage = error instanceof Error ? error.stack || error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.stack || error.message : String(error);
       const logMsg = `[${new Date().toISOString()}] Error creating agreement:\n${errorMessage}\nDTO: ${JSON.stringify(dto)}\n\n`;
       fs.appendFileSync(logFile, logMsg);
       console.error('Agreement creation failed:', error);
@@ -241,16 +259,21 @@ export class AgreementService {
     return agreement;
   }
 
-  async findAll(tenantId: string, filters?: {
-    status?: AgreementStatus;
-    cplId?: string;
-    channel?: string;
-  }): Promise<Agreement[]> {
+  async findAll(
+    tenantId: string,
+    filters?: {
+      status?: AgreementStatus;
+      cplId?: string;
+      channel?: string;
+    },
+  ): Promise<Agreement[]> {
     return this.agreementRepo.findAll(tenantId, filters);
   }
 
   async findPendingApprovals(tenantId: string): Promise<Agreement[]> {
-    return this.agreementRepo.findAll(tenantId, { status: AgreementStatus.PENDING });
+    return this.agreementRepo.findAll(tenantId, {
+      status: AgreementStatus.PENDING,
+    });
   }
 
   async update(
@@ -278,14 +301,23 @@ export class AgreementService {
         throw new BadRequestException('STA agreements must be 30 days or less');
       }
       if (agreement.agreementType === AgreementType.LTA && durationDays <= 30) {
-        throw new BadRequestException('LTA agreements must be more than 30 days');
+        throw new BadRequestException(
+          'LTA agreements must be more than 30 days',
+        );
       }
     }
 
     // Update period month if start date changed
     // Exclude date fields from spread to convert them separately
-    const { startDate: dtoStartDate, endDate: dtoEndDate, ...dtoWithoutDates } = dto;
-    const updateData: Partial<Agreement> = { ...dtoWithoutDates, updatedBy: userId };
+    const {
+      startDate: dtoStartDate,
+      endDate: dtoEndDate,
+      ...dtoWithoutDates
+    } = dto;
+    const updateData: Partial<Agreement> = {
+      ...dtoWithoutDates,
+      updatedBy: userId,
+    };
 
     if (dtoStartDate) {
       const startDate = new Date(dtoStartDate);
@@ -298,13 +330,23 @@ export class AgreementService {
 
     // If parameters affecting KPIs changed, recalculate
     const kpiAffectingFields = [
-      'mechanicValue', 'mechanicType', 'tacticId',
-      'startDate', 'endDate', 'additionalParams'
+      'mechanicValue',
+      'mechanicType',
+      'tacticId',
+      'startDate',
+      'endDate',
+      'additionalParams',
     ];
 
-    const shouldRecalculate = Object.keys(dto).some(key => kpiAffectingFields.includes(key));
+    const shouldRecalculate = Object.keys(dto).some((key) =>
+      kpiAffectingFields.includes(key),
+    );
 
-    const updatedAgreement = await this.agreementRepo.update(id, tenantId, updateData);
+    const updatedAgreement = await this.agreementRepo.update(
+      id,
+      tenantId,
+      updateData,
+    );
 
     if (shouldRecalculate) {
       try {
@@ -323,7 +365,11 @@ export class AgreementService {
     return updatedAgreement;
   }
 
-  async submit(id: string, tenantId: string, userId: string): Promise<Agreement> {
+  async submit(
+    id: string,
+    tenantId: string,
+    userId: string,
+  ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId);
 
     if (agreement.status !== AgreementStatus.DRAFT) {
@@ -342,13 +388,23 @@ export class AgreementService {
     );
 
     // Update agreement with approval request ID and status
-    return this.agreementRepo.updateStatus(id, tenantId, AgreementStatus.PENDING, {
-      approvalRequestId: approvalRequest.id,
-      updatedBy: userId,
-    });
+    return this.agreementRepo.updateStatus(
+      id,
+      tenantId,
+      AgreementStatus.PENDING,
+      {
+        approvalRequestId: approvalRequest.id,
+        updatedBy: userId,
+      },
+    );
   }
 
-  async approve(id: string, tenantId: string, userId: string, comments?: string): Promise<Agreement> {
+  async approve(
+    id: string,
+    tenantId: string,
+    userId: string,
+    comments?: string,
+  ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId);
 
     if (agreement.status !== AgreementStatus.PENDING) {
@@ -368,7 +424,10 @@ export class AgreementService {
     // Load channel relation if not already loaded
     let agreementWithChannel: Agreement = agreement;
     if (!agreement.channel) {
-      const loadedAgreement = await this.agreementRepo.findById(agreement.id, tenantId);
+      const loadedAgreement = await this.agreementRepo.findById(
+        agreement.id,
+        tenantId,
+      );
       if (!loadedAgreement || !loadedAgreement.channel) {
         throw new BadRequestException('Agreement channel not found');
       }
@@ -386,14 +445,19 @@ export class AgreementService {
         userId,
       );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Budget reservation failed: ${errorMessage}`);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(
+        `Budget reservation failed: ${errorMessage}`,
+      );
     }
 
     // Update approval request AFTER successful budget reservation
     // This ensures approval request is only marked approved if budget reservation succeeded
     if (!agreement.approvalRequestId) {
-      throw new BadRequestException('Agreement does not have an approval request');
+      throw new BadRequestException(
+        'Agreement does not have an approval request',
+      );
     }
     await this.approvalService.approve(
       agreement.approvalRequestId,
@@ -403,11 +467,16 @@ export class AgreementService {
     );
 
     // Update agreement status
-    return this.agreementRepo.updateStatus(id, tenantId, AgreementStatus.APPROVED, {
-      approvedAt: new Date(),
-      approvedById: userId,
-      updatedBy: userId,
-    });
+    return this.agreementRepo.updateStatus(
+      id,
+      tenantId,
+      AgreementStatus.APPROVED,
+      {
+        approvedAt: new Date(),
+        approvedById: userId,
+        updatedBy: userId,
+      },
+    );
   }
 
   async reject(
@@ -438,28 +507,45 @@ export class AgreementService {
       { reason },
     );
 
-    return this.agreementRepo.updateStatus(id, tenantId, AgreementStatus.REJECTED, {
-      rejectedAt: new Date(),
-      rejectedById: userId,
-      rejectionReason: reason,
-      updatedBy: userId,
-    });
+    return this.agreementRepo.updateStatus(
+      id,
+      tenantId,
+      AgreementStatus.REJECTED,
+      {
+        rejectedAt: new Date(),
+        rejectedById: userId,
+        rejectionReason: reason,
+        updatedBy: userId,
+      },
+    );
   }
 
-  async cancel(id: string, tenantId: string, userId: string, reason?: string): Promise<Agreement> {
+  async cancel(
+    id: string,
+    tenantId: string,
+    userId: string,
+    reason?: string,
+  ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId);
 
-    if (![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(agreement.status)) {
-      throw new BadRequestException('Only APPROVED or ACTIVE agreements can be cancelled');
+    if (
+      ![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(
+        agreement.status,
+      )
+    ) {
+      throw new BadRequestException(
+        'Only APPROVED or ACTIVE agreements can be cancelled',
+      );
     }
 
     // Find the RESERVE transaction for this agreement to get the correct envelope
     // This is more reliable than looking up by dimensions, as envelope status might have changed
-    const reserveTransactions = await this.budgetService.getTransactionsBySource(
-      tenantId,
-      BudgetTransactionSourceType.AGREEMENT,
-      agreement.id,
-    );
+    const reserveTransactions =
+      await this.budgetService.getTransactionsBySource(
+        tenantId,
+        BudgetTransactionSourceType.AGREEMENT,
+        agreement.id,
+      );
 
     const reserveTx = reserveTransactions.find(
       (tx) =>
@@ -479,7 +565,8 @@ export class AgreementService {
           userId,
         );
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
         throw new BadRequestException(`Budget release failed: ${errorMessage}`);
       }
     } else {
@@ -491,9 +578,14 @@ export class AgreementService {
     }
 
     // Update agreement status
-    return this.agreementRepo.updateStatus(id, tenantId, AgreementStatus.CANCELLED, {
-      updatedBy: userId,
-    });
+    return this.agreementRepo.updateStatus(
+      id,
+      tenantId,
+      AgreementStatus.CANCELLED,
+      {
+        updatedBy: userId,
+      },
+    );
   }
 
   async delete(id: string, tenantId: string, userId: string): Promise<void> {
@@ -513,28 +605,30 @@ export class AgreementService {
    * - Tactic: Central catalog with applicability rules (channel/category codes)
    * - Mechanic: Belongs to a tactic, defines calculation method (PERCENT, AMOUNT, AMOUNT_PER_UNIT)
    * - One tactic can have multiple mechanics
-   * 
+   *
    * Filters tactics based on applicability rules using channel/category codes
    * Returns tactics with their associated active mechanics
    */
   async getAvailableTactics(
-    tenantId: string, 
-    channelIdOrCode?: string, 
-    categoryId?: string
-  ): Promise<Array<{
-    id: string;
-    name: string;
-    code: string;
-    spendType: 'ON_INVOICE' | 'OFF_INVOICE' | 'BOTH';
-    mechanics: Array<{
+    tenantId: string,
+    channelIdOrCode?: string,
+    categoryId?: string,
+  ): Promise<
+    Array<{
       id: string;
       name: string;
       code: string;
-      mechanicType: 'PERCENT' | 'AMOUNT' | 'AMOUNT_PER_UNIT';
-      minValue?: number;
-      maxValue?: number;
-    }>;
-  }>> {
+      spendType: 'ON_INVOICE' | 'OFF_INVOICE' | 'BOTH';
+      mechanics: Array<{
+        id: string;
+        name: string;
+        code: string;
+        mechanicType: 'PERCENT' | 'AMOUNT' | 'AMOUNT_PER_UNIT';
+        minValue?: number;
+        maxValue?: number;
+      }>;
+    }>
+  > {
     // Get all active tactics with their mechanics (relations loaded)
     const tactics = await this.tacticService.findAll(tenantId, true);
 
@@ -542,10 +636,16 @@ export class AgreementService {
     let channelCode: string | undefined;
     if (channelIdOrCode) {
       // Check if it's a UUID (channelId) or a code
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(channelIdOrCode);
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          channelIdOrCode,
+        );
       if (isUuid) {
         try {
-          const channel = await this.channelService.findOne(tenantId, channelIdOrCode);
+          const channel = await this.channelService.findOne(
+            tenantId,
+            channelIdOrCode,
+          );
           channelCode = channel.code;
         } catch (error) {
           console.warn(`Channel with ID ${channelIdOrCode} not found`);
@@ -559,7 +659,10 @@ export class AgreementService {
     let categoryCode: string | undefined;
     if (categoryId) {
       try {
-        const category = await this.categoryService.findOne(tenantId, categoryId);
+        const category = await this.categoryService.findOne(
+          tenantId,
+          categoryId,
+        );
         categoryCode = category.code;
       } catch (error) {
         console.warn(`Category with ID ${categoryId} not found`);
@@ -569,7 +672,8 @@ export class AgreementService {
     // Filter by channel applicability (using channel code)
     let filtered = tactics.filter((t) => {
       // If no applicable channels defined, it's available for all
-      if (!t.applicableChannels || t.applicableChannels.length === 0) return true;
+      if (!t.applicableChannels || t.applicableChannels.length === 0)
+        return true;
       if (!channelCode) return false;
       return t.applicableChannels.includes(channelCode);
     });
@@ -578,20 +682,21 @@ export class AgreementService {
     if (categoryCode) {
       filtered = filtered.filter((t) => {
         // If no applicable categories defined, it's available for all
-        if (!t.applicableCategories || t.applicableCategories.length === 0) return true;
+        if (!t.applicableCategories || t.applicableCategories.length === 0)
+          return true;
         return t.applicableCategories.includes(categoryCode!);
       });
     }
 
     // Return tactics with their active mechanics
-    return filtered.map(t => ({
+    return filtered.map((t) => ({
       id: t.id,
       name: t.name,
       code: t.code,
       spendType: t.spendType || 'ON_INVOICE',
       mechanics: (t.mechanics || [])
-        .filter(m => m.isActive)
-        .map(m => ({
+        .filter((m) => m.isActive)
+        .map((m) => ({
           id: m.id,
           name: m.name,
           code: m.code,
@@ -605,7 +710,10 @@ export class AgreementService {
   /**
    * Calculate KPIs for agreement using KpiEngine
    */
-  private async calculateKpis(agreement: Agreement, tenantId: string): Promise<Record<string, any>> {
+  private async calculateKpis(
+    agreement: Agreement,
+    tenantId: string,
+  ): Promise<Record<string, any>> {
     // Construct SKU context (simplification: assuming 1 SKU or aggregate context)
     // For now, we'll use a simplified context based on agreement fields
     // In a real scenario, this would iterate over all SKUs in scope
@@ -629,16 +737,18 @@ export class AgreementService {
 
     // Mock SKU results for now (since we don't have full SKU data flow here yet)
     // In production, this should fetch actual SKU volumes
-    const skuResults = [{
-      'BASE_VOL': { value: 1000, displayFormat: 'N0', decimalPlaces: 0 },
-      'PLAN_VOL': { value: 1100, displayFormat: 'N0', decimalPlaces: 0 }, // 10% uplift assumption
-    }];
+    const skuResults = [
+      {
+        BASE_VOL: { value: 1000, displayFormat: 'N0', decimalPlaces: 0 },
+        PLAN_VOL: { value: 1100, displayFormat: 'N0', decimalPlaces: 0 }, // 10% uplift assumption
+      },
+    ];
 
     // Calculate at FU level
     const kpiResults = await this.kpiEngine.calculateFu(
       tenantId,
       skuResults as any, // Type assertion due to mock structure
-      tacticsContext
+      tacticsContext,
     );
 
     // Transform results to simple value map for storage
@@ -646,12 +756,10 @@ export class AgreementService {
     for (const [key, result] of Object.entries(kpiResults)) {
       simplifiedResults[key] = {
         value: result.value,
-        rag: result.ragStatus
+        rag: result.ragStatus,
       };
     }
 
     return simplifiedResults;
   }
 }
-
-

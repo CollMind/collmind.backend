@@ -1,4 +1,11 @@
-import { MigrationInterface, QueryRunner, TableColumn, Table, TableIndex, TableForeignKey } from 'typeorm';
+import {
+  MigrationInterface,
+  QueryRunner,
+  TableColumn,
+  Table,
+  TableIndex,
+  TableForeignKey,
+} from 'typeorm';
 
 export class AddApprovalWorkflowFieldsToPlans1772000000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -287,9 +294,13 @@ export class AddApprovalWorkflowFieldsToPlans1772000000000 implements MigrationI
 
     // Drop foreign keys from plans
     const plansTable = await queryRunner.getTable('main.plans');
-    const submittedByFk = plansTable?.foreignKeys.find(fk => fk.columnNames.indexOf('submitted_by') !== -1);
-    const escalatedByFk = plansTable?.foreignKeys.find(fk => fk.columnNames.indexOf('escalated_by') !== -1);
-    
+    const submittedByFk = plansTable?.foreignKeys.find(
+      (fk) => fk.columnNames.indexOf('submitted_by') !== -1,
+    );
+    const escalatedByFk = plansTable?.foreignKeys.find(
+      (fk) => fk.columnNames.indexOf('escalated_by') !== -1,
+    );
+
     if (submittedByFk) {
       await queryRunner.dropForeignKey('main.plans', submittedByFk);
     }

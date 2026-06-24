@@ -1,13 +1,20 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ApprovalWorkflowService } from './approval-workflow.service';
 import { PlanRepository } from './plan.repository';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { Plan, PlanStatus } from '../../../../database/entities/plan.entity';
-import { PlanApprovalHistory, ApprovalHistoryAction } from '../../../../database/entities/plan-approval-history.entity';
+import {
+  PlanApprovalHistory,
+  ApprovalHistoryAction,
+} from '../../../../database/entities/plan-approval-history.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { SubmitForApprovalDto } from './dto/submit-for-approval.dto';
@@ -40,7 +47,7 @@ describe('ApprovalWorkflowService', () => {
       {
         id: 'plan-fu-1',
         fuId: 'fu-1',
-        tactics: { 'CPP_ON_PCT': 10, 'DISPLAY_FEE': 5000 },
+        tactics: { CPP_ON_PCT: 10, DISPLAY_FEE: 5000 },
         planSkus: [
           {
             id: 'plan-sku-1',
@@ -170,9 +177,13 @@ describe('ApprovalWorkflowService', () => {
 
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
       tacticRepo.find.mockResolvedValue(mockTactics);
-      budgetService.findEnvelopeByDimensions.mockResolvedValue(mockEnvelope as any);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(
+        mockEnvelope as any,
+      );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
-      approvalService.createRequest.mockResolvedValue(mockApprovalRequest as any);
+      approvalService.createRequest.mockResolvedValue(
+        mockApprovalRequest as any,
+      );
       planRepo.updateStatus.mockResolvedValue({
         ...mockPlan,
         status: PlanStatus.PENDING_APPROVAL,
@@ -182,7 +193,12 @@ describe('ApprovalWorkflowService', () => {
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
-      const result = await service.submitForApproval(mockPlanId, mockTenantId, mockUserId, submitDto);
+      const result = await service.submitForApproval(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        submitDto,
+      );
 
       expect(result.success).toBe(true);
       expect(result.status).toBe(PlanStatus.PENDING_APPROVAL);
@@ -206,7 +222,12 @@ describe('ApprovalWorkflowService', () => {
       } as Plan);
 
       await expect(
-        service.submitForApproval(mockPlanId, mockTenantId, mockUserId, submitDto),
+        service.submitForApproval(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          submitDto,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -217,10 +238,17 @@ describe('ApprovalWorkflowService', () => {
       } as Plan);
       tacticRepo.find.mockResolvedValue([]);
 
-      const result = await service.submitForApproval(mockPlanId, mockTenantId, mockUserId, submitDto);
+      const result = await service.submitForApproval(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        submitDto,
+      );
 
       expect(result.success).toBe(false);
-      expect(result.validationErrors).toContain('Plan must have at least one FU');
+      expect(result.validationErrors).toContain(
+        'Plan must have at least one FU',
+      );
     });
 
     it('should fail if FU has no tactics', async () => {
@@ -236,7 +264,12 @@ describe('ApprovalWorkflowService', () => {
 
       tacticRepo.find.mockResolvedValue([]);
 
-      const result = await service.submitForApproval(mockPlanId, mockTenantId, mockUserId, submitDto);
+      const result = await service.submitForApproval(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        submitDto,
+      );
 
       expect(result.success).toBe(false);
       expect(result.validationErrors).toBeDefined();
@@ -274,14 +307,25 @@ describe('ApprovalWorkflowService', () => {
 
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
       tacticRepo.find.mockResolvedValue(mockTactics);
-      budgetService.findEnvelopeByDimensions.mockResolvedValue(mockEnvelope as any);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(
+        mockEnvelope as any,
+      );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
 
-      const result = await service.submitForApproval(mockPlanId, mockTenantId, mockUserId, submitDto);
+      const result = await service.submitForApproval(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        submitDto,
+      );
 
       expect(result.success).toBe(false);
       expect(result.validationErrors).toBeDefined();
-      expect(result.validationErrors?.some(err => err.includes('Insufficient budget'))).toBe(true);
+      expect(
+        result.validationErrors?.some((err) =>
+          err.includes('Insufficient budget'),
+        ),
+      ).toBe(true);
     });
 
     it('should add warning for RED RAG status', async () => {
@@ -324,9 +368,13 @@ describe('ApprovalWorkflowService', () => {
         ragStatus: 'RED',
       } as Plan);
       tacticRepo.find.mockResolvedValue(mockTactics);
-      budgetService.findEnvelopeByDimensions.mockResolvedValue(mockEnvelope as any);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(
+        mockEnvelope as any,
+      );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
-      approvalService.createRequest.mockResolvedValue(mockApprovalRequest as any);
+      approvalService.createRequest.mockResolvedValue(
+        mockApprovalRequest as any,
+      );
       planRepo.updateStatus.mockResolvedValue({
         ...mockPlan,
         status: PlanStatus.PENDING_APPROVAL,
@@ -335,11 +383,18 @@ describe('ApprovalWorkflowService', () => {
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
-      const result = await service.submitForApproval(mockPlanId, mockTenantId, mockUserId, submitDto);
+      const result = await service.submitForApproval(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        submitDto,
+      );
 
       expect(result.success).toBe(true);
       expect(result.budgetCheck.warnings).toBeDefined();
-      expect(result.budgetCheck.warnings?.some(w => w.includes('RED RAG status'))).toBe(true);
+      expect(
+        result.budgetCheck.warnings?.some((w) => w.includes('RED RAG status')),
+      ).toBe(true);
     });
   });
 
@@ -371,7 +426,12 @@ describe('ApprovalWorkflowService', () => {
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
-      const result = await service.reviewPlan(mockPlanId, mockTenantId, 'reviewer-1', reviewDto);
+      const result = await service.reviewPlan(
+        mockPlanId,
+        mockTenantId,
+        'reviewer-1',
+        reviewDto,
+      );
 
       expect(result.success).toBe(true);
       expect(result.newStatus).toBe(PlanStatus.APPROVED);
@@ -410,11 +470,19 @@ describe('ApprovalWorkflowService', () => {
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
-      const result = await service.reviewPlan(mockPlanId, mockTenantId, 'reviewer-1', rejectDto);
+      const result = await service.reviewPlan(
+        mockPlanId,
+        mockTenantId,
+        'reviewer-1',
+        rejectDto,
+      );
 
       expect(result.success).toBe(true);
       expect(result.newStatus).toBe(PlanStatus.REJECTED);
-      expect(budgetService.releaseForPlan).toHaveBeenCalledWith(mockPlanId, mockTenantId);
+      expect(budgetService.releaseForPlan).toHaveBeenCalledWith(
+        mockPlanId,
+        mockTenantId,
+      );
       expect(approvalService.reject).toHaveBeenCalled();
     });
 
@@ -458,7 +526,12 @@ describe('ApprovalWorkflowService', () => {
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
-      const result = await service.reviewPlan(mockPlanId, mockTenantId, 'reviewer-1', requestChangesDto);
+      const result = await service.reviewPlan(
+        mockPlanId,
+        mockTenantId,
+        'reviewer-1',
+        requestChangesDto,
+      );
 
       expect(result.success).toBe(true);
       expect(result.newStatus).toBe(PlanStatus.DRAFT);
@@ -478,7 +551,12 @@ describe('ApprovalWorkflowService', () => {
       planRepo.findById.mockResolvedValue(pendingPlan);
 
       await expect(
-        service.reviewPlan(mockPlanId, mockTenantId, 'reviewer-1', requestChangesDto),
+        service.reviewPlan(
+          mockPlanId,
+          mockTenantId,
+          'reviewer-1',
+          requestChangesDto,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -504,7 +582,12 @@ describe('ApprovalWorkflowService', () => {
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
-      const result = await service.reviewPlan(mockPlanId, mockTenantId, 'reviewer-1', escalateDto);
+      const result = await service.reviewPlan(
+        mockPlanId,
+        mockTenantId,
+        'reviewer-1',
+        escalateDto,
+      );
 
       expect(result.success).toBe(true);
       expect(result.newStatus).toBe(PlanStatus.PENDING_FINANCE_REVIEW);
@@ -573,7 +656,13 @@ describe('ApprovalWorkflowService', () => {
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
-      await service.escalateToFinance(mockPlanId, mockTenantId, mockUserId, 'High spend', 'Comments');
+      await service.escalateToFinance(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        'High spend',
+        'Comments',
+      );
 
       expect(planRepo.updateStatus).toHaveBeenCalledWith(
         mockPlanId,
@@ -593,7 +682,13 @@ describe('ApprovalWorkflowService', () => {
       } as Plan);
 
       await expect(
-        service.escalateToFinance(mockPlanId, mockTenantId, mockUserId, 'Reason', 'Comments'),
+        service.escalateToFinance(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          'Reason',
+          'Comments',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -621,7 +716,11 @@ describe('ApprovalWorkflowService', () => {
         return Promise.resolve([]);
       });
 
-      const result = await service.getApprovalQueue('reviewer-1', mockTenantId, {});
+      const result = await service.getApprovalQueue(
+        'reviewer-1',
+        mockTenantId,
+        {},
+      );
 
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe(mockPlanId);
@@ -632,7 +731,9 @@ describe('ApprovalWorkflowService', () => {
     it('should filter by category if provided', async () => {
       planRepo.findAll.mockResolvedValue([]);
 
-      await service.getApprovalQueue('reviewer-1', mockTenantId, { categoryId: 'category-1' });
+      await service.getApprovalQueue('reviewer-1', mockTenantId, {
+        categoryId: 'category-1',
+      });
 
       // getApprovalQueue calls findAll multiple times for different statuses
       expect(planRepo.findAll).toHaveBeenCalled();
@@ -660,7 +761,10 @@ describe('ApprovalWorkflowService', () => {
 
       approvalHistoryRepo.find.mockResolvedValue(mockHistory);
 
-      const result = await service.getPlanApprovalHistory(mockPlanId, mockTenantId);
+      const result = await service.getPlanApprovalHistory(
+        mockPlanId,
+        mockTenantId,
+      );
 
       expect(result).toHaveLength(2);
       expect(result[0].action).toBe(ApprovalHistoryAction.SUBMITTED);

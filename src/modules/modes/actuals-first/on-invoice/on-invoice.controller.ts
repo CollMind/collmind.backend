@@ -11,7 +11,13 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { Response } from 'express';
 import { OnInvoiceService } from './on-invoice.service';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
@@ -66,7 +72,7 @@ export class OnInvoiceController {
    */
   @Get('count')
   @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
-  @ApiOperation({ summary: "Toplam On-Invoice entry sayısını getir" })
+  @ApiOperation({ summary: 'Toplam On-Invoice entry sayısını getir' })
   async getCount(@TenantId() tenantId: string) {
     const count = await this.onInvoiceService.getCount(tenantId);
     return { count };
@@ -111,8 +117,14 @@ export class OnInvoiceController {
   @ApiOperation({ summary: 'Excel template indir' })
   async downloadExcelTemplate(@Res() res: Response) {
     const buffer = this.onInvoiceService.generateExcelTemplate();
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=on-invoice-template.xlsx');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=on-invoice-template.xlsx',
+    );
     res.send(buffer);
   }
 
@@ -126,7 +138,10 @@ export class OnInvoiceController {
   async downloadCSVTemplate(@Res() res: Response) {
     const csv = this.onInvoiceService.generateCSVTemplate();
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=on-invoice-template.csv');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=on-invoice-template.csv',
+    );
     res.send(csv);
   }
 

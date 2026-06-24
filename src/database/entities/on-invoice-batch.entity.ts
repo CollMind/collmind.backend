@@ -1,4 +1,11 @@
-import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Tenant } from './tenant.entity';
 import { OnInvoiceEntry } from './on-invoice-entry.entity';
@@ -39,7 +46,13 @@ export class OnInvoiceBatch extends BaseEntity {
   @Column({ name: 'error_rows', type: 'int', default: 0 })
   errorRows!: number;
 
-  @Column({ name: 'total_discount_amount', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'total_discount_amount',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   totalDiscountAmount!: number;
 
   @Column({ name: 'affected_envelopes_count', type: 'int', default: 0 })

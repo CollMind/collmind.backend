@@ -14,7 +14,10 @@ export class TacticRepository {
     return this.repository.findOne({ where: { tenantId, code } });
   }
 
-  async findAllByTenant(tenantId: string, activeOnly = false): Promise<Tactic[]> {
+  async findAllByTenant(
+    tenantId: string,
+    activeOnly = false,
+  ): Promise<Tactic[]> {
     const where: any = { tenantId };
     if (activeOnly) {
       where.isActive = true;

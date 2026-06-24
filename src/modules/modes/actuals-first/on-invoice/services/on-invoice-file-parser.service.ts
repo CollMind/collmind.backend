@@ -20,7 +20,9 @@ export class OnInvoiceFileParserService {
     try {
       // Dosya boyutu kontrolü
       if (file.buffer.length > this.MAX_FILE_SIZE) {
-        throw new BadRequestException('Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.');
+        throw new BadRequestException(
+          'Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.',
+        );
       }
 
       const workbook = XLSX.read(file.buffer, {
@@ -53,7 +55,9 @@ export class OnInvoiceFileParserService {
       }
 
       if (data.length > this.MAX_ROWS) {
-        throw new BadRequestException(`Excel dosyası çok fazla satır içeriyor. Maksimum ${this.MAX_ROWS} satır işlenebilir.`);
+        throw new BadRequestException(
+          `Excel dosyası çok fazla satır içeriyor. Maksimum ${this.MAX_ROWS} satır işlenebilir.`,
+        );
       }
 
       return this.mapToEntryDtos(data);
@@ -61,7 +65,8 @@ export class OnInvoiceFileParserService {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Bilinmeyen hata';
       throw new BadRequestException(`Excel dosyası okunamadı: ${errorMessage}`);
     }
   }
@@ -69,7 +74,9 @@ export class OnInvoiceFileParserService {
   async parseCSV(file: Express.Multer.File): Promise<ParsedOnInvoiceRow[]> {
     try {
       if (file.buffer.length > this.MAX_FILE_SIZE) {
-        throw new BadRequestException('Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.');
+        throw new BadRequestException(
+          'Dosya boyutu çok büyük. Maksimum 10MB olmalıdır.',
+        );
       }
 
       let rowCount = 0;
@@ -84,7 +91,11 @@ export class OnInvoiceFileParserService {
             rowCount++;
             if (rowCount > this.MAX_ROWS) {
               stream.destroy();
-              reject(new BadRequestException(`CSV dosyası çok fazla satır içeriyor. Maksimum ${this.MAX_ROWS} satır işlenebilir.`));
+              reject(
+                new BadRequestException(
+                  `CSV dosyası çok fazla satır içeriyor. Maksimum ${this.MAX_ROWS} satır işlenebilir.`,
+                ),
+              );
               return;
             }
             results.push(data);
@@ -101,20 +112,29 @@ export class OnInvoiceFileParserService {
                 reject(error);
                 return;
               }
-              const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-              reject(new BadRequestException(`CSV dosyası işlenemedi: ${errorMessage}`));
+              const errorMessage =
+                error instanceof Error ? error.message : 'Bilinmeyen hata';
+              reject(
+                new BadRequestException(
+                  `CSV dosyası işlenemedi: ${errorMessage}`,
+                ),
+              );
             }
           })
           .on('error', (error: Error) => {
-            const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-            reject(new BadRequestException(`CSV dosyası okunamadı: ${errorMessage}`));
+            const errorMessage =
+              error instanceof Error ? error.message : 'Bilinmeyen hata';
+            reject(
+              new BadRequestException(`CSV dosyası okunamadı: ${errorMessage}`),
+            );
           });
       });
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Bilinmeyen hata';
       throw new BadRequestException(`CSV dosyası işlenemedi: ${errorMessage}`);
     }
   }
@@ -127,39 +147,62 @@ export class OnInvoiceFileParserService {
       }))
       .filter((row) => {
         // Boş satırları filtrele - en azından customer_code veya invoice_no olmalı
-        return row.customer_code || row.customerCode || row.CUSTOMER_CODE || row.CustomerCode ||
-               row.invoice_no || row.invoiceNo || row.INVOICE_NO || row.InvoiceNo;
+        return (
+          row.customer_code ||
+          row.customerCode ||
+          row.CUSTOMER_CODE ||
+          row.CustomerCode ||
+          row.invoice_no ||
+          row.invoiceNo ||
+          row.INVOICE_NO ||
+          row.InvoiceNo
+        );
       })
       .map((row) => {
         const customerCode = this.getStringValue(
-          row.customer_code || row.customerCode || row.CUSTOMER_CODE || row.CustomerCode
+          row.customer_code ||
+            row.customerCode ||
+            row.CUSTOMER_CODE ||
+            row.CustomerCode,
         );
         const invoiceNo = this.getStringValue(
-          row.invoice_no || row.invoiceNo || row.INVOICE_NO || row.InvoiceNo
+          row.invoice_no || row.invoiceNo || row.INVOICE_NO || row.InvoiceNo,
         );
         const invoiceDate = this.getDateValue(
-          row.invoice_date || row.invoiceDate || row.INVOICE_DATE || row.InvoiceDate
+          row.invoice_date ||
+            row.invoiceDate ||
+            row.INVOICE_DATE ||
+            row.InvoiceDate,
         );
         const fiscalPeriod = this.getFiscalPeriod(
-          row.fiscal_period || row.fiscalPeriod || row.FISCAL_PERIOD || row.FiscalPeriod
+          row.fiscal_period ||
+            row.fiscalPeriod ||
+            row.FISCAL_PERIOD ||
+            row.FiscalPeriod,
         );
         const skuCode = this.getStringValue(
-          row.sku_code || row.skuCode || row.SKU_CODE || row.SkuCode
+          row.sku_code || row.skuCode || row.SKU_CODE || row.SkuCode,
         );
         const quantity = this.getNumberValue(
-          row.quantity || row.Quantity || row.QUANTITY
+          row.quantity || row.Quantity || row.QUANTITY,
         );
         const listPrice = this.getNumberValue(
-          row.list_price || row.listPrice || row.LIST_PRICE || row.ListPrice
+          row.list_price || row.listPrice || row.LIST_PRICE || row.ListPrice,
         );
         const actualPrice = this.getNumberValue(
-          row.actual_price || row.actualPrice || row.ACTUAL_PRICE || row.ActualPrice
+          row.actual_price ||
+            row.actualPrice ||
+            row.ACTUAL_PRICE ||
+            row.ActualPrice,
         );
         const discount = this.getNumberValue(
-          row.discount || row.Discount || row.DISCOUNT
+          row.discount || row.Discount || row.DISCOUNT,
         );
         const discountType = this.getDiscountType(
-          row.discount_type || row.discountType || row.DISCOUNT_TYPE || row.DiscountType
+          row.discount_type ||
+            row.discountType ||
+            row.DISCOUNT_TYPE ||
+            row.DiscountType,
         );
 
         const dto: CreateOnInvoiceEntryDto = {
@@ -173,9 +216,10 @@ export class OnInvoiceFileParserService {
           actualPrice: actualPrice,
           discount: discount,
           discountType: discountType,
-          currency: this.getOptionalString(
-            row.currency || row.Currency || row.CURRENCY
-          ) || 'TRY',
+          currency:
+            this.getOptionalString(
+              row.currency || row.Currency || row.CURRENCY,
+            ) || 'TRY',
         };
 
         return {
@@ -233,9 +277,11 @@ export class OnInvoiceFileParserService {
     // String tarih formatlarını dene
     const str = String(value).trim();
     const date = new Date(str);
-    
+
     if (isNaN(date.getTime())) {
-      throw new BadRequestException(`Geçersiz tarih formatı: ${value}. YYYY-MM-DD formatında olmalıdır.`);
+      throw new BadRequestException(
+        `Geçersiz tarih formatı: ${value}. YYYY-MM-DD formatında olmalıdır.`,
+      );
     }
 
     // YYYY-MM-DD formatına çevir
@@ -249,9 +295,9 @@ export class OnInvoiceFileParserService {
     if (value === null || value === undefined || value === '') {
       throw new BadRequestException('Fiscal period değeri zorunludur');
     }
-    
+
     const str = String(value).trim();
-    
+
     // YYYY-MM formatını kontrol et
     const fiscalPeriodRegex = /^\d{4}-\d{2}$/;
     if (fiscalPeriodRegex.test(str)) {
@@ -262,7 +308,7 @@ export class OnInvoiceFileParserService {
         return str;
       }
     }
-    
+
     // Excel serial date ise çevir
     if (typeof value === 'number') {
       const excelEpoch = new Date(1899, 11, 30);
@@ -280,7 +326,9 @@ export class OnInvoiceFileParserService {
       return `${year}-${month}`;
     }
 
-    throw new BadRequestException(`Geçersiz fiscal period formatı: ${value}. YYYY-MM formatında olmalıdır.`);
+    throw new BadRequestException(
+      `Geçersiz fiscal period formatı: ${value}. YYYY-MM formatında olmalıdır.`,
+    );
   }
 
   private getDiscountType(value: any): OnInvoiceDiscountType {
@@ -291,17 +339,32 @@ export class OnInvoiceFileParserService {
     const str = String(value).trim().toUpperCase();
 
     // Mapping
-    if (str === 'CPP_ON' || str === 'CPP ON-INVOICE' || str === 'CPP_ON_INVOICE') {
+    if (
+      str === 'CPP_ON' ||
+      str === 'CPP ON-INVOICE' ||
+      str === 'CPP_ON_INVOICE'
+    ) {
       return OnInvoiceDiscountType.CPP_ON;
     }
-    if (str === 'LTA_ON' || str === 'LTA ON-INVOICE' || str === 'LTA_ON_INVOICE' || str === 'LTA Fatura Altı İskonto') {
+    if (
+      str === 'LTA_ON' ||
+      str === 'LTA ON-INVOICE' ||
+      str === 'LTA_ON_INVOICE' ||
+      str === 'LTA Fatura Altı İskonto'
+    ) {
       return OnInvoiceDiscountType.LTA_ON;
     }
-    if (str === 'PROMO_DISCOUNT' || str === 'PROMO DISCOUNT' || str === 'Anında Fiyat İndirimi') {
+    if (
+      str === 'PROMO_DISCOUNT' ||
+      str === 'PROMO DISCOUNT' ||
+      str === 'Anında Fiyat İndirimi'
+    ) {
       return OnInvoiceDiscountType.PROMO_DISCOUNT;
     }
 
-    throw new BadRequestException(`Geçersiz discount type: ${value}. Geçerli değerler: CPP_ON, LTA_ON, PROMO_DISCOUNT`);
+    throw new BadRequestException(
+      `Geçersiz discount type: ${value}. Geçerli değerler: CPP_ON, LTA_ON, PROMO_DISCOUNT`,
+    );
   }
 
   /**
@@ -310,14 +373,102 @@ export class OnInvoiceFileParserService {
   generateExcelTemplate(): Buffer {
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.aoa_to_sheet([
-      ['CUSTOMER_CODE', 'INVOICE_NO', 'INVOICE_DATE', 'FISCAL_PERIOD', 'SKU_CODE', 'QUANTITY', 'LIST_PRICE', 'ACTUAL_PRICE', 'DISCOUNT', 'DISCOUNT_TYPE'],
-      ['CUST-CF-001', 'INV-50001', '2026-01-15', '2026-01', 'WEL-HC-001', '100', '185.00', '162.80', '2220.00', 'CPP_ON'],
-      ['CUST-CF-001', 'INV-50001', '2026-01-15', '2026-01', 'WEL-HC-002', '50', '245.00', '220.50', '1225.00', 'CPP_ON'],
-      ['CUST-GS-002', 'INV-50002', '2026-01-16', '2026-01', 'WEL-HC-001', '200', '185.00', '166.50', '3700.00', 'LTA_ON'],
-      ['CUST-GS-002', 'INV-50002', '2026-01-16', '2026-01', 'WEL-HC-003', '75', '320.00', '288.00', '2400.00', 'LTA_ON'],
-      ['CUST-MK-003', 'INV-50003', '2026-01-17', '2026-01', 'WEL-HC-001', '150', '185.00', '175.75', '1387.50', 'PROMO_DISCOUNT'],
-      ['CUST-MK-003', 'INV-50003', '2026-01-17', '2026-01', 'WEL-HC-002', '100', '245.00', '232.75', '1225.00', 'PROMO_DISCOUNT'],
-      ['CUST-CF-001', 'INV-50004', '2026-01-18', '2026-01', 'WEL-HC-004', '80', '150.00', '135.00', '1200.00', 'CPP_ON'],
+      [
+        'CUSTOMER_CODE',
+        'INVOICE_NO',
+        'INVOICE_DATE',
+        'FISCAL_PERIOD',
+        'SKU_CODE',
+        'QUANTITY',
+        'LIST_PRICE',
+        'ACTUAL_PRICE',
+        'DISCOUNT',
+        'DISCOUNT_TYPE',
+      ],
+      [
+        'CUST-CF-001',
+        'INV-50001',
+        '2026-01-15',
+        '2026-01',
+        'WEL-HC-001',
+        '100',
+        '185.00',
+        '162.80',
+        '2220.00',
+        'CPP_ON',
+      ],
+      [
+        'CUST-CF-001',
+        'INV-50001',
+        '2026-01-15',
+        '2026-01',
+        'WEL-HC-002',
+        '50',
+        '245.00',
+        '220.50',
+        '1225.00',
+        'CPP_ON',
+      ],
+      [
+        'CUST-GS-002',
+        'INV-50002',
+        '2026-01-16',
+        '2026-01',
+        'WEL-HC-001',
+        '200',
+        '185.00',
+        '166.50',
+        '3700.00',
+        'LTA_ON',
+      ],
+      [
+        'CUST-GS-002',
+        'INV-50002',
+        '2026-01-16',
+        '2026-01',
+        'WEL-HC-003',
+        '75',
+        '320.00',
+        '288.00',
+        '2400.00',
+        'LTA_ON',
+      ],
+      [
+        'CUST-MK-003',
+        'INV-50003',
+        '2026-01-17',
+        '2026-01',
+        'WEL-HC-001',
+        '150',
+        '185.00',
+        '175.75',
+        '1387.50',
+        'PROMO_DISCOUNT',
+      ],
+      [
+        'CUST-MK-003',
+        'INV-50003',
+        '2026-01-17',
+        '2026-01',
+        'WEL-HC-002',
+        '100',
+        '245.00',
+        '232.75',
+        '1225.00',
+        'PROMO_DISCOUNT',
+      ],
+      [
+        'CUST-CF-001',
+        'INV-50004',
+        '2026-01-18',
+        '2026-01',
+        'WEL-HC-004',
+        '80',
+        '150.00',
+        '135.00',
+        '1200.00',
+        'CPP_ON',
+      ],
     ]);
 
     // Kolon genişliklerini ayarla
@@ -335,7 +486,7 @@ export class OnInvoiceFileParserService {
     ];
 
     XLSX.utils.book_append_sheet(workbook, worksheet, 'On-Invoice');
-    
+
     return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
   }
 

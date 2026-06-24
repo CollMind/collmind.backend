@@ -15,4 +15,3 @@ export class RejectRequestDto {
   @MaxLength(1000)
   reason!: string;
 }
-

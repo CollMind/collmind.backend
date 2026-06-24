@@ -24,7 +24,10 @@ export class NotificationService {
     recipientEmail: string,
     recipientName: string,
     metadata: Record<string, any>,
-    channels: NotificationChannel[] = [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+    channels: NotificationChannel[] = [
+      NotificationChannel.IN_APP,
+      NotificationChannel.EMAIL,
+    ],
   ): Promise<Notification[]> {
     const template = this.getTemplate(type, metadata);
     const priority = this.getPriority(type);
@@ -43,10 +46,14 @@ export class NotificationService {
         subject: template.subject,
         body: template.body,
         metadata,
-        status: channel === NotificationChannel.IN_APP ? NotificationStatus.SENT : NotificationStatus.PENDING,
-        expiresAt: type === NotificationType.APPROVAL_REQUESTED 
-          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-          : undefined,
+        status:
+          channel === NotificationChannel.IN_APP
+            ? NotificationStatus.SENT
+            : NotificationStatus.PENDING,
+        expiresAt:
+          type === NotificationType.APPROVAL_REQUESTED
+            ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+            : undefined,
       });
 
       notifications.push(notification);
@@ -69,7 +76,10 @@ export class NotificationService {
   }
 
   // MC-002: Email templates
-  private getTemplate(type: NotificationType, metadata: Record<string, any>): { subject: string; body: string } {
+  private getTemplate(
+    type: NotificationType,
+    metadata: Record<string, any>,
+  ): { subject: string; body: string } {
     switch (type) {
       case NotificationType.APPROVAL_REQUESTED:
         return {
@@ -224,8 +234,14 @@ Days remaining: ${metadata.daysRemaining || 0}
     }
   }
 
-  async markAsRead(tenantId: string, notificationId: string): Promise<Notification> {
-    const notification = await this.notificationRepository.findById(tenantId, notificationId);
+  async markAsRead(
+    tenantId: string,
+    notificationId: string,
+  ): Promise<Notification> {
+    const notification = await this.notificationRepository.findById(
+      tenantId,
+      notificationId,
+    );
     if (!notification) {
       throw new Error(`Notification with ID ${notificationId} not found`);
     }
@@ -236,12 +252,18 @@ Days remaining: ${metadata.daysRemaining || 0}
     return this.notificationRepository.update(notification);
   }
 
-  async getUnreadNotifications(tenantId: string, userId: string): Promise<Notification[]> {
+  async getUnreadNotifications(
+    tenantId: string,
+    userId: string,
+  ): Promise<Notification[]> {
     return this.notificationRepository.findUnreadByRecipient(tenantId, userId);
   }
 
-  async getAllNotifications(tenantId: string, userId: string, limit = 30): Promise<Notification[]> {
+  async getAllNotifications(
+    tenantId: string,
+    userId: string,
+    limit = 30,
+  ): Promise<Notification[]> {
     return this.notificationRepository.findByRecipient(tenantId, userId, limit);
   }
 }
-
