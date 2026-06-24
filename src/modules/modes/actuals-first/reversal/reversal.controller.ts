@@ -5,6 +5,8 @@ import {
   Body,
   UseGuards,
   ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -34,6 +36,7 @@ export class ReversalController {
    * Yalnızca ADMIN veya CATEGORY_MANAGER rolü.
    */
   @Post('agreement-transaction/:transactionId')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Reverse an off-invoice agreement transaction',
     description:

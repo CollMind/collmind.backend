@@ -140,7 +140,7 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   console.log('─'.repeat(40));
   if (users && users.length > 0) {
     users.forEach((user) => {
-      console.log(`   ${user.role}: ${user.email} / password123`);
+      console.log(`   ${user.role}: ${user.email} / Collmind2026!`);
     });
   } else {
     console.log('   ⚠️  No users available');
