@@ -90,6 +90,18 @@ export class LedgerEntry extends BaseEntity {
   @Column({ name: 'idempotency_key', length: 200 })
   idempotencyKey!: string; // Format: 'LEDGER|AGREEMENT|{agreement_id}|{transaction_id}'
 
+  // Reversal support
+  /** ID of the original ledger entry this entry reverses. NULL for normal entries. */
+  @Column({ name: 'reverses_entry_id', type: 'uuid', nullable: true })
+  reversesEntryId?: string;
+
+  /**
+   * True when this entry has been reversed by a later credit entry.
+   * Immutable once set — never reset to false.
+   */
+  @Column({ name: 'is_reversed', type: 'boolean', default: false })
+  isReversed!: boolean;
+
   // Description
   @Column({ type: 'text', nullable: true })
   description?: string;
@@ -101,6 +113,11 @@ export class LedgerEntry extends BaseEntity {
   @ManyToOne(() => Agreement, { nullable: true })
   @JoinColumn({ name: 'agreement_id' })
   agreement?: Agreement;
+
+  /** Self-referential: the original entry that this entry reverses. */
+  @ManyToOne(() => LedgerEntry, { nullable: true })
+  @JoinColumn({ name: 'reverses_entry_id' })
+  reversesEntry?: LedgerEntry;
 
   @ManyToOne(() => BudgetEnvelope, { nullable: true })
   @JoinColumn({ name: 'budget_envelope_id' })
@@ -114,5 +131,3 @@ export class LedgerEntry extends BaseEntity {
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }
-
-

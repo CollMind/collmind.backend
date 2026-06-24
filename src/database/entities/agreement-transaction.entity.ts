@@ -46,6 +46,10 @@ export class AgreementTransaction extends BaseEntity {
   @Column({ name: 'idempotency_key', length: 200 })
   idempotencyKey!: string; // Format: '{agreement_id}|{invoice_no}|{invoice_date}'
 
+  // Reversal flag — set to true after a successful reversal; immutable
+  @Column({ name: 'is_reversed', type: 'boolean', default: false })
+  isReversed!: boolean;
+
   // Metadata
   @Column({ type: 'text', nullable: true })
   notes?: string;
@@ -66,5 +70,3 @@ export class AgreementTransaction extends BaseEntity {
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }
-
-

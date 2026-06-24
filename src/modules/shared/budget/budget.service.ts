@@ -3,11 +3,9 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { BudgetRepository } from './budget.repository';
 import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
-import { ReserveBudgetDto } from './dto/reserve-budget.dto';
 import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
@@ -21,7 +19,7 @@ import {
 
 @Injectable()
 export class BudgetService {
-  constructor(private readonly budgetRepository: BudgetRepository) { }
+  constructor(private readonly budgetRepository: BudgetRepository) {}
 
   async createEnvelope(
     tenantId: string,
@@ -30,15 +28,23 @@ export class BudgetService {
     // Auto-generate code and name if not provided
     const channel = createDto.channel || 'UNKNOWN';
     const category = createDto.category || 'GENERAL';
-    const period = createDto.period || `${createDto.fiscalYear}-${createDto.month || '01'}`;
+    const period =
+      createDto.period || `${createDto.fiscalYear}-${createDto.month || '01'}`;
 
     const code = createDto.code || `${channel}/${category}/${period}`;
-    const name = createDto.name || `${channel} ${category.replace('_', ' ')} ${period} Budget`;
+    const name =
+      createDto.name ||
+      `${channel} ${category.replace('_', ' ')} ${period} Budget`;
 
     // Check if code already exists
-    const existing = await this.budgetRepository.findEnvelopeByCode(tenantId, code);
+    const existing = await this.budgetRepository.findEnvelopeByCode(
+      tenantId,
+      code,
+    );
     if (existing) {
-      throw new ConflictException('Budget envelope with this code already exists');
+      throw new ConflictException(
+        'Budget envelope with this code already exists',
+      );
     }
 
     const envelope = await this.budgetRepository.createEnvelope({
@@ -61,7 +67,10 @@ export class BudgetService {
     return this.budgetRepository.findAllEnvelopes(tenantId);
   }
 
-  async findEnvelopeById(tenantId: string, id: string): Promise<BudgetEnvelope> {
+  async findEnvelopeById(
+    tenantId: string,
+    id: string,
+  ): Promise<BudgetEnvelope> {
     const envelope = await this.budgetRepository.findEnvelopeById(tenantId, id);
     if (!envelope) {
       throw new NotFoundException(`Budget envelope with ID ${id} not found`);
@@ -79,10 +88,15 @@ export class BudgetService {
     currency: string = 'TRY',
   ): Promise<BudgetTransaction> {
     // Get envelope with pessimistic lock (MC-001: Same envelope serialized)
-    const envelope = await this.budgetRepository.findEnvelopeWithLock(tenantId, envelopeId);
+    const envelope = await this.budgetRepository.findEnvelopeWithLock(
+      tenantId,
+      envelopeId,
+    );
 
     if (!envelope) {
-      throw new NotFoundException(`Budget envelope with ID ${envelopeId} not found`);
+      throw new NotFoundException(
+        `Budget envelope with ID ${envelopeId} not found`,
+      );
     }
 
     if (envelope.status !== BudgetEnvelopeStatus.ACTIVE) {
@@ -91,17 +105,24 @@ export class BudgetService {
 
     // Check idempotency (prevent duplicate reservations)
     const idempotencyKey = `RESERVE|AGREEMENT|${agreementId}|${envelopeId}`;
-    const existing = await this.budgetRepository.findTransactionByIdempotencyKey(tenantId, idempotencyKey);
+    const existing =
+      await this.budgetRepository.findTransactionByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
     if (existing) {
-      throw new ConflictException('Budget reservation already exists for this agreement');
+      throw new ConflictException(
+        'Budget reservation already exists for this agreement',
+      );
     }
 
     // Check available amount using v_budget_summary view (BRD-compliant)
-    const { available, sufficient } = await this.budgetRepository.checkBudgetAvailability(
-      envelopeId,
-      tenantId,
-      amount,
-    );
+    const { available, sufficient } =
+      await this.budgetRepository.checkBudgetAvailability(
+        envelopeId,
+        tenantId,
+        amount,
+      );
 
     if (!sufficient) {
       throw new BadRequestException(
@@ -138,9 +159,15 @@ export class BudgetService {
   ): Promise<BudgetTransaction> {
     // Check idempotency
     const idempotencyKey = `RELEASE|AGREEMENT|${agreementId}|${envelopeId}`;
-    const existing = await this.budgetRepository.findTransactionByIdempotencyKey(tenantId, idempotencyKey);
+    const existing =
+      await this.budgetRepository.findTransactionByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
     if (existing) {
-      throw new ConflictException('Budget release already exists for this agreement');
+      throw new ConflictException(
+        'Budget release already exists for this agreement',
+      );
     }
 
     // Create RELEASE transaction
@@ -162,7 +189,10 @@ export class BudgetService {
   }
 
   // Get reserved amount for envelope (computed from transactions)
-  async getReservedAmount(tenantId: string, envelopeId: string): Promise<number> {
+  async getReservedAmount(
+    tenantId: string,
+    envelopeId: string,
+  ): Promise<number> {
     return this.budgetRepository.getReservedAmount(tenantId, envelopeId);
   }
 
@@ -172,7 +202,11 @@ export class BudgetService {
     envelopeId: string,
     txType?: BudgetTransactionType,
   ): Promise<BudgetTransaction[]> {
-    return this.budgetRepository.findTransactionsByEnvelope(tenantId, envelopeId, txType);
+    return this.budgetRepository.findTransactionsByEnvelope(
+      tenantId,
+      envelopeId,
+      txType,
+    );
   }
 
   // Get transactions by source (e.g., agreement)
@@ -181,7 +215,11 @@ export class BudgetService {
     sourceType: BudgetTransactionSourceType,
     sourceId: string,
   ): Promise<BudgetTransaction[]> {
-    return this.budgetRepository.findTransactionsBySource(tenantId, sourceType, sourceId);
+    return this.budgetRepository.findTransactionsBySource(
+      tenantId,
+      sourceType,
+      sourceId,
+    );
   }
 
   /**
@@ -201,11 +239,12 @@ export class BudgetService {
     // Check for existing RESERVE transaction for this agreement (true idempotency)
     // Idempotency key should be based on agreementId only, not envelope ID
     // This ensures that retrying with different envelope lookups doesn't create duplicate transactions
-    const existingReserveTransactions = await this.budgetRepository.findTransactionsBySource(
-      tenantId,
-      BudgetTransactionSourceType.AGREEMENT,
-      agreementId,
-    );
+    const existingReserveTransactions =
+      await this.budgetRepository.findTransactionsBySource(
+        tenantId,
+        BudgetTransactionSourceType.AGREEMENT,
+        agreementId,
+      );
 
     const existingReserve = existingReserveTransactions.find(
       (tx) =>
@@ -232,11 +271,12 @@ export class BudgetService {
     }
 
     // Check availability using view
-    const { available, sufficient } = await this.budgetRepository.checkBudgetAvailability(
-      envelope.id,
-      tenantId,
-      amount,
-    );
+    const { available, sufficient } =
+      await this.budgetRepository.checkBudgetAvailability(
+        envelope.id,
+        tenantId,
+        amount,
+      );
 
     if (!sufficient) {
       throw new BadRequestException(
@@ -250,10 +290,11 @@ export class BudgetService {
     const idempotencyKey = `RESERVE|AGREEMENT|${agreementId}`;
 
     // Double-check idempotency (defensive check)
-    const existingByIdempotency = await this.budgetRepository.findTransactionByIdempotencyKey(
-      tenantId,
-      idempotencyKey,
-    );
+    const existingByIdempotency =
+      await this.budgetRepository.findTransactionByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
     if (existingByIdempotency) {
       return existingByIdempotency;
     }
@@ -291,11 +332,12 @@ export class BudgetService {
     userId: string,
   ): Promise<BudgetTransaction> {
     // Check for existing COMMIT transaction for this plan (true idempotency)
-    const existingReserveTransactions = await this.budgetRepository.findTransactionsBySource(
-      tenantId,
-      BudgetTransactionSourceType.PLAN,
-      planId,
-    );
+    const existingReserveTransactions =
+      await this.budgetRepository.findTransactionsBySource(
+        tenantId,
+        BudgetTransactionSourceType.PLAN,
+        planId,
+      );
 
     const existingReserve = existingReserveTransactions.find(
       (tx) =>
@@ -321,11 +363,12 @@ export class BudgetService {
     }
 
     // Check availability using view
-    const { available, sufficient } = await this.budgetRepository.checkBudgetAvailability(
-      envelope.id,
-      tenantId,
-      amount,
-    );
+    const { available, sufficient } =
+      await this.budgetRepository.checkBudgetAvailability(
+        envelope.id,
+        tenantId,
+        amount,
+      );
 
     if (!sufficient) {
       throw new BadRequestException(
@@ -355,6 +398,50 @@ export class BudgetService {
   }
 
   /**
+   * Release budget spend for a reversed agreement transaction.
+   *
+   * Creates a RELEASE budget transaction scoped to the original agreementTransaction.
+   * Idempotency key: 'REVERSAL|AGREEMENT|{transactionId}'
+   *
+   * Uses RELEASE type (no new enum value needed) to unwind spend from the envelope.
+   * Callers must supply the envelopeId from the original ledger entry's budgetEnvelopeId.
+   */
+  async reverseForTransaction(
+    agreementTransactionId: string,
+    envelopeId: string,
+    amount: number,
+    currency: string,
+    tenantId: string,
+    userId: string,
+  ): Promise<BudgetTransaction> {
+    const idempotencyKey = `REVERSAL|AGREEMENT|${agreementTransactionId}`;
+
+    // Idempotency check
+    const existing =
+      await this.budgetRepository.findTransactionByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
+    if (existing) {
+      return existing;
+    }
+
+    return this.budgetRepository.createTransaction({
+      tenantId,
+      envelopeId,
+      txType: BudgetTransactionType.RELEASE,
+      txStatus: BudgetTransactionStatus.POSTED,
+      sourceType: BudgetTransactionSourceType.AGREEMENT,
+      sourceId: agreementTransactionId,
+      amount: Math.abs(amount),
+      currency: currency || 'TRY',
+      idempotencyKey,
+      description: `Budget release for reversed agreement transaction ${agreementTransactionId}`,
+      createdBy: userId,
+    });
+  }
+
+  /**
    * Release budget reservation when agreement is cancelled
    */
   async releaseForAgreement(
@@ -368,10 +455,11 @@ export class BudgetService {
     const idempotencyKey = `RELEASE|AGREEMENT|${agreementId}|${envelopeId}`;
 
     // Check if already released (idempotency)
-    const existing = await this.budgetRepository.findTransactionByIdempotencyKey(
-      tenantId,
-      idempotencyKey,
-    );
+    const existing =
+      await this.budgetRepository.findTransactionByIdempotencyKey(
+        tenantId,
+        idempotencyKey,
+      );
     if (existing) {
       return existing;
     }
@@ -394,10 +482,7 @@ export class BudgetService {
     return transaction;
   }
 
-  async releaseForPlan(
-    planId: string,
-    tenantId: string,
-  ): Promise<void> {
+  async releaseForPlan(planId: string, tenantId: string): Promise<void> {
     // Find all COMMIT transactions for this plan
     const transactions = await this.budgetRepository.findTransactionsBySource(
       tenantId,
@@ -416,10 +501,11 @@ export class BudgetService {
       const idempotencyKey = `RELEASE|PLAN|${planId}|${commitTx.envelopeId}`;
 
       // Check if already released (idempotency)
-      const existing = await this.budgetRepository.findTransactionByIdempotencyKey(
-        tenantId,
-        idempotencyKey,
-      );
+      const existing =
+        await this.budgetRepository.findTransactionByIdempotencyKey(
+          tenantId,
+          idempotencyKey,
+        );
       if (existing) {
         continue;
       }
@@ -449,7 +535,12 @@ export class BudgetService {
     periodMonth: string,
     category?: string,
   ): Promise<BudgetEnvelope | null> {
-    return this.budgetRepository.findEnvelopeByDimensions(tenantId, channel, periodMonth, category);
+    return this.budgetRepository.findEnvelopeByDimensions(
+      tenantId,
+      channel,
+      periodMonth,
+      category,
+    );
   }
 
   /**
@@ -495,7 +586,10 @@ export class BudgetService {
     }
 
     // Get budget summary
-    const summary = await this.budgetRepository.getBudgetSummary(envelope.id, tenantId);
+    const summary = await this.budgetRepository.getBudgetSummary(
+      envelope.id,
+      tenantId,
+    );
 
     if (!summary) {
       return {
@@ -509,9 +603,12 @@ export class BudgetService {
     }
 
     // Determine status based on usage
-    const usagePercent = summary.allocatedAmount > 0
-      ? ((summary.reservedAmount + summary.consumedAmount) / summary.allocatedAmount) * 100
-      : 0;
+    const usagePercent =
+      summary.allocatedAmount > 0
+        ? ((summary.reservedAmount + summary.consumedAmount) /
+            summary.allocatedAmount) *
+          100
+        : 0;
 
     let status: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
     if (usagePercent >= 95) {
@@ -530,4 +627,3 @@ export class BudgetService {
     };
   }
 }
-

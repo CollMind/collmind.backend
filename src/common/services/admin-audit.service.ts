@@ -1,11 +1,14 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AdminAuditLog, AuditLogResult } from '../../database/entities/admin-audit-log.entity';
+import {
+  AdminAuditLog,
+  AuditLogResult,
+} from '../../database/entities/admin-audit-log.entity';
 
 /**
  * EA-001: Admin Audit Service
- * 
+ *
  * Logs all admin actions for accountability:
  * - Timestamp
  * - Admin user ID + email
@@ -57,7 +60,13 @@ export class AdminAuditService {
 
     // EA-001: High-risk admin actions trigger alerts
     if (isHighRisk) {
-      await this.triggerAlert(actionType, entityType, adminEmail, entityId, savedLog.id);
+      await this.triggerAlert(
+        actionType,
+        entityType,
+        adminEmail,
+        entityId,
+        savedLog.id,
+      );
     }
 
     return savedLog;
@@ -69,6 +78,8 @@ export class AdminAuditService {
       { action: 'UPDATE', entity: 'user', field: 'role' }, // Role permission changes
       { action: 'DELETE', entity: 'user' }, // Bulk user deactivations
       { action: 'DELETE', entity: 'budget_envelope' }, // Budget envelope deletions
+      { action: 'REVERSE', entity: 'AGREEMENT_TRANSACTION' }, // Financial reversal (BRD: high-risk)
+      { action: 'CLOSE', entity: 'AGREEMENT' }, // Settlement close — irreversible state (T-013 pending)
     ];
 
     return highRiskActions.some(
@@ -120,7 +131,10 @@ export class AdminAuditService {
     return query.getMany();
   }
 
-  async getHighRiskActions(tenantId: string, limit = 50): Promise<AdminAuditLog[]> {
+  async getHighRiskActions(
+    tenantId: string,
+    limit = 50,
+  ): Promise<AdminAuditLog[]> {
     return this.auditLogRepository.find({
       where: { tenantId, isHighRisk: true },
       order: { createdAt: 'DESC' },
@@ -128,4 +142,3 @@ export class AdminAuditService {
     });
   }
 }
-

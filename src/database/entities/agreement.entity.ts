@@ -101,7 +101,13 @@ export class Agreement extends BaseEntity {
   mechanicId!: string;
 
   // Financial terms
-  @Column({ name: 'mechanic_value', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  @Column({
+    name: 'mechanic_value',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
   mechanicValue?: number; // e.g., 15.00 (TL per unit) or 10.5 (%)
 
   @Column({
@@ -116,7 +122,12 @@ export class Agreement extends BaseEntity {
   currency!: string;
 
   // Budget
-  @Column({ name: 'cap_total_amount', type: 'decimal', precision: 18, scale: 2 })
+  @Column({
+    name: 'cap_total_amount',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+  })
   capTotalAmount!: number; // Budget ceiling for this agreement
 
   @Column({
@@ -179,18 +190,49 @@ export class Agreement extends BaseEntity {
   @Column({ name: 'rejection_reason', type: 'text', nullable: true })
   rejectionReason?: string;
 
+  // Settlement / Close
+  @Column({ name: 'closed_at', type: 'timestamp', nullable: true })
+  closedAt?: Date;
+
+  @Column({ name: 'closed_by', type: 'uuid', nullable: true })
+  closedBy?: string;
+
   // Budget tracking (computed)
-  @Column({ name: 'consumed_amount', type: 'decimal', precision: 18, scale: 2, default: 0 })
+  @Column({
+    name: 'consumed_amount',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: 0,
+  })
   consumedAmount!: number; // Sum of ledger entries
 
   // Price simulation (STA only)
-  @Column({ name: 'current_price', type: 'decimal', precision: 18, scale: 2, nullable: true })
+  @Column({
+    name: 'current_price',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
   currentPrice?: number;
 
-  @Column({ name: 'expected_price', type: 'decimal', precision: 18, scale: 2, nullable: true })
+  @Column({
+    name: 'expected_price',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
   expectedPrice?: number;
 
-  @Column({ name: 'competitor_price', type: 'decimal', precision: 18, scale: 2, nullable: true })
+  @Column({
+    name: 'competitor_price',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
   competitorPrice?: number;
 
   @Column({ name: 'competitor_name', length: 200, nullable: true })
@@ -249,5 +291,3 @@ export class Agreement extends BaseEntity {
   @JoinColumn({ name: 'rejected_by' })
   rejectedBy?: User;
 }
-
-
