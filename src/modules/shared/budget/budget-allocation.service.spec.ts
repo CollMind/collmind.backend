@@ -13,6 +13,25 @@ import {
 import { Plan } from '../../../database/entities/plan.entity';
 import { BudgetCheckContext } from './dto/budget-check-context.dto';
 import { SpendBreakdown } from '../spend-calculation/dto/spend-breakdown.dto';
+import { BudgetThresholdService } from './budget-threshold.service';
+import { UtilizationStatus } from '../finance-reporting/dto/budget-utilization.dto';
+
+const mockBudgetThresholdService = {
+  getThresholds: jest
+    .fn()
+    .mockResolvedValue({ warning: 80, critical: 95, exceeded: 100 }),
+  toStatus: jest.fn().mockImplementation((percent: number) => {
+    if (percent >= 95) return UtilizationStatus.RED;
+    if (percent >= 80) return UtilizationStatus.AMBER;
+    return UtilizationStatus.GREEN;
+  }),
+  isExceeded: jest
+    .fn()
+    .mockImplementation(
+      (percent: number, thresholds: { exceeded: number }) =>
+        percent >= thresholds.exceeded,
+    ),
+};
 
 describe('BudgetAllocationService', () => {
   let service: BudgetAllocationService;
@@ -52,6 +71,10 @@ describe('BudgetAllocationService', () => {
           useValue: {
             findOne: jest.fn(),
           },
+        },
+        {
+          provide: BudgetThresholdService,
+          useValue: mockBudgetThresholdService,
         },
       ],
     }).compile();

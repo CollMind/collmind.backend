@@ -5,6 +5,8 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { BudgetRepository } from './budget.repository';
+import { BudgetThresholdService } from './budget-threshold.service';
+import { UtilizationStatus } from '../finance-reporting/dto/budget-utilization.dto';
 import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
 import {
   BudgetEnvelope,
@@ -19,7 +21,10 @@ import {
 
 @Injectable()
 export class BudgetService {
-  constructor(private readonly budgetRepository: BudgetRepository) {}
+  constructor(
+    private readonly budgetRepository: BudgetRepository,
+    private readonly budgetThresholdService: BudgetThresholdService,
+  ) {}
 
   async createEnvelope(
     tenantId: string,
@@ -558,13 +563,17 @@ export class BudgetService {
     reserved: number;
     consumed: number;
     planned: number; // For current STA being created
-    status: 'GREEN' | 'YELLOW' | 'RED';
+    status: UtilizationStatus;
   }> {
     // Get current month if not provided
     if (!periodMonth) {
       const now = new Date();
       periodMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     }
+
+    // Fetch thresholds once (config-driven, tenant-scoped)
+    const thresholds =
+      await this.budgetThresholdService.getThresholds(tenantId);
 
     // Find envelope by dimensions
     const envelope = await this.budgetRepository.findEnvelopeByDimensions(
@@ -581,7 +590,7 @@ export class BudgetService {
         reserved: 0,
         consumed: 0,
         planned: 0,
-        status: 'GREEN',
+        status: UtilizationStatus.GREEN,
       };
     }
 
@@ -598,11 +607,11 @@ export class BudgetService {
         reserved: 0,
         consumed: 0,
         planned: 0,
-        status: 'GREEN' as const,
+        status: UtilizationStatus.GREEN,
       };
     }
 
-    // Determine status based on usage
+    // Determine status based on usage (config-driven thresholds)
     const usagePercent =
       summary.allocatedAmount > 0
         ? ((summary.reservedAmount + summary.consumedAmount) /
@@ -610,20 +619,13 @@ export class BudgetService {
           100
         : 0;
 
-    let status: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
-    if (usagePercent >= 95) {
-      status = 'RED';
-    } else if (usagePercent >= 80) {
-      status = 'YELLOW';
-    }
-
     return {
       totalAllocation: summary.allocatedAmount,
       available: summary.availableAmount,
       reserved: summary.reservedAmount,
       consumed: summary.consumedAmount,
       planned: 0, // Will be set by frontend for current STA
-      status,
+      status: this.budgetThresholdService.toStatus(usagePercent, thresholds),
     };
   }
 }

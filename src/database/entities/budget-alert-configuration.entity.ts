@@ -38,6 +38,14 @@ export class BudgetAlertConfiguration extends BaseEntity {
     repeatInterval?: number; // Repeat alert interval in minutes
   };
 
+  @Column({
+    name: 'threshold_percent',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+  })
+  thresholdPercent!: number;
+
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive!: boolean;
 

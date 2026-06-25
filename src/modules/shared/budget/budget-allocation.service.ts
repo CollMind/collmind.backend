@@ -28,6 +28,7 @@ import {
 } from './dto/budget-report.dto';
 import { SpendBreakdown } from '../spend-calculation/dto/spend-breakdown.dto';
 import { Plan } from '../../../database/entities/plan.entity';
+import { BudgetThresholdService } from './budget-threshold.service';
 
 @Injectable()
 export class BudgetAllocationService {
@@ -40,6 +41,7 @@ export class BudgetAllocationService {
     private readonly budgetTransactionLogRepository: Repository<BudgetTransactionLog>,
     @InjectRepository(Plan)
     private readonly planRepository: Repository<Plan>,
+    private readonly budgetThresholdService: BudgetThresholdService,
   ) {}
 
   /**
@@ -879,6 +881,8 @@ export class BudgetAllocationService {
 
   /**
    * Check and send alerts based on thresholds
+   * alertThreshold80/95/100 on-off switches are preserved; actual percent values
+   * come from config-driven BudgetThresholdService.
    */
   private async checkAndSendAlerts(
     tenantId: string,
@@ -897,33 +901,48 @@ export class BudgetAllocationService {
           100
         : 0;
 
-    // Check thresholds and send alerts (implementation would integrate with notification service)
+    // Fetch thresholds once (tenant-scoped, cached)
+    const thresholds =
+      await this.budgetThresholdService.getThresholds(tenantId);
+
+    // Check warning threshold (alertThreshold80 switch preserved)
     if (
       allocation.alertThreshold80 &&
-      (onUtilizationPercent >= 80 || offUtilizationPercent >= 80)
+      (onUtilizationPercent >= thresholds.warning ||
+        offUtilizationPercent >= thresholds.warning)
     ) {
       this.logger.warn(
-        `Budget 80% threshold reached for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
+        `Budget warning threshold (${thresholds.warning}%) reached for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
       );
       // TODO: Send email to Finance Manager
     }
 
+    // Check critical threshold (alertThreshold95 switch preserved)
     if (
       allocation.alertThreshold95 &&
-      (onUtilizationPercent >= 95 || offUtilizationPercent >= 95)
+      (onUtilizationPercent >= thresholds.critical ||
+        offUtilizationPercent >= thresholds.critical)
     ) {
       this.logger.error(
-        `Budget 95% threshold reached for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
+        `Budget critical threshold (${thresholds.critical}%) reached for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
       );
       // TODO: Send critical alert to Finance Manager + Category Manager
     }
 
+    // Check exceeded threshold (alertThreshold100 switch preserved)
     if (
       allocation.alertThreshold100 &&
-      (onUtilizationPercent >= 100 || offUtilizationPercent >= 100)
+      (this.budgetThresholdService.isExceeded(
+        onUtilizationPercent,
+        thresholds,
+      ) ||
+        this.budgetThresholdService.isExceeded(
+          offUtilizationPercent,
+          thresholds,
+        ))
     ) {
       this.logger.error(
-        `Budget 100% threshold exceeded for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
+        `Budget exceeded threshold (${thresholds.exceeded}%) for allocation ${allocation.id}. On: ${onUtilizationPercent.toFixed(1)}%, Off: ${offUtilizationPercent.toFixed(1)}%`,
       );
       // TODO: Send immediate alert + block plan submission if hard limit mode
     }

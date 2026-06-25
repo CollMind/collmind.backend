@@ -8,6 +8,10 @@ import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spen
 import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
 import { BudgetAllocationService } from '../budget/budget-allocation.service';
 import {
+  BudgetThresholdService,
+  BudgetThresholds,
+} from '../budget/budget-threshold.service';
+import {
   ReportFilters,
   PaginationParams,
   ReportGranularity,
@@ -51,6 +55,7 @@ export class FinanceReportingService {
     @InjectRepository(BudgetAllocation)
     private readonly budgetAllocationRepository: Repository<BudgetAllocation>,
     private readonly budgetAllocationService: BudgetAllocationService,
+    private readonly budgetThresholdService: BudgetThresholdService,
   ) {}
 
   /**
@@ -64,6 +69,10 @@ export class FinanceReportingService {
       ? new Date(filters.startDate)
       : new Date();
     const endDate = filters.endDate ? new Date(filters.endDate) : new Date();
+
+    // Fetch thresholds once outside any loop (config-driven, tenant-scoped)
+    const thresholds =
+      await this.budgetThresholdService.getThresholds(tenantId);
 
     // Get budget allocations for the period
     const allocations = await this.budgetAllocationRepository.find({
@@ -124,7 +133,10 @@ export class FinanceReportingService {
       reserved: totalOnInvoiceReserved,
       available: onInvoiceAvailable,
       utilizationPercent: onInvoiceUtilizationPercent,
-      status: this.getUtilizationStatus(onInvoiceUtilizationPercent),
+      status: this.getUtilizationStatus(
+        onInvoiceUtilizationPercent,
+        thresholds,
+      ),
     };
 
     const offInvoice: BudgetSummary = {
@@ -133,48 +145,44 @@ export class FinanceReportingService {
       reserved: totalOffInvoiceReserved,
       available: offInvoiceAvailable,
       utilizationPercent: offInvoiceUtilizationPercent,
-      status: this.getUtilizationStatus(offInvoiceUtilizationPercent),
+      status: this.getUtilizationStatus(
+        offInvoiceUtilizationPercent,
+        thresholds,
+      ),
     };
+
+    const totalUtilizationPercent =
+      totalOnInvoiceAllocated + totalOffInvoiceAllocated > 0
+        ? ((totalOnInvoiceUtilized +
+            totalOnInvoiceReserved +
+            totalOffInvoiceUtilized +
+            totalOffInvoiceReserved) /
+            (totalOnInvoiceAllocated + totalOffInvoiceAllocated)) *
+          100
+        : 0;
 
     const total: BudgetSummary = {
       allocated: totalOnInvoiceAllocated + totalOffInvoiceAllocated,
       utilized: totalOnInvoiceUtilized + totalOffInvoiceUtilized,
       reserved: totalOnInvoiceReserved + totalOffInvoiceReserved,
       available: onInvoiceAvailable + offInvoiceAvailable,
-      utilizationPercent:
-        totalOnInvoiceAllocated + totalOffInvoiceAllocated > 0
-          ? ((totalOnInvoiceUtilized +
-              totalOnInvoiceReserved +
-              totalOffInvoiceUtilized +
-              totalOffInvoiceReserved) /
-              (totalOnInvoiceAllocated + totalOffInvoiceAllocated)) *
-            100
-          : 0,
-      status: this.getUtilizationStatus(
-        totalOnInvoiceAllocated + totalOffInvoiceAllocated > 0
-          ? ((totalOnInvoiceUtilized +
-              totalOnInvoiceReserved +
-              totalOffInvoiceUtilized +
-              totalOffInvoiceReserved) /
-              (totalOnInvoiceAllocated + totalOffInvoiceAllocated)) *
-              100
-          : 0,
-      ),
+      utilizationPercent: totalUtilizationPercent,
+      status: this.getUtilizationStatus(totalUtilizationPercent, thresholds),
     };
 
     // Breakdown by dimensions (if requested)
     const byCpl =
       filters.cplIds && filters.cplIds.length > 0
         ? undefined
-        : this.aggregateByCpl(allocations);
+        : this.aggregateByCpl(allocations, thresholds);
     const byChannel =
       filters.channels && filters.channels.length > 0
         ? undefined
-        : this.aggregateByChannel(allocations);
+        : this.aggregateByChannel(allocations, thresholds);
     const byCategory =
       filters.categories && filters.categories.length > 0
         ? undefined
-        : this.aggregateByCategory(allocations);
+        : this.aggregateByCategory(allocations, thresholds);
 
     return {
       onInvoice,
@@ -926,13 +934,17 @@ export class FinanceReportingService {
     return query.getMany();
   }
 
-  private getUtilizationStatus(percent: number): UtilizationStatus {
-    if (percent >= 95) return UtilizationStatus.RED;
-    if (percent >= 80) return UtilizationStatus.AMBER;
-    return UtilizationStatus.GREEN;
+  private getUtilizationStatus(
+    percent: number,
+    thresholds: BudgetThresholds,
+  ): UtilizationStatus {
+    return this.budgetThresholdService.toStatus(percent, thresholds);
   }
 
-  private aggregateByCpl(allocations: BudgetAllocation[]): Array<{
+  private aggregateByCpl(
+    allocations: BudgetAllocation[],
+    thresholds: BudgetThresholds,
+  ): Array<{
     cplId: string;
     cplName: string;
     onInvoice: BudgetSummary;
@@ -1005,7 +1017,7 @@ export class FinanceReportingService {
           reserved: onInvoiceReserved,
           available: onInvoiceAvailable,
           utilizationPercent: onInvoicePercent,
-          status: this.getUtilizationStatus(onInvoicePercent),
+          status: this.getUtilizationStatus(onInvoicePercent, thresholds),
         },
         offInvoice: {
           allocated: offInvoiceAllocated,
@@ -1013,13 +1025,16 @@ export class FinanceReportingService {
           reserved: offInvoiceReserved,
           available: offInvoiceAvailable,
           utilizationPercent: offInvoicePercent,
-          status: this.getUtilizationStatus(offInvoicePercent),
+          status: this.getUtilizationStatus(offInvoicePercent, thresholds),
         },
       };
     });
   }
 
-  private aggregateByChannel(allocations: BudgetAllocation[]): Array<{
+  private aggregateByChannel(
+    allocations: BudgetAllocation[],
+    thresholds: BudgetThresholds,
+  ): Array<{
     channel: string;
     onInvoice: BudgetSummary;
     offInvoice: BudgetSummary;
@@ -1090,7 +1105,7 @@ export class FinanceReportingService {
           reserved: onInvoiceReserved,
           available: onInvoiceAvailable,
           utilizationPercent: onInvoicePercent,
-          status: this.getUtilizationStatus(onInvoicePercent),
+          status: this.getUtilizationStatus(onInvoicePercent, thresholds),
         },
         offInvoice: {
           allocated: offInvoiceAllocated,
@@ -1098,13 +1113,16 @@ export class FinanceReportingService {
           reserved: offInvoiceReserved,
           available: offInvoiceAvailable,
           utilizationPercent: offInvoicePercent,
-          status: this.getUtilizationStatus(offInvoicePercent),
+          status: this.getUtilizationStatus(offInvoicePercent, thresholds),
         },
       };
     });
   }
 
-  private aggregateByCategory(allocations: BudgetAllocation[]): Array<{
+  private aggregateByCategory(
+    allocations: BudgetAllocation[],
+    thresholds: BudgetThresholds,
+  ): Array<{
     category: string;
     onInvoice: BudgetSummary;
     offInvoice: BudgetSummary;
@@ -1175,7 +1193,7 @@ export class FinanceReportingService {
           reserved: onInvoiceReserved,
           available: onInvoiceAvailable,
           utilizationPercent: onInvoicePercent,
-          status: this.getUtilizationStatus(onInvoicePercent),
+          status: this.getUtilizationStatus(onInvoicePercent, thresholds),
         },
         offInvoice: {
           allocated: offInvoiceAllocated,
@@ -1183,7 +1201,7 @@ export class FinanceReportingService {
           reserved: offInvoiceReserved,
           available: offInvoiceAvailable,
           utilizationPercent: offInvoicePercent,
-          status: this.getUtilizationStatus(offInvoicePercent),
+          status: this.getUtilizationStatus(offInvoicePercent, thresholds),
         },
       };
     });

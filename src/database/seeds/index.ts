@@ -5,6 +5,7 @@ import { seedChannels } from './channel.seed';
 import { seedCustomers } from './customer.seed';
 import { seedCpls } from './cpl.seed';
 import { seedBudgetEnvelopes } from './budget-envelope.seed';
+import { seedBudgetAlertConfigurations } from './budget-alert-configuration.seed';
 import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
@@ -74,6 +75,9 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   if (!envelopes || envelopes.length === 0) {
     throw new Error('❌ No budget envelopes were seeded. Cannot continue.');
   }
+
+  // 6a. Seed budget alert configurations (config-driven thresholds — T-012)
+  await seedBudgetAlertConfigurations(dataSource, tenant.id);
   const nkaEnvelope =
     envelopes.find((e) => e.code.includes('NKA')) || envelopes[0];
   if (!nkaEnvelope) {

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { CustomerService } from '../../../../customer/customer.service';
 import { SkuService } from '../../../../master-data/sku/sku.service';
 import { BudgetService } from '../../../../shared/budget/budget.service';
+import { BudgetThresholdService } from '../../../../shared/budget/budget-threshold.service';
 import { ParsedOnInvoiceRow } from './on-invoice-file-parser.service';
 import { OnInvoiceRepository } from '../on-invoice.repository';
 import {
@@ -12,6 +13,7 @@ import {
 } from '../dto/validation-response.dto';
 import { OnInvoiceDiscountType } from '../../../../../database/entities/on-invoice-entry.entity';
 import { CustomerStatus } from '../../../../../database/entities/customer.entity';
+import { UtilizationStatus } from '../../../../shared/finance-reporting/dto/budget-utilization.dto';
 
 export interface ValidationError {
   rowNumber: number;
@@ -40,6 +42,7 @@ export class OnInvoiceValidationService {
     private readonly customerService: CustomerService,
     private readonly skuService: SkuService,
     private readonly budgetService: BudgetService,
+    private readonly budgetThresholdService: BudgetThresholdService,
     private readonly repository: OnInvoiceRepository,
   ) {}
 
@@ -454,6 +457,10 @@ export class OnInvoiceValidationService {
     validationResults: ValidationResult[],
     tenantId: string,
   ): Promise<BudgetImpactItemDto[]> {
+    // Fetch thresholds once outside any loop (config-driven, tenant-scoped)
+    const thresholds =
+      await this.budgetThresholdService.getThresholds(tenantId);
+
     // Envelope bazlı grupla
     const envelopeMap = new Map<
       string,
@@ -512,17 +519,24 @@ export class OnInvoiceValidationService {
           const current = Number(foundEnvelope.availableAmount) || 0;
           const after = current - envelope.thisUpload;
 
-          // Status belirleme (RAG)
-          let status: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
+          // Status belirleme (RAG) — config-driven thresholds, tenant-scoped
           const allocated = Number(foundEnvelope.allocatedAmount) || 0;
           const utilizationAfter =
             allocated > 0 ? ((allocated - after) / allocated) * 100 : 0;
 
-          if (utilizationAfter >= 100 || after < 0) {
-            status = 'RED';
-          } else if (utilizationAfter >= 80) {
-            status = 'YELLOW';
-          }
+          // Thresholds are fetched once outside the loop (passed via closure)
+          const rawStatus = this.budgetThresholdService.toStatus(
+            utilizationAfter,
+            thresholds,
+          );
+          // Override to RED when actually exceeded or available goes negative
+          const status: UtilizationStatus =
+            this.budgetThresholdService.isExceeded(
+              utilizationAfter,
+              thresholds,
+            ) || after < 0
+              ? UtilizationStatus.RED
+              : rawStatus;
 
           budgetImpact.push({
             envelopeCode: envelope.envelopeCode,
@@ -538,7 +552,7 @@ export class OnInvoiceValidationService {
             current: 0,
             thisUpload: -envelope.thisUpload,
             after: -envelope.thisUpload,
-            status: 'RED', // Envelope yoksa RED
+            status: UtilizationStatus.RED, // Envelope yoksa RED
           });
         }
       } catch (error) {
@@ -548,7 +562,7 @@ export class OnInvoiceValidationService {
           current: 0,
           thisUpload: -envelope.thisUpload,
           after: -envelope.thisUpload,
-          status: 'RED',
+          status: UtilizationStatus.RED,
         });
       }
     }

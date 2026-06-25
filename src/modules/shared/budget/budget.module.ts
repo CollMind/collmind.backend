@@ -4,6 +4,7 @@ import { BudgetController } from './budget.controller';
 import { BudgetAllocationController } from './budget-allocation.controller';
 import { BudgetService } from './budget.service';
 import { BudgetAllocationService } from './budget-allocation.service';
+import { BudgetThresholdService } from './budget-threshold.service';
 import { BudgetRepository } from './budget.repository';
 import { BudgetEnvelope } from '../../../database/entities/budget-envelope.entity';
 import { BudgetTransaction } from '../../../database/entities/budget-transaction.entity';
@@ -36,7 +37,17 @@ import { Plan } from '../../../database/entities/plan.entity';
     ]),
   ],
   controllers: [BudgetController, BudgetAllocationController],
-  providers: [BudgetService, BudgetAllocationService, BudgetRepository],
-  exports: [BudgetService, BudgetAllocationService, BudgetRepository],
+  providers: [
+    BudgetService,
+    BudgetAllocationService,
+    BudgetThresholdService,
+    BudgetRepository,
+  ],
+  exports: [
+    BudgetService,
+    BudgetAllocationService,
+    BudgetThresholdService,
+    BudgetRepository,
+  ],
 })
 export class BudgetModule {}

@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { UtilizationStatus } from '../../../../shared/finance-reporting/dto/budget-utilization.dto';
 
 export class LineAnalysisDto {
   @ApiProperty()
@@ -48,8 +49,8 @@ export class BudgetImpactItemDto {
   @ApiProperty()
   after!: number;
 
-  @ApiProperty({ enum: ['GREEN', 'YELLOW', 'RED'] })
-  status!: 'GREEN' | 'YELLOW' | 'RED';
+  @ApiProperty({ enum: UtilizationStatus })
+  status!: UtilizationStatus;
 }
 
 export class ValidationErrorDto {

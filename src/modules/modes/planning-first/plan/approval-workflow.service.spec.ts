@@ -18,6 +18,7 @@ import {
 import { Tactic } from '../../../../database/entities/tactic.entity';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { SubmitForApprovalDto } from './dto/submit-for-approval.dto';
+import { UtilizationStatus } from '../../../shared/finance-reporting/dto/budget-utilization.dto';
 import { ReviewPlanDto, ReviewDecision } from './dto/review-plan.dto';
 
 describe('ApprovalWorkflowService', () => {
@@ -167,7 +168,7 @@ describe('ApprovalWorkflowService', () => {
         reserved: 30000,
         consumed: 20000,
         planned: 0,
-        status: 'GREEN' as const,
+        status: UtilizationStatus.GREEN,
       };
 
       const mockApprovalRequest = {
@@ -302,7 +303,7 @@ describe('ApprovalWorkflowService', () => {
         reserved: 30000,
         consumed: 10000,
         planned: 0,
-        status: 'RED' as const,
+        status: UtilizationStatus.RED,
       };
 
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
@@ -355,7 +356,7 @@ describe('ApprovalWorkflowService', () => {
         reserved: 30000,
         consumed: 20000,
         planned: 0,
-        status: 'GREEN' as const,
+        status: UtilizationStatus.GREEN,
       };
 
       const mockApprovalRequest = {

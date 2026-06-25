@@ -16,6 +16,7 @@ import { ForecastingUnit } from '../../../../database/entities/forecasting-unit.
 import { Sku } from '../../../../database/entities/sku.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
+import { UtilizationStatus } from '../../../shared/finance-reporting/dto/budget-utilization.dto';
 
 describe('PlanService', () => {
   let service: PlanService;
@@ -218,7 +219,7 @@ describe('PlanService', () => {
         reserved: 30000,
         consumed: 20000,
         planned: 0,
-        status: 'GREEN' as const,
+        status: UtilizationStatus.GREEN,
       };
 
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
