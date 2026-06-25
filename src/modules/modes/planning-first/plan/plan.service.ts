@@ -838,51 +838,6 @@ export class PlanService {
   }
 
   /**
-   * @deprecated This method is no longer used in the main KPI recalculation
-   * flow (recalculatePlanWithKpiEngine). SpendCalculationService is now the
-   * authoritative source for all spend values (Adım 4 / BUG #2 fix).
-   *
-   * This method remains temporarily for getAnalysis display-only use.
-   * TODO T-012: replace with SpendCalculationService.calculateAllSpendsForFU.
-   *
-   * NOTE: tacticCode.includes('PCT') hardcode is a BRD violation — tactic
-   * type must come from SpendCalculationService / mechanic config. Tracked as
-   * part of T-012 scope.
-   */
-  private calculateFuTacticSpend(
-    planFu: PlanFu,
-    tacticMap: Map<string, Tactic>,
-  ): number {
-    let totalTacticSpend = 0;
-
-    if (!planFu.tactics) return 0;
-
-    for (const [tacticCode, value] of Object.entries(planFu.tactics)) {
-      const tactic = tacticMap.get(tacticCode);
-
-      if (
-        tactic?.tacticType === 'DISCOUNT' ||
-        tacticCode.includes('PCT') ||
-        tacticCode.includes('%')
-      ) {
-        const plannedTurnover =
-          planFu.planSkus?.reduce((sum, sku) => {
-            return (
-              sum +
-              (Number(sku.plannedVolume) || 0) *
-                (Number(sku.sku?.unitPrice) || 0)
-            );
-          }, 0) || 0;
-        totalTacticSpend += plannedTurnover * (value / 100);
-      } else {
-        totalTacticSpend += value;
-      }
-    }
-
-    return totalTacticSpend;
-  }
-
-  /**
    * Calculate KPIs for a plan and return results (API endpoint).
    * Triggers a full recalculation via recalculatePlanWithKpiEngine (which uses
    * SpendCalculationService as the authoritative spend/LTA source), then reads

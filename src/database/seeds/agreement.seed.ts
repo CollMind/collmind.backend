@@ -11,7 +11,12 @@ import { Category } from '../entities/category.entity';
 import { GenericUnit } from '../entities/generic-unit.entity';
 import { ForecastingUnit } from '../entities/forecasting-unit.entity';
 import { Tactic, TacticType } from '../entities/tactic.entity';
-import { Mechanic, MechanicType } from '../entities/mechanic.entity';
+import {
+  Mechanic,
+  MechanicType,
+  MechanicCategory,
+  SpendingType,
+} from '../entities/mechanic.entity';
 
 export async function seedAgreements(
   dataSource: DataSource,
@@ -187,6 +192,8 @@ export async function seedAgreements(
   }
 
   // Create or get Mechanic
+  // T-017: category + spendingType MUST be populated so SpendCalculationService
+  // can classify on/off-invoice correctly (no string-hack fallback).
   let mechanic = await mechanicRepo.findOne({
     where: { code: 'MEC-DISCOUNT', tenantId },
   });
@@ -197,6 +204,8 @@ export async function seedAgreements(
         name: 'Discount',
         tacticId: tactic.id,
         mechanicType: MechanicType.PERCENT,
+        category: MechanicCategory.ON_INVOICE_DISCOUNT,
+        spendingType: SpendingType.ON_INVOICE,
         tenantId,
         createdBy: createdByUserId,
       });
@@ -211,6 +220,11 @@ export async function seedAgreements(
         throw error;
       }
     }
+  } else if (!mechanic.category || !mechanic.spendingType) {
+    // Patch existing seed mechanic that was created without classification (T-017).
+    mechanic.category = MechanicCategory.ON_INVOICE_DISCOUNT;
+    mechanic.spendingType = SpendingType.ON_INVOICE;
+    mechanic = await mechanicRepo.save(mechanic);
   }
 
   // Agreement 1: DRAFT (ready to submit)

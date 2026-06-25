@@ -1,6 +1,8 @@
 import {
   Injectable,
   BadRequestException,
+  InternalServerErrorException,
+  Logger,
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
@@ -13,6 +15,7 @@ import {
 } from '../../../../database/entities/plan-approval-history.entity';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
+import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
 import { PlanRepository } from './plan.repository';
 import {
   SubmitForApprovalDto,
@@ -25,22 +28,18 @@ import {
 } from './dto/review-plan.dto';
 import { ApprovalFilters, PendingPlan } from './dto/approval-queue.dto';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
-import {
-  BudgetTransactionType,
-  BudgetTransactionSourceType,
-} from '../../../../database/entities/budget-transaction.entity';
-import { Tactic } from '../../../../database/entities/tactic.entity';
 
 @Injectable()
 export class ApprovalWorkflowService {
+  private readonly logger = new Logger(ApprovalWorkflowService.name);
+
   constructor(
     private readonly planRepo: PlanRepository,
     private readonly approvalService: ApprovalService,
     private readonly budgetService: BudgetService,
+    private readonly spendCalc: SpendCalculationService,
     @InjectRepository(PlanApprovalHistory)
     private readonly approvalHistoryRepo: Repository<PlanApprovalHistory>,
-    @InjectRepository(Tactic)
-    private readonly tacticRepo: Repository<Tactic>,
   ) {}
 
   /**
@@ -65,14 +64,28 @@ export class ApprovalWorkflowService {
     const validationErrors: string[] = [];
     const warnings: string[] = [];
 
-    // 1. Check required tactics
+    // 1. Check required mechanics/tactics.
+    // SpendCalculationService reads planMechanicValues (enteredValue) as its authoritative
+    // source. Validation must use the same source to stay consistent: if no mechanic values
+    // are entered, SpendCalc will return zero spend for that FU — an invalid plan.
+    // We accept either planMechanicValues with at least one enteredValue, OR a non-empty
+    // tactics JSONB (legacy/planning-first flow) so that both modes are covered.
     if (!plan.planFus || plan.planFus.length === 0) {
       validationErrors.push('Plan must have at least one FU');
     } else {
       for (const planFu of plan.planFus) {
-        if (!planFu.tactics || Object.keys(planFu.tactics).length === 0) {
+        const hasMechanicValues =
+          planFu.planMechanicValues &&
+          planFu.planMechanicValues.some(
+            (pmv: any) =>
+              pmv.enteredValue !== null && pmv.enteredValue !== undefined,
+          );
+        const hasTactics =
+          planFu.tactics && Object.keys(planFu.tactics).length > 0;
+
+        if (!hasMechanicValues && !hasTactics) {
           validationErrors.push(
-            `FU ${planFu.fu?.code || planFu.fuId} has no tactics defined`,
+            `FU ${planFu.fu?.code || planFu.fuId} has no mechanic values or tactics defined`,
           );
         }
       }
@@ -602,6 +615,15 @@ export class ApprovalWorkflowService {
 
   // Private helper methods
 
+  /**
+   * T-017: Delegates on/off-invoice spend breakdown to SpendCalculationService.
+   * Eliminates `tacticCode.includes(...)` string-hack (BRD violation).
+   * Classification is now driven by Mechanic.category (ON_INVOICE_DISCOUNT /
+   * OFF_INVOICE_DISCOUNT / PER_UNIT_SUPPORT / LUMPSUM_SPEND) via SpendCalc.
+   *
+   * FUs with no mechanics/tactics will return zero spend from SpendCalc
+   * (planMechanicValues empty → all enteredValues = 0 → no spend calculated).
+   */
   private async calculateSpendBreakdown(
     plan: Plan,
     tenantId: string,
@@ -609,54 +631,23 @@ export class ApprovalWorkflowService {
     let onInvoice = 0;
     let offInvoice = 0;
 
-    const allTactics = await this.tacticRepo.find({
-      where: { tenantId },
-      select: ['code', 'spendType', 'tacticType'],
-    });
-    const tacticMap = new Map((allTactics || []).map((t) => [t.code, t]));
-
     for (const planFu of plan.planFus || []) {
-      if (planFu.tactics) {
-        for (const [tacticCode, value] of Object.entries(planFu.tactics)) {
-          const tactic = tacticMap.get(tacticCode);
-
-          let isOffInvoice = false;
-          if (tactic?.spendType === 'OFF_INVOICE') {
-            isOffInvoice = true;
-          } else if (tactic?.spendType === 'ON_INVOICE') {
-            isOffInvoice = false;
-          } else {
-            isOffInvoice =
-              tacticCode.includes('OFF') ||
-              tacticCode.includes('DISPLAY') ||
-              tacticCode.includes('LUMP');
-          }
-
-          let tacticSpend = 0;
-          if (
-            tactic?.tacticType === 'DISCOUNT' ||
-            tacticCode.includes('PCT') ||
-            tacticCode.includes('%')
-          ) {
-            const plannedTurnover =
-              planFu.planSkus?.reduce((sum, sku) => {
-                return (
-                  sum +
-                  (Number(sku.plannedVolume) || 0) *
-                    (Number(sku.sku?.unitPrice) || 0)
-                );
-              }, 0) || 0;
-            tacticSpend = plannedTurnover * (value / 100);
-          } else {
-            tacticSpend = value;
-          }
-
-          if (isOffInvoice) {
-            offInvoice += tacticSpend;
-          } else {
-            onInvoice += tacticSpend;
-          }
-        }
+      try {
+        const fuBreakdown = await this.spendCalc.calculateAllSpendsForFU(
+          tenantId,
+          planFu.id,
+        );
+        onInvoice += fuBreakdown?.aggregatedPlanned?.totalOnInvoice ?? 0;
+        offInvoice += fuBreakdown?.aggregatedPlanned?.totalOffInvoice ?? 0;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(
+          `calculateSpendBreakdown failed for FU [fuId=${planFu.id}, planId=${plan.id}]: ${message}`,
+        );
+        throw new InternalServerErrorException(
+          `Spend calculation failed for FU ${planFu.id}: ${message}`,
+        );
       }
     }
 

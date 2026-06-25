@@ -1,4 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlanSku, PlanFu } from '../../../database/entities/plan.entity';
@@ -200,7 +204,7 @@ export class SpendCalculationService {
     distributionMethod: DistributionMethod,
   ): Promise<SKUSpendDistribution[]> {
     const planFu = await this.planFuRepository.findOne({
-      where: { id: fuId },
+      where: { id: fuId, tenantId },
       relations: ['planSkus', 'planSkus.sku'],
     });
 
@@ -323,15 +327,32 @@ export class SpendCalculationService {
     let totalPromoOnInv = 0;
     let totalPromoOffInv = 0;
 
-    // First pass: Calculate on-invoice spends
+    // First pass: Calculate on-invoice spends.
+    // Mechanic is classified as on-invoice when:
+    //   - spendingType === ON_INVOICE, OR
+    //   - category === ON_INVOICE_DISCOUNT (explicit category wins regardless of spendingType)
+    // SpendingType.BOTH without an explicit on-invoice category is routed to the
+    // off-invoice pass below (category-driven routing takes precedence).
     for (const mechanic of mechanics) {
       const enteredValue = context.mechanicValues[mechanic.code] || 0;
       if (!enteredValue) continue;
 
-      if (
-        mechanic.spendingType === SpendingType.ON_INVOICE ||
-        mechanic.category === MechanicCategory.ON_INVOICE_DISCOUNT
-      ) {
+      const isOnInvoiceCategory =
+        mechanic.category === MechanicCategory.ON_INVOICE_DISCOUNT;
+      const isOnInvoiceType = mechanic.spendingType === SpendingType.ON_INVOICE;
+      const isBoth = mechanic.spendingType === SpendingType.BOTH;
+
+      if (isOnInvoiceCategory || (!isBoth && isOnInvoiceType)) {
+        const spend = await this.calculateMechanicSpend(
+          tenantId,
+          mechanic.code,
+          context,
+          skuContext,
+        );
+        promoOnInvoice[mechanic.code] = spend;
+        totalPromoOnInv += spend;
+      } else if (isBoth && isOnInvoiceCategory) {
+        // BOTH + on-invoice category: route to on-invoice pass
         const spend = await this.calculateMechanicSpend(
           tenantId,
           mechanic.code,
@@ -343,17 +364,26 @@ export class SpendCalculationService {
       }
     }
 
-    // Second pass: Calculate off-invoice spends (needs all on-invoice spends)
+    // Second pass: Calculate off-invoice spends (needs all on-invoice spends).
+    // Off-invoice mechanic categories: OFF_INVOICE_DISCOUNT, PER_UNIT_SUPPORT, LUMPSUM_SPEND.
+    // SpendingType.BOTH with an off-invoice (or non-on-invoice) category is also routed here.
+    // SpendingType.BOTH with no recognised category: warn and skip to avoid silent zero spend.
     for (const mechanic of mechanics) {
       const enteredValue = context.mechanicValues[mechanic.code] || 0;
       if (!enteredValue) continue;
 
-      if (
-        mechanic.spendingType === SpendingType.OFF_INVOICE ||
+      const isOffInvoiceCategory =
         mechanic.category === MechanicCategory.OFF_INVOICE_DISCOUNT ||
         mechanic.category === MechanicCategory.PER_UNIT_SUPPORT ||
-        mechanic.category === MechanicCategory.LUMPSUM_SPEND
-      ) {
+        mechanic.category === MechanicCategory.LUMPSUM_SPEND;
+      const isOffInvoiceType =
+        mechanic.spendingType === SpendingType.OFF_INVOICE;
+      const isBoth = mechanic.spendingType === SpendingType.BOTH;
+      const alreadyOnInvoice = mechanic.code in promoOnInvoice;
+
+      if (alreadyOnInvoice) continue; // already classified in first pass
+
+      if (isOffInvoiceCategory || isOffInvoiceType) {
         // Filter out undefined values from promoOnInvoice for type compatibility
         const filteredPromoOnInvoice: Record<string, number> = {};
         for (const [key, value] of Object.entries(promoOnInvoice)) {
@@ -370,6 +400,14 @@ export class SpendCalculationService {
         );
         promoOffInvoice[mechanic.code] = spend;
         totalPromoOffInv += spend;
+      } else if (isBoth) {
+        // SpendingType.BOTH mechanic whose category is not a recognised spend category.
+        // Route to off-invoice by category if possible; otherwise warn and skip —
+        // adding full amount to both buckets would cause double-counting.
+        this.logger.warn(
+          `Mechanic [code=${mechanic.code}] has SpendingType.BOTH but no recognised spend category (category=${mechanic.category}). ` +
+            `Skipping to avoid double-counting. Assign an explicit MechanicCategory to classify this mechanic.`,
+        );
       }
     }
 
@@ -434,7 +472,7 @@ export class SpendCalculationService {
     const startTime = Date.now();
 
     const planFu = await this.planFuRepository.findOne({
-      where: { id: fuId },
+      where: { id: fuId, tenantId },
       relations: [
         'plan',
         'planSkus',
@@ -445,7 +483,12 @@ export class SpendCalculationService {
     });
 
     if (!planFu) {
-      throw new Error(`Plan FU with ID ${fuId} not found`);
+      this.logger.error(
+        `calculateAllSpendsForFU: PlanFU not found [fuId=${fuId}, tenantId=${tenantId}]`,
+      );
+      throw new InternalServerErrorException(
+        `Plan FU with ID ${fuId} not found for tenant ${tenantId}`,
+      );
     }
 
     // Build context
@@ -672,9 +715,15 @@ export class SpendCalculationService {
     };
     niv.incrementalNiv = niv.plannedNiv - niv.baseNiv;
 
+    // T-017: BRD NIV semantics — Turnover is reduced ONLY by on-invoice deductions.
+    // Off-invoice spend (LTA_OFF, lumpsum, per-unit support) does NOT reduce TO;
+    // it enters GP calculation as incremental spend instead.
+    // Aligns with migration 1781 (FixTurnoverOnInvoiceOnly):
+    //   BASE_TO    = BASE_GSV - BASE_LTA_ON       → niv.baseNiv (already GSV - LTA_ON)
+    //   PLANNED_TO = PLANNED_GSV - PLANNED_ON_INVOICE_SPEND → niv.plannedNiv
     const turnover: TurnoverMetrics = {
-      baseTo: niv.baseNiv - spendBreakdown.base.ltaOffInvoice,
-      plannedTo: niv.plannedNiv - spendBreakdown.planned.totalOffInvoice,
+      baseTo: niv.baseNiv,
+      plannedTo: niv.plannedNiv,
       incrementalTo: 0, // Will calculate below
     };
     turnover.incrementalTo = turnover.plannedTo - turnover.baseTo;

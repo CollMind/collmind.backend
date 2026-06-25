@@ -36,6 +36,7 @@ export class PlanRepository {
         'planFus.fu',
         'planFus.planSkus',
         'planFus.planSkus.sku',
+        'planFus.planMechanicValues',
         'approvedBy',
         'rejectedBy',
         // 'submittedBy', // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run

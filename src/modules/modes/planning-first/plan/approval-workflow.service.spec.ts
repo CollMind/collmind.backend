@@ -10,12 +10,12 @@ import { ApprovalWorkflowService } from './approval-workflow.service';
 import { PlanRepository } from './plan.repository';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
+import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
 import { Plan, PlanStatus } from '../../../../database/entities/plan.entity';
 import {
   PlanApprovalHistory,
   ApprovalHistoryAction,
 } from '../../../../database/entities/plan-approval-history.entity';
-import { Tactic } from '../../../../database/entities/tactic.entity';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { SubmitForApprovalDto } from './dto/submit-for-approval.dto';
 import { UtilizationStatus } from '../../../shared/finance-reporting/dto/budget-utilization.dto';
@@ -26,8 +26,8 @@ describe('ApprovalWorkflowService', () => {
   let planRepo: jest.Mocked<PlanRepository>;
   let approvalService: jest.Mocked<ApprovalService>;
   let budgetService: jest.Mocked<BudgetService>;
+  let spendCalc: jest.Mocked<SpendCalculationService>;
   let approvalHistoryRepo: jest.Mocked<Repository<PlanApprovalHistory>>;
-  let tacticRepo: jest.Mocked<Repository<Tactic>>;
 
   const mockTenantId = 'tenant-1';
   const mockUserId = 'user-1';
@@ -94,17 +94,19 @@ describe('ApprovalWorkflowService', () => {
             releaseForPlan: jest.fn(),
           },
         },
+        // T-017: SpendCalculationService is now the authoritative source for
+        // on/off-invoice breakdown (replaces tacticRepo + string-hack).
+        {
+          provide: SpendCalculationService,
+          useValue: {
+            calculateAllSpendsForFU: jest.fn(),
+          },
+        },
         {
           provide: getRepositoryToken(PlanApprovalHistory),
           useValue: {
             create: jest.fn(),
             save: jest.fn(),
-            find: jest.fn(),
-          },
-        },
-        {
-          provide: getRepositoryToken(Tactic),
-          useValue: {
             find: jest.fn(),
           },
         },
@@ -115,8 +117,8 @@ describe('ApprovalWorkflowService', () => {
     planRepo = module.get(PlanRepository);
     approvalService = module.get(ApprovalService);
     budgetService = module.get(BudgetService);
+    spendCalc = module.get(SpendCalculationService);
     approvalHistoryRepo = module.get(getRepositoryToken(PlanApprovalHistory));
-    tacticRepo = module.get(getRepositoryToken(Tactic));
   });
 
   afterEach(() => {
@@ -129,32 +131,35 @@ describe('ApprovalWorkflowService', () => {
     };
 
     it('should successfully submit plan for approval', async () => {
-      const mockTactics: Tactic[] = [
-        {
-          id: 'tactic-1',
-          code: 'CPP_ON_PCT',
-          name: 'CPP On Invoice %',
-          spendType: 'ON_INVOICE',
-          tacticType: 'DISCOUNT' as any,
-          isActive: true,
-          mechanics: [],
-          tenantId: mockTenantId,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        } as Tactic,
-        {
-          id: 'tactic-2',
-          code: 'DISPLAY_FEE',
-          name: 'Display Fee',
-          spendType: 'OFF_INVOICE',
-          tacticType: 'LUMP_SUM' as any,
-          isActive: true,
-          mechanics: [],
-          tenantId: mockTenantId,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        } as Tactic,
-      ];
+      // T-017: SpendCalc now provides on/off breakdown (mechanic.category driven)
+      // CPP_ON_PCT → ON_INVOICE_DISCOUNT → onInvoice; DISPLAY_FEE → LUMPSUM_SPEND → offInvoice
+      const mockFuSpendBreakdown = {
+        fuId: 'plan-fu-1',
+        skuBreakdowns: [],
+        aggregatedBase: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedPlanned: {
+          ltaOnInvoice: 200,
+          ltaOffInvoice: 100,
+          promoOnInvoice: { CPP_ON_PCT: 9800 },
+          promoOffInvoice: { DISPLAY_FEE: 5000 },
+          totalPromoOnInvoice: 9800,
+          totalPromoOffInvoice: 5000,
+          totalOnInvoice: 10000, // on-invoice total
+          totalOffInvoice: 5100, // off-invoice total
+          totalSpend: 15100,
+        },
+        aggregatedIncremental: {
+          onInvoice: 10000,
+          offInvoice: 5100,
+          total: 15100,
+        },
+      };
 
       const mockEnvelope = {
         id: 'envelope-1',
@@ -177,7 +182,9 @@ describe('ApprovalWorkflowService', () => {
       };
 
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
-      tacticRepo.find.mockResolvedValue(mockTactics);
+      spendCalc.calculateAllSpendsForFU.mockResolvedValue(
+        mockFuSpendBreakdown as any,
+      );
       budgetService.findEnvelopeByDimensions.mockResolvedValue(
         mockEnvelope as any,
       );
@@ -210,6 +217,9 @@ describe('ApprovalWorkflowService', () => {
         expect.objectContaining({
           submissionNotes: submitDto.submissionNotes,
           submittedById: mockUserId,
+          // T-017: on/off breakdown now comes from SpendCalc
+          onInvoiceSpend: 10000,
+          offInvoiceSpend: 5100,
         }),
       );
       expect(approvalService.createRequest).toHaveBeenCalled();
@@ -237,7 +247,7 @@ describe('ApprovalWorkflowService', () => {
         ...mockPlan,
         planFus: [],
       } as Plan);
-      tacticRepo.find.mockResolvedValue([]);
+      // No FUs → calculateSpendBreakdown iterates empty array; SpendCalc not called.
 
       const result = await service.submitForApproval(
         mockPlanId,
@@ -263,7 +273,7 @@ describe('ApprovalWorkflowService', () => {
         ],
       } as Plan);
 
-      tacticRepo.find.mockResolvedValue([]);
+      // Validation fails before SpendCalc is called (empty tactics check)
 
       const result = await service.submitForApproval(
         mockPlanId,
@@ -276,22 +286,119 @@ describe('ApprovalWorkflowService', () => {
       expect(result.validationErrors).toBeDefined();
     });
 
-    it('should fail if budget is insufficient', async () => {
-      const mockTactics: Tactic[] = [
-        {
-          id: 'tactic-1',
-          code: 'CPP_ON_PCT',
-          name: 'CPP On Invoice %',
-          spendType: 'ON_INVOICE',
-          tacticType: 'DISCOUNT' as any,
-          isActive: true,
-          mechanics: [],
-          tenantId: mockTenantId,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        } as Tactic,
-      ];
+    /**
+     * S-3: validation must use planMechanicValues (SpendCalc's source) not just tactics JSONB.
+     * FU with planMechanicValues having an enteredValue but no tactics JSONB is valid.
+     */
+    it('should pass validation for FU with planMechanicValues but no tactics JSONB (S-3)', async () => {
+      const mockFuSpendBreakdown = {
+        fuId: 'plan-fu-1',
+        skuBreakdowns: [],
+        aggregatedBase: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedPlanned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: { CPP_ON: 5000 },
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 5000,
+          totalPromoOffInvoice: 0,
+          totalOnInvoice: 5000,
+          totalOffInvoice: 0,
+          totalSpend: 5000,
+        },
+        aggregatedIncremental: { onInvoice: 5000, offInvoice: 0, total: 5000 },
+      };
 
+      const mockEnvelope = { id: 'env-1', allocatedAmount: 200000 };
+      const mockBudgetStatus = {
+        totalAllocation: 200000,
+        available: 150000,
+        reserved: 0,
+        consumed: 0,
+        planned: 0,
+        status: 'GREEN' as any,
+      };
+      const mockApprovalRequest = {
+        id: mockApprovalRequestId,
+        requestType: ApprovalRequestType.PLAN,
+      };
+
+      // FU has planMechanicValues with an enteredValue but NO tactics JSONB
+      planRepo.findById.mockResolvedValue({
+        ...mockPlan,
+        planFus: [
+          {
+            ...mockPlan.planFus![0],
+            tactics: {}, // empty tactics JSONB
+            planMechanicValues: [{ enteredValue: 10, mechanicId: 'mech-1' }],
+          },
+        ],
+      } as Plan);
+
+      spendCalc.calculateAllSpendsForFU.mockResolvedValue(
+        mockFuSpendBreakdown as any,
+      );
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(
+        mockEnvelope as any,
+      );
+      budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+      approvalService.createRequest.mockResolvedValue(
+        mockApprovalRequest as any,
+      );
+      planRepo.updateStatus.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.PENDING_APPROVAL,
+      } as Plan);
+      budgetService.reserveForPlan.mockResolvedValue({} as any);
+      approvalHistoryRepo.create.mockReturnValue({} as any);
+      approvalHistoryRepo.save.mockResolvedValue({} as any);
+
+      const result = await service.submitForApproval(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        submitDto,
+      );
+
+      // Should succeed — planMechanicValues provides the mechanic data for SpendCalc
+      expect(result.success).toBe(true);
+    });
+
+    it('should fail validation for FU with neither planMechanicValues nor tactics (S-3)', async () => {
+      planRepo.findById.mockResolvedValue({
+        ...mockPlan,
+        planFus: [
+          {
+            ...mockPlan.planFus![0],
+            tactics: {}, // no tactics
+            planMechanicValues: [], // no mechanic values either
+          },
+        ],
+      } as Plan);
+
+      const result = await service.submitForApproval(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        submitDto,
+      );
+
+      expect(result.success).toBe(false);
+      expect(
+        result.validationErrors?.some(
+          (err) =>
+            err.includes('no mechanic values') || err.includes('no tactics'),
+        ),
+      ).toBe(true);
+    });
+
+    it('should fail if budget is insufficient', async () => {
       const mockEnvelope = {
         id: 'envelope-1',
         allocatedAmount: 50000,
@@ -307,7 +414,33 @@ describe('ApprovalWorkflowService', () => {
       };
 
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
-      tacticRepo.find.mockResolvedValue(mockTactics);
+      spendCalc.calculateAllSpendsForFU.mockResolvedValue({
+        fuId: 'plan-fu-1',
+        skuBreakdowns: [],
+        aggregatedBase: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedPlanned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 30000,
+          totalPromoOffInvoice: 10000,
+          totalOnInvoice: 30000,
+          totalOffInvoice: 10000,
+          totalSpend: 40000,
+        },
+        aggregatedIncremental: {
+          onInvoice: 30000,
+          offInvoice: 10000,
+          total: 40000,
+        },
+      } as any);
       budgetService.findEnvelopeByDimensions.mockResolvedValue(
         mockEnvelope as any,
       );
@@ -330,21 +463,6 @@ describe('ApprovalWorkflowService', () => {
     });
 
     it('should add warning for RED RAG status', async () => {
-      const mockTactics: Tactic[] = [
-        {
-          id: 'tactic-1',
-          code: 'CPP_ON_PCT',
-          name: 'CPP On Invoice %',
-          spendType: 'ON_INVOICE',
-          tacticType: 'DISCOUNT' as any,
-          isActive: true,
-          mechanics: [],
-          tenantId: mockTenantId,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        } as Tactic,
-      ];
-
       const mockEnvelope = {
         id: 'envelope-1',
         allocatedAmount: 200000,
@@ -368,7 +486,33 @@ describe('ApprovalWorkflowService', () => {
         ...mockPlan,
         ragStatus: 'RED',
       } as Plan);
-      tacticRepo.find.mockResolvedValue(mockTactics);
+      spendCalc.calculateAllSpendsForFU.mockResolvedValue({
+        fuId: 'plan-fu-1',
+        skuBreakdowns: [],
+        aggregatedBase: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedPlanned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 10000,
+          totalPromoOffInvoice: 5000,
+          totalOnInvoice: 10000,
+          totalOffInvoice: 5000,
+          totalSpend: 15000,
+        },
+        aggregatedIncremental: {
+          onInvoice: 10000,
+          offInvoice: 5000,
+          total: 15000,
+        },
+      } as any);
       budgetService.findEnvelopeByDimensions.mockResolvedValue(
         mockEnvelope as any,
       );
