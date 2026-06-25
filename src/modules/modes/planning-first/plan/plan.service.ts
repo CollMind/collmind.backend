@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  Logger,
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
@@ -26,6 +27,11 @@ import {
   CalculationResult,
   SkuCalculationContext,
 } from '../../../shared/kpi-engine/kpi-engine.service';
+import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
+import {
+  SKUContext,
+  CalculationContext,
+} from '../../../shared/spend-calculation/dto/calculation-context.dto';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -35,11 +41,14 @@ import { Tactic } from '../../../../database/entities/tactic.entity';
 
 @Injectable()
 export class PlanService {
+  private readonly logger = new Logger(PlanService.name);
+
   constructor(
     private readonly planRepo: PlanRepository,
     private readonly budgetService: BudgetService,
     private readonly approvalService: ApprovalService,
     private readonly kpiEngine: KpiEngineService,
+    private readonly spendCalc: SpendCalculationService,
     @InjectRepository(ForecastingUnit)
     private readonly fuRepo: Repository<ForecastingUnit>,
     @InjectRepository(Sku)
@@ -581,17 +590,35 @@ export class PlanService {
     const plan = await this.findById(planId, tenantId);
     if (!plan.planFus || plan.planFus.length === 0) return;
 
-    // Get all tactics for tactic spend calculation
-    const allTactics = await this.tacticRepo.find({ where: { tenantId } });
-    const tacticMap = new Map(allTactics.map((t) => [t.code, t]));
-
     const allFuResults: Array<Record<string, CalculationResult>> = [];
 
     for (const planFu of plan.planFus) {
       const skuResults: Array<Record<string, CalculationResult>> = [];
 
-      // Calculate tactic spend for this FU
-      const fuTacticTotalSpend = this.calculateFuTacticSpend(planFu, tacticMap);
+      // Build mechanic values map for this FU (needed by SpendCalc)
+      const mechanicValues: Record<string, number> = {};
+      for (const pmv of (planFu as any).planMechanicValues || []) {
+        if (pmv.mechanic?.code && pmv.enteredValue != null) {
+          mechanicValues[pmv.mechanic.code] = pmv.enteredValue;
+        } else if (pmv.mechanicCode && pmv.enteredValue != null) {
+          mechanicValues[pmv.mechanicCode] = pmv.enteredValue;
+        }
+      }
+      // Also read tactic values if stored in planFu.tactics
+      for (const [code, val] of Object.entries(planFu.tactics || {})) {
+        if (val != null) mechanicValues[code] = val as number;
+      }
+
+      // Build SpendCalc CalculationContext for this FU
+      const calcCtx: CalculationContext = {
+        planId: plan.id,
+        fuId: planFu.id,
+        skuContexts: [],
+        mechanicValues,
+      };
+
+      // Track FU-level totals (summed from per-SKU SpendCalc results)
+      let fuTotalPlannedSpend = 0;
 
       for (const planSku of planFu.planSkus || []) {
         const sku = planSku.sku;
@@ -600,62 +627,96 @@ export class PlanService {
         const unitPrice = Number(sku.unitPrice) || 0;
         const cogs = Number(sku.cogs) || 0;
 
-        // Distribute FU tactic spend proportionally across SKUs
-        const fuPlannedVolume =
-          planFu.planSkus?.reduce(
-            (sum, s) => sum + (Number(s.plannedVolume) || 0),
-            0,
-          ) || 0;
-        const skuShareRatio =
-          fuPlannedVolume > 0 ? planVol / fuPlannedVolume : 0;
-        const skuTacticSpend = fuTacticTotalSpend * skuShareRatio;
-
-        // Build context for KPI engine
-        const context: SkuCalculationContext = {
-          BASE_VOL: baseVol,
-          PLAN_VOL: planVol,
-          BPTT: unitPrice,
-          COGS: cogs,
-          // Inject computed intermediary values
-          INCR_VOL: planVol - baseVol,
-          PLAN_TURNOVER: planVol * unitPrice,
-          TACTIC_SPEND: skuTacticSpend,
-          BASE_TURNOVER: baseVol * unitPrice,
-          PLAN_COGS: planVol * cogs,
-          GP: planVol * unitPrice - planVol * cogs - skuTacticSpend,
+        // ── Step 1: Call SpendCalculationService for this SKU ────────────
+        // This is the single source of truth for LTA, promo spend breakdown.
+        const skuCtx: SKUContext = {
+          skuId: planSku.skuId,
+          baseVolume: baseVol,
+          plannedVolume: planVol,
+          listPrice: unitPrice,
+          cogsPerUnit: cogs,
+          channelCode: plan.channel?.code,
+          categoryCode: plan.category?.code,
+          cplId: plan.cplId,
         };
 
-        // Try KPI engine first
+        let spendBreakdown: Awaited<
+          ReturnType<SpendCalculationService['calculateAllSpendsForSKU']>
+        >;
+        try {
+          spendBreakdown = await this.spendCalc.calculateAllSpendsForSKU(
+            tenantId,
+            skuCtx,
+            calcCtx,
+          );
+        } catch (spendErr) {
+          this.logger.error(
+            `SpendCalc failed for SKU ${planSku.skuId} in FU ${planFu.id}: ${spendErr}`,
+          );
+          throw spendErr; // surface the error — do not silently produce wrong values
+        }
+
+        const totalPlannedSpend = spendBreakdown.planned.totalSpend;
+        const baseTotalSpend = spendBreakdown.base.totalSpend;
+        const incrSpend = spendBreakdown.incremental.total;
+        // BRD NIV semantics: only on-invoice deductions reduce Turnover.
+        // plannedOnInvoiceSpend = LTA_ON + all on-invoice promo spends (CPP_ON etc.)
+        const plannedOnInvoiceSpend = spendBreakdown.planned.totalOnInvoice;
+        fuTotalPlannedSpend += totalPlannedSpend;
+
+        // ── Step 2: Build KPI engine context with BRD-required external values ──
+        // BRD canonical fields (all must be present for GP_ROI_PCT to resolve):
+        //   PLANNED_LTA_ON, PLANNED_LTA_OFF, BASE_LTA_ON, BASE_LTA_OFF,
+        //   TOTAL_PLANNED_SPEND, BASE_TOTAL_SPEND, INCR_SPEND,
+        //   PLANNED_ON_INVOICE_SPEND (T-008 fix: on-invoice only → used in PLANNED_TO)
+        // Also inject tactic percentage codes for CPP_ON_SPEND formula.
+        const context: SkuCalculationContext = {
+          // User inputs
+          BASE_VOL: baseVol,
+          PLAN_VOL: planVol,
+          // Master data
+          BPTT: unitPrice,
+          COGS: cogs,
+          // BRD external — from SpendCalc (BUG #2 / Gap G fix)
+          PLANNED_LTA_ON: spendBreakdown.planned.ltaOnInvoice,
+          PLANNED_LTA_OFF: spendBreakdown.planned.ltaOffInvoice,
+          BASE_LTA_ON: spendBreakdown.base.ltaOnInvoice,
+          BASE_LTA_OFF: spendBreakdown.base.ltaOffInvoice,
+          TOTAL_PLANNED_SPEND: totalPlannedSpend,
+          BASE_TOTAL_SPEND: baseTotalSpend,
+          INCR_SPEND: incrSpend,
+          // T-008: PLANNED_TO uses only on-invoice deductions (BRD NIV semantics)
+          PLANNED_ON_INVOICE_SPEND: plannedOnInvoiceSpend,
+          // Tactic percentage values (CPP_ON_SPEND formula needs CPP_ON_PCT etc.)
+          ...mechanicValues,
+        };
+
+        // ── Step 3: KPI engine calculates all derived KPIs from context ──
         let kpiResults: Record<string, CalculationResult>;
         try {
           kpiResults = await this.kpiEngine.calculateSku(tenantId, context);
-        } catch {
-          // Fallback to basic calculations if KPI engine fails
-          kpiResults = {};
+        } catch (kpiErr) {
+          // Surface the error with context; do not silently return empty results
+          // as that would persist null/wrong values.
+          this.logger.error(
+            `KPI engine failed for SKU ${planSku.skuId} in FU ${planFu.id}: ${kpiErr}`,
+          );
+          throw kpiErr;
         }
 
         skuResults.push(kpiResults);
 
-        // Extract values from KPI results or fallback
+        // ── Step 4: Persist SKU KPI results ─────────────────────────────
+        // All values come from kpiResults; no fallback arithmetic here.
+        // If a value is null, it persists as null (BRD: missing data → null).
         const incrementalVolume = planVol - baseVol;
-        const plannedTurnover = planVol * unitPrice;
-        const plannedGp =
-          kpiResults['GP']?.value ??
-          planVol * unitPrice - planVol * cogs - skuTacticSpend;
-        const gpRoi =
-          kpiResults['GP_ROI_PCT']?.value ??
-          (skuTacticSpend > 0 ? (plannedGp / skuTacticSpend) * 100 : null);
+        const plannedTurnover = kpiResults['PLANNED_TO']?.value ?? null;
+        const plannedGp = kpiResults['PLANNED_GP']?.value ?? null;
+        const gpRoi = kpiResults['GP_ROI_PCT']?.value ?? null;
+        // RAG comes exclusively from kpi engine (config-driven thresholds)
+        const ragStatus = kpiResults['GP_ROI_PCT']?.ragStatus ?? null;
 
-        // RAG from KPI engine or fallback
-        let ragStatus = kpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
-        if (!kpiResults['GP_ROI_PCT']) {
-          if (gpRoi !== null) {
-            if (gpRoi < 0) ragStatus = 'RED';
-            else if (gpRoi < 15) ragStatus = 'AMBER';
-          }
-        }
-
-        // Convert KPI results to calculated_kpis format
+        // Convert KPI results to calculated_kpis JSONB format
         const calculatedKpis: Record<string, any> = {};
         for (const [kpiCode, result] of Object.entries(kpiResults)) {
           calculatedKpis[kpiCode] = {
@@ -669,16 +730,16 @@ export class PlanService {
 
         await this.planRepo.updatePlanSku(planSku.id, {
           incrementalVolume,
-          plannedTurnover,
-          tacticSpend: skuTacticSpend,
-          plannedGp,
+          plannedTurnover: plannedTurnover ?? undefined,
+          tacticSpend: totalPlannedSpend,
+          plannedGp: plannedGp ?? undefined,
           gpRoi: gpRoi ?? undefined,
-          ragStatus,
+          ragStatus: ragStatus ?? undefined,
           calculatedKpis,
         });
       }
 
-      // Calculate FU level using KPI engine
+      // ── Step 5: FU-level KPI aggregation ─────────────────────────────
       let fuKpiResults: Record<string, CalculationResult>;
       try {
         fuKpiResults = await this.kpiEngine.calculateFu(
@@ -686,16 +747,18 @@ export class PlanService {
           skuResults,
           planFu.tactics || {},
         );
-      } catch {
-        fuKpiResults = {};
+      } catch (kpiErr) {
+        this.logger.error(
+          `KPI engine (FU level) failed for FU ${planFu.id}: ${kpiErr}`,
+        );
+        throw kpiErr;
       }
 
-      // Aggregate SKU values for FU
+      // Aggregate SKU volumes/GP for FU-level persist
       let fuTotalPlannedVolume = 0;
       let fuTotalGp = 0;
 
       for (const planSku of planFu.planSkus || []) {
-        // Re-read to get updated values
         const updated = await this.planRepo.findPlanSku(
           planFu.id,
           planSku.skuId,
@@ -706,21 +769,11 @@ export class PlanService {
         }
       }
 
-      const fuGpRoi =
-        fuKpiResults['GP_ROI_PCT']?.value ??
-        (fuTacticTotalSpend > 0
-          ? (fuTotalGp / fuTacticTotalSpend) * 100
-          : null);
+      // FU GP ROI and RAG come exclusively from engine (config-driven)
+      const fuGpRoi = fuKpiResults['GP_ROI_PCT']?.value ?? null;
+      const fuRagStatus = fuKpiResults['GP_ROI_PCT']?.ragStatus ?? null;
 
-      let fuRagStatus = fuKpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
-      if (!fuKpiResults['GP_ROI_PCT']) {
-        if (fuGpRoi !== null) {
-          if (fuGpRoi < 0) fuRagStatus = 'RED';
-          else if (fuGpRoi < 15) fuRagStatus = 'AMBER';
-        }
-      }
-
-      // Convert FU KPI results to calculated_kpis format
+      // Convert FU KPI results to JSONB format
       const fuCalculatedKpis: Record<string, any> = {};
       for (const [kpiCode, result] of Object.entries(fuKpiResults)) {
         fuCalculatedKpis[kpiCode] = {
@@ -734,10 +787,10 @@ export class PlanService {
 
       await this.planRepo.updatePlanFu(planFu.id, {
         totalPlannedVolume: fuTotalPlannedVolume,
-        totalSpend: fuTacticTotalSpend,
+        totalSpend: fuTotalPlannedSpend,
         totalGp: fuTotalGp,
         gpRoi: fuGpRoi ?? undefined,
-        ragStatus: fuRagStatus,
+        ragStatus: fuRagStatus ?? undefined,
         calculatedKpis: fuCalculatedKpis,
       });
 
@@ -757,40 +810,44 @@ export class PlanService {
       planTotalGp += Number(planFu.totalGp) || 0;
     }
 
-    // Plan-level KPI calculation
+    // ── Plan-level KPI aggregation ────────────────────────────────────────
     let planKpiResults: Record<string, CalculationResult>;
     try {
       planKpiResults = await this.kpiEngine.calculatePlan(
         tenantId,
         allFuResults,
       );
-    } catch {
-      planKpiResults = {};
+    } catch (kpiErr) {
+      this.logger.error(
+        `KPI engine (Plan level) failed for plan ${planId}: ${kpiErr}`,
+      );
+      throw kpiErr;
     }
 
-    const overallRoi =
-      planKpiResults['GP_ROI_PCT']?.value ??
-      (planTotalSpend > 0 ? (planTotalGp / planTotalSpend) * 100 : null);
-
-    let planRagStatus = planKpiResults['GP_ROI_PCT']?.ragStatus || 'GREEN';
-    if (!planKpiResults['GP_ROI_PCT']) {
-      const fuRags =
-        updatedPlan.planFus?.map((f) => f.ragStatus).filter(Boolean) || [];
-      if (fuRags.includes('RED')) planRagStatus = 'RED';
-      else if (fuRags.includes('AMBER')) planRagStatus = 'AMBER';
-    }
+    // Overall ROI and RAG come exclusively from engine (config-driven, no fallback)
+    const overallRoi = planKpiResults['GP_ROI_PCT']?.value ?? null;
+    const planRagStatus = planKpiResults['GP_ROI_PCT']?.ragStatus ?? null;
 
     await this.planRepo.update(planId, tenantId, {
       totalPlannedVolume: planTotalPlannedVolume,
       totalSpend: planTotalSpend,
       totalGp: planTotalGp,
       overallRoi: overallRoi ?? undefined,
-      ragStatus: planRagStatus,
+      ragStatus: planRagStatus ?? undefined,
     });
   }
 
   /**
-   * Calculate total tactic spend for an FU based on tactic definitions
+   * @deprecated This method is no longer used in the main KPI recalculation
+   * flow (recalculatePlanWithKpiEngine). SpendCalculationService is now the
+   * authoritative source for all spend values (Adım 4 / BUG #2 fix).
+   *
+   * This method remains temporarily for getAnalysis display-only use.
+   * TODO T-012: replace with SpendCalculationService.calculateAllSpendsForFU.
+   *
+   * NOTE: tacticCode.includes('PCT') hardcode is a BRD violation — tactic
+   * type must come from SpendCalculationService / mechanic config. Tracked as
+   * part of T-012 scope.
    */
   private calculateFuTacticSpend(
     planFu: PlanFu,
@@ -803,13 +860,11 @@ export class PlanService {
     for (const [tacticCode, value] of Object.entries(planFu.tactics)) {
       const tactic = tacticMap.get(tacticCode);
 
-      // Calculate based on tactic type
       if (
         tactic?.tacticType === 'DISCOUNT' ||
         tacticCode.includes('PCT') ||
         tacticCode.includes('%')
       ) {
-        // Percentage-based tactic: % of planned turnover
         const plannedTurnover =
           planFu.planSkus?.reduce((sum, sku) => {
             return (
@@ -820,7 +875,6 @@ export class PlanService {
           }, 0) || 0;
         totalTacticSpend += plannedTurnover * (value / 100);
       } else {
-        // Lumpsum tactic
         totalTacticSpend += value;
       }
     }
@@ -829,7 +883,10 @@ export class PlanService {
   }
 
   /**
-   * Calculate KPIs for a plan and return results (API endpoint)
+   * Calculate KPIs for a plan and return results (API endpoint).
+   * Triggers a full recalculation via recalculatePlanWithKpiEngine (which uses
+   * SpendCalculationService as the authoritative spend/LTA source), then reads
+   * the persisted calculatedKpis JSONB back from each FU/plan.
    */
   async calculateKpis(
     planId: string,
@@ -842,12 +899,11 @@ export class PlanService {
       kpis: Record<string, CalculationResult>;
     }>;
   }> {
-    // Trigger full recalculation
+    // Trigger full recalculation (single authoritative path)
     await this.recalculatePlanWithKpiEngine(planId, tenantId);
 
+    // Read stored KPI results (already computed above, no duplicate recalc)
     const plan = await this.findById(planId, tenantId);
-    const allTactics = await this.tacticRepo.find({ where: { tenantId } });
-    const tacticMap = new Map(allTactics.map((t) => [t.code, t]));
 
     const fuKpis: Array<{
       fuId: string;
@@ -858,59 +914,18 @@ export class PlanService {
     const allFuResults: Array<Record<string, CalculationResult>> = [];
 
     for (const planFu of plan.planFus || []) {
-      const skuResults: Array<Record<string, CalculationResult>> = [];
-
-      const fuTacticTotalSpend = this.calculateFuTacticSpend(planFu, tacticMap);
-
-      for (const planSku of planFu.planSkus || []) {
-        const sku = planSku.sku;
-        const baseVol = Number(planSku.baseVolume) || 0;
-        const planVol = Number(planSku.plannedVolume) || 0;
-        const unitPrice = Number(sku.unitPrice) || 0;
-        const cogsVal = Number(sku.cogs) || 0;
-
-        const fuPlannedVolume =
-          planFu.planSkus?.reduce(
-            (sum, s) => sum + (Number(s.plannedVolume) || 0),
-            0,
-          ) || 0;
-        const skuShareRatio =
-          fuPlannedVolume > 0 ? planVol / fuPlannedVolume : 0;
-        const skuTacticSpend = fuTacticTotalSpend * skuShareRatio;
-
-        const context: SkuCalculationContext = {
-          BASE_VOL: baseVol,
-          PLAN_VOL: planVol,
-          BPTT: unitPrice,
-          COGS: cogsVal,
-          INCR_VOL: planVol - baseVol,
-          PLAN_TURNOVER: planVol * unitPrice,
-          TACTIC_SPEND: skuTacticSpend,
-          BASE_TURNOVER: baseVol * unitPrice,
-          PLAN_COGS: planVol * cogsVal,
-          GP: planVol * unitPrice - planVol * cogsVal - skuTacticSpend,
+      // Convert stored JSONB calculatedKpis back to CalculationResult shape
+      const fuKpiResults: Record<string, CalculationResult> = {};
+      for (const [code, stored] of Object.entries(
+        planFu.calculatedKpis || {},
+      )) {
+        fuKpiResults[code] = {
+          kpiCode: code,
+          value: (stored as any).value,
+          displayFormat: (stored as any).displayFormat,
+          decimalPlaces: (stored as any).decimalPlaces,
+          ragStatus: (stored as any).ragStatus,
         };
-
-        try {
-          const kpiResults = await this.kpiEngine.calculateSku(
-            tenantId,
-            context,
-          );
-          skuResults.push(kpiResults);
-        } catch {
-          skuResults.push({});
-        }
-      }
-
-      let fuKpiResults: Record<string, CalculationResult>;
-      try {
-        fuKpiResults = await this.kpiEngine.calculateFu(
-          tenantId,
-          skuResults,
-          planFu.tactics || {},
-        );
-      } catch {
-        fuKpiResults = {};
       }
 
       fuKpis.push({
@@ -921,11 +936,13 @@ export class PlanService {
       allFuResults.push(fuKpiResults);
     }
 
+    // Plan-level aggregation (re-run engine on stored FU results for plan shape)
     let planKpis: Record<string, CalculationResult>;
     try {
       planKpis = await this.kpiEngine.calculatePlan(tenantId, allFuResults);
-    } catch {
-      planKpis = {};
+    } catch (err) {
+      this.logger.error(`Plan-level KPI aggregation failed: ${err}`);
+      throw err;
     }
 
     return { planKpis, fuKpis };
@@ -977,25 +994,53 @@ export class PlanService {
   }> {
     const plan = await this.findById(planId, tenantId);
 
-    // Calculate base GP (from base volumes)
+    // B-2: Read stored BASE_GP and INCR_GP from calculatedKpis JSONB —
+    // no re-computation here. If recalc has not been run yet the values
+    // may be null, which we surface as-is (BRD: missing data → null).
     let baseGp = 0;
     let baseVolume = 0;
+    let storedIncrGp: number | null = null;
+    let storedIncrGpFound = false;
+
     for (const planFu of plan.planFus || []) {
+      // Accumulate base volume from SKUs (user-entered, not a calculated KPI)
       for (const planSku of planFu.planSkus || []) {
-        const sku = planSku.sku;
-        const baseVol = Number(planSku.baseVolume) || 0;
-        const unitPrice = Number(sku.unitPrice) || 0;
-        const cogs = Number(sku.cogs) || 0;
-        baseVolume += baseVol;
-        baseGp += baseVol * unitPrice - baseVol * cogs;
+        baseVolume += Number(planSku.baseVolume) || 0;
+      }
+
+      // Sum BASE_GP from stored calculatedKpis across FUs
+      const fuBaseGp = (planFu.calculatedKpis as Record<string, any> | null)?.[
+        'BASE_GP'
+      ]?.value;
+      if (fuBaseGp !== null && fuBaseGp !== undefined) {
+        baseGp += Number(fuBaseGp);
+      }
+
+      // Sum INCR_GP from stored calculatedKpis across FUs
+      const fuIncrGp = (planFu.calculatedKpis as Record<string, any> | null)?.[
+        'INCR_GP'
+      ]?.value;
+      if (fuIncrGp !== null && fuIncrGp !== undefined) {
+        storedIncrGp = (storedIncrGp ?? 0) + Number(fuIncrGp);
+        storedIncrGpFound = true;
       }
     }
 
-    const incrementalGp = Number(plan.totalGp) - baseGp;
+    // Use stored INCR_GP if available; fallback to totalGp - baseGp only when
+    // calculatedKpis have not been populated yet (first-run scenario).
+    const incrementalGp = storedIncrGpFound
+      ? (storedIncrGp ?? 0)
+      : Number(plan.totalGp) - baseGp;
+
     const currentRoi = plan.overallRoi ? Number(plan.overallRoi) : null;
 
-    // Target ROI from KPI engine thresholds (if defined) or default 20%
-    const targetRoi = 20.0;
+    // B-1: Target ROI from GP_ROI_PCT KPI config (ragGreenThreshold) — NOT hardcoded.
+    const gpRoiKpi = await this.kpiEngine.getKpiConfig(tenantId, 'GP_ROI_PCT');
+    const targetRoi =
+      gpRoiKpi?.ragGreenThreshold !== null &&
+      gpRoiKpi?.ragGreenThreshold !== undefined
+        ? Number(gpRoiKpi.ragGreenThreshold)
+        : 20.0; // safe fallback only when KPI record is absent
     const status =
       currentRoi === null
         ? 'BELOW_TARGET'
@@ -1005,7 +1050,10 @@ export class PlanService {
             ? 'ON_TARGET'
             : 'BELOW_TARGET';
 
-    // Calculate ON/OFF Invoice split from tactics
+    // B-3: ON/OFF invoice split from stored calculatedKpis (PLANNED_ON_INVOICE_SPEND
+    // and TOTAL_PLANNED_SPEND), not from hardcoded tactic code pattern matching.
+    // PLANNED_ON_INVOICE_SPEND is context-injected during recalc and stored per SKU
+    // (aggregated to FU via SUM aggregation in calculateFu).
     let onInvoiceSpend = 0;
     let offInvoiceSpend = 0;
     const tacticSpendMap = new Map<string, { spend: number; name: string }>();
@@ -1017,54 +1065,42 @@ export class PlanService {
     const tacticMap = new Map(allTactics.map((t) => [t.code, t]));
 
     for (const planFu of plan.planFus || []) {
+      const fuKpis =
+        (planFu.calculatedKpis as Record<string, any> | null) ?? {};
+
+      // Read stored on-invoice and total spend from JSONB; do NOT recompute.
+      const fuOnInvoice = fuKpis['PLANNED_ON_INVOICE_SPEND']?.value;
+      const fuTotalSpend = fuKpis['TOTAL_PLANNED_SPEND']?.value;
+
+      if (fuOnInvoice !== null && fuOnInvoice !== undefined) {
+        const onInv = Number(fuOnInvoice);
+        const totalSp =
+          fuTotalSpend !== null && fuTotalSpend !== undefined
+            ? Number(fuTotalSpend)
+            : onInv;
+        onInvoiceSpend += onInv;
+        offInvoiceSpend += Math.max(0, totalSp - onInv);
+      } else {
+        // Fallback: stored KPIs not yet populated — use planFu.totalSpend as
+        // on-invoice (conservative; recalc will correct on next trigger).
+        onInvoiceSpend += Number(planFu.totalSpend) || 0;
+      }
+
+      // Tactic spend breakdown — tactic names from tacticMap (no amount re-calc).
+      // Amounts come from stored per-tactic in tactics JSONB (raw user inputs) but
+      // we label them only; the aggregate totals above are authoritative.
       if (planFu.tactics) {
         for (const [tacticCode, value] of Object.entries(planFu.tactics)) {
           const tactic = tacticMap.get(tacticCode);
           const tacticName = tactic?.name || tacticCode;
-
-          let isOffInvoice = false;
-          if (tactic?.spendType === 'OFF_INVOICE') {
-            isOffInvoice = true;
-          } else if (tactic?.spendType === 'ON_INVOICE') {
-            isOffInvoice = false;
-          } else {
-            isOffInvoice =
-              tacticCode.includes('OFF') ||
-              tacticCode.includes('DISPLAY') ||
-              tacticCode.includes('LUMP');
-          }
-
-          let tacticSpend = 0;
-          if (
-            tactic?.tacticType === 'DISCOUNT' ||
-            tacticCode.includes('PCT') ||
-            tacticCode.includes('%')
-          ) {
-            const plannedTurnover =
-              planFu.planSkus?.reduce((sum, sku) => {
-                return (
-                  sum +
-                  (Number(sku.plannedVolume) || 0) *
-                    (Number(sku.sku.unitPrice) || 0)
-                );
-              }, 0) || 0;
-            tacticSpend = plannedTurnover * (value / 100);
-          } else {
-            tacticSpend = value;
-          }
-
-          if (isOffInvoice) {
-            offInvoiceSpend += tacticSpend;
-          } else {
-            onInvoiceSpend += tacticSpend;
-          }
-
+          // Use raw value for breakdown label; actual monetary impact is captured
+          // in the on/off totals above (derived from engine-stored KPIs).
           const existing = tacticSpendMap.get(tacticCode);
           if (existing) {
-            existing.spend += tacticSpend;
+            existing.spend += Number(value) || 0;
           } else {
             tacticSpendMap.set(tacticCode, {
-              spend: tacticSpend,
+              spend: Number(value) || 0,
               name: tacticName,
             });
           }

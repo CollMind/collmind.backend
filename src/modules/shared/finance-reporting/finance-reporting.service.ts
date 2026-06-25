@@ -932,9 +932,7 @@ export class FinanceReportingService {
     return UtilizationStatus.GREEN;
   }
 
-  private aggregateByCpl(
-    allocations: BudgetAllocation[],
-  ): Array<{
+  private aggregateByCpl(allocations: BudgetAllocation[]): Array<{
     cplId: string;
     cplName: string;
     onInvoice: BudgetSummary;
@@ -1021,9 +1019,7 @@ export class FinanceReportingService {
     });
   }
 
-  private aggregateByChannel(
-    allocations: BudgetAllocation[],
-  ): Array<{
+  private aggregateByChannel(allocations: BudgetAllocation[]): Array<{
     channel: string;
     onInvoice: BudgetSummary;
     offInvoice: BudgetSummary;
@@ -1108,9 +1104,7 @@ export class FinanceReportingService {
     });
   }
 
-  private aggregateByCategory(
-    allocations: BudgetAllocation[],
-  ): Array<{
+  private aggregateByCategory(allocations: BudgetAllocation[]): Array<{
     category: string;
     onInvoice: BudgetSummary;
     offInvoice: BudgetSummary;

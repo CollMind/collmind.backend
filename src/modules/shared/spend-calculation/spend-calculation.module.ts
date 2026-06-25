@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PlanSku, PlanFu, Plan } from '../../../database/entities/plan.entity';
 import { Mechanic } from '../../../database/entities/mechanic.entity';
@@ -22,8 +22,8 @@ import { BudgetModule } from '../budget/budget.module';
       PlanMechanicValue,
       MechanicSpendBreakdown,
     ]),
-    LTAModule,
-    MasterDataModule,
+    forwardRef(() => LTAModule),
+    forwardRef(() => MasterDataModule),
     BudgetModule,
   ],
   controllers: [SpendCalculationController],

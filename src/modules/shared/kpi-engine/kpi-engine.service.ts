@@ -347,6 +347,16 @@ export class KpiEngineService {
   }
 
   /**
+   * Get a single KPI config record for a tenant (uses the same cache as
+   * getActiveKpis so no extra DB round-trips when called after recalc).
+   * Returns null if the KPI code is not found or is inactive.
+   */
+  async getKpiConfig(tenantId: string, kpiCode: string): Promise<Kpi | null> {
+    const kpis = await this.getActiveKpis(tenantId);
+    return kpis.find((k) => k.kpiCode === kpiCode) ?? null;
+  }
+
+  /**
    * Clear the KPI cache (call after KPI updates)
    */
   clearCache(tenantId?: string): void {

@@ -120,9 +120,7 @@ describe('Auth (E2E)', () => {
     });
 
     it('Token olmadan GET /dashboard/summary → 401', async () => {
-      await request(app.getHttpServer())
-        .get('/dashboard/summary')
-        .expect(401);
+      await request(app.getHttpServer()).get('/dashboard/summary').expect(401);
     });
 
     it('Geçersiz/manipüle edilmiş token → 401', async () => {

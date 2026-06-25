@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LTAAgreement } from '../../../database/entities/lta-agreement.entity';
 import { LTARate } from '../../../database/entities/lta-rate.entity';
@@ -20,7 +20,7 @@ import { MasterDataModule } from '../../master-data/master-data.module';
       PlanSku,
       Sku,
     ]),
-    MasterDataModule,
+    forwardRef(() => MasterDataModule),
   ],
   controllers: [LTAAgreementController],
   providers: [

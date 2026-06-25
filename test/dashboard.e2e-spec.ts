@@ -246,10 +246,10 @@ describe('Dashboard (E2E)', () => {
 
       const plannerItems = Array.isArray(plannerRes.body)
         ? plannerRes.body
-        : plannerRes.body.items ?? [];
+        : (plannerRes.body.items ?? []);
       const adminItems = Array.isArray(adminRes.body)
         ? adminRes.body
-        : adminRes.body.items ?? [];
+        : (adminRes.body.items ?? []);
 
       // PLANNER CPL scope'u → ADMIN'den az veya eşit CPL görür
       expect(plannerItems.length).toBeLessThanOrEqual(adminItems.length);

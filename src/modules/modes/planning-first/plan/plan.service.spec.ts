@@ -1,17 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { PlanService } from './plan.service';
 import { PlanRepository } from './plan.repository';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
+import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
 import {
   Plan,
   PlanStatus,
   PlanFu,
-  PlanSku,
 } from '../../../../database/entities/plan.entity';
 import { ForecastingUnit } from '../../../../database/entities/forecasting-unit.entity';
 import { Sku } from '../../../../database/entities/sku.entity';
@@ -24,9 +23,7 @@ describe('PlanService', () => {
   let budgetService: jest.Mocked<BudgetService>;
   let approvalService: jest.Mocked<ApprovalService>;
   let kpiEngine: jest.Mocked<KpiEngineService>;
-  let fuRepo: jest.Mocked<Repository<ForecastingUnit>>;
-  let skuRepo: jest.Mocked<Repository<Sku>>;
-  let tacticRepo: jest.Mocked<Repository<Tactic>>;
+  let spendCalc: jest.Mocked<SpendCalculationService>;
 
   const mockTenantId = 'tenant-1';
   const mockUserId = 'user-1';
@@ -96,6 +93,14 @@ describe('PlanService', () => {
           },
         },
         {
+          provide: SpendCalculationService,
+          useValue: {
+            calculateAllSpendsForSKU: jest.fn(),
+            calculateAllSpendsForFU: jest.fn(),
+            calculateCompleteSKUFinancialMetrics: jest.fn(),
+          },
+        },
+        {
           provide: getRepositoryToken(ForecastingUnit),
           useValue: {
             findOne: jest.fn(),
@@ -121,9 +126,7 @@ describe('PlanService', () => {
     budgetService = module.get(BudgetService);
     approvalService = module.get(ApprovalService);
     kpiEngine = module.get(KpiEngineService);
-    fuRepo = module.get(getRepositoryToken(ForecastingUnit));
-    skuRepo = module.get(getRepositoryToken(Sku));
-    tacticRepo = module.get(getRepositoryToken(Tactic));
+    spendCalc = module.get(SpendCalculationService);
   });
 
   afterEach(() => {
@@ -321,6 +324,269 @@ describe('PlanService', () => {
 
       expect(result.status).toBe(PlanStatus.REJECTED);
       expect(approvalService.reject).toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * BRD Parite Test Matrisi — Set A (happy path)
+   *
+   * Inputs (from parity-analysis.md Set A):
+   *   SKU-A: planVol=4200, baseVol=3200, BPTT=4.00, COGS=1.80
+   *   SKU-B: planVol=3500, baseVol=2800, BPTT=3.50, COGS=1.50
+   *   CPP_ON_PCT=10, VIS_LS=2000, PRICE_SUP_PER_UNIT=0.25
+   *   LTA: on=0 (no LTA in Set A baseline), off=0
+   *   Expected: TOTAL_PLANNED_SPEND(FU)≈6830, INCR_GP≈695, GP_ROI≈10.18, RAG=AMBER
+   *
+   * These tests verify that recalculatePlanWithKpiEngine uses SpendCalc as
+   * the authoritative spend source and passes BRD-required context fields.
+   */
+  describe('recalculatePlanWithKpiEngine — BRD parity (Set A)', () => {
+    /**
+     * Build a minimal SpendBreakdown stub for a SKU.
+     * In Set A: no LTA (all zeroes), INCR_SPEND = TOTAL_PLANNED_SPEND.
+     */
+    const makeSpendBreakdown = (
+      totalPlannedSpend: number,
+      baseTotalSpend: number,
+    ) => ({
+      skuId: 'sku-x',
+      base: {
+        ltaOnInvoice: 0,
+        ltaOffInvoice: 0,
+        totalOnInvoice: baseTotalSpend,
+        totalOffInvoice: 0,
+        totalSpend: baseTotalSpend,
+      },
+      planned: {
+        ltaOnInvoice: 0,
+        ltaOffInvoice: 0,
+        promoOnInvoice: {},
+        promoOffInvoice: {},
+        totalPromoOnInvoice: totalPlannedSpend,
+        totalPromoOffInvoice: 0,
+        totalOnInvoice: totalPlannedSpend,
+        totalOffInvoice: 0,
+        totalSpend: totalPlannedSpend,
+      },
+      incremental: {
+        onInvoice: totalPlannedSpend - baseTotalSpend,
+        offInvoice: 0,
+        total: totalPlannedSpend - baseTotalSpend,
+      },
+    });
+
+    it('should call SpendCalculationService for each SKU (BRD context injection)', async () => {
+      // Set A: SKU-A only for simplicity — validate that spendCalc is called
+      const planWithFus = {
+        ...mockPlan,
+        cplId: 'cpl-1',
+        channel: { id: 'ch-1', code: 'NKA', name: 'NKA' } as any,
+        category: { id: 'cat-1', code: 'DAIRY', name: 'Dairy' } as any,
+        planFus: [
+          {
+            id: 'fu-1',
+            fuId: 'fu-1',
+            planId: mockPlanId,
+            tactics: { CPP_ON_PCT: 10 },
+            planSkus: [
+              {
+                id: 'ps-1',
+                skuId: 'sku-a',
+                baseVolume: 3200,
+                plannedVolume: 4200,
+                sku: { id: 'sku-a', unitPrice: 4.0, cogs: 1.8 },
+              },
+            ],
+          } as any,
+        ],
+      } as Plan;
+
+      // SpendCalc stub for SKU-A: total planned spend = CPP_ON(10% of 4200*4=16800) = 1680
+      const skuASpend = makeSpendBreakdown(1680, 0);
+      spendCalc.calculateAllSpendsForSKU.mockResolvedValue(skuASpend as any);
+
+      // KPI engine returns BRD-correct values
+      kpiEngine.calculateSku.mockResolvedValue({
+        PLANNED_GP: {
+          kpiCode: 'PLANNED_GP',
+          value: 8330.4,
+          displayFormat: 'currency',
+          decimalPlaces: 2,
+          ragStatus: null,
+        },
+        BASE_GP: {
+          kpiCode: 'BASE_GP',
+          value: 7136,
+          displayFormat: 'currency',
+          decimalPlaces: 2,
+          ragStatus: null,
+        },
+        INCR_GP: {
+          kpiCode: 'INCR_GP',
+          value: 1194.4,
+          displayFormat: 'currency',
+          decimalPlaces: 2,
+          ragStatus: null,
+        },
+        INCR_SPEND: {
+          kpiCode: 'INCR_SPEND',
+          value: 1680,
+          displayFormat: 'currency',
+          decimalPlaces: 2,
+          ragStatus: null,
+        },
+        GP_ROI_PCT: {
+          kpiCode: 'GP_ROI_PCT',
+          value: 71.1,
+          displayFormat: 'percentage',
+          decimalPlaces: 1,
+          ragStatus: 'GREEN',
+        },
+        PLANNED_TO: {
+          kpiCode: 'PLANNED_TO',
+          value: 15120,
+          displayFormat: 'currency',
+          decimalPlaces: 2,
+          ragStatus: null,
+        },
+      } as any);
+      kpiEngine.calculateFu.mockResolvedValue({} as any);
+      kpiEngine.calculatePlan.mockResolvedValue({} as any);
+
+      planRepo.findById
+        .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
+      planRepo.findPlanSku.mockResolvedValue({
+        id: 'ps-1',
+        plannedVolume: 4200,
+        plannedGp: 8330.4,
+      } as any);
+      planRepo.updatePlanSku.mockResolvedValue(undefined as any);
+      planRepo.updatePlanFu.mockResolvedValue(undefined as any);
+      planRepo.update.mockResolvedValue({} as any);
+
+      await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
+
+      // Verify SpendCalc was called (authoritative spend source)
+      expect(spendCalc.calculateAllSpendsForSKU).toHaveBeenCalledTimes(1);
+
+      // Verify KPI engine context contains BRD-required LTA + spend fields
+      const engineCtx = kpiEngine.calculateSku.mock.calls[0][1];
+      expect(engineCtx).toMatchObject({
+        BASE_VOL: 3200,
+        PLAN_VOL: 4200,
+        BPTT: 4.0,
+        COGS: 1.8,
+        // BRD external fields (Gap G fix)
+        PLANNED_LTA_ON: 0,
+        PLANNED_LTA_OFF: 0,
+        BASE_LTA_ON: 0,
+        BASE_LTA_OFF: 0,
+        TOTAL_PLANNED_SPEND: 1680,
+        BASE_TOTAL_SPEND: 0,
+        INCR_SPEND: 1680,
+      });
+    });
+
+    it('should persist GP_ROI_PCT from engine only — no fallback arithmetic (BUG #1 fix)', async () => {
+      // If engine returns null for GP_ROI_PCT (e.g. INCR_SPEND=0 → div-by-zero),
+      // persistedGpRoi must be null — not a hardcoded fallback calculation.
+      const planWithFus = {
+        ...mockPlan,
+        cplId: 'cpl-1',
+        channel: { id: 'ch-1', code: 'NKA', name: 'NKA' } as any,
+        category: { id: 'cat-1', code: 'DAIRY', name: 'Dairy' } as any,
+        planFus: [
+          {
+            id: 'fu-1',
+            fuId: 'fu-1',
+            planId: mockPlanId,
+            tactics: {},
+            planSkus: [
+              {
+                id: 'ps-1',
+                skuId: 'sku-a',
+                baseVolume: 3200,
+                plannedVolume: 4200,
+                sku: { id: 'sku-a', unitPrice: 4.0, cogs: 1.8 },
+              },
+            ],
+          } as any,
+        ],
+      } as Plan;
+
+      // Set D: INCR_SPEND=0 → ROI must be null (div-by-zero BRD rule)
+      const skuNoSpend = makeSpendBreakdown(0, 0);
+      spendCalc.calculateAllSpendsForSKU.mockResolvedValue(skuNoSpend as any);
+
+      kpiEngine.calculateSku.mockResolvedValue({
+        GP_ROI_PCT: {
+          kpiCode: 'GP_ROI_PCT',
+          value: null,
+          displayFormat: 'percentage',
+          decimalPlaces: 1,
+          ragStatus: null,
+        },
+      } as any);
+      kpiEngine.calculateFu.mockResolvedValue({} as any);
+      kpiEngine.calculatePlan.mockResolvedValue({} as any);
+
+      planRepo.findById
+        .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
+      planRepo.findPlanSku.mockResolvedValue({
+        id: 'ps-1',
+        plannedVolume: 4200,
+        plannedGp: null,
+      } as any);
+      planRepo.updatePlanSku.mockResolvedValue(undefined as any);
+      planRepo.updatePlanFu.mockResolvedValue(undefined as any);
+      planRepo.update.mockResolvedValue({} as any);
+
+      await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
+
+      const updateCall = planRepo.updatePlanSku.mock.calls[0][1];
+      // Set D: SPEND=0 → ROI null (not a fallback number)
+      expect(updateCall.gpRoi).toBeUndefined(); // null → undefined (persist as null)
+      // No RAG should be set from hardcode
+      expect(updateCall.ragStatus).toBeUndefined();
+    });
+
+    it('should surface KPI engine errors instead of silently swallowing them', async () => {
+      const planWithFus = {
+        ...mockPlan,
+        cplId: 'cpl-1',
+        planFus: [
+          {
+            id: 'fu-1',
+            fuId: 'fu-1',
+            planId: mockPlanId,
+            tactics: {},
+            planSkus: [
+              {
+                id: 'ps-1',
+                skuId: 'sku-a',
+                baseVolume: 100,
+                plannedVolume: 200,
+                sku: { id: 'sku-a', unitPrice: 10, cogs: 5 },
+              },
+            ],
+          } as any,
+        ],
+      } as Plan;
+
+      spendCalc.calculateAllSpendsForSKU.mockResolvedValue(
+        makeSpendBreakdown(500, 0) as any,
+      );
+      kpiEngine.calculateSku.mockRejectedValue(
+        new Error('KPI engine internal error'),
+      );
+      planRepo.findById.mockResolvedValue(planWithFus);
+
+      // Error must propagate — not silently caught
+      await expect(
+        service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId),
+      ).rejects.toThrow('KPI engine internal error');
     });
   });
 });

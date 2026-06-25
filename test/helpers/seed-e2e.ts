@@ -97,7 +97,7 @@ export async function loadE2EFixture(
     if (!approvedAgreement || approvedAgreement.length === 0) {
       throw new Error(
         'E2E fixture eksik: APPROVED agreement bulunamadı ve reset başarısız. ' +
-          '`npm run seed` çalıştırın veya STA-2026-0002 agreement\'ını kontrol edin.',
+          "`npm run seed` çalıştırın veya STA-2026-0002 agreement'ını kontrol edin.",
       );
     }
   }

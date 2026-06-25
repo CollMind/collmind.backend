@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PlanController } from './plan.controller';
 import { PlanService } from './plan.service';
@@ -16,6 +16,7 @@ import { Tactic } from '../../../../database/entities/tactic.entity';
 import { BudgetModule } from '../../../shared/budget/budget.module';
 import { ApprovalModule } from '../../../shared/approval/approval.module';
 import { KpiEngineModule } from '../../../shared/kpi-engine/kpi-engine.module';
+import { SpendCalculationModule } from '../../../shared/spend-calculation/spend-calculation.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { KpiEngineModule } from '../../../shared/kpi-engine/kpi-engine.module';
     BudgetModule,
     ApprovalModule,
     KpiEngineModule,
+    forwardRef(() => SpendCalculationModule),
   ],
   controllers: [PlanController],
   providers: [PlanService, PlanRepository, ApprovalWorkflowService],

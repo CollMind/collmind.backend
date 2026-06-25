@@ -177,9 +177,7 @@ describe('Settlement (E2E)', () => {
       const admin = await loginAs(app, 'ADMIN');
 
       const res = await request(app.getHttpServer())
-        .post(
-          `/actuals-first/settlements/close/${fixture.approvedAgreementId}`,
-        )
+        .post(`/actuals-first/settlements/close/${fixture.approvedAgreementId}`)
         .set(admin.authHeader())
         .send({ justification: 'E2E test - başarılı settlement close' })
         .expect(201);

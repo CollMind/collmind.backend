@@ -9,6 +9,7 @@ import { seedCpls } from './cpl.seed';
 import { seedBudgetEnvelopes } from './budget-envelope.seed';
 import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
+import { seedKpis } from './kpi.seed';
 
 config();
 
@@ -124,8 +125,12 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
     `   - APPROVED: ${agreements.filter((a) => a.status === 'APPROVED').length}\n`,
   );
 
-  // 8. Seed budget transactions (for approved agreement)
-  let matchingEnvelope = nkaEnvelope;
+  // 8. Seed KPI definitions (BRD canonical formulas — idempotent upsert)
+  const kpis = await seedKpis(dataSource, tenant.id);
+  console.log(`   KPIs: ${kpis.length} inserted/updated\n`);
+
+  // 9. Seed budget transactions (for approved agreement)
+  const matchingEnvelope = nkaEnvelope;
   if (approvedAgreement) {
     const transactions = await seedBudgetTransactions(
       dataSource,

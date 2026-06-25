@@ -97,9 +97,7 @@ describe('Reversal (E2E)', () => {
       );
 
       const res = await request(app.getHttpServer())
-        .post(
-          `/actuals-first/reversals/agreement-transaction/${transactionId}`,
-        )
+        .post(`/actuals-first/reversals/agreement-transaction/${transactionId}`)
         .set(admin.authHeader())
         .send({ justification: 'E2E test reversal - fatura iptali' })
         // Reversal mevcut bir tx'i tersine çevirir, yeni kaynak yaratmaz → 200
@@ -125,9 +123,7 @@ describe('Reversal (E2E)', () => {
       );
 
       const res = await request(app.getHttpServer())
-        .post(
-          `/actuals-first/reversals/agreement-transaction/${transactionId}`,
-        )
+        .post(`/actuals-first/reversals/agreement-transaction/${transactionId}`)
         .set(cm.authHeader())
         .send({ justification: 'E2E test - CM reversal' })
         .expect(200);
@@ -149,18 +145,14 @@ describe('Reversal (E2E)', () => {
 
       // İlk reversal başarılı
       await request(app.getHttpServer())
-        .post(
-          `/actuals-first/reversals/agreement-transaction/${transactionId}`,
-        )
+        .post(`/actuals-first/reversals/agreement-transaction/${transactionId}`)
         .set(admin.authHeader())
         .send({ justification: 'İlk reversal' })
         .expect(200);
 
       // İkinci reversal → 409
       const res = await request(app.getHttpServer())
-        .post(
-          `/actuals-first/reversals/agreement-transaction/${transactionId}`,
-        )
+        .post(`/actuals-first/reversals/agreement-transaction/${transactionId}`)
         .set(admin.authHeader())
         .send({ justification: 'İkinci reversal denemesi' })
         .expect(409);
@@ -193,9 +185,7 @@ describe('Reversal (E2E)', () => {
 
       // Reversal yap
       await request(app.getHttpServer())
-        .post(
-          `/actuals-first/reversals/agreement-transaction/${transactionId}`,
-        )
+        .post(`/actuals-first/reversals/agreement-transaction/${transactionId}`)
         .set(admin.authHeader())
         .send({ justification: 'Net consumed test' })
         .expect(200);
@@ -220,9 +210,7 @@ describe('Reversal (E2E)', () => {
       const nonExistentId = '00000000-0000-0000-0000-000000000001';
 
       await request(app.getHttpServer())
-        .post(
-          `/actuals-first/reversals/agreement-transaction/${nonExistentId}`,
-        )
+        .post(`/actuals-first/reversals/agreement-transaction/${nonExistentId}`)
         .set(admin.authHeader())
         .send({})
         .expect(404);
@@ -232,9 +220,7 @@ describe('Reversal (E2E)', () => {
       const admin = await loginAs(app, 'ADMIN');
 
       await request(app.getHttpServer())
-        .post(
-          '/actuals-first/reversals/agreement-transaction/not-a-uuid',
-        )
+        .post('/actuals-first/reversals/agreement-transaction/not-a-uuid')
         .set(admin.authHeader())
         .send({})
         .expect(400);
