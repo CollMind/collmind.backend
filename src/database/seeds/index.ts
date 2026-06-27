@@ -6,6 +6,7 @@ import { seedCustomers } from './customer.seed';
 import { seedCpls } from './cpl.seed';
 import { seedBudgetEnvelopes } from './budget-envelope.seed';
 import { seedBudgetAlertConfigurations } from './budget-alert-configuration.seed';
+import { seedMechanics } from './mechanic.seed';
 import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
@@ -87,7 +88,12 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
     `   NKA Envelope: ${nkaEnvelope.code} (${nkaEnvelope.allocatedAmount} TRY)\n`,
   );
 
-  // 7. Seed agreements (use CPL ID instead of customer ID)
+  // 7. Seed mechanics (master-data; bağımlılık: tactic'ler bu adımda oluşturulur)
+  // ÖNCE agreement.seed'den çalışmalı — agreement seed TAC-PROMO'yu da oluşturuyor
+  // ancak mechanic seed kendi tactic'lerini idempotent yönetiyor.
+  await seedMechanics(dataSource, tenant.id, adminUser.id);
+
+  // 8. Seed agreements (use CPL ID instead of customer ID)
   const agreements = await seedAgreements(
     dataSource,
     tenant.id,
@@ -106,11 +112,11 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
     `   - APPROVED: ${agreements.filter((a) => a.status === 'APPROVED').length}\n`,
   );
 
-  // 8. Seed KPI definitions (BRD canonical formulas — idempotent upsert)
+  // 9. Seed KPI definitions (BRD canonical formulas — idempotent upsert)
   const kpis = await seedKpis(dataSource, tenant.id);
   console.log(`   KPIs: ${kpis.length} inserted/updated\n`);
 
-  // 9. Seed budget transactions (for approved agreement)
+  // 10. Seed budget transactions (for approved agreement)
   let matchingEnvelope = nkaEnvelope;
   if (approvedAgreement) {
     // Find envelope matching the approved agreement's period and channel

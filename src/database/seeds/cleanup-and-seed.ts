@@ -7,6 +7,7 @@ import { seedChannels } from './channel.seed';
 import { seedCustomers } from './customer.seed';
 import { seedCpls } from './cpl.seed';
 import { seedBudgetEnvelopes } from './budget-envelope.seed';
+import { seedMechanics } from './mechanic.seed';
 import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
@@ -106,7 +107,10 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
     `   NKA Envelope: ${nkaEnvelope.code} (${nkaEnvelope.allocatedAmount} TRY)\n`,
   );
 
-  // 7. Seed agreements (use CPL ID instead of customer ID)
+  // 7. Seed mechanics (master-data; bağımlılık sırası: channels, CPLs tamamlandı)
+  await seedMechanics(dataSource, tenant.id, adminUser.id);
+
+  // 8. Seed agreements (use CPL ID instead of customer ID)
   const agreements = await seedAgreements(
     dataSource,
     tenant.id,
@@ -125,11 +129,11 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
     `   - APPROVED: ${agreements.filter((a) => a.status === 'APPROVED').length}\n`,
   );
 
-  // 8. Seed KPI definitions (BRD canonical formulas — idempotent upsert)
+  // 9. Seed KPI definitions (BRD canonical formulas — idempotent upsert)
   const kpis = await seedKpis(dataSource, tenant.id);
   console.log(`   KPIs: ${kpis.length} inserted/updated\n`);
 
-  // 9. Seed budget transactions (for approved agreement)
+  // 10. Seed budget transactions (for approved agreement)
   const matchingEnvelope = nkaEnvelope;
   if (approvedAgreement) {
     const transactions = await seedBudgetTransactions(
