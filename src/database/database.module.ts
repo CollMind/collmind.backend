@@ -16,6 +16,8 @@ import { LedgerEntry } from './entities/ledger-entry.entity';
 import { AgreementTransaction } from './entities/agreement-transaction.entity';
 import { OnInvoiceEntry } from './entities/on-invoice-entry.entity';
 import { OnInvoiceBatch } from './entities/on-invoice-batch.entity';
+import { SalesActual } from './entities/sales-actual.entity';
+import { SalesActualBatch } from './entities/sales-actual-batch.entity';
 import { BudgetSummaryView } from './entities/budget-summary.view-entity';
 // Master Data entities
 import {
@@ -97,6 +99,8 @@ import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.
             AgreementTransaction,
             OnInvoiceEntry,
             OnInvoiceBatch,
+            SalesActual,
+            SalesActualBatch,
             // Master Data entities
             Brand,
             Category,

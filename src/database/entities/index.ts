@@ -18,3 +18,5 @@ export * from './budget-alert-configuration.entity';
 export * from './region.entity';
 export * from './sku.entity';
 export * from './tactic.entity';
+export * from './sales-actual.entity';
+export * from './sales-actual-batch.entity';

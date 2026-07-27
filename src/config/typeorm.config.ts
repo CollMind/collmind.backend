@@ -16,6 +16,8 @@ import { LedgerEntry } from '../database/entities/ledger-entry.entity';
 import { AgreementTransaction } from '../database/entities/agreement-transaction.entity';
 import { OnInvoiceEntry } from '../database/entities/on-invoice-entry.entity';
 import { OnInvoiceBatch } from '../database/entities/on-invoice-batch.entity';
+import { SalesActual } from '../database/entities/sales-actual.entity';
+import { SalesActualBatch } from '../database/entities/sales-actual-batch.entity';
 import { BudgetSummaryView } from '../database/entities/budget-summary.view-entity';
 import {
   Brand,
@@ -93,6 +95,8 @@ export const dataSourceOptions: DataSourceOptions = {
     AgreementTransaction,
     OnInvoiceEntry,
     OnInvoiceBatch,
+    SalesActual,
+    SalesActualBatch,
     // Master Data entities
     Brand,
     Category,

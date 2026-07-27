@@ -17,6 +17,7 @@ import { LedgerModule } from './modules/modes/actuals-first/ledger/ledger.module
 import { OnInvoiceModule } from './modules/modes/actuals-first/on-invoice/on-invoice.module';
 import { ReversalModule } from './modules/modes/actuals-first/reversal/reversal.module';
 import { SettlementModule } from './modules/modes/actuals-first/settlement/settlement.module';
+import { SalesActualsModule } from './modules/modes/actuals-first/sales-actuals/sales-actuals.module';
 // Master Data module
 import { MasterDataModule } from './modules/master-data/master-data.module';
 // Planning-First mode modules
@@ -62,6 +63,7 @@ import { AdminModule } from './modules/admin/admin.module';
     OnInvoiceModule,
     ReversalModule,
     SettlementModule,
+    SalesActualsModule,
     // Master Data module
     MasterDataModule,
     // Planning-First mode modules

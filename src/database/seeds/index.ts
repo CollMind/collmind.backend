@@ -11,6 +11,7 @@ import { seedProducts } from './product.seed';
 import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
+import { seedSalesActuals } from './sales-actual.seed';
 
 export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   console.log('🌱 Starting seed process...\n');
@@ -101,6 +102,11 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   console.log(
     `   Product master-data: ${productSeed.categories.length} categories, ${productSeed.genericUnits.length} GUs, ${productSeed.forecastingUnits.length} FUs, ${productSeed.skus.length} SKUs\n`,
   );
+
+  // 7b. Seed sales actuals (T-020) — Wella actuals_2026-01/02.csv fixture'ları.
+  // CPL/Category/Channel master-data'ya bağımlı; product seed'den (kategoriler)
+  // ve cpl/channel seed'den (adım 3-4) SONRA çalışmalı.
+  await seedSalesActuals(dataSource, tenant.id, adminUser.id, adminUser.email);
 
   // 8. Seed agreements (use CPL ID instead of customer ID)
   const agreements = await seedAgreements(

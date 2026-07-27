@@ -156,6 +156,59 @@ export async function cleanupTestTransactions(
 }
 
 /**
+ * E2E sales-actuals testleri için oluşturulan batch/satır/audit fixture'larını
+ * temizler. `--runInBand` tekrar koşumlarında ve dev DB'de state birikimini
+ * önler.
+ *
+ * Kapsam: yalnızca test fixture'ları — `fiscalPeriod` LIKE '2027-%' olan
+ * batch'ler (sales-actuals.e2e-spec.ts bilinçli olarak tüm senaryolarında
+ * gerçek Wella verisiyle (2026-*) asla çakışmayacak 2027-* dönemlerini
+ * kullanır; bu, `cleanupTestTransactions`'daki `E2E-INV-%` marker desenine
+ * eşdeğer bir izolasyon stratejisidir). Silme sırası FK nedeniyle:
+ * `sales_actuals` → `sales_actual_batches` → ilgili `admin_audit_logs`
+ * (audit tablosunda FK yok ama mantıksal sıra korunur).
+ *
+ * NOT: Uygulama katmanının immutable audit/batch kuralını ihlal etmez —
+ * bu doğrudan SQL yalnızca test ortamında, test helper'ından çağrılır
+ * (tıpkı `cleanupTestTransactions`'ın ledger/agreement_transactions temizliği
+ * gibi).
+ */
+export async function cleanupSalesActuals(
+  app: INestApplication,
+  tenantId: string,
+  fiscalPeriodPrefix: string = '2027-',
+): Promise<void> {
+  const dataSource = app.get<DataSource>(getDataSourceToken());
+
+  const batches = await dataSource.query(
+    `SELECT id FROM main.sales_actual_batches
+     WHERE tenant_id = $1 AND fiscal_period LIKE $2`,
+    [tenantId, `${fiscalPeriodPrefix}%`],
+  );
+  const batchIds: string[] = batches.map((b: { id: string }) => b.id);
+  if (batchIds.length === 0) {
+    return;
+  }
+
+  await dataSource.query(
+    `DELETE FROM main.sales_actuals
+     WHERE tenant_id = $1 AND batch_id = ANY($2::uuid[])`,
+    [tenantId, batchIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.admin_audit_logs
+     WHERE tenant_id = $1 AND entity_type = 'SalesActualBatch'
+     AND entity_id = ANY($2::uuid[])`,
+    [tenantId, batchIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.sales_actual_batches
+     WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+    [tenantId, batchIds],
+  );
+}
+
+/**
  * Reversal testi için yeni bir off-invoice transaction oluşturur.
  * Her test çağrısında benzersiz invoiceNo ile idempotent değil (bilinçli).
  */
