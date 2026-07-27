@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BudgetController } from './budget.controller';
 import { BudgetAllocationController } from './budget-allocation.controller';
 import { BudgetService } from './budget.service';
+import { BudgetReservationService } from './budget-reservation.service';
 import { BudgetAllocationService } from './budget-allocation.service';
 import { BudgetThresholdService } from './budget-threshold.service';
 import { BudgetRepository } from './budget.repository';
@@ -39,12 +40,14 @@ import { Plan } from '../../../database/entities/plan.entity';
   controllers: [BudgetController, BudgetAllocationController],
   providers: [
     BudgetService,
+    BudgetReservationService,
     BudgetAllocationService,
     BudgetThresholdService,
     BudgetRepository,
   ],
   exports: [
     BudgetService,
+    BudgetReservationService,
     BudgetAllocationService,
     BudgetThresholdService,
     BudgetRepository,

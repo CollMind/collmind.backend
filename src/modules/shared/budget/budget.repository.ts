@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, EntityManager } from 'typeorm';
 import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
@@ -131,11 +131,19 @@ export class BudgetRepository {
   }
 
   // Budget Transaction methods (Event-Sourced Approach)
+  // T-030: optional `manager` allows callers to run the write INSIDE an
+  // already-open QueryRunner transaction (e.g. settlement-close's queryRunner)
+  // so a RELEASE and its owning state transition commit/rollback atomically.
+  // When omitted, falls back to the injected repository (pre-existing behaviour).
   async createTransaction(
     transaction: Partial<BudgetTransaction>,
+    manager?: EntityManager,
   ): Promise<BudgetTransaction> {
-    const newTransaction = this.transactionRepository.create(transaction);
-    return this.transactionRepository.save(newTransaction);
+    const repo = manager
+      ? manager.getRepository(BudgetTransaction)
+      : this.transactionRepository;
+    const newTransaction = repo.create(transaction);
+    return repo.save(newTransaction);
   }
 
   async findTransactionById(
@@ -151,8 +159,12 @@ export class BudgetRepository {
   async findTransactionByIdempotencyKey(
     tenantId: string,
     idempotencyKey: string,
+    manager?: EntityManager,
   ): Promise<BudgetTransaction | null> {
-    return this.transactionRepository.findOne({
+    const repo = manager
+      ? manager.getRepository(BudgetTransaction)
+      : this.transactionRepository;
+    return repo.findOne({
       where: { tenantId, idempotencyKey },
     });
   }
@@ -176,8 +188,12 @@ export class BudgetRepository {
     tenantId: string,
     sourceType: string,
     sourceId: string,
+    manager?: EntityManager,
   ): Promise<BudgetTransaction[]> {
-    return this.transactionRepository.find({
+    const repo = manager
+      ? manager.getRepository(BudgetTransaction)
+      : this.transactionRepository;
+    return repo.find({
       where: { tenantId, sourceType: sourceType as any, sourceId },
       order: { createdAt: 'DESC' },
     });

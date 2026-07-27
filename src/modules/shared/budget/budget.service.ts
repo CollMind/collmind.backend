@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { BudgetRepository } from './budget.repository';
 import { BudgetThresholdService } from './budget-threshold.service';
+import {
+  BudgetReservationService,
+  PlanReservationReleaseReason,
+} from './budget-reservation.service';
 import { UtilizationStatus } from '../finance-reporting/dto/budget-utilization.dto';
 import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
 import {
@@ -24,6 +28,7 @@ export class BudgetService {
   constructor(
     private readonly budgetRepository: BudgetRepository,
     private readonly budgetThresholdService: BudgetThresholdService,
+    private readonly budgetReservationService: BudgetReservationService,
   ) {}
 
   async createEnvelope(
@@ -588,7 +593,13 @@ export class BudgetService {
   }
 
   /**
-   * Release budget reservation when agreement is cancelled
+   * @deprecated T-030 — use BudgetReservationService.releaseAgreementReservation
+   * instead. This method releases a caller-supplied `amount` against a
+   * caller-supplied `envelopeId`, which is unsafe: callers historically
+   * passed `agreement.capTotalAmount` (drifts from actual net reservation
+   * if the cap was edited post-approval) and only the first RESERVE's
+   * envelope (breaks for multi-envelope agreements, T-019). Kept only for
+   * backward compatibility with any external callers; do not use in new code.
    */
   async releaseForAgreement(
     agreementId: string,
@@ -629,74 +640,44 @@ export class BudgetService {
   }
 
   /**
-   * T-029: Release ALL outstanding budget encumbrances for a plan — both
-   * RESERVE (Pending Approval rejected/cancelled before approval) and COMMIT
-   * (Approved plan reverted/deleted). Each gets its own idempotency-keyed
-   * RELEASE transaction (suffixed by the type being released) so a plan that
-   * went RESERVE→COMMIT→released still has one audit-clean RELEASE per leg,
-   * and a repeat call (idempotent) does not double-release either.
+   * T-029 (fixed by code-review, 2026-07-27): Release ALL outstanding budget
+   * encumbrances for a plan — both RESERVE (Pending Approval rejected/
+   * cancelled before approval) and COMMIT (Approved plan reverted/deleted).
    *
-   * RELEASE is generic in v_budget_summary (nets against RESERVE+COMMIT pool,
-   * see migration 1789000000000) so releasing either type correctly restores
-   * available_amount.
+   * BUG FIXED (was): this method used to scan for POSTED RESERVE/COMMIT rows
+   * by raw txType/txStatus and release each one found, with a per-type
+   * idempotency key (`...|RESERVE`, `...|COMMIT`). That double-counted: when
+   * a plan goes RESERVE → (approve) COMMIT, `commitReservedForPlan` already
+   * releases the RESERVE as part of the conversion (key `...|CONVERT`) and
+   * writes a COMMIT of the same amount — the original RESERVE row stays
+   * POSTED forever (event-sourced ledger, rows are never mutated). The old
+   * scan found that still-POSTED RESERVE again (under a *different* key,
+   * `...|RESERVE`, so idempotency did not catch it) AND the COMMIT, releasing
+   * both — net went negative (budget "refunded" twice). Real trigger: approve
+   * succeeds, then the post-approve audit write fails and the compensation
+   * path in `PlanService#approve` calls this method.
+   *
+   * FIX: delegate to `BudgetReservationService#releasePlanReservation`, which
+   * computes the TRUE net (ΣRESERVE + ΣCOMMIT − ΣRELEASE, all prior RELEASEs
+   * including CONVERT ones) per envelope and writes at most one RELEASE for
+   * the residual — same net-based pattern already proven correct for
+   * agreements (T-030). See that method's JSDoc for the full rationale;
+   * kept as a single shared engine so this double-count bug class (already
+   * seen once for agreements, F1/0003, and now for plans) cannot resurface
+   * for a third source type without also being fixed here.
    */
   async releaseForPlan(
     planId: string,
     tenantId: string,
     userId?: string,
+    reason: PlanReservationReleaseReason = 'REJECT',
   ): Promise<void> {
-    const transactions = await this.budgetRepository.findTransactionsBySource(
-      tenantId,
-      BudgetTransactionSourceType.PLAN,
+    await this.budgetReservationService.releasePlanReservation(
       planId,
+      tenantId,
+      userId,
+      reason,
     );
-
-    const outstandingByType: Array<{
-      tx: BudgetTransaction;
-      label: 'RESERVE' | 'COMMIT';
-    }> = [
-      ...transactions
-        .filter(
-          (tx) =>
-            tx.txType === BudgetTransactionType.RESERVE &&
-            tx.txStatus === BudgetTransactionStatus.POSTED,
-        )
-        .map((tx) => ({ tx, label: 'RESERVE' as const })),
-      ...transactions
-        .filter(
-          (tx) =>
-            tx.txType === BudgetTransactionType.COMMIT &&
-            tx.txStatus === BudgetTransactionStatus.POSTED,
-        )
-        .map((tx) => ({ tx, label: 'COMMIT' as const })),
-    ];
-
-    for (const { tx, label } of outstandingByType) {
-      const idempotencyKey = `RELEASE|PLAN|${planId}|${tx.envelopeId}|${label}`;
-
-      const existing =
-        await this.budgetRepository.findTransactionByIdempotencyKey(
-          tenantId,
-          idempotencyKey,
-        );
-      if (existing) {
-        continue;
-      }
-
-      await this.budgetRepository.createTransaction({
-        tenantId,
-        envelopeId: tx.envelopeId,
-        txType: BudgetTransactionType.RELEASE,
-        amount: tx.amount,
-        currency: tx.currency,
-        txStatus: BudgetTransactionStatus.POSTED,
-        sourceType: BudgetTransactionSourceType.PLAN,
-        sourceId: planId,
-        idempotencyKey,
-        description: `Budget release (${label}) for plan ${planId}`,
-        createdBy: userId,
-      });
-    }
   }
 
   /**

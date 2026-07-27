@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ConflictException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -14,12 +15,8 @@ import {
   AgreementStatus,
   AgreementType,
 } from '../../../../database/entities/agreement.entity';
-import {
-  BudgetTransactionType,
-  BudgetTransactionStatus,
-  BudgetTransactionSourceType,
-} from '../../../../database/entities/budget-transaction.entity';
 import { BudgetService } from '../../../shared/budget/budget.service';
+import { BudgetReservationService } from '../../../shared/budget/budget-reservation.service';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
@@ -32,9 +29,12 @@ import { FuService } from '../../../master-data/forecasting-unit/fu.service';
 
 @Injectable()
 export class AgreementService {
+  private readonly logger = new Logger(AgreementService.name);
+
   constructor(
     private readonly agreementRepo: AgreementRepository,
     private readonly budgetService: BudgetService,
+    private readonly budgetReservationService: BudgetReservationService,
     private readonly approvalService: ApprovalService,
     private readonly kpiEngine: KpiEngineService,
     private readonly tacticService: TacticService,
@@ -507,7 +507,7 @@ export class AgreementService {
       { reason },
     );
 
-    return this.agreementRepo.updateStatus(
+    const updated = await this.agreementRepo.updateStatus(
       id,
       tenantId,
       AgreementStatus.REJECTED,
@@ -518,6 +518,36 @@ export class AgreementService {
         updatedBy: userId,
       },
     );
+
+    // T-030 (F3, defensive): PENDING agreements normally have no budget
+    // reservation yet (RESERVE only happens on approve()), so this is
+    // expected to be a no-op today. Kept defensive in case reservation
+    // timing changes upstream — reject() must never leave a stray RESERVE.
+    //
+    // Code-review fix (2026-07-27, #2): status was already written to
+    // REJECTED above, so a release failure here must NOT throw (unlike
+    // cancel(), where release happens before the status write and a
+    // BadRequestException correctly blocks the transition). Throwing after
+    // the status write would surface a 500 for an already-committed,
+    // immutably-audited rejection, and a retry would then hit "Only PENDING
+    // agreements can be rejected" — confusing. Log and continue, same
+    // defensive no-op-on-failure pattern as PlanService#reject (T-029).
+    try {
+      await this.budgetReservationService.releaseAgreementReservation(
+        id,
+        tenantId,
+        userId,
+        'REJECT',
+      );
+    } catch (error) {
+      this.logger.error(
+        `Budget release failed after reject for agreement ${id} (status already committed as REJECTED): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+    }
+
+    return updated;
   }
 
   async cancel(
@@ -538,43 +568,22 @@ export class AgreementService {
       );
     }
 
-    // Find the RESERVE transaction for this agreement to get the correct envelope
-    // This is more reliable than looking up by dimensions, as envelope status might have changed
-    const reserveTransactions =
-      await this.budgetService.getTransactionsBySource(
-        tenantId,
-        BudgetTransactionSourceType.AGREEMENT,
+    // T-030: release the FULL net outstanding reservation (RESERVE+COMMIT−RELEASE)
+    // for every envelope this agreement touched, not `capTotalAmount` (drift risk
+    // if cap was edited post-approval) and not just the single first RESERVE tx
+    // found (multi-envelope agreements, T-019). Idempotency key is identical to
+    // the one this call used to write directly, so no double-release / conflict.
+    try {
+      await this.budgetReservationService.releaseAgreementReservation(
         agreement.id,
+        tenantId,
+        userId,
+        'CANCEL',
       );
-
-    const reserveTx = reserveTransactions.find(
-      (tx) =>
-        tx.txType === BudgetTransactionType.RESERVE &&
-        tx.txStatus === BudgetTransactionStatus.POSTED,
-    );
-
-    if (reserveTx) {
-      // Release the reserved budget using the envelope from the original RESERVE transaction
-      try {
-        await this.budgetService.releaseForAgreement(
-          agreement.id,
-          reserveTx.envelopeId,
-          agreement.capTotalAmount,
-          agreement.currency,
-          tenantId,
-          userId,
-        );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-        throw new BadRequestException(`Budget release failed: ${errorMessage}`);
-      }
-    } else {
-      // If no RESERVE transaction found, this is a data integrity issue
-      // Log warning but don't block cancellation
-      console.warn(
-        `No RESERVE transaction found for agreement ${agreement.id} during cancellation`,
-      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Budget release failed: ${errorMessage}`);
     }
 
     // Update agreement status

@@ -15,6 +15,7 @@ import {
 } from '../../../../database/entities/plan-approval-history.entity';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
+import { PlanReservationReleaseReason } from '../../../shared/budget/budget-reservation.service';
 import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
 import { PlanRepository } from './plan.repository';
 import {
@@ -219,7 +220,12 @@ export class ApprovalWorkflowService {
         }`,
       );
       try {
-        await this.releaseBudgetForPlan(planId, tenantId, userId);
+        await this.releaseBudgetForPlan(
+          planId,
+          tenantId,
+          userId,
+          'SUBMIT_COMPENSATION',
+        );
       } catch (releaseError) {
         this.logger.error(
           `Compensation failed: could not release budget for plan ${planId} after history write failure: ${
@@ -428,7 +434,7 @@ export class ApprovalWorkflowService {
     comments?: string,
   ): Promise<ReviewResult> {
     // Release reserved budget
-    await this.releaseBudgetForPlan(plan.id, tenantId, rejectorId);
+    await this.releaseBudgetForPlan(plan.id, tenantId, rejectorId, 'REJECT');
 
     // Update approval request
     if (plan.approvalRequestId) {
@@ -477,7 +483,12 @@ export class ApprovalWorkflowService {
     specificChanges?: string[],
   ): Promise<ReviewResult> {
     // Release reserved budget
-    await this.releaseBudgetForPlan(plan.id, tenantId, reviewerId);
+    await this.releaseBudgetForPlan(
+      plan.id,
+      tenantId,
+      reviewerId,
+      'REQUEST_CHANGES',
+    );
 
     // Update plan status to DRAFT
     await this.planRepo.updateStatus(plan.id, tenantId, PlanStatus.DRAFT, {
@@ -800,8 +811,9 @@ export class ApprovalWorkflowService {
     planId: string,
     tenantId: string,
     userId: string,
+    reason: PlanReservationReleaseReason = 'REJECT',
   ): Promise<void> {
-    await this.budgetService.releaseForPlan(planId, tenantId, userId);
+    await this.budgetService.releaseForPlan(planId, tenantId, userId, reason);
   }
 
   private async createHistoryEntry(

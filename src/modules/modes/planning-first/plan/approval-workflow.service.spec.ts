@@ -630,6 +630,7 @@ describe('ApprovalWorkflowService', () => {
         mockPlanId,
         mockTenantId,
         'reviewer-1',
+        'REJECT',
       );
       expect(approvalService.reject).toHaveBeenCalled();
     });

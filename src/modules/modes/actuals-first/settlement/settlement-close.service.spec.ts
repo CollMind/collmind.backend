@@ -3,6 +3,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { SettlementCloseService } from './settlement-close.service';
 import { AdminAuditService } from '../../../../common/services/admin-audit.service';
+import { BudgetReservationService } from '../../../shared/budget/budget-reservation.service';
 import {
   Agreement,
   AgreementStatus,
@@ -72,6 +73,8 @@ describe('SettlementCloseService', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockAuditService: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockBudgetReservationService: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockDataSource: any;
   let mockQueryRunner: ReturnType<typeof buildQueryRunner>;
 
@@ -91,12 +94,19 @@ describe('SettlementCloseService', () => {
     mockAuditService = {
       logAdminAction: jest.fn().mockResolvedValue({ id: 'audit-1' }),
     };
+    mockBudgetReservationService = {
+      releaseAgreementReservation: jest.fn().mockResolvedValue([]),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SettlementCloseService,
         { provide: DataSource, useValue: mockDataSource },
         { provide: AdminAuditService, useValue: mockAuditService },
+        {
+          provide: BudgetReservationService,
+          useValue: mockBudgetReservationService,
+        },
       ],
     }).compile();
 
@@ -173,6 +183,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -202,6 +216,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -222,6 +240,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -256,6 +278,10 @@ describe('SettlementCloseService', () => {
             SettlementCloseService,
             { provide: DataSource, useValue: ds },
             { provide: AdminAuditService, useValue: mockAuditService },
+            {
+              provide: BudgetReservationService,
+              useValue: mockBudgetReservationService,
+            },
           ],
         }).compile();
         const svc = module.get<SettlementCloseService>(SettlementCloseService);
@@ -281,6 +307,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: ds },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       const svc = module.get<SettlementCloseService>(SettlementCloseService);
@@ -306,6 +336,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -327,6 +361,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -347,6 +385,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -440,6 +482,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -464,6 +510,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -482,6 +532,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -506,6 +560,10 @@ describe('SettlementCloseService', () => {
           SettlementCloseService,
           { provide: DataSource, useValue: mockDataSource },
           { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
         ],
       }).compile();
       service = module.get<SettlementCloseService>(SettlementCloseService);
@@ -580,19 +638,18 @@ describe('SettlementCloseService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // CRIT: Çift-sayım önlemi — budget/ledger write OLMAMALI
-  // T-003 dersi: Close yalnızca state geçişidir.
-  // Budget zaten transaction girilirken (ledger DEBIT) düşülmüştür.
-  // Bu servise ledger veya budget service inject edilmemiştir.
+  // CRIT: Çift-sayım önlemi — NO LEDGER WRITE (T-003 dersi korunur)
+  // T-030 (docs/analysis/0003) niyet değişikliği: close artık BÜTÇE RELEASE
+  // yazar (BudgetReservationService üzerinden, aynı queryRunner transaction'ı
+  // içinde) — bu kasıtlı ve gerekli (F1 sızıntı fix'i). Yasak olan hâlâ
+  // LEDGER'a yazmak (consumed_amount hiçbir zaman close'da değişmemeli).
   // -------------------------------------------------------------------------
 
-  describe('CRIT: no budget/ledger write on close (double-counting prevention)', () => {
-    it('does NOT inject or call any ledger service', async () => {
-      // SettlementCloseService yalnızca DataSource ve AdminAuditService alır.
-      // Ledger veya budget service bu serviste bulunmamalı.
-      // Constructor signature: (dataSource, adminAuditService) → 2 params
-      // TypeScript metaprogramming yerine doğrudan queryRunner mock'una bakıyoruz:
-      // hiçbir ledger/budget çağrısı yapılmamalı
+  describe('CRIT: no LEDGER write on close (double-counting prevention)', () => {
+    it('does NOT touch any ledger entity via queryRunner.manager', async () => {
+      // SettlementCloseService: DataSource, AdminAuditService,
+      // BudgetReservationService alır — LedgerService/LedgerRepository
+      // bu serviste bulunmamalı (bkz. constructor).
       await service.closeAgreement(
         AGREEMENT_ID,
         TENANT_ID,
@@ -600,12 +657,13 @@ describe('SettlementCloseService', () => {
         USER_EMAIL,
       );
 
-      // queryRunner.manager.update yalnızca 1 kez çağrılmalı (agreement state update)
-      // Eğer ledger/budget yazılsaydı ek update/save çağrısı olurdu.
+      // queryRunner.manager.update yalnızca 1 kez çağrılmalı (agreement state
+      // update). Bütçe RELEASE'i BudgetReservationService (mock'lu) üzerinden
+      // gider, queryRunner.manager.update'i doğrudan çağırmaz.
       expect(mockQueryRunner.manager.update).toHaveBeenCalledTimes(1);
     });
 
-    it('queryRunner.manager.update called exactly once (agreement status only — no ledger/budget rows)', async () => {
+    it('queryRunner.manager.update called exactly once (agreement status only — no ledger rows)', async () => {
       await service.closeAgreement(
         AGREEMENT_ID,
         TENANT_ID,
@@ -614,7 +672,7 @@ describe('SettlementCloseService', () => {
       );
 
       // Tek update çağrısı: agreement.status = CLOSED
-      // Eğer ledger entry veya budget transaction yazılsaydı başka update/save çağrıları olurdu.
+      // Eğer ledger entry yazılsaydı başka update/save çağrıları olurdu.
       const updateCalls = mockQueryRunner.manager.update.mock.calls;
       expect(updateCalls).toHaveLength(1);
 
@@ -622,8 +680,8 @@ describe('SettlementCloseService', () => {
       expect(updateCalls[0][0]).toBe(Agreement);
     });
 
-    it('queryRunner.manager.save is NOT called (no new entity rows created)', async () => {
-      // Ledger/budget entry oluşturulsaydı manager.save çağrılırdı.
+    it('queryRunner.manager.save is NOT called (no new ledger rows created)', async () => {
+      // Ledger entry oluşturulsaydı manager.save çağrılırdı.
       // manager.save mock'ta tanımlı değil — undefined olmalı.
       await service.closeAgreement(
         AGREEMENT_ID,
@@ -634,6 +692,108 @@ describe('SettlementCloseService', () => {
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       expect((mockQueryRunner.manager as any).save).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // T-030: budget RELEASE — çağrılır, aynı queryRunner transaction'ı içinde,
+  // audit log'a öncesinde ve commit'ten önce.
+  // -------------------------------------------------------------------------
+
+  describe('T-030: budget reservation release on close', () => {
+    it('calls releaseAgreementReservation with agreementId/tenantId/userId/CLOSE and queryRunner.manager', async () => {
+      await service.closeAgreement(
+        AGREEMENT_ID,
+        TENANT_ID,
+        USER_ID,
+        USER_EMAIL,
+      );
+
+      expect(
+        mockBudgetReservationService.releaseAgreementReservation,
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        mockBudgetReservationService.releaseAgreementReservation,
+      ).toHaveBeenCalledWith(
+        AGREEMENT_ID,
+        TENANT_ID,
+        USER_ID,
+        'CLOSE',
+        mockQueryRunner.manager,
+      );
+    });
+
+    it('includes budgetReleases in audit log newValues', async () => {
+      mockBudgetReservationService.releaseAgreementReservation.mockResolvedValueOnce(
+        [
+          {
+            envelopeId: 'env-1',
+            amount: 20000,
+          },
+        ],
+      );
+
+      await service.closeAgreement(
+        AGREEMENT_ID,
+        TENANT_ID,
+        USER_ID,
+        USER_EMAIL,
+      );
+
+      expect(mockAuditService.logAdminAction).toHaveBeenCalledWith(
+        TENANT_ID,
+        USER_ID,
+        USER_EMAIL,
+        'CLOSE',
+        'AGREEMENT',
+        AGREEMENT_ID,
+        undefined,
+        'SUCCESS',
+        expect.any(Object),
+        expect.objectContaining({
+          budgetReleases: [{ envelopeId: 'env-1', amount: 20000 }],
+        }),
+        undefined,
+      );
+    });
+
+    it('does NOT call releaseAgreementReservation on error path (rollback)', async () => {
+      setupWith(null); // will throw NotFoundException
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          SettlementCloseService,
+          { provide: DataSource, useValue: mockDataSource },
+          { provide: AdminAuditService, useValue: mockAuditService },
+          {
+            provide: BudgetReservationService,
+            useValue: mockBudgetReservationService,
+          },
+        ],
+      }).compile();
+      service = module.get<SettlementCloseService>(SettlementCloseService);
+
+      await service
+        .closeAgreement(AGREEMENT_ID, TENANT_ID, USER_ID, USER_EMAIL)
+        .catch(() => null);
+
+      expect(
+        mockBudgetReservationService.releaseAgreementReservation,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('rolls back the whole transaction if releaseAgreementReservation throws', async () => {
+      mockBudgetReservationService.releaseAgreementReservation.mockRejectedValueOnce(
+        new Error('unexpected budget failure'),
+      );
+
+      await expect(
+        service.closeAgreement(AGREEMENT_ID, TENANT_ID, USER_ID, USER_EMAIL),
+      ).rejects.toThrow('unexpected budget failure');
+
+      expect(mockQueryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(mockQueryRunner.commitTransaction).not.toHaveBeenCalled();
+      // Audit log must not be written if the release failed before it.
+      expect(mockAuditService.logAdminAction).not.toHaveBeenCalled();
     });
   });
 });

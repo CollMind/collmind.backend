@@ -485,7 +485,12 @@ export class PlanService {
       );
       if (reserved) {
         try {
-          await this.budgetService.releaseForPlan(id, tenantId, userId);
+          await this.budgetService.releaseForPlan(
+            id,
+            tenantId,
+            userId,
+            'SUBMIT_COMPENSATION',
+          );
         } catch (releaseError) {
           this.logger.error(
             `Compensation failed: could not release budget for plan ${id} after history write failure: ${
@@ -693,7 +698,12 @@ export class PlanService {
         }`,
       );
       try {
-        await this.budgetService.releaseForPlan(id, tenantId, userId);
+        await this.budgetService.releaseForPlan(
+          id,
+          tenantId,
+          userId,
+          'APPROVE_COMPENSATION',
+        );
       } catch (releaseError) {
         this.logger.error(
           `Compensation failed: could not release budget for plan ${id} after history write failure: ${
@@ -816,7 +826,12 @@ export class PlanService {
     }
 
     if (plan.totalSpend > 0) {
-      await this.budgetService.releaseForPlan(id, tenantId);
+      await this.budgetService.releaseForPlan(
+        id,
+        tenantId,
+        undefined,
+        'DELETE',
+      );
     }
 
     await this.planRepo.softDelete(id, tenantId);

@@ -13,7 +13,6 @@ import { MasterDataModule } from '../../../master-data/master-data.module';
   imports: [
     TypeOrmModule.forFeature([Agreement]),
     BudgetModule,
-    BudgetModule,
     ApprovalModule,
     KpiEngineModule,
     MasterDataModule,

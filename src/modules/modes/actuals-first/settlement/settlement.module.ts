@@ -8,12 +8,14 @@ import { Agreement } from '../../../../database/entities/agreement.entity';
 import { UserScope } from '../../../../database/entities/user-scope.entity';
 import { LedgerModule } from '../ledger/ledger.module';
 import { CommonModule } from '../../../../common/common.module';
+import { BudgetModule } from '../../../shared/budget/budget.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Agreement, UserScope]),
     LedgerModule,
     CommonModule,
+    BudgetModule,
   ],
   controllers: [SettlementController],
   providers: [
