@@ -8,6 +8,7 @@ import { seedCustomers } from './customer.seed';
 import { seedCpls } from './cpl.seed';
 import { seedBudgetEnvelopes } from './budget-envelope.seed';
 import { seedMechanics } from './mechanic.seed';
+import { seedProducts } from './product.seed';
 import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
@@ -109,6 +110,14 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
 
   // 7. Seed mechanics (master-data; bağımlılık sırası: channels, CPLs tamamlandı)
   await seedMechanics(dataSource, tenant.id, adminUser.id);
+
+  // 7a. Seed product master-data (T-010) — Wella Product.xlsx: Brand/Category/
+  // GenericUnit/ForecastingUnit/Sku. WELLA brand'i agreement.seed ile paylaşılır;
+  // agreement.seed'in HAIR_CARE placeholder zincirine dokunmaz.
+  const productSeed = await seedProducts(dataSource, tenant.id, adminUser.id);
+  console.log(
+    `   Product master-data: ${productSeed.categories.length} categories, ${productSeed.genericUnits.length} GUs, ${productSeed.forecastingUnits.length} FUs, ${productSeed.skus.length} SKUs\n`,
+  );
 
   // 8. Seed agreements (use CPL ID instead of customer ID)
   const agreements = await seedAgreements(

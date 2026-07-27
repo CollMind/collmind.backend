@@ -1,0 +1,1510 @@
+{
+ "fuToCategory": {
+  "Karma Koli": "Karma Koli",
+  "Wellaflex": "Köpük",
+  "Tüp Boya": "Saç Boyası",
+  "New Wave": "Şekillendirici",
+  "Naturals": "Saç Boyası",
+  "İntense": "Set Boya",
+  "Peroksit": "Peroksit",
+  "Koleston Kit": "Set Boya",
+  "Koleston": "Saç Boyası",
+  "Promosyon": "Diğer"
+ },
+ "products": [
+  {
+   "code": "601402913",
+   "name": "Bim Karma Koli Koleston Saç Boyası *1",
+   "price": "1839.5",
+   "fu": "Karma Koli",
+   "category": "Karma Koli",
+   "subGroup": "Karma Koli",
+   "fkms": "11"
+  },
+  {
+   "code": "6099240010632",
+   "name": "EskiWellaflex Flexıble UltraStrong HoldHaırspray*6",
+   "price": "162.06",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350117818",
+   "name": "Koleston Single 11/1 Açık Küllü Sarı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350117819",
+   "name": "Koleston Single 3/4 Koyu Kestane *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "3"
+  },
+  {
+   "code": "6099350117820",
+   "name": "Koleston Single 2/0 Siyah *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "7"
+  },
+  {
+   "code": "6099350117821",
+   "name": "Koleston Single 3/66 Patlican Moru *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "19"
+  },
+  {
+   "code": "6099350117823",
+   "name": "Koleston Single 3/0 Koyu Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350117830",
+   "name": "Koleston Single 4/0 Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "2"
+  },
+  {
+   "code": "6099350117832",
+   "name": "Koleston Single 4/6 Kızıl Viyole *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "11"
+  },
+  {
+   "code": "6099350117833",
+   "name": "Koleston Single 4/77 Kadife Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "10"
+  },
+  {
+   "code": "6099350117834",
+   "name": "Koleston Single 5/0 Açık Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "5"
+  },
+  {
+   "code": "6099350117835",
+   "name": "Koleston Single 5/37 Kışkırtıcı Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "11"
+  },
+  {
+   "code": "6099350117836",
+   "name": "Koleston Single 5/4 Açık Kestane *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "18"
+  },
+  {
+   "code": "6099350117837",
+   "name": "Koleston Single 5/66 Şarap Kızılı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350117838",
+   "name": "Koleston Single 6/0 Koyu Kumral *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350117839",
+   "name": "Koleston Single 55/46 Kızıl Büyü *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "2"
+  },
+  {
+   "code": "6099350117840",
+   "name": "Koleston Single 6/35 Elegan Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "5"
+  },
+  {
+   "code": "6099350117841",
+   "name": "Koleston Single 6/4 Kızıl Bakır *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "9"
+  },
+  {
+   "code": "6099350117842",
+   "name": "Koleston Single 6/74 Terrakota *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "11"
+  },
+  {
+   "code": "6099350117843",
+   "name": "Koleston Single 6/7 Çikolata Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "3"
+  },
+  {
+   "code": "6099350117844",
+   "name": "Koleston Single 66/46 Aşk Alevi *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "5"
+  },
+  {
+   "code": "6099350117845",
+   "name": "Koleston Single 7/0 Kumral *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350117846",
+   "name": "Koleston Single 7/1 Küllü Kumral *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350117847",
+   "name": "Koleston Single 7/3 Fındık Kabuğu *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "3"
+  },
+  {
+   "code": "6099350117848",
+   "name": "Koleston Single 7/77 Işıltılı Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350117849",
+   "name": "Koleston Single 77/44 Kor Ateşi Kızılı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "4"
+  },
+  {
+   "code": "6099350117851",
+   "name": "Koleston Single 8/1 Açık Küllü Kumral *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "4"
+  },
+  {
+   "code": "6099350117852",
+   "name": "Koleston Single 9/0 Sarı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "6"
+  },
+  {
+   "code": "6099350117853",
+   "name": "Koleston Single 9/3 Altın Sarısı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350129898",
+   "name": "Eski Wellaflex Saç Spreyi 250 ml Invisible Hold *6",
+   "price": "162.06",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "4"
+  },
+  {
+   "code": "6099350129900",
+   "name": "Eski Wellaflex Saç Köpüğü 200 ml Invisible Hold *6",
+   "price": "162.06",
+   "fu": "Wellaflex",
+   "category": "Köpük",
+   "subGroup": "Köpük",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350129903",
+   "name": "D Wellaflex Brillant Colors Strong HoldHairspray*6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "3"
+  },
+  {
+   "code": "6099350129904",
+   "name": "EskiWellaflex Curls&Waves Strong HoldMousse200ml*6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Köpük",
+   "subGroup": "Köpük",
+   "fkms": "2"
+  },
+  {
+   "code": "6099350129922",
+   "name": "Wella New Wave Smoothıng Mousse 200 ml *6",
+   "price": "92.27",
+   "fu": "New Wave",
+   "category": "Şekillendirici",
+   "subGroup": "Mousse",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350129923",
+   "name": "Eski Wellaflex 2Nd Day Volume Mousse ExtraStrong*6",
+   "price": "162.06",
+   "fu": "Wellaflex",
+   "category": "Köpük",
+   "subGroup": "Köpük",
+   "fkms": "3"
+  },
+  {
+   "code": "6099350129925",
+   "name": "EskiWellaflex Flexıble UltraStrong HoldHaırspray*6",
+   "price": "162.06",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "5"
+  },
+  {
+   "code": "6099350130353",
+   "name": "Koleston Naturals 5/0 Açık Kahve *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "38"
+  },
+  {
+   "code": "6099350130354",
+   "name": "Koleston Naturals 5/45 Koyu Nar Kızılı *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "15"
+  },
+  {
+   "code": "6099350130355",
+   "name": "Koleston Naturals 3/66 Kızıl Kestane *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "18"
+  },
+  {
+   "code": "6099350130356",
+   "name": "Koleston Naturals 7/0 Kumral *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "47"
+  },
+  {
+   "code": "6099350130357",
+   "name": "Koleston Naturals 2/0 Siyah *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "42"
+  },
+  {
+   "code": "6099350130358",
+   "name": "Koleston Naturals 3/4 Koyu Kestane *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "32"
+  },
+  {
+   "code": "6099350130359",
+   "name": "Koleston Naturals 5/73 Altın Kestane *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350130360",
+   "name": "Koleston Naturals 2/8 Böğürtlen Siyahı *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "32"
+  },
+  {
+   "code": "6099350130361",
+   "name": "Koleston Naturals 8/1 Açık Küllü Kumral *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "44"
+  },
+  {
+   "code": "6099350130362",
+   "name": "Koleston Naturals 5/37 Orta Kestane *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "25"
+  },
+  {
+   "code": "6099350130363",
+   "name": "Koleston Naturals 11/7 Vanilya Sarısı *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "32"
+  },
+  {
+   "code": "6099350130364",
+   "name": "Koleston Naturals 6/0 Koyu Kumral *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "39"
+  },
+  {
+   "code": "6099350130365",
+   "name": "Koleston Naturals 6/7 Çikolata Kahve *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "39"
+  },
+  {
+   "code": "6099350130366",
+   "name": "Koleston Naturals 8/0 Açık Kumral *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "43"
+  },
+  {
+   "code": "6099350130367",
+   "name": "Koleston Naturals 4/0 Kahve *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "41"
+  },
+  {
+   "code": "6099350130368",
+   "name": "Koleston Naturals 7/3 Karamel Kumral *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "40"
+  },
+  {
+   "code": "6099350130369",
+   "name": "Koleston Naturals 4/6 Kızıl Viyole *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "23"
+  },
+  {
+   "code": "6099350130370",
+   "name": "Koleston Naturals 3/0 Koyu Kahve *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "45"
+  },
+  {
+   "code": "6099350130371",
+   "name": "Koleston Naturals 6/34 Bakır Kumral *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "21"
+  },
+  {
+   "code": "6099350130372",
+   "name": "Koleston Naturals 7/1 Küllü Kumral *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "47"
+  },
+  {
+   "code": "6099350130373",
+   "name": "Koleston Naturals 6/1 Büyüleyici Kahve *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "30"
+  },
+  {
+   "code": "6099350130374",
+   "name": "Koleston Naturals 6/73 Ayışığı Kahvesi *24",
+   "price": "181.61",
+   "fu": "Naturals",
+   "category": "Saç Boyası",
+   "subGroup": "Demi-Kit",
+   "fkms": "40"
+  },
+  {
+   "code": "6099350151939",
+   "name": "Wella New Wave Curls & Waves Mousse 200 ml *6",
+   "price": "92.27",
+   "fu": "New Wave",
+   "category": "Şekillendirici",
+   "subGroup": "Mousse",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350151940",
+   "name": "Wella New Wave Volume Haırspray 250 ml *6",
+   "price": "92.27",
+   "fu": "New Wave",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "1"
+  },
+  {
+   "code": "6099350166343",
+   "name": "Koleston Intense 7/0 Kumral *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "31"
+  },
+  {
+   "code": "6099350166344",
+   "name": "Koleston Intense 9/3 Açık Altın Sarısı *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "19"
+  },
+  {
+   "code": "6099350166345",
+   "name": "Koleston Intense 8/0 Açık Kumral *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "39"
+  },
+  {
+   "code": "6099350166346",
+   "name": "Koleston Intense 10/0 Çok Açık Sarı *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "22"
+  },
+  {
+   "code": "6099350166347",
+   "name": "Koleston Intense 5/66 Patlıcan Moru *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "19"
+  },
+  {
+   "code": "6099350166348",
+   "name": "Koleston Intense 7/3 Fındık Kabuğu *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "37"
+  },
+  {
+   "code": "6099350166349",
+   "name": "Koleston Intense 6/0 Koyu Kumral *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "37"
+  },
+  {
+   "code": "6099350166350",
+   "name": "Koleston Intense 7/11 Ekstra Küllü Kumral *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "40"
+  },
+  {
+   "code": "6099350166351",
+   "name": "Koleston Intense 5/4 Açık Kestane *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "30"
+  },
+  {
+   "code": "6099350166352",
+   "name": "Koleston Intense 8/11 Ekstra Açık Küllü Kumral *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "39"
+  },
+  {
+   "code": "6099350166353",
+   "name": "Koleston Intense 6/7 Çikolata Kahve *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "39"
+  },
+  {
+   "code": "6099350166354",
+   "name": "Koleston Intense 9/0 Sarı *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "34"
+  },
+  {
+   "code": "6099350166355",
+   "name": "Koleston Intense 1/0 Mavi Siyah *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "41"
+  },
+  {
+   "code": "6099350166356",
+   "name": "Koleston Intense 7/17 Buzlu Çikolata *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "36"
+  },
+  {
+   "code": "6099350166357",
+   "name": "Koleston Intense 10/81 Çok Açık Küllü İnci Sar *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "34"
+  },
+  {
+   "code": "6099350166358",
+   "name": "Koleston Intense 4/1 Küllü Kahve *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "32"
+  },
+  {
+   "code": "6099350166359",
+   "name": "Koleston Intense 5/1 Ekstra Küllü Kahve *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "30"
+  },
+  {
+   "code": "6099350166360",
+   "name": "Koleston Intense 3/0 Koyu Kahve *24",
+   "price": "181.61",
+   "fu": "İntense",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "41"
+  },
+  {
+   "code": "6099350167682",
+   "name": "Koleston Peroksit 9% *50",
+   "price": "42.56",
+   "fu": "Peroksit",
+   "category": "Peroksit",
+   "subGroup": "Peroksit",
+   "fkms": "2"
+  },
+  {
+   "code": "6099350170207",
+   "name": "Koleston Supreme Kit 4/1 Gizemli Küllü Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "18"
+  },
+  {
+   "code": "6099350170208",
+   "name": "Koleston Supreme Kit 7/18 Işıltılı Küllü Kumral*18",
+   "price": "338.15",
+   "fu": "Koleston",
+   "category": "Saç Boyası",
+   "subGroup": "Kit",
+   "fkms": "20"
+  },
+  {
+   "code": "6099350170209",
+   "name": "Koleston Supreme Kit 8/18 Açık Inci Küllü Kumral18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "21"
+  },
+  {
+   "code": "6099350170547",
+   "name": "Koleston Supreme Kit 7/1 Küllü Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "47"
+  },
+  {
+   "code": "6099350170548",
+   "name": "Koleston Supreme Kit 6/0 Koyu Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "45"
+  },
+  {
+   "code": "6099350170549",
+   "name": "Koleston Supreme Kit 7/0 Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "46"
+  },
+  {
+   "code": "6099350170550",
+   "name": "Koleston Supreme Kit 6/1 Koyu Küllü Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "26"
+  },
+  {
+   "code": "6099350170551",
+   "name": "Koleston Supreme Kit 8/1 Açık Küllü Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "41"
+  },
+  {
+   "code": "6099350171204",
+   "name": "Yeni Wellaflex Men Saç Spreyi 250 ml *6",
+   "price": "162.05000000000001",
+   "fu": "New Wave",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350171207",
+   "name": "Yeni Wellaflex Men Matte Paste *6",
+   "price": "152.6",
+   "fu": "New Wave",
+   "category": "Şekillendirici",
+   "subGroup": "Wax",
+   "fkms": "18"
+  },
+  {
+   "code": "6099350172031",
+   "name": "Koleston Supreme Kit 4/77 Kadife Kahve *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "19"
+  },
+  {
+   "code": "6099350172032",
+   "name": "Koleston Supreme Kit 3/0 Koyu Kahve *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "47"
+  },
+  {
+   "code": "6099350172033",
+   "name": "Koleston Supreme Kit 2/0 Siyah *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "48"
+  },
+  {
+   "code": "6099350172034",
+   "name": "Koleston Supreme Kit 6/3 Altın Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "15"
+  },
+  {
+   "code": "6099350172035",
+   "name": "Koleston Supreme Kit 4/6 Kızıl Viyole *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "20"
+  },
+  {
+   "code": "6099350172036",
+   "name": "Koleston Supreme Kit 3/66 Patlıcan Moru *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350172037",
+   "name": "Koleston Supreme Kit 6/73 Toffee Çikolata Kahve*18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "21"
+  },
+  {
+   "code": "6099350172038",
+   "name": "Koleston Supreme Kit 5/75 Çekici Bakır *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "14"
+  },
+  {
+   "code": "6099350172039",
+   "name": "Koleston Supreme Kit 5/37 Kışkırtıcı Kahve *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "31"
+  },
+  {
+   "code": "6099350172040",
+   "name": "Koleston Supreme Kit 5/0 Açık Kahve *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "46"
+  },
+  {
+   "code": "6099350172041",
+   "name": "Koleston Supreme Kit 6/74 Koyu Amber Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350172042",
+   "name": "Koleston Supreme Kit 66/46 Aşk Alevi *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "23"
+  },
+  {
+   "code": "6099350172043",
+   "name": "Koleston Supreme Kit 6/7 Çikolata Kahve *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "43"
+  },
+  {
+   "code": "6099350172044",
+   "name": "Koleston Supreme Kit 7/77 Işıltılı Kahve *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "34"
+  },
+  {
+   "code": "6099350172045",
+   "name": "Koleston Supreme Kit 4/66 Sıcak Kızıl *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "11"
+  },
+  {
+   "code": "6099350172046",
+   "name": "Koleston Supreme Kit 7/3 Fındık Kabuğu *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "42"
+  },
+  {
+   "code": "6099350172047",
+   "name": "Koleston Supreme Kit 44/46 Koyu Ateşli Kızıl *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "16"
+  },
+  {
+   "code": "6099350172048",
+   "name": "Koleston Supreme Kit 55/46 Kızıl Büyü *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "38"
+  },
+  {
+   "code": "6099350172049",
+   "name": "Koleston Supreme Kit 2/8 Mavi Siyah *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "35"
+  },
+  {
+   "code": "6099350172050",
+   "name": "Koleston Supreme Kit 5/4 Açık Kestane *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "28"
+  },
+  {
+   "code": "6099350172051",
+   "name": "Koleston Supreme Kit 3/4 Koyu Kestane *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "44"
+  },
+  {
+   "code": "6099350172052",
+   "name": "Koleston Supreme Kit 8/0 Açık Kumral *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "35"
+  },
+  {
+   "code": "6099350172053",
+   "name": "Koleston Supreme Kit 77/44 Kor Ateş Kızılı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "21"
+  },
+  {
+   "code": "6099350172054",
+   "name": "Koleston Supreme Kit 4/0 Kahve *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "43"
+  },
+  {
+   "code": "6099350172055",
+   "name": "Koleston Supreme Kit 8/74 Gizemli Kahve *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "26"
+  },
+  {
+   "code": "6099350172056",
+   "name": "Koleston Supreme Kit 9/1 Özel Açık Kül Sarısı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "15"
+  },
+  {
+   "code": "6099350172057",
+   "name": "Koleston Supreme Kit 6/4 Kızıl Bakır *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "14"
+  },
+  {
+   "code": "6099350172058",
+   "name": "Koleston Supreme Kit 10/0 Çok Açık Sarı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "12"
+  },
+  {
+   "code": "6099350172059",
+   "name": "Koleston Supreme Kit 5/66 Şarap Kızılı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350172060",
+   "name": "Koleston Supreme Kit 9/0 Sarı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "20"
+  },
+  {
+   "code": "6099350172061",
+   "name": "Koleston Supreme Kit 12/81 Küllü İnci Sarısı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "10"
+  },
+  {
+   "code": "6099350172062",
+   "name": "Koleston Supreme Kit 12/0 Çok Açık Doğal Sarı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "31"
+  },
+  {
+   "code": "6099350172063",
+   "name": "Koleston Supreme Kit 12/11 Yoğun Küllü Sarı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "23"
+  },
+  {
+   "code": "6099350172064",
+   "name": "Koleston Supreme Kit 12/1 Küllü Sarı *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "19"
+  },
+  {
+   "code": "6099350172096",
+   "name": "Koleston Balyaj - Ombre Kiti  *18",
+   "price": "413.22",
+   "fu": "Koleston Kit",
+   "category": "Set Boya",
+   "subGroup": "Set Boya",
+   "fkms": "19"
+  },
+  {
+   "code": "6099350174891",
+   "name": "Yeni Wellaflex Saç Spreyi 75 ml Invisible Hold *12",
+   "price": "106.31",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "11"
+  },
+  {
+   "code": "6099350174943",
+   "name": "Yeni Wellaflex Saç Spreyi 400 ml 2 Days Volume *6",
+   "price": "232.62",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "7"
+  },
+  {
+   "code": "6099350174944",
+   "name": "Yeni Wellaflex Saç Spreyi 400 ml Invisible Hold *6",
+   "price": "232.62",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "8"
+  },
+  {
+   "code": "6099350174945",
+   "name": "Yeni Wellaflex Saç Sprey 400ml Silk Finish&Hold*6",
+   "price": "232.62",
+   "fu": "New Wave",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "8"
+  },
+  {
+   "code": "6099350174993",
+   "name": "Yeni Wellaflex Saç Spreyi 250 ml 2 Days Volume *6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "21"
+  },
+  {
+   "code": "6099350174996",
+   "name": "Yeni Wellaflex Saç Spreyi 250ml Silk Finish&Hold*6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "17"
+  },
+  {
+   "code": "6099350175014",
+   "name": "Yeni Wellaflex Saç Spreyi 75 ml 2 Days Volume *12",
+   "price": "106.31",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "27"
+  },
+  {
+   "code": "6099350175050",
+   "name": "Yeni Wellaflex Saç Köpüğü 200 ml 2 Days Volume *6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Köpük",
+   "subGroup": "Köpük",
+   "fkms": "25"
+  },
+  {
+   "code": "6099350175052",
+   "name": "Yeni Wellaflex Saç Köpüğü 200ml Curls Definition*6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Köpük",
+   "subGroup": "Köpük",
+   "fkms": "25"
+  },
+  {
+   "code": "6099350175053",
+   "name": "Yeni Wellaflex Saç Köpüğü 200ml Silk Finish&Hold*6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "20"
+  },
+  {
+   "code": "6099350175282",
+   "name": "Yeni Wellaflex Saç Spreyi 250 ml Invisible Hold *6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "25"
+  },
+  {
+   "code": "6099350175696",
+   "name": "Yeni Wellaflex Saç Köpüğü 200 ml Invisible Hold *6",
+   "price": "162.05000000000001",
+   "fu": "Wellaflex",
+   "category": "Köpük",
+   "subGroup": "Köpük",
+   "fkms": "20"
+  },
+  {
+   "code": "6099350182574",
+   "name": "Yeni Wellaflex Men Jel Sprey 150 ml *6",
+   "price": "152.6",
+   "fu": "New Wave",
+   "category": "Şekillendirici",
+   "subGroup": "Spray",
+   "fkms": "8"
+  },
+  {
+   "code": "6099350184919",
+   "name": "Koleston Peroksit 9% *50",
+   "price": "42.56",
+   "fu": "Peroksit",
+   "category": "Peroksit",
+   "subGroup": "Peroksit",
+   "fkms": "38"
+  },
+  {
+   "code": "6099350184920",
+   "name": "Koleston Peroksit 6% *50",
+   "price": "42.56",
+   "fu": "Peroksit",
+   "category": "Peroksit",
+   "subGroup": "Peroksit",
+   "fkms": "36"
+  },
+  {
+   "code": "6099350185289",
+   "name": "Koleston Single 4/6 Kızıl Viyole *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "7"
+  },
+  {
+   "code": "6099350185290",
+   "name": "Koleston Single 3/66 Patlican Moru *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "2"
+  },
+  {
+   "code": "6099350185291",
+   "name": "Koleston Single 8/0 Açık Kumral *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "34"
+  },
+  {
+   "code": "6099350185292",
+   "name": "Koleston Single 6/7 Çikolata Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "32"
+  },
+  {
+   "code": "6099350185293",
+   "name": "Koleston Single 2/0 Siyah *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "39"
+  },
+  {
+   "code": "6099350185294",
+   "name": "Koleston Single 77/44 Kor Ateşi Kızılı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "16"
+  },
+  {
+   "code": "6099350185295",
+   "name": "Koleston Single 9/3 Altın Sarısı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "10"
+  },
+  {
+   "code": "6099350185296",
+   "name": "Koleston Single 7/0 Kumral Yeni *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "36"
+  },
+  {
+   "code": "6099350185297",
+   "name": "Koleston Single 5/66 Şarap Kızılı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "18"
+  },
+  {
+   "code": "6099350185298",
+   "name": "Koleston Single 7/3 Fındık Kabuğu *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "35"
+  },
+  {
+   "code": "6099350185299",
+   "name": "Koleston Single 11/1 Açık Küllü Sarı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "19"
+  },
+  {
+   "code": "6099350185300",
+   "name": "Koleston Single 6/0 Koyu Kumral *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "41"
+  },
+  {
+   "code": "6099350185301",
+   "name": "Koleston Single 9/0 Sarı *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "32"
+  },
+  {
+   "code": "6099350185302",
+   "name": "Koleston Single 3/0 Koyu Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "26"
+  },
+  {
+   "code": "6099350185303",
+   "name": "Koleston Single 7/77 Işıltılı Kahve Yeni *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "36"
+  },
+  {
+   "code": "6099350185304",
+   "name": "Koleston Single 5/4 Açık Kestane *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "12"
+  },
+  {
+   "code": "6099350185305",
+   "name": "Koleston Single 6/35 Elegan Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "22"
+  },
+  {
+   "code": "6099350185306",
+   "name": "Koleston Single 7/1 Küllü Kumral *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "36"
+  },
+  {
+   "code": "6099350185307",
+   "name": "Koleston Single 5/0 Açık Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "26"
+  },
+  {
+   "code": "6099350185308",
+   "name": "Koleston Single 4/0 Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "28"
+  },
+  {
+   "code": "6099350185309",
+   "name": "Koleston Single 3/4 Koyu Kestane *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "23"
+  },
+  {
+   "code": "6099350185310",
+   "name": "Koleston Single 8/1 Açık Küllü Kumral *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "36"
+  },
+  {
+   "code": "6099350185311",
+   "name": "Koleston Single 66/46 Aşk Alevi *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "23"
+  },
+  {
+   "code": "6099350185513",
+   "name": "Koleston Single 55/46 Kızıl Büyü *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "16"
+  },
+  {
+   "code": "6099350185514",
+   "name": "Koleston Single 5/37 Kışkırtıcı Kahve *72",
+   "price": "81.87",
+   "fu": "Tüp Boya",
+   "category": "Saç Boyası",
+   "subGroup": "Single",
+   "fkms": "13"
+  },
+  {
+   "code": "6099363069024",
+   "name": "Koleston Saç Boyama Seti *96",
+   "price": "0.01",
+   "fu": "Promosyon",
+   "category": "Diğer",
+   "subGroup": "Promosyon",
+   "fkms": "4"
+  },
+  {
+   "code": "6099617250113",
+   "name": "Koleston Saç Tarağı *72",
+   "price": "0.01",
+   "fu": "Promosyon",
+   "category": "Diğer",
+   "subGroup": "Promosyon",
+   "fkms": "1"
+  }
+ ]
+}
