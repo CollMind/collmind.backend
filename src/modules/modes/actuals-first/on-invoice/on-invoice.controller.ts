@@ -38,7 +38,7 @@ export class OnInvoiceController {
    * Adım 1: Dosya Yükleme
    */
   @Post('upload')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -71,7 +71,12 @@ export class OnInvoiceController {
    * Get total count of On-Invoice entries
    */
   @Get('count')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Toplam On-Invoice entry sayısını getir' })
   async getCount(@TenantId() tenantId: string) {
     const count = await this.onInvoiceService.getCount(tenantId);
@@ -83,7 +88,12 @@ export class OnInvoiceController {
    * NOT: Bu endpoint GET /on-invoice/:batchId'den ÖNCE olmalı (route sırası önemli)
    */
   @Get('entries')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: "Tüm On-Invoice entry'lerini listele" })
   async getEntries(
     @TenantId() tenantId: string,
@@ -113,7 +123,7 @@ export class OnInvoiceController {
    * NOT: Bu endpoint GET /on-invoice/:batchId'den ÖNCE olmalı (route sırası önemli)
    */
   @Get('template/excel')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Excel template indir' })
   async downloadExcelTemplate(@Res() res: Response) {
     const buffer = this.onInvoiceService.generateExcelTemplate();
@@ -133,7 +143,7 @@ export class OnInvoiceController {
    * NOT: Bu endpoint GET /on-invoice/:batchId'den ÖNCE olmalı (route sırası önemli)
    */
   @Get('template/csv')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'CSV template indir' })
   async downloadCSVTemplate(@Res() res: Response) {
     const csv = this.onInvoiceService.generateCSVTemplate();
@@ -149,7 +159,7 @@ export class OnInvoiceController {
    * Adım 2: Validasyon (Eğer upload'da yapılmadıysa)
    */
   @Post(':batchId/validate')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Adım 2: Batch validasyonu yap' })
   async validateBatch(
     @Param('batchId') batchId: string,
@@ -162,7 +172,7 @@ export class OnInvoiceController {
    * Adım 3: Batch İşleme
    */
   @Post(':batchId/process')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Adım 3: Batch işle ve ledger entry oluştur' })
   async processBatch(
     @Param('batchId') batchId: string,
@@ -176,7 +186,12 @@ export class OnInvoiceController {
    * Batch Bilgisi
    */
   @Get('batch/:batchId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Batch bilgilerini getir' })
   async getBatch(
     @Param('batchId') batchId: string,

@@ -38,7 +38,7 @@ export class FinanceReportingController {
   @Get('budget-utilization')
   @Roles(
     UserRole.ADMIN,
-    UserRole.FINANCE,
+    UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
     UserRole.READONLY,
   )
@@ -58,7 +58,7 @@ export class FinanceReportingController {
   @Get('spend-trend')
   @Roles(
     UserRole.ADMIN,
-    UserRole.FINANCE,
+    UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
     UserRole.READONLY,
   )
@@ -84,7 +84,7 @@ export class FinanceReportingController {
   @Get('spend-composition')
   @Roles(
     UserRole.ADMIN,
-    UserRole.FINANCE,
+    UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
     UserRole.READONLY,
   )
@@ -104,7 +104,7 @@ export class FinanceReportingController {
   @Get('plan-performance')
   @Roles(
     UserRole.ADMIN,
-    UserRole.FINANCE,
+    UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
     UserRole.PLANNER,
     UserRole.READONLY,
@@ -128,7 +128,7 @@ export class FinanceReportingController {
   }
 
   @Get('budget-at-risk')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get budget at risk analysis' })
   @ApiResponse({
     status: 200,
@@ -145,7 +145,7 @@ export class FinanceReportingController {
   @Get('mechanic-effectiveness')
   @Roles(
     UserRole.ADMIN,
-    UserRole.FINANCE,
+    UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
     UserRole.READONLY,
   )
@@ -166,7 +166,7 @@ export class FinanceReportingController {
   }
 
   @Get('variance-analysis')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get variance analysis report' })
   @ApiResponse({
     status: 200,
@@ -187,7 +187,7 @@ export class FinanceReportingController {
   }
 
   @Get('cash-flow-projection')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get cash flow projection' })
   @ApiResponse({
     status: 200,

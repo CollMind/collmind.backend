@@ -49,7 +49,7 @@ export class UserController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({
     status: 200,
@@ -120,11 +120,9 @@ export class UserController {
   @Get('dashboard-summary')
   @Roles(
     UserRole.ADMIN,
-    UserRole.MANAGER,
-    UserRole.PLANNER,
-    UserRole.FINANCE,
-    UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({

@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Plan, PlanStatus } from '../../../../database/entities/plan.entity';
+import { UserRole } from '../../../../database/entities/user.entity';
 import {
   PlanApprovalHistory,
   ApprovalHistoryAction,
@@ -267,6 +268,7 @@ export class ApprovalWorkflowService {
     tenantId: string,
     reviewerId: string,
     dto: ReviewPlanDto,
+    reviewerRole?: UserRole,
   ): Promise<ReviewResult> {
     const plan = await this.planRepo.findById(planId, tenantId);
     if (!plan) {
@@ -280,6 +282,21 @@ export class ApprovalWorkflowService {
     ) {
       throw new BadRequestException(
         `Plan is not in a reviewable state. Current status: ${plan.status}`,
+      );
+    }
+
+    // ADR 0002 (docs/decisions/0002-finance-manager-escalation-onayi.md):
+    // FINANCE_MANAGER may only review plans that were explicitly escalated to
+    // finance (PENDING_FINANCE_REVIEW). The normal PENDING_APPROVAL queue is
+    // Category Manager's — FM must get 403, not silently fall through the
+    // RolesGuard's coarse @Roles() check (@Roles only knows the route allows
+    // ADMIN|CATEGORY_MANAGER|FINANCE_MANAGER, not the plan's current status).
+    if (
+      reviewerRole === UserRole.FINANCE_MANAGER &&
+      plan.status !== PlanStatus.PENDING_FINANCE_REVIEW
+    ) {
+      throw new ForbiddenException(
+        'Finance Manager can only review plans escalated to finance (PENDING_FINANCE_REVIEW)',
       );
     }
 

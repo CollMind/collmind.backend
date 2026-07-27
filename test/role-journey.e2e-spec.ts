@@ -458,25 +458,22 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
       const res = await request(app.getHttpServer())
         .get(`/plans/${planId}/budget-check`)
-        .set(planner.authHeader());
+        .set(planner.authHeader())
+        .expect(200);
 
       record({
         step: 'A6',
         role: 'PLANNER',
         endpoint: 'GET /plans/:id/budget-check',
-        expected: '200 veya 403 (PLANNER Roles listesinde yok!)',
+        expected: 200,
         actual: res.status,
         note: JSON.stringify(res.body).slice(0, 200),
       });
 
-      if (res.status === 200) {
-        envelopeId = res.body.envelope?.id;
-      }
-      // Not: PlanController @Get(':id/budget-check') Roles = ADMIN, MANAGER,
-      // READONLY — PLANNER YOK. Bu adım BRD ihlali/mantık boşluğu adayı:
-      // planı hazırlayan PLANNER kendi planının bütçe uygunluğunu kontrol
-      // edemiyor olabilir (submit-for-approval zaten dahili budget-check
-      // yapıyor ama kullanıcı arayüzünden manuel kontrol imkânı yok).
+      envelopeId = res.body.envelope?.id;
+      // T-028a (F9) FIX: PlanController @Get(':id/budget-check') Roles artık
+      // ADMIN, PLANNER, CATEGORY_MANAGER, READONLY içeriyor — planı hazırlayan
+      // PLANNER artık kendi planının bütçe uygunluğunu kontrol edebiliyor.
     });
 
     it('A6b. ADMIN → GET /plans/:id/budget-check (fallback ile envelope doğrula)', async () => {
@@ -559,43 +556,40 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(planCheck.body.status).toBe('PENDING_APPROVAL');
     });
 
-    it('A9. CATEGORY_MANAGER → GET /plans/approval-queue (BRD: CM onaylamalı ama Roles listesinde yok)', async () => {
+    it('A9. CATEGORY_MANAGER → GET /plans/approval-queue', async () => {
       const cm = await loginAs(app, 'CATEGORY_MANAGER');
 
       const res = await request(app.getHttpServer())
         .get('/plans/approval-queue')
-        .set(cm.authHeader());
+        .set(cm.authHeader())
+        .expect(200);
 
       record({
         step: 'A9',
         role: 'CATEGORY_MANAGER',
         endpoint: 'GET /plans/approval-queue',
-        expected:
-          '200 (BRD beklentisi) — kod: 403 (Roles=ADMIN/MANAGER/FINANCE/READONLY)',
+        expected: 200,
         actual: res.status,
-        note: 'BRD SAPMASI: CATEGORY_MANAGER plan.controller.ts @Roles listelerinde HİÇ yok',
+        note: 'T-028a FIX: MANAGER→CATEGORY_MANAGER alias konsolidasyonu ile CM artık plan.controller.ts approval-queue Roles listesinde. (Kategori-bazlı filtreleme henüz yok — T-028b işi.)',
       });
-
-      expect(res.status).toBe(403);
     });
 
-    it('A9b. CATEGORY_MANAGER → GET /plans/pending-approvals → 403 (Roles=ADMIN/MANAGER/READONLY)', async () => {
+    it('A9b. CATEGORY_MANAGER → GET /plans/pending-approvals', async () => {
       const cm = await loginAs(app, 'CATEGORY_MANAGER');
 
       const res = await request(app.getHttpServer())
         .get('/plans/pending-approvals')
-        .set(cm.authHeader());
+        .set(cm.authHeader())
+        .expect(200);
 
       record({
         step: 'A9b',
         role: 'CATEGORY_MANAGER',
         endpoint: 'GET /plans/pending-approvals',
-        expected: '403 (kod davranışı)',
+        expected: 200,
         actual: res.status,
-        note: 'CM plan modülünde tamamen görünmez',
+        note: 'T-028a FIX: CM artık plan modülünde görünür (MANAGER→CATEGORY_MANAGER alias).',
       });
-
-      expect(res.status).toBe(403);
     });
 
     it('A9c. CATEGORY_MANAGER → GET /plans/:id (planı görüntüleyebiliyor mu?)', async () => {
@@ -603,38 +597,49 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
       const res = await request(app.getHttpServer())
         .get(`/plans/${planId}`)
-        .set(cm.authHeader());
+        .set(cm.authHeader())
+        .expect(200);
 
       record({
         step: 'A9c',
         role: 'CATEGORY_MANAGER',
         endpoint: 'GET /plans/:id',
-        expected: '403 (Roles=ADMIN/PLANNER/MANAGER/FINANCE/READONLY)',
+        expected: 200,
         actual: res.status,
-        note: 'CM tek bir planı bile göremiyor — kategori onayı BRD kuralı kod düzeyinde YOK',
+        note: 'T-028a FIX: CM artık planı görüntüleyebiliyor (kategori-scope T-028b işi; şimdilik tenant-wide).',
       });
-
-      expect(res.status).toBe(403);
     });
 
-    it('A10. CATEGORY_MANAGER → POST /plans/:id/approve → BEKLENEN 403 (BRD ihlali kanıtı: CM plan onaylayamaz)', async () => {
+    it('A10. CATEGORY_MANAGER → POST /plans/:id/approve (BRD: CM atanmış kategoriyi onaylar — ayrı scratch plan üzerinde, golden path planId bozulmadan)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
       const cm = await loginAs(app, 'CATEGORY_MANAGER');
 
+      const { planId: a10PlanId } = await createT029TestPlan(
+        planner,
+        'E2E-ROLE-JOURNEY-A10-CM-APPROVE',
+      );
+
+      await request(app.getHttpServer())
+        .post(`/plans/${a10PlanId}/submit`)
+        .set(planner.authHeader())
+        .expect(200);
+
       const res = await request(app.getHttpServer())
-        .post(`/plans/${planId}/approve`)
+        .post(`/plans/${a10PlanId}/approve`)
         .set(cm.authHeader())
-        .send({});
+        .send({ comments: 'A10 CM approve — T-028a RBAC fix' });
 
       record({
         step: 'A10',
         role: 'CATEGORY_MANAGER',
         endpoint: 'POST /plans/:id/approve',
-        expected: 403,
+        expected: 200,
         actual: res.status,
-        note: 'BRD "Category Manager atanmış kategoriyi onaylar" kuralı KOD SEVİYESİNDE UYGULANMAMIŞ — CM approve endpoint Roles=ADMIN,MANAGER; CM asla plan onaylayamaz (kategori bazlı da değil, tamamen yok)',
+        note: 'T-028a FIX: MANAGER bugün sahip olduğu onay yetkisi CATEGORY_MANAGER’a geçti (BRD: CM plan onaylar). golden-path planId etkilenmesin diye ayrı scratch plan kullanıldı.',
       });
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('APPROVED');
     });
 
     it('A11. MANAGER → GET /budget/envelopes/:id/transactions (ÖNCESİ)', async () => {
@@ -747,17 +752,17 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         step: 'A13',
         role: 'FINANCE_MANAGER',
         endpoint: 'GET /finance-reporting/budget-utilization',
-        expected:
-          '200 (mantıksal beklenti: Finance Manager bütçe okur) — kod: 403 (Roles=ADMIN,FINANCE,CATEGORY_MANAGER,READONLY — FINANCE_MANAGER YOK)',
+        expected: 200,
         actual: res.status,
-        note: 'BRD SAPMASI ADAYI: rol adı FINANCE_MANAGER olduğu halde finance-reporting Roles listesinde yalnızca FINANCE var, FINANCE_MANAGER yok',
+        note: 'T-028a (F8) FIX: finance-reporting Roles listesi FINANCE (deprecated) yerine FINANCE_MANAGER içeriyor.',
       });
 
-      // Kod gerçek davranışı: FINANCE_MANAGER bu endpoint'te YOK → 403 bekleniyor.
-      expect(res.status).toBe(403);
+      // T-028a (F8) FIX: deprecated FINANCE alias'ı FINANCE_MANAGER'a
+      // konsolide edildi → Finance Manager artık kendi raporunu okuyabiliyor.
+      expect(res.status).toBe(200);
     });
 
-    it('A13b. FINANCE → GET /finance-reporting/budget-utilization (kontrol: doğru rol çalışıyor mu)', async () => {
+    it('A13b. FINANCE (deprecated alias, seed: finance@wella.com) → GET /finance-reporting/budget-utilization', async () => {
       const finance = await loginAs(app, 'FINANCE');
 
       const res = await request(app.getHttpServer())
@@ -766,16 +771,16 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
       record({
         step: 'A13b',
-        role: 'FINANCE',
+        role: 'FINANCE (deprecated alias user, now stores FINANCE_MANAGER)',
         endpoint: 'GET /finance-reporting/budget-utilization',
         expected: 200,
         actual: res.status,
         note: `items=${Array.isArray(res.body) ? res.body.length : JSON.stringify(res.body).slice(0, 100)}`,
       });
 
-      // T-026 (D-3) FIX: migration 1786000000000-AddMetadataToBudgetAllocations
-      // main.budget_allocations tablosuna eksik olan "metadata" jsonb kolonunu
-      // ekledi (entity ↔ DB şema kayması giderildi). FINANCE rolü artık 200 alıyor.
+      // T-028a: migration 1791000000000-ConsolidateRolesToBrd, finance@wella.com
+      // seed satırı da FINANCE → FINANCE_MANAGER'a taşındı (e-posta korunur) →
+      // bu kullanıcı artık DB'de FINANCE_MANAGER rolüyle giriş yapıyor.
       expect(res.status).toBe(200);
     });
 

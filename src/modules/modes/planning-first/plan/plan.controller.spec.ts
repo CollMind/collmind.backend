@@ -5,6 +5,7 @@ import { ApprovalWorkflowService } from './approval-workflow.service';
 import { SubmitForApprovalDto } from './dto/submit-for-approval.dto';
 import { ReviewPlanDto, ReviewDecision } from './dto/review-plan.dto';
 import { PlanStatus } from '../../../../database/entities/plan.entity';
+import { UserRole } from '../../../../database/entities/user.entity';
 
 describe('PlanController', () => {
   let controller: PlanController;
@@ -12,7 +13,7 @@ describe('PlanController', () => {
   let approvalWorkflowService: jest.Mocked<ApprovalWorkflowService>;
 
   const mockTenantId = 'tenant-1';
-  const mockUser = { id: 'user-1' };
+  const mockUser = { id: 'user-1', role: UserRole.CATEGORY_MANAGER };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -156,6 +157,7 @@ describe('PlanController', () => {
         mockTenantId,
         mockUser.id,
         dto,
+        mockUser.role,
       );
       expect(result).toEqual(mockResult);
     });
@@ -189,6 +191,7 @@ describe('PlanController', () => {
         mockTenantId,
         mockUser.id,
         dto,
+        mockUser.role,
       );
       expect(result).toEqual(mockResult);
     });

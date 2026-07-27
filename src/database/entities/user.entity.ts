@@ -15,13 +15,38 @@ import { Tenant } from './tenant.entity';
 export enum UserRole {
   ADMIN = 'ADMIN',
   PLANNER = 'PLANNER',
-  MANAGER = 'MANAGER', // Replaces APPROVER — approves plans and agreements
+
+  /**
+   * @deprecated T-028a rol konsolidasyonu (BRD hizalama) — koda YAZMAYIN.
+   * Canonical: {@link UserRole.CATEGORY_MANAGER}.
+   * PostgreSQL enum'dan değer silinemediği için bu değer DB'de/enum'da kalır
+   * (migration 1791000000000-ConsolidateRolesToBrd veriyi taşıdı), yalnızca
+   * kod tarafında kullanımı yasaklanmıştır (bkz. .eslintrc.js
+   * no-restricted-syntax kuralı, src/modules/**).
+   */
+  MANAGER = 'MANAGER',
+
+  /**
+   * @deprecated T-028a rol konsolidasyonu (BRD hizalama) — koda YAZMAYIN.
+   * Canonical: {@link UserRole.FINANCE_MANAGER}.
+   * PostgreSQL enum'dan değer silinemediği için bu değer DB'de/enum'da kalır
+   * (migration 1791000000000-ConsolidateRolesToBrd veriyi taşıdı), yalnızca
+   * kod tarafında kullanımı yasaklanmıştır (bkz. .eslintrc.js
+   * no-restricted-syntax kuralı, src/modules/**).
+   */
   FINANCE = 'FINANCE',
+
   FINANCE_MANAGER = 'FINANCE_MANAGER',
   CATEGORY_MANAGER = 'CATEGORY_MANAGER',
   READONLY = 'READONLY', // Read-only access — all GET endpoints, no write
 
-  /** @deprecated Use MANAGER instead. Will be removed in a future migration. */
+  /**
+   * @deprecated T-028a rol konsolidasyonu (BRD hizalama) — koda YAZMAYIN.
+   * Canonical: {@link UserRole.CATEGORY_MANAGER}. Migration 1775 zaten
+   * APPROVER kullanıcılarını MANAGER'a taşımıştı; 1791 MANAGER'ı da
+   * CATEGORY_MANAGER'a taşıdı — bu değer artık iki kat dondurulmuş bir
+   * alias'tır.
+   */
   APPROVER = 'APPROVER',
 }
 

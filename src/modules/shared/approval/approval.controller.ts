@@ -25,7 +25,12 @@ export class ApprovalController {
   constructor(private readonly approvalService: ApprovalService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get all approval requests' })
   findAll(
     @TenantId() tenantId: string,
@@ -41,7 +46,12 @@ export class ApprovalController {
   }
 
   @Get('pending')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get pending approval requests for current user' })
   findPending(@TenantId() tenantId: string, @CurrentUser('id') userId: string) {
     return this.approvalService.findPendingForUser(userId, tenantId);
@@ -51,8 +61,8 @@ export class ApprovalController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get approval requests created by current user' })
@@ -67,8 +77,8 @@ export class ApprovalController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get approval request by ID' })
@@ -77,7 +87,7 @@ export class ApprovalController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.CATEGORY_MANAGER)
   @ApiOperation({ summary: 'Approve a request' })
   approve(
     @Param('id') id: string,
@@ -89,7 +99,7 @@ export class ApprovalController {
   }
 
   @Post(':id/reject')
-  @Roles(UserRole.MANAGER)
+  @Roles(UserRole.CATEGORY_MANAGER)
   @ApiOperation({ summary: 'Reject a request' })
   reject(
     @Param('id') id: string,

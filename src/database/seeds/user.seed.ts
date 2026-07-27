@@ -40,7 +40,9 @@ export async function seedUsers(
       fullName: 'Jane Manager',
       firstName: 'Jane',
       lastName: 'Manager',
-      role: UserRole.MANAGER,
+      // T-028a: MANAGER deprecated alias → CATEGORY_MANAGER (BRD canonical).
+      // E-posta korunur (e2e login helper'ları buna göre eşleşiyor).
+      role: UserRole.CATEGORY_MANAGER,
       status: UserStatus.ACTIVE,
       department: 'Sales',
       jobTitle: 'Sales Manager',
@@ -53,7 +55,9 @@ export async function seedUsers(
       fullName: 'Bob Finance',
       firstName: 'Bob',
       lastName: 'Finance',
-      role: UserRole.FINANCE,
+      // T-028a: FINANCE deprecated alias → FINANCE_MANAGER (BRD canonical).
+      // E-posta korunur (e2e login helper'ları buna göre eşleşiyor).
+      role: UserRole.FINANCE_MANAGER,
       status: UserStatus.ACTIVE,
       department: 'Finance',
       jobTitle: 'Finance Analyst',

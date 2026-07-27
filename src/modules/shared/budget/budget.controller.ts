@@ -33,7 +33,7 @@ export class BudgetController {
   constructor(private readonly budgetService: BudgetService) {}
 
   @Post('envelopes')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Create a new budget envelope' })
   @ApiResponse({
     status: 201,

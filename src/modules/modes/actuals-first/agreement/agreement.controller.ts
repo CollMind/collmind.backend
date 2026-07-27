@@ -52,8 +52,8 @@ export class AgreementController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get all agreements' })
@@ -69,7 +69,12 @@ export class AgreementController {
 
   // Spesifik route'lar parametrik route'lardan (:id) önce tanımlanmalı
   @Get('pending-approvals')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Get pending approval agreements' })
   @ApiResponse({
     status: 200,
@@ -83,8 +88,8 @@ export class AgreementController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get available tactics for channel and category' })
@@ -110,8 +115,8 @@ export class AgreementController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get agreement by ID' })
@@ -156,7 +161,7 @@ export class AgreementController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE_MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Approve agreement' })
   @ApiResponse({ status: 200, description: 'Agreement approved successfully' })
@@ -174,7 +179,7 @@ export class AgreementController {
   }
 
   @Post(':id/reject')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE_MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject agreement' })
   @ApiResponse({ status: 200, description: 'Agreement rejected successfully' })

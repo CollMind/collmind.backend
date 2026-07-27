@@ -65,8 +65,8 @@ export class PlanController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get all plans' })
@@ -87,16 +87,50 @@ export class PlanController {
   }
 
   @Get('pending-approvals')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.READONLY)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get plans pending approval' })
   @ApiResponse({ status: 200, description: 'List of plans pending approval' })
   findPendingApprovals(@TenantId() tenantId: string) {
     return this.planService.findPendingApprovals(tenantId);
   }
 
+  // T-028a FIX: 'approval-queue' tek segmentli bir literal route olduğu için
+  // ':id' parametrik route'undan (aşağıda) ÖNCE tanımlanmalı — aksi halde
+  // Nest/Express route matching sırası nedeniyle "approval-queue" string'i
+  // ':id' parametresi olarak yakalanır (findById('approval-queue') → uuid
+  // parse hatası, 500). 'pending-approvals' zaten bu kuralı doğru uyguluyordu;
+  // 'approval-queue' önceden ':id'den SONRA tanımlıydı — CM Roles listesine
+  // eklenene kadar hiçbir e2e testi bu path'i egzersiz etmediği için bug
+  // gizli kalmıştı.
+  @Get('approval-queue')
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
+    UserRole.READONLY,
+  )
+  @ApiOperation({ summary: 'Get approval queue for current user' })
+  @ApiResponse({ status: 200, description: 'List of pending plans' })
+  getApprovalQueue(
+    @Query() filters: ApprovalFilters,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.approvalWorkflowService.getApprovalQueue(
+      user.id,
+      tenantId,
+      filters,
+    );
+  }
+
   // Spesifik route'lar parametrik route'dan ÖNCE tanımlanmalı
   @Get(':id/budget-check')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.READONLY)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.READONLY,
+  )
   @ApiOperation({ summary: 'Check budget availability for plan approval' })
   @ApiResponse({ status: 200, description: 'Budget check result' })
   budgetCheck(@Param('id') id: string, @TenantId() tenantId: string) {
@@ -107,8 +141,8 @@ export class PlanController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get plan analysis data' })
@@ -122,8 +156,8 @@ export class PlanController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get plan by ID' })
@@ -243,24 +277,8 @@ export class PlanController {
     );
   }
 
-  @Get('approval-queue')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE, UserRole.READONLY)
-  @ApiOperation({ summary: 'Get approval queue for current user' })
-  @ApiResponse({ status: 200, description: 'List of pending plans' })
-  getApprovalQueue(
-    @Query() filters: ApprovalFilters,
-    @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
-  ) {
-    return this.approvalWorkflowService.getApprovalQueue(
-      user.id,
-      tenantId,
-      filters,
-    );
-  }
-
   @Post(':id/review')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE_MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Review plan (approve/reject/request changes/escalate)',
@@ -274,13 +292,19 @@ export class PlanController {
     @Param('id') id: string,
     @Body() dto: ReviewPlanDto,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.approvalWorkflowService.reviewPlan(id, tenantId, user.id, dto);
+    return this.approvalWorkflowService.reviewPlan(
+      id,
+      tenantId,
+      user.id,
+      dto,
+      user.role,
+    );
   }
 
   @Post(':id/escalate-to-finance')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Escalate plan to Finance Manager' })
   @ApiResponse({ status: 200, description: 'Plan escalated successfully' })
@@ -303,8 +327,8 @@ export class PlanController {
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE_MANAGER,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get plan approval history' })
@@ -314,7 +338,7 @@ export class PlanController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Approve plan' })
   @ApiResponse({ status: 200, description: 'Plan approved successfully' })
@@ -344,7 +368,7 @@ export class PlanController {
   }
 
   @Post(':id/reject')
-  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject plan' })
   @ApiResponse({ status: 200, description: 'Plan rejected successfully' })

@@ -42,8 +42,6 @@ export class DashboardController {
   @Get('summary')
   @Roles(
     UserRole.ADMIN,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
     UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
     UserRole.PLANNER,
@@ -82,8 +80,6 @@ export class DashboardController {
   @Get('pending-tasks')
   @Roles(
     UserRole.ADMIN,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
     UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
     UserRole.PLANNER,
@@ -121,8 +117,6 @@ export class DashboardController {
   @Get('cpl-status')
   @Roles(
     UserRole.ADMIN,
-    UserRole.MANAGER,
-    UserRole.FINANCE,
     UserRole.FINANCE_MANAGER,
     UserRole.CATEGORY_MANAGER,
     UserRole.PLANNER,

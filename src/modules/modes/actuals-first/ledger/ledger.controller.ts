@@ -15,7 +15,7 @@ export class LedgerController {
   constructor(private readonly ledgerService: LedgerService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get all ledger entries' })
   findAll(
     @TenantId() tenantId: string,
@@ -33,7 +33,7 @@ export class LedgerController {
   }
 
   @Get('agreement/:agreementId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get ledger entries by agreement ID' })
   findByAgreement(
     @Param('agreementId') agreementId: string,
@@ -43,7 +43,7 @@ export class LedgerController {
   }
 
   @Get('agreement/:agreementId/consumed')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get total consumed amount for agreement' })
   async getConsumedByAgreement(
     @Param('agreementId') agreementId: string,
@@ -57,7 +57,7 @@ export class LedgerController {
   }
 
   @Get('envelope/:envelopeId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get ledger entries by budget envelope ID' })
   findByEnvelope(
     @Param('envelopeId') envelopeId: string,
@@ -67,7 +67,7 @@ export class LedgerController {
   }
 
   @Get('envelope/:envelopeId/consumed')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get total consumed amount for budget envelope' })
   async getConsumedByEnvelope(
     @Param('envelopeId') envelopeId: string,
@@ -81,7 +81,7 @@ export class LedgerController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get ledger entry by ID' })
   findOne(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.ledgerService.findById(id, tenantId);

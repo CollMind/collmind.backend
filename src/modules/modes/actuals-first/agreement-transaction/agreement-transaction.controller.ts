@@ -48,7 +48,7 @@ export class AgreementTransactionController {
   ) {}
 
   @Post()
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Create single off-invoice transaction' })
   create(
     @Body() dto: CreateAgreementTransactionDto,
@@ -59,7 +59,7 @@ export class AgreementTransactionController {
   }
 
   @Post('batch')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Batch import off-invoice transactions' })
   batchImport(
     @Body() dto: BatchImportDto,
@@ -70,7 +70,7 @@ export class AgreementTransactionController {
   }
 
   @Get('agreement/:agreementId')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get transactions by agreement ID' })
   findByAgreement(
     @Param('agreementId') agreementId: string,
@@ -80,7 +80,7 @@ export class AgreementTransactionController {
   }
 
   @Get('agreement/:agreementId/total')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get total transaction amount for agreement' })
   async getTotalByAgreement(
     @Param('agreementId') agreementId: string,
@@ -94,14 +94,14 @@ export class AgreementTransactionController {
   }
 
   @Get('batch/:batchId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get transactions by batch ID' })
   findByBatch(@Param('batchId') batchId: string, @TenantId() tenantId: string) {
     return this.txService.findByBatchId(batchId, tenantId);
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get all agreement transactions with filters' })
   findAll(
     @TenantId() tenantId: string,
@@ -126,7 +126,7 @@ export class AgreementTransactionController {
   }
 
   @Get('budget-impact/:agreementId')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({
     summary: 'Get budget impact for agreement and fiscal period',
   })
@@ -194,7 +194,7 @@ export class AgreementTransactionController {
   }
 
   @Get('count')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get total count of off-invoice transactions' })
   async getCount(@TenantId() tenantId: string) {
     const count = await this.txService.getCount(tenantId);
@@ -202,7 +202,7 @@ export class AgreementTransactionController {
   }
 
   @Get('stats/summary')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get transaction statistics summary' })
   async getSummary(
     @TenantId() tenantId: string,
@@ -272,14 +272,14 @@ export class AgreementTransactionController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get transaction by ID' })
   findOne(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.txService.findById(id, tenantId);
   }
 
   @Post('upload')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -370,7 +370,7 @@ export class AgreementTransactionController {
   }
 
   @Post('validate-and-import')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Validate and import validated rows' })
   async validateAndImport(
     @Body() body: { rows: CreateAgreementTransactionDto[]; batchId?: string },
@@ -391,7 +391,7 @@ export class AgreementTransactionController {
   }
 
   @Get('template/excel')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Download Excel template' })
   async downloadExcelTemplate(@Res() res: Response) {
     const buffer = this.fileParserService.generateExcelTemplate();
@@ -407,7 +407,7 @@ export class AgreementTransactionController {
   }
 
   @Get('template/csv')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Download CSV template' })
   async downloadCSVTemplate(@Res() res: Response) {
     const csv = this.fileParserService.generateCSVTemplate();
