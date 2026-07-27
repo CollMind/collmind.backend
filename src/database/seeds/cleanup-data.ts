@@ -74,6 +74,15 @@ export async function cleanupAgreementsBudgetPlans(
     await queryRunner.query(`DELETE FROM main.budget_envelopes`);
     console.log('   ✅ Deleted budget_envelopes');
 
+    // 3b. Sales actuals (T-020) — FK: sales_actual_batches → categories/cpls/channels.
+    // Kategorilerden ÖNCE silinmeli; satırlar → batch'ler sırası FK gereği.
+    console.log('\n📦 Cleaning up Sales Actuals (T-020)...');
+    await queryRunner.query(`DELETE FROM main.sales_actuals`);
+    console.log('   ✅ Deleted sales_actuals');
+
+    await queryRunner.query(`DELETE FROM main.sales_actual_batches`);
+    console.log('   ✅ Deleted sales_actual_batches');
+
     // 4. Master data tables used by agreements (delete in reverse dependency order)
     console.log('\n📦 Cleaning up Master Data tables used by Agreements...');
     await queryRunner.query(`DELETE FROM main.mechanics`);

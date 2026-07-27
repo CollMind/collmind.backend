@@ -489,6 +489,153 @@ describe('PlanService', () => {
       });
     });
 
+    /**
+     * T-027 — KPI eksik-veri kuralı: COGS null → context'e null geçmeli
+     * (0 DEĞİL), böylece formula-parser'ın dependency-null propagation'ı
+     * PLANNED_GP/GP_ROI_PCT'i null'a düşürür ve fabrik %100/GREEN
+     * yanılsaması oluşmaz. COGS=0 ise (gerçekten sıfır maliyet) context'e
+     * 0 geçmeli — null'a çevrilmemeli.
+     */
+    it('T-027: missing COGS (sku.cogs undefined) propagates as null in KPI context, not 0', async () => {
+      const planWithFus = {
+        ...mockPlan,
+        cplId: 'cpl-1',
+        channel: { id: 'ch-1', code: 'NKA', name: 'NKA' } as any,
+        category: { id: 'cat-1', code: 'DAIRY', name: 'Dairy' } as any,
+        planFus: [
+          {
+            id: 'fu-1',
+            fuId: 'fu-1',
+            planId: mockPlanId,
+            tactics: {},
+            planSkus: [
+              {
+                id: 'ps-1',
+                skuId: 'sku-a',
+                baseVolume: 800,
+                plannedVolume: 1000,
+                // No `cogs` on the SKU — real Wella seed scenario (T-027).
+                sku: { id: 'sku-a', unitPrice: 100 },
+              },
+            ],
+          } as any,
+        ],
+      } as Plan;
+
+      const skuASpend = makeSpendBreakdown(1000, 0);
+      spendCalc.calculateAllSpendsForSKU.mockResolvedValue(skuASpend as any);
+
+      // KPI engine mock simulates the real dependency-null propagation:
+      // PLANNED_GP/GP_ROI_PCT resolve to null when COGS is null.
+      kpiEngine.calculateSku.mockResolvedValue({
+        PLANNED_TO: {
+          kpiCode: 'PLANNED_TO',
+          value: 99000,
+          displayFormat: 'currency',
+          decimalPlaces: 2,
+          ragStatus: null,
+        },
+        PLANNED_GP: {
+          kpiCode: 'PLANNED_GP',
+          value: null,
+          displayFormat: 'currency',
+          decimalPlaces: 2,
+          ragStatus: null,
+        },
+        GP_ROI_PCT: {
+          kpiCode: 'GP_ROI_PCT',
+          value: null,
+          displayFormat: 'percentage',
+          decimalPlaces: 1,
+          ragStatus: null,
+        },
+      } as any);
+      kpiEngine.calculateFu.mockResolvedValue({} as any);
+      kpiEngine.calculatePlan.mockResolvedValue({} as any);
+
+      planRepo.findById
+        .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
+      planRepo.findPlanSku.mockResolvedValue({
+        id: 'ps-1',
+        plannedVolume: 1000,
+        plannedGp: null,
+      } as any);
+      planRepo.updatePlanSku.mockResolvedValue(undefined as any);
+      planRepo.updatePlanFu.mockResolvedValue(undefined as any);
+      planRepo.update.mockResolvedValue({} as any);
+
+      await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
+
+      // The context handed to the KPI engine must carry COGS: null (not 0),
+      // while BPTT/BASE_VOL/PLAN_VOL (all present) stay numeric.
+      const engineCtx = kpiEngine.calculateSku.mock.calls[0][1];
+      expect(engineCtx.COGS).toBeNull();
+      expect(engineCtx.BPTT).toBe(100);
+      expect(engineCtx.BASE_VOL).toBe(800);
+      expect(engineCtx.PLAN_VOL).toBe(1000);
+
+      // Persisted SKU result must reflect null GP/ROI/RAG — never a
+      // fabricated 100%/GREEN — while PLANNED_TO (independent of COGS)
+      // remains a real number.
+      const updateCall = planRepo.updatePlanSku.mock.calls[0][1];
+      expect(updateCall.plannedGp).toBeNull();
+      expect(updateCall.gpRoi).toBeNull();
+      expect(updateCall.ragStatus).toBeNull();
+      expect(updateCall.plannedTurnover).toBe(99000);
+    });
+
+    it('T-027: COGS=0 (legitimately zero) is NOT coalesced to null in KPI context', async () => {
+      const planWithFus = {
+        ...mockPlan,
+        cplId: 'cpl-1',
+        channel: { id: 'ch-1', code: 'NKA', name: 'NKA' } as any,
+        category: { id: 'cat-1', code: 'DAIRY', name: 'Dairy' } as any,
+        planFus: [
+          {
+            id: 'fu-1',
+            fuId: 'fu-1',
+            planId: mockPlanId,
+            tactics: {},
+            planSkus: [
+              {
+                id: 'ps-1',
+                skuId: 'sku-a',
+                baseVolume: 800,
+                plannedVolume: 1000,
+                // Explicit legitimate 0 (e.g. a free-goods SKU) — must stay 0.
+                sku: { id: 'sku-a', unitPrice: 100, cogs: 0 },
+              },
+            ],
+          } as any,
+        ],
+      } as Plan;
+
+      const skuASpend = makeSpendBreakdown(1000, 0);
+      spendCalc.calculateAllSpendsForSKU.mockResolvedValue(skuASpend as any);
+      kpiEngine.calculateSku.mockResolvedValue({} as any);
+      kpiEngine.calculateFu.mockResolvedValue({} as any);
+      kpiEngine.calculatePlan.mockResolvedValue({} as any);
+
+      planRepo.findById
+        .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
+      planRepo.findPlanSku.mockResolvedValue({
+        id: 'ps-1',
+        plannedVolume: 1000,
+        plannedGp: null,
+      } as any);
+      planRepo.updatePlanSku.mockResolvedValue(undefined as any);
+      planRepo.updatePlanFu.mockResolvedValue(undefined as any);
+      planRepo.update.mockResolvedValue({} as any);
+
+      await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
+
+      const engineCtx = kpiEngine.calculateSku.mock.calls[0][1];
+      expect(engineCtx.COGS).toBe(0);
+      expect(engineCtx.COGS).not.toBeNull();
+    });
+
     it('should persist GP_ROI_PCT from engine only — no fallback arithmetic (BUG #1 fix)', async () => {
       // If engine returns null for GP_ROI_PCT (e.g. INCR_SPEND=0 → div-by-zero),
       // persistedGpRoi must be null — not a hardcoded fallback calculation.
@@ -547,10 +694,14 @@ describe('PlanService', () => {
       await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
 
       const updateCall = planRepo.updatePlanSku.mock.calls[0][1];
-      // Set D: SPEND=0 → ROI null (not a fallback number)
-      expect(updateCall.gpRoi).toBeUndefined(); // null → undefined (persist as null)
+      // Set D: SPEND=0 → ROI null (not a fallback number).
+      // T-027: null is now persisted EXPLICITLY (not `undefined`, which
+      // TypeORM's `.update()` would skip and leave a stale prior value in
+      // place) — a recalc that newly resolves to null must actually clear
+      // the DB column.
+      expect(updateCall.gpRoi).toBeNull();
       // No RAG should be set from hardcode
-      expect(updateCall.ragStatus).toBeUndefined();
+      expect(updateCall.ragStatus).toBeNull();
     });
 
     it('should surface KPI engine errors instead of silently swallowing them', async () => {

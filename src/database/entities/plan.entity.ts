@@ -174,10 +174,10 @@ export class Plan extends BaseEntity {
     scale: 4,
     nullable: true,
   })
-  overallRoi?: number; // Overall GP ROI %
+  overallRoi?: number | null; // Overall GP ROI %; null when a dependency (e.g. COGS) is missing
 
-  @Column({ name: 'rag_status', length: 10, nullable: true })
-  ragStatus?: string; // 'RED' | 'AMBER' | 'GREEN'
+  @Column({ name: 'rag_status', type: 'varchar', length: 10, nullable: true })
+  ragStatus?: string | null; // 'RED' | 'AMBER' | 'GREEN' | null
 
   // Relations
   @ManyToOne(() => Cpl)
@@ -270,10 +270,10 @@ export class PlanFu extends BaseEntity {
     scale: 4,
     nullable: true,
   })
-  gpRoi?: number;
+  gpRoi?: number | null; // null when a dependency (e.g. COGS) is missing
 
-  @Column({ name: 'rag_status', length: 10, nullable: true })
-  ragStatus?: string; // 'RED' | 'AMBER' | 'GREEN'
+  @Column({ name: 'rag_status', type: 'varchar', length: 10, nullable: true })
+  ragStatus?: string | null; // 'RED' | 'AMBER' | 'GREEN' | null
 
   // Calculated KPIs (stored as JSONB)
   @Column({ name: 'calculated_kpis', type: 'jsonb', nullable: true })
@@ -350,8 +350,10 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    nullable: true,
   })
-  plannedTurnover!: number; // plannedVolume * unitPrice
+  plannedTurnover?: number | null; // PLANNED_TO from KPI engine; null when a
+  // required master/user input (e.g. BPTT/unit price) is missing (T-027)
 
   @Column({
     name: 'tactic_spend',
@@ -368,8 +370,11 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    nullable: true,
   })
-  plannedGp!: number; // Gross Profit
+  plannedGp?: number | null; // PLANNED_GP from KPI engine; null when a
+  // required master input (e.g. COGS) is missing — BRD: missing data → null,
+  // never a fabricated 0 that masks GP_ROI_PCT as 100%/GREEN (T-027)
 
   @Column({
     name: 'gp_roi',
@@ -378,10 +383,10 @@ export class PlanSku extends BaseEntity {
     scale: 4,
     nullable: true,
   })
-  gpRoi?: number; // GP ROI %
+  gpRoi?: number | null; // GP ROI %; null when a dependency (e.g. COGS) is missing
 
-  @Column({ name: 'rag_status', length: 10, nullable: true })
-  ragStatus?: string; // 'RED' | 'AMBER' | 'GREEN'
+  @Column({ name: 'rag_status', type: 'varchar', length: 10, nullable: true })
+  ragStatus?: string | null; // 'RED' | 'AMBER' | 'GREEN' | null
 
   // Calculated KPIs (stored as JSONB)
   @Column({ name: 'calculated_kpis', type: 'jsonb', nullable: true })

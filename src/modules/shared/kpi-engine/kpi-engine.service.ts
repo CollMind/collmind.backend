@@ -10,11 +10,15 @@ import {
 import { FormulaParserService, ParsedFormula } from './formula-parser.service';
 
 export interface SkuCalculationContext {
-  // User inputs & master data
-  BASE_VOL: number;
-  PLAN_VOL: number;
-  BPTT: number; // Base Price To Trade (unit price)
-  COGS: number; // Cost of Goods Sold per unit
+  // User inputs & master data.
+  // BRD: missing master data (e.g. SKU has no COGS configured yet) must
+  // propagate as null so dependent KPIs (GP, ROI, RAG) resolve to null
+  // instead of silently defaulting to 0 (which would fabricate a fake
+  // 100%/GREEN result). See T-027.
+  BASE_VOL: number | null;
+  PLAN_VOL: number | null;
+  BPTT: number | null; // Base Price To Trade (unit price)
+  COGS: number | null; // Cost of Goods Sold per unit
   // Tactic values (injected from FU level)
   [tacticCode: string]: number | null | undefined;
 }

@@ -39,6 +39,19 @@ import { ForecastingUnit } from '../../../../database/entities/forecasting-unit.
 import { Sku } from '../../../../database/entities/sku.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
 
+/**
+ * T-027: Convert a raw (possibly string-typed decimal column, null, or
+ * undefined) value into a strict number-or-null. Distinguishes "genuinely
+ * absent" master/user data (null/undefined/NaN) from a legitimately entered
+ * 0, which callers must NOT coalesce together — BRD requires missing data to
+ * propagate as null through the KPI engine, never silently become 0.
+ */
+function toNullableNumber(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const num = Number(raw);
+  return Number.isFinite(num) ? num : null;
+}
+
 @Injectable()
 export class PlanService {
   private readonly logger = new Logger(PlanService.name);
@@ -622,10 +635,22 @@ export class PlanService {
 
       for (const planSku of planFu.planSkus || []) {
         const sku = planSku.sku;
-        const baseVol = Number(planSku.baseVolume) || 0;
-        const planVol = Number(planSku.plannedVolume) || 0;
-        const unitPrice = Number(sku.unitPrice) || 0;
-        const cogs = Number(sku.cogs) || 0;
+        // T-027: distinguish "genuinely missing master/user data" (null/undefined
+        // source) from "legitimately 0". SpendCalc's SKUContext has no null-safety
+        // (raw arithmetic), so it keeps the 0-fallback numeric values below — a
+        // missing input there degrades to 0 spend rather than crashing on NaN.
+        // The KPI engine context (below) instead receives the nullable
+        // (`*OrNull`) versions so missing COGS/BPTT/volume propagates as null
+        // through PLANNED_GP/GP_ROI_PCT/RAG (BRD: missing data → null, never a
+        // fabricated 100%/GREEN result).
+        const baseVolOrNull = toNullableNumber(planSku.baseVolume);
+        const planVolOrNull = toNullableNumber(planSku.plannedVolume);
+        const unitPriceOrNull = toNullableNumber(sku.unitPrice);
+        const cogsOrNull = toNullableNumber(sku.cogs);
+        const baseVol = baseVolOrNull ?? 0;
+        const planVol = planVolOrNull ?? 0;
+        const unitPrice = unitPriceOrNull ?? 0;
+        const cogs = cogsOrNull ?? 0;
 
         // ── Step 1: Call SpendCalculationService for this SKU ────────────
         // This is the single source of truth for LTA, promo spend breakdown.
@@ -671,12 +696,14 @@ export class PlanService {
         //   PLANNED_ON_INVOICE_SPEND (T-008 fix: on-invoice only → used in PLANNED_TO)
         // Also inject tactic percentage codes for CPP_ON_SPEND formula.
         const context: SkuCalculationContext = {
-          // User inputs
-          BASE_VOL: baseVol,
-          PLAN_VOL: planVol,
-          // Master data
-          BPTT: unitPrice,
-          COGS: cogs,
+          // User inputs — null when not yet entered (T-027: missing data → null)
+          BASE_VOL: baseVolOrNull,
+          PLAN_VOL: planVolOrNull,
+          // Master data — null when not yet configured on the SKU (T-027:
+          // e.g. Wella SKUs seeded without COGS must not silently become 0,
+          // which would fabricate GP_ROI_PCT = 100% / RAG = GREEN)
+          BPTT: unitPriceOrNull,
+          COGS: cogsOrNull,
           // BRD external — from SpendCalc (BUG #2 / Gap G fix)
           PLANNED_LTA_ON: spendBreakdown.planned.ltaOnInvoice,
           PLANNED_LTA_OFF: spendBreakdown.planned.ltaOffInvoice,
@@ -730,11 +757,16 @@ export class PlanService {
 
         await this.planRepo.updatePlanSku(planSku.id, {
           incrementalVolume,
-          plannedTurnover: plannedTurnover ?? undefined,
+          // T-027: write the (possibly null) values explicitly so a recalc
+          // that newly discovers missing master data (e.g. COGS removed)
+          // actually clears a previously-computed number rather than
+          // silently leaving stale data behind (TypeORM `.update()` skips
+          // `undefined` fields but persists explicit `null`).
+          plannedTurnover,
           tacticSpend: totalPlannedSpend,
-          plannedGp: plannedGp ?? undefined,
-          gpRoi: gpRoi ?? undefined,
-          ragStatus: ragStatus ?? undefined,
+          plannedGp,
+          gpRoi,
+          ragStatus,
           calculatedKpis,
         });
       }
@@ -789,8 +821,10 @@ export class PlanService {
         totalPlannedVolume: fuTotalPlannedVolume,
         totalSpend: fuTotalPlannedSpend,
         totalGp: fuTotalGp,
-        gpRoi: fuGpRoi ?? undefined,
-        ragStatus: fuRagStatus ?? undefined,
+        // T-027: persist null explicitly (not `undefined`) so a recalc that
+        // newly discovers missing master data clears any stale prior value.
+        gpRoi: fuGpRoi,
+        ragStatus: fuRagStatus,
         calculatedKpis: fuCalculatedKpis,
       });
 
@@ -832,8 +866,10 @@ export class PlanService {
       totalPlannedVolume: planTotalPlannedVolume,
       totalSpend: planTotalSpend,
       totalGp: planTotalGp,
-      overallRoi: overallRoi ?? undefined,
-      ragStatus: planRagStatus ?? undefined,
+      // T-027: persist null explicitly (not `undefined`) so a recalc that
+      // newly discovers missing master data clears any stale prior value.
+      overallRoi,
+      ragStatus: planRagStatus,
     });
   }
 

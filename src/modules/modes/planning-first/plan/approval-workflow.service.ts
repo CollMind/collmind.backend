@@ -620,7 +620,7 @@ export class ApprovalWorkflowService {
         onInvoiceSpend: Number(plan.onInvoiceSpend || 0),
         offInvoiceSpend: Number(plan.offInvoiceSpend || 0),
         overallRoi: plan.overallRoi ? Number(plan.overallRoi) : undefined,
-        ragStatus: plan.ragStatus,
+        ragStatus: plan.ragStatus ?? undefined,
         submittedAt: plan.submittedAt,
         submittedBy: {
           id: plan.submittedBy?.id || '',

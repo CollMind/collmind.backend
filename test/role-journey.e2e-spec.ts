@@ -33,15 +33,35 @@ import {
   cleanupSalesActuals,
 } from './helpers/seed-e2e';
 
-// ── Seed sabitleri (gerçek dev DB'den doğrulanmış, bkz. görev teşhis notları) ──
-const CPL_1 = 'b39ade6a-ea33-413f-95a0-281c859f32fd'; // BS0501.50001 Gratis
-const CPL_2 = '4b3850a8-d598-49ca-a740-94730fd7cfa6'; // BS0501.50004 A.S.Watson
-const CHANNEL_NKA = '7ecd1c45-9697-4a06-8416-3ba599977494'; // code NKA
-const CATEGORY_SAC_BOYASI = 'ac979ec6-6dee-4816-8e37-191913aa3082'; // CAT-SAC-BOYASI
-const FU_TUP_BOYA = 'f44c4bb9-419e-4a65-af38-c9206a0f564b'; // FU-TUP-BOYA
-const FU_WELLA_HC_500ML = '8c500433-8582-4c97-8601-76bc5ba191ce'; // agreement seed FU
-const TACTIC_PROMO = 'e647e274-0ca6-49be-aa2f-0f6e4b380233'; // TAC-PROMO
-const MECHANIC_DISCOUNT = 'afcf9ffb-9741-42c5-b07b-e03c0de35588'; // MEC-DISCOUNT
+// ── Seed sabitleri — beforeAll'da KODA göre çözülür (hardcoded UUID YASAK:
+// cleanup-and-seed master-data'yı yeniden yaratınca id'ler değişir; kod sabittir) ──
+let CPL_1: string; // BS0501.50001 Gratis
+let CPL_2: string; // BS0501.50004 A.S.Watson
+let CHANNEL_NKA: string; // code NKA
+let CATEGORY_SAC_BOYASI: string; // CAT-SAC-BOYASI
+let FU_TUP_BOYA: string; // FU-TUP-BOYA
+let FU_WELLA_HC_500ML: string; // agreement seed FU (FU-WELLA-HC-500ML)
+let TACTIC_PROMO: string; // TAC-PROMO
+let MECHANIC_DISCOUNT: string; // MEC-DISCOUNT
+
+/** Kod → id çözümlemesi; bulunamazsa anlaşılır hata (seed eksik demektir). */
+async function resolveIdByCode(
+  ds: DataSource,
+  tenantId: string,
+  table: string,
+  code: string,
+): Promise<string> {
+  const rows = await ds.query(
+    `SELECT id FROM main.${table} WHERE tenant_id = $1 AND code = $2 AND deleted_at IS NULL LIMIT 1`,
+    [tenantId, code],
+  );
+  if (!rows?.[0]?.id) {
+    throw new Error(
+      `role-journey fixture: main.${table} içinde code='${code}' bulunamadı — önce 'npm run seed' çalıştırın.`,
+    );
+  }
+  return rows[0].id;
+}
 
 interface JourneyResult {
   step: string;
@@ -79,6 +99,28 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     fixture = await loadE2EFixture(app);
     dataSource = app.get<DataSource>(getDataSourceToken());
     await cleanupSalesActuals(app, fixture.tenantId);
+
+    // Master-data id'lerini KODA göre çöz (reseed-sonrası id değişimine dayanıklı)
+    const t = fixture.tenantId;
+    [
+      CPL_1,
+      CPL_2,
+      CHANNEL_NKA,
+      CATEGORY_SAC_BOYASI,
+      FU_TUP_BOYA,
+      FU_WELLA_HC_500ML,
+      TACTIC_PROMO,
+      MECHANIC_DISCOUNT,
+    ] = await Promise.all([
+      resolveIdByCode(dataSource, t, 'cpls', 'BS0501.50001'),
+      resolveIdByCode(dataSource, t, 'cpls', 'BS0501.50004'),
+      resolveIdByCode(dataSource, t, 'channels', 'NKA'),
+      resolveIdByCode(dataSource, t, 'categories', 'CAT-SAC-BOYASI'),
+      resolveIdByCode(dataSource, t, 'forecasting_units', 'FU-TUP-BOYA'),
+      resolveIdByCode(dataSource, t, 'forecasting_units', 'FU-WELLA-HC-500ML'),
+      resolveIdByCode(dataSource, t, 'tactics', 'TAC-PROMO'),
+      resolveIdByCode(dataSource, t, 'mechanics', 'MEC-DISCOUNT'),
+    ]);
   }, 60000);
 
   afterAll(async () => {
@@ -246,7 +288,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(res.status).toBe(200);
     });
 
-    it('A5. PLANNER → POST /plans/:id/recalculate — KPI/ROI/RAG doluyor mu', async () => {
+    it('A5. PLANNER → POST /plans/:id/recalculate — KPI/ROI/RAG doluyor mu (COGS eksik → null, T-027 fix)', async () => {
       const planner = await loginAs(app, 'PLANNER');
 
       const res = await request(app.getHttpServer())
@@ -254,8 +296,15 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .set(planner.authHeader())
         .send({});
 
+      // NOT: `planSkuId` A2'de `planFu.planSkus[0].skuId` olarak set edildi
+      // (yani Sku.id, PlanSku satır PK'sı değil) — API `:skuId` route
+      // parametresi de Sku.id bekliyor (bkz. plan.controller.ts
+      // `:id/fus/:fuId/skus/:skuId/volume`), bu yüzden karşılaştırma
+      // `s.skuId` üzerinden yapılmalı (PlanSku satırının kendi `id`'si
+      // değil — önceki sürümde bu karışıklık yüzünden `sku` hep undefined
+      // dönüyordu).
       const sku = res.body?.planFus?.[0]?.planSkus?.find(
-        (s: any) => s.id === planSkuId,
+        (s: any) => s.skuId === planSkuId,
       );
 
       record({
@@ -266,47 +315,142 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         actual: res.status,
         note:
           res.status === 200
-            ? `plan.overallRoi=${res.body.overallRoi}, plan.ragStatus=${res.body.ragStatus}, plan.totalSpend=${res.body.totalSpend}, sku.gpRoi=${sku?.gpRoi}, sku.ragStatus=${sku?.ragStatus}, sku.plannedTurnover=${sku?.plannedTurnover}`
+            ? `plan.overallRoi=${res.body.overallRoi}, plan.ragStatus=${res.body.ragStatus}, plan.totalSpend=${res.body.totalSpend}, sku.gpRoi=${sku?.gpRoi}, sku.ragStatus=${sku?.ragStatus}, sku.plannedTurnover=${sku?.plannedTurnover}, sku.plannedGp=${sku?.plannedGp}`
             : JSON.stringify(res.body),
       });
 
       expect(res.status).toBe(200);
       expect(res.body.totalSpend).not.toBeNull();
+      expect(sku).toBeDefined();
 
-      // ── GERÇEK DEFECT KANITI: "eksik veri → null" BRD kuralı ihlali ──
-      // Seed'deki HİÇBİR SKU'da cogs (main.skus.cogs) dolu değil (bkz. B1
-      // benzeri DB doğrulaması: `SELECT count(*) FROM main.skus WHERE cogs
-      // IS NOT NULL` → 0). BRD kuralı: eksik veri → null KPI. Ancak
-      // plan.service.ts:628 `const cogs = Number(sku.cogs) || 0;` yazıyor —
-      // `Number(null)` JS'te 0'dır, dolayısıyla eksik COGS sessizce 0'a
-      // düşüyor (null'a değil). Sonuç: PLANNED_COGS = PLAN_VOL * 0 = 0,
-      // PLANNED_GP = PLANNED_TO - 0 = PLANNED_TO (tam ciro), GP_ROI_PCT
-      // = %100, ragStatus = GREEN — GERÇEKTE karlılık verisi eksik olduğu
-      // için null/UNKNOWN olması gerekirken YANILTICI ŞEKİLDE "mükemmel"
-      // (%100 ROI, GREEN) gösteriliyor. DB'den doğrulandı:
-      //   plan_skus.planned_gp === plan_skus.planned_turnover (tam eşit)
-      //   plan_skus.gp_roi = 100.0000, rag_status = GREEN
-      // Bu, plan.service.ts:627-628 (unitPrice/cogs "|| 0" fallback) için net.
-      expect(res.body.overallRoi).not.toBeNull(); // BRD'ye göre NULL olmalıydı — bug'ı belgeliyoruz
-      expect(Number(res.body.overallRoi)).toBe(100); // gözlemlenen (buggy) değer
+      // ── T-027 FIX KANITI: "eksik veri → null" BRD kuralı artık uygulanıyor ──
+      // Seed'deki HİÇBİR gerçek Wella SKU'sunda cogs (main.skus.cogs) dolu
+      // değil (kaynak Product.xlsx'te COGS alanı yok; BRD "varsayım yapma"
+      // gereği uydurma COGS eklenmedi). BRD kuralı: eksik veri → null KPI.
+      // T-027 öncesi `plan.service.ts:628 Number(sku.cogs) || 0` eksik
+      // COGS'u sessizce 0'a düşürüyordu → PLANNED_GP = PLANNED_TO (tam
+      // ciro) → GP_ROI_PCT = %100, ragStatus = GREEN gibi YANILTICI bir
+      // "mükemmel skor" üretiyordu. T-027 fix: context'e null geçiyor →
+      // formula-parser'ın dependency-null propagation'ı (zaten T-008'de
+      // kurulu) PLANNED_COGS → PLANNED_GP → INCR_GP → GP_ROI_PCT zincirini
+      // null'a düşürüyor; RAG de null kalıyor (fabrik GREEN üretilmiyor).
+      expect(sku?.plannedGp).toBeNull();
+      expect(sku?.gpRoi).toBeNull();
+      expect(sku?.ragStatus).toBeNull();
+      // BPTT (unitPrice) gerçek Wella SKU'larında dolu olduğundan PLANNED_TO
+      // hâlâ hesaplanabilir (yalnızca COGS'a bağlı KPI'lar null olmalı).
+      expect(sku?.plannedTurnover).not.toBeNull();
+      expect(res.body.overallRoi).toBeNull();
+      expect(res.body.ragStatus).toBeNull();
 
       const skuRow = await dataSource.query(
         `SELECT ps.planned_turnover, ps.planned_gp, ps.gp_roi, ps.rag_status
-         FROM main.plan_skus ps WHERE ps.id = $1`,
-        [planSkuId],
+         FROM main.plan_skus ps
+         WHERE ps.plan_fu_id = $1 AND ps.sku_id = $2`,
+        [planFuId, planSkuId],
       );
       record({
         step: 'A5b',
         role: '-',
-        endpoint: 'DB: main.plan_skus (COGS eksik veri defecti)',
+        endpoint:
+          'DB: main.plan_skus (COGS eksik veri — T-027 fix doğrulaması)',
         expected:
-          'planned_gp < planned_turnover VE gp_roi/rag_status NULL (eksik COGS)',
+          'planned_gp/gp_roi/rag_status NULL, planned_turnover NOT NULL (eksik COGS, dolu BPTT)',
         actual: `planned_turnover=${skuRow[0]?.planned_turnover}, planned_gp=${skuRow[0]?.planned_gp}, gp_roi=${skuRow[0]?.gp_roi}, rag_status=${skuRow[0]?.rag_status}`,
-        note: 'GERÇEK DEFECT: planned_gp === planned_turnover (COGS sessizce 0 kabul edildi) → GP_ROI_PCT=%100 GREEN. Kök neden: plan.service.ts:628 `Number(sku.cogs) || 0` — BRD "eksik veri → null" ihlali.',
+        note: 'T-027 FIX: plan.service.ts context artık eksik COGS için null geçiyor (Number(x)||0 yerine toNullableNumber) → planned_gp/gp_roi/rag_status DB’de NULL persist ediliyor (undefined skip değil, açık null — bkz. plan.entity.ts nullable:true + migration 1788000000000).',
       });
-      expect(Number(skuRow[0]?.planned_gp)).toBe(
-        Number(skuRow[0]?.planned_turnover),
+      expect(skuRow[0]?.planned_gp).toBeNull();
+      expect(skuRow[0]?.gp_roi).toBeNull();
+      expect(skuRow[0]?.rag_status).toBeNull();
+      expect(skuRow[0]?.planned_turnover).not.toBeNull();
+    });
+
+    it('A5c. PLANNER → COGS dolu fixture SKU (FU-WELLA-HC-500ML) ile plan → sayısal ROI + doğru RAG (T-027 pozitif yol)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      // Ayrı bir plan: FU-WELLA-HC-500ML altındaki senkron test fixture'ı
+      // (SKU-E2E-COGS-FIXTURE, unitPrice=100/cogs=60 — bkz. agreement.seed.ts)
+      // gerçek Wella kataloğunun bir parçası DEĞİL, yalnızca e2e için; COGS
+      // burada açık şekilde verilebilir (BRD'nin "varsayım yapma" kuralı
+      // gerçek master data'yı uydurmayı yasaklar, sentetik test verisini değil).
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-COGS-FIXTURE-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const cogsFixturePlanId = createRes.body.id;
+
+      const fuRes = await request(app.getHttpServer())
+        .post(`/plans/${cogsFixturePlanId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML })
+        .expect(201);
+      const cogsFixturePlanFuId = fuRes.body.id;
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${cogsFixturePlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const planFu = planRes.body.planFus.find(
+        (f: any) => f.id === cogsFixturePlanFuId,
       );
+      expect(planFu).toBeDefined();
+      expect(planFu.planSkus.length).toBeGreaterThan(0);
+      const cogsFixtureSkuId = planFu.planSkus[0].skuId;
+
+      await request(app.getHttpServer())
+        .patch(
+          `/plans/${cogsFixturePlanId}/fus/${FU_WELLA_HC_500ML}/skus/${cogsFixtureSkuId}/volume`,
+        )
+        .set(planner.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000 })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/plans/${cogsFixturePlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 } })
+        .expect(200);
+
+      const recalcRes = await request(app.getHttpServer())
+        .post(`/plans/${cogsFixturePlanId}/recalculate`)
+        .set(planner.authHeader())
+        .send({});
+
+      const fixtureSku = recalcRes.body?.planFus?.[0]?.planSkus?.find(
+        (s: any) => s.skuId === cogsFixtureSkuId,
+      );
+
+      record({
+        step: 'A5c',
+        role: 'PLANNER',
+        endpoint: 'POST /plans/:id/recalculate (COGS dolu fixture)',
+        expected: 200,
+        actual: recalcRes.status,
+        note: `plan.overallRoi=${recalcRes.body.overallRoi}, plan.ragStatus=${recalcRes.body.ragStatus}, sku.gpRoi=${fixtureSku?.gpRoi}, sku.ragStatus=${fixtureSku?.ragStatus}, sku.plannedGp=${fixtureSku?.plannedGp}`,
+      });
+
+      expect(recalcRes.status).toBe(200);
+      expect(fixtureSku).toBeDefined();
+      // COGS dolu (60) → PLANNED_GP < PLANNED_TO → gerçek (100'den farklı,
+      // null olmayan) bir ROI ve config-driven bir RAG üretilmeli.
+      expect(fixtureSku?.plannedGp).not.toBeNull();
+      expect(fixtureSku?.gpRoi).not.toBeNull();
+      expect(Number(fixtureSku?.gpRoi)).not.toBe(100);
+      expect(['RED', 'AMBER', 'GREEN']).toContain(fixtureSku?.ragStatus);
+      expect(recalcRes.body.overallRoi).not.toBeNull();
+
+      // Temizlik: bu yardımcı plan DRAFT durumunda, silinebilir.
+      await request(app.getHttpServer())
+        .delete(`/plans/${cogsFixturePlanId}`)
+        .set(planner.authHeader());
     });
 
     it('A6. PLANNER → GET /plans/:id/budget-check', async () => {

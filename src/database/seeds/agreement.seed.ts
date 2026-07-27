@@ -17,6 +17,7 @@ import {
   MechanicCategory,
   SpendingType,
 } from '../entities/mechanic.entity';
+import { Sku } from '../entities/sku.entity';
 
 export async function seedAgreements(
   dataSource: DataSource,
@@ -162,6 +163,50 @@ export async function seedAgreements(
         throw error; // Re-throw other errors
       }
     }
+  }
+
+  // T-027: synthetic e2e-only SKU with explicit COGS/unitPrice, attached to
+  // this fixture FU (FU-WELLA-HC-500ML is a test-only FU, not part of the
+  // real Product.xlsx-derived Wella catalog — see product.seed.ts). Real
+  // Wella SKUs are intentionally left without COGS (source data doesn't have
+  // it; BRD forbids inventing master data), so a "COGS present → real ROI"
+  // path needs a dedicated synthetic fixture. Used by
+  // test/role-journey.e2e-spec.ts (A5c) to prove the positive path alongside
+  // A5's "COGS missing → null ROI" defect-fix proof.
+  const skuRepo = dataSource.getRepository(Sku);
+  let cogsFixtureSku = await skuRepo.findOne({
+    where: { code: 'SKU-E2E-COGS-FIXTURE', tenantId },
+  });
+  if (!cogsFixtureSku) {
+    try {
+      cogsFixtureSku = skuRepo.create({
+        code: 'SKU-E2E-COGS-FIXTURE',
+        name: 'E2E COGS Fixture SKU (Wella HC 500ml)',
+        guId: gu.id,
+        fuId: fu.id,
+        size: '500ml',
+        unitPrice: 100,
+        cogs: 60,
+        currency: 'TRY',
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      cogsFixtureSku = await skuRepo.save(cogsFixtureSku);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        cogsFixtureSku = await skuRepo.findOne({
+          where: { code: 'SKU-E2E-COGS-FIXTURE', tenantId },
+        });
+        if (!cogsFixtureSku) throw error;
+      } else {
+        throw error;
+      }
+    }
+  } else if (cogsFixtureSku.cogs == null || cogsFixtureSku.unitPrice == null) {
+    // Backfill if a prior seed run created it without COGS/price.
+    cogsFixtureSku.unitPrice = 100;
+    cogsFixtureSku.cogs = 60;
+    cogsFixtureSku = await skuRepo.save(cogsFixtureSku);
   }
 
   // Create or get Tactic
