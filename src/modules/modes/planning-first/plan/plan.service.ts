@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  ForbiddenException,
   ConflictException,
 } from '@nestjs/common';
 import { PlanRepository } from './plan.repository';
@@ -43,6 +44,19 @@ import {
   PlanApprovalHistory,
   ApprovalHistoryAction,
 } from '../../../../database/entities/plan-approval-history.entity';
+import { UserRole } from '../../../../database/entities/user.entity';
+import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
+
+/**
+ * T-028b: caller identity for scope-aware reads/decisions. Optional on
+ * purpose — internal callers (e.g. addFu -> findById) that do not have an
+ * actor keep today's unscoped behavior (PLANNER enforcement is T-028c's
+ * job, not this one's).
+ */
+export interface PlanActor {
+  userId: string;
+  role: UserRole;
+}
 
 /**
  * T-027: Convert a raw (possibly string-typed decimal column, null, or
@@ -75,7 +89,54 @@ export class PlanService {
     private readonly tacticRepo: Repository<Tactic>,
     @InjectRepository(PlanApprovalHistory)
     private readonly approvalHistoryRepo: Repository<PlanApprovalHistory>,
+    private readonly accessScope: AccessScopeService,
   ) {}
+
+  /**
+   * T-028b: CM kategori-scoped okuma. Yalnızca CATEGORY_MANAGER için scope
+   * çözer; diğer roller (PLANNER dahil — T-028c'nin işi) etkilenmez. Bulunan
+   * planı 404'e düşürür (varlık sızdırma yok — BRD/§9 N3).
+   */
+  private async assertCmReadScope(
+    plan: Plan,
+    tenantId: string,
+    actor?: PlanActor,
+  ): Promise<void> {
+    if (!actor || actor.role !== UserRole.CATEGORY_MANAGER) return;
+    const scope = await this.accessScope.resolveScope(
+      tenantId,
+      actor.userId,
+      actor.role,
+    );
+    if (!this.accessScope.isInScope(scope, { categoryId: plan.categoryId })) {
+      throw new NotFoundException({
+        statusCode: 404,
+        message: `Plan with ID ${plan.id} not found`,
+        code: 'OUT_OF_SCOPE',
+      });
+    }
+  }
+
+  /**
+   * T-028b: CM kategori-scoped karar (approve/reject). Kesişim yoksa 403 —
+   * okumadan farklı olarak burada varlık zaten biliniyor (aksiyon denendi),
+   * bu yüzden 404 değil 403 (§3 tablosu).
+   */
+  private async assertCmDecisionScope(
+    plan: Plan,
+    tenantId: string,
+    actor?: PlanActor,
+  ): Promise<void> {
+    if (!actor || actor.role !== UserRole.CATEGORY_MANAGER) return;
+    const scope = await this.accessScope.resolveScope(
+      tenantId,
+      actor.userId,
+      actor.role,
+    );
+    this.accessScope.assertEntityInScope(scope, {
+      categoryId: plan.categoryId,
+    });
+  }
 
   /**
    * T-029: Write an immutable PlanApprovalHistory entry. Mirrors the pattern
@@ -184,11 +245,17 @@ export class PlanService {
     );
   }
 
-  async findById(id: string, tenantId: string): Promise<Plan> {
+  async findById(
+    id: string,
+    tenantId: string,
+    actor?: PlanActor,
+  ): Promise<Plan> {
     const plan = await this.planRepo.findById(id, tenantId);
     if (!plan) {
       throw new NotFoundException(`Plan with ID ${id} not found`);
     }
+    // T-028b: CM kategori dışı plan -> 404 (varlık sızdırma yok, §9 N3).
+    await this.assertCmReadScope(plan, tenantId, actor);
     return plan;
   }
 
@@ -200,14 +267,34 @@ export class PlanService {
       channelId?: string;
       categoryId?: string;
     },
+    actor?: PlanActor,
   ): Promise<Plan[]> {
-    return this.planRepo.findAll(tenantId, filters);
+    const scope = await this.resolveCmScopeForFilter(tenantId, actor);
+    return this.planRepo.findAll(tenantId, filters, scope);
   }
 
-  async findPendingApprovals(tenantId: string): Promise<Plan[]> {
-    return this.planRepo.findAll(tenantId, {
-      status: PlanStatus.PENDING_APPROVAL,
-    });
+  async findPendingApprovals(
+    tenantId: string,
+    actor?: PlanActor,
+  ): Promise<Plan[]> {
+    const scope = await this.resolveCmScopeForFilter(tenantId, actor);
+    return this.planRepo.findAll(
+      tenantId,
+      { status: PlanStatus.PENDING_APPROVAL },
+      scope,
+    );
+  }
+
+  /**
+   * T-028b: only resolves (and returns) a scope when the actor is
+   * CATEGORY_MANAGER — used to filter list/queue reads by category
+   * intersection. Returns undefined for every other actor (including no
+   * actor at all), which PlanRepository#findAll treats as a no-op filter —
+   * PLANNER list scoping remains T-028c's job, not touched here.
+   */
+  private async resolveCmScopeForFilter(tenantId: string, actor?: PlanActor) {
+    if (!actor || actor.role !== UserRole.CATEGORY_MANAGER) return undefined;
+    return this.accessScope.resolveScope(tenantId, actor.userId, actor.role);
   }
 
   async update(
@@ -418,6 +505,12 @@ export class PlanService {
       PlanStatus.PENDING_APPROVAL,
       {
         approvalRequestId: approvalRequest.id,
+        // F7 fix: submittedById must be recorded here too — approve()/reject()
+        // self-approval guard (docs/analysis/0004 §1/§9 N12) relies on it and
+        // this legacy /submit path previously left it unset, silently
+        // disabling the guard for any plan submitted this way.
+        submittedById: userId,
+        submittedAt: new Date(),
         updatedBy: userId,
       },
     );
@@ -518,6 +611,7 @@ export class PlanService {
   async checkBudget(
     id: string,
     tenantId: string,
+    actor?: PlanActor,
   ): Promise<{
     hasBudget: boolean;
     planTotalSpend: number;
@@ -534,7 +628,7 @@ export class PlanService {
     };
     sufficient?: boolean;
   }> {
-    const plan = await this.findById(id, tenantId);
+    const plan = await this.findById(id, tenantId, actor);
     const channelCode = plan.channel?.code || '';
     const channelName = plan.channel?.name || channelCode;
 
@@ -587,6 +681,7 @@ export class PlanService {
     comments?: string,
     autoCreateBudget?: boolean,
     budgetAmount?: number,
+    actor?: PlanActor,
   ): Promise<Plan> {
     const plan = await this.findById(id, tenantId);
 
@@ -599,6 +694,17 @@ export class PlanService {
     if (!plan.approvalRequestId) {
       throw new BadRequestException('Approval request not found');
     }
+
+    // F7 (docs/analysis/0004-rbac-brd-alignment.md §1/§9 N12): legacy/kanonik
+    // approve() had no self-approval guard — a Planner+Admin dual account
+    // could bypass "Planner cannot approve their own plan". Mirrors the
+    // check already present in ApprovalWorkflowService#reviewPlan.
+    if (plan.submittedById === userId) {
+      throw new ForbiddenException('You cannot approve your own submission');
+    }
+
+    // T-028b: CM kategori-scoped onay — kesişim yoksa 403 (§3, §9 N4).
+    await this.assertCmDecisionScope(plan, tenantId, actor);
 
     const channelCode = plan.channel?.code || '';
 
@@ -732,6 +838,7 @@ export class PlanService {
     tenantId: string,
     userId: string,
     reason: string,
+    actor?: PlanActor,
   ): Promise<Plan> {
     const plan = await this.findById(id, tenantId);
 
@@ -744,6 +851,16 @@ export class PlanService {
     if (!plan.approvalRequestId) {
       throw new BadRequestException('Approval request not found');
     }
+
+    // F7: same self-approval guard as approve() — a rejecter reviewing their
+    // own submission is equally a bypass of "Planner cannot review their own
+    // plan" (mirrors ApprovalWorkflowService#reviewPlan).
+    if (plan.submittedById === userId) {
+      throw new ForbiddenException('You cannot review your own submission');
+    }
+
+    // T-028b: CM kategori-scoped red — kesişim yoksa 403.
+    await this.assertCmDecisionScope(plan, tenantId, actor);
 
     await this.approvalService.reject(
       plan.approvalRequestId,
@@ -1187,6 +1304,7 @@ export class PlanService {
   async getAnalysis(
     planId: string,
     tenantId: string,
+    actor?: PlanActor,
   ): Promise<{
     gpRoiPerformance: {
       currentRoi: number | null;
@@ -1228,7 +1346,7 @@ export class PlanService {
       }>;
     };
   }> {
-    const plan = await this.findById(planId, tenantId);
+    const plan = await this.findById(planId, tenantId, actor);
 
     // B-2: Read stored BASE_GP and INCR_GP from calculatedKpis JSONB —
     // no re-computation here. If recalc has not been run yet the values

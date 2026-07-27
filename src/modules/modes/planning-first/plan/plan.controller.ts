@@ -73,25 +73,36 @@ export class PlanController {
   @ApiResponse({ status: 200, description: 'List of plans' })
   findAll(
     @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
     @Query('status') status?: PlanStatus,
     @Query('cplId') cplId?: string,
     @Query('channelId') channelId?: string,
     @Query('categoryId') categoryId?: string,
   ) {
-    return this.planService.findAll(tenantId, {
-      status,
-      cplId,
-      channelId,
-      categoryId,
-    });
+    return this.planService.findAll(
+      tenantId,
+      {
+        status,
+        cplId,
+        channelId,
+        categoryId,
+      },
+      { userId: user.id, role: user.role },
+    );
   }
 
   @Get('pending-approvals')
   @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.READONLY)
   @ApiOperation({ summary: 'Get plans pending approval' })
   @ApiResponse({ status: 200, description: 'List of plans pending approval' })
-  findPendingApprovals(@TenantId() tenantId: string) {
-    return this.planService.findPendingApprovals(tenantId);
+  findPendingApprovals(
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.planService.findPendingApprovals(tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   // T-028a FIX: 'approval-queue' tek segmentli bir literal route olduğu için
@@ -114,12 +125,13 @@ export class PlanController {
   getApprovalQueue(
     @Query() filters: ApprovalFilters,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
     return this.approvalWorkflowService.getApprovalQueue(
       user.id,
       tenantId,
       filters,
+      user.role,
     );
   }
 
@@ -133,8 +145,15 @@ export class PlanController {
   )
   @ApiOperation({ summary: 'Check budget availability for plan approval' })
   @ApiResponse({ status: 200, description: 'Budget check result' })
-  budgetCheck(@Param('id') id: string, @TenantId() tenantId: string) {
-    return this.planService.checkBudget(id, tenantId);
+  budgetCheck(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.planService.checkBudget(id, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Get(':id/analysis')
@@ -148,8 +167,15 @@ export class PlanController {
   @ApiOperation({ summary: 'Get plan analysis data' })
   @ApiResponse({ status: 200, description: 'Plan analysis data' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
-  getAnalysis(@Param('id') id: string, @TenantId() tenantId: string) {
-    return this.planService.getAnalysis(id, tenantId);
+  getAnalysis(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.planService.getAnalysis(id, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Get(':id')
@@ -163,8 +189,15 @@ export class PlanController {
   @ApiOperation({ summary: 'Get plan by ID' })
   @ApiResponse({ status: 200, description: 'Plan details' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
-  findOne(@Param('id') id: string, @TenantId() tenantId: string) {
-    return this.planService.findById(id, tenantId);
+  findOne(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.planService.findById(id, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Patch(':id')
@@ -312,7 +345,7 @@ export class PlanController {
     @Param('id') id: string,
     @Body() body: { reason: string; comments?: string },
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
     return this.approvalWorkflowService.escalateToFinance(
       id,
@@ -320,6 +353,7 @@ export class PlanController {
       user.id,
       body.reason,
       body.comments,
+      { userId: user.id, role: user.role },
     );
   }
 
@@ -333,8 +367,15 @@ export class PlanController {
   )
   @ApiOperation({ summary: 'Get plan approval history' })
   @ApiResponse({ status: 200, description: 'Approval history entries' })
-  getApprovalHistory(@Param('id') id: string, @TenantId() tenantId: string) {
-    return this.approvalWorkflowService.getPlanApprovalHistory(id, tenantId);
+  getApprovalHistory(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.approvalWorkflowService.getPlanApprovalHistory(id, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/approve')
@@ -355,7 +396,7 @@ export class PlanController {
       budgetAmount?: number;
     },
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
     return this.planService.approve(
       id,
@@ -364,6 +405,7 @@ export class PlanController {
       body.comments,
       body.autoCreateBudget,
       body.budgetAmount,
+      { userId: user.id, role: user.role },
     );
   }
 
@@ -380,9 +422,12 @@ export class PlanController {
     @Param('id') id: string,
     @Body() body: { reason: string },
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.reject(id, tenantId, user.id, body.reason);
+    return this.planService.reject(id, tenantId, user.id, body.reason, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Delete(':id')

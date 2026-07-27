@@ -30,6 +30,8 @@ import {
 } from './dto/review-plan.dto';
 import { ApprovalFilters, PendingPlan } from './dto/approval-queue.dto';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
+import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
+import { PlanActor } from './plan.service';
 
 @Injectable()
 export class ApprovalWorkflowService {
@@ -42,6 +44,7 @@ export class ApprovalWorkflowService {
     private readonly spendCalc: SpendCalculationService,
     @InjectRepository(PlanApprovalHistory)
     private readonly approvalHistoryRepo: Repository<PlanApprovalHistory>,
+    private readonly accessScope: AccessScopeService,
   ) {}
 
   /**
@@ -305,6 +308,18 @@ export class ApprovalWorkflowService {
       throw new ForbiddenException('You cannot review your own submission');
     }
 
+    // T-028b: CM kategori-scoped onay — kesişim yoksa 403 (§3, §9 N4).
+    if (reviewerRole === UserRole.CATEGORY_MANAGER) {
+      const scope = await this.accessScope.resolveScope(
+        tenantId,
+        reviewerId,
+        reviewerRole,
+      );
+      this.accessScope.assertEntityInScope(scope, {
+        categoryId: plan.categoryId,
+      });
+    }
+
     const channelCode = plan.channel?.code || '';
 
     switch (dto.decision) {
@@ -541,6 +556,7 @@ export class ApprovalWorkflowService {
     escalatedById: string,
     reason: string,
     comments?: string,
+    actor?: PlanActor,
   ): Promise<void> {
     const plan = await this.planRepo.findById(planId, tenantId);
     if (!plan) {
@@ -551,6 +567,19 @@ export class ApprovalWorkflowService {
       throw new BadRequestException(
         'Only PENDING_APPROVAL plans can be escalated',
       );
+    }
+
+    // T-028b: CM kategori-scoped escalate — kesişim yoksa 403 (aynı aile:
+    // approve/reject/review). ADMIN her zaman UNRESTRICTED, dokunulmaz.
+    if (actor?.role === UserRole.CATEGORY_MANAGER) {
+      const scope = await this.accessScope.resolveScope(
+        tenantId,
+        actor.userId,
+        actor.role,
+      );
+      this.accessScope.assertEntityInScope(scope, {
+        categoryId: plan.categoryId,
+      });
     }
 
     // Update plan status
@@ -588,9 +617,17 @@ export class ApprovalWorkflowService {
     userId: string,
     tenantId: string,
     filters: ApprovalFilters = {},
+    role?: UserRole,
   ): Promise<PendingPlan[]> {
-    // TODO: Implement role-based filtering
-    // For now, return all pending plans (both PENDING_APPROVAL and PENDING_FINANCE_REVIEW)
+    // F3 fix (docs/analysis/0004-rbac-brd-alignment.md §1/§3): PENDING_APPROVAL
+    // AND kategori kesişimi for CATEGORY_MANAGER (was previously unfiltered —
+    // any CM saw the entire tenant's queue). Other roles unaffected (scope
+    // resolves to undefined -> PlanRepository#findAll no-ops the filter).
+    const scope =
+      role === UserRole.CATEGORY_MANAGER
+        ? await this.accessScope.resolveScope(tenantId, userId, role)
+        : undefined;
+
     const statusFilter =
       filters.status && filters.status.length > 0
         ? filters.status
@@ -599,12 +636,16 @@ export class ApprovalWorkflowService {
     const allPlans: Plan[] = [];
     const seenPlanIds = new Set<string>();
     for (const status of statusFilter) {
-      const plans = await this.planRepo.findAll(tenantId, {
-        status: status as PlanStatus,
-        ...(filters.categoryId && { categoryId: filters.categoryId }),
-        ...(filters.channelId && { channelId: filters.channelId }),
-        ...(filters.cplId && { cplId: filters.cplId }),
-      });
+      const plans = await this.planRepo.findAll(
+        tenantId,
+        {
+          status: status as PlanStatus,
+          ...(filters.categoryId && { categoryId: filters.categoryId }),
+          ...(filters.channelId && { channelId: filters.channelId }),
+          ...(filters.cplId && { cplId: filters.cplId }),
+        },
+        scope,
+      );
       // Filter out duplicates (in case a plan appears in multiple status searches)
       for (const plan of plans) {
         if (!seenPlanIds.has(plan.id)) {
@@ -669,7 +710,29 @@ export class ApprovalWorkflowService {
   async getPlanApprovalHistory(
     planId: string,
     tenantId: string,
+    actor?: PlanActor,
   ): Promise<PlanApprovalHistory[]> {
+    // T-028b: CM kategori-scoped okuma — kapsam dışı plan -> 404 (varlık
+    // sızdırma yok, §3 tablosu "approval-history: kategori-scoped okuma").
+    if (actor?.role === UserRole.CATEGORY_MANAGER) {
+      const plan = await this.planRepo.findById(planId, tenantId);
+      if (!plan) {
+        throw new NotFoundException(`Plan with ID ${planId} not found`);
+      }
+      const scope = await this.accessScope.resolveScope(
+        tenantId,
+        actor.userId,
+        actor.role,
+      );
+      if (!this.accessScope.isInScope(scope, { categoryId: plan.categoryId })) {
+        throw new NotFoundException({
+          statusCode: 404,
+          message: `Plan with ID ${planId} not found`,
+          code: 'OUT_OF_SCOPE',
+        });
+      }
+    }
+
     return this.approvalHistoryRepo.find({
       where: { planId, tenantId },
       relations: ['actionedBy'],

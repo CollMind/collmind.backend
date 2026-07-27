@@ -17,6 +17,7 @@ import { BudgetModule } from '../../../shared/budget/budget.module';
 import { ApprovalModule } from '../../../shared/approval/approval.module';
 import { KpiEngineModule } from '../../../shared/kpi-engine/kpi-engine.module';
 import { SpendCalculationModule } from '../../../shared/spend-calculation/spend-calculation.module';
+import { AccessScopeModule } from '../../../shared/access-scope/access-scope.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { SpendCalculationModule } from '../../../shared/spend-calculation/spend-
     BudgetModule,
     ApprovalModule,
     KpiEngineModule,
+    AccessScopeModule,
     forwardRef(() => SpendCalculationModule),
   ],
   controllers: [PlanController],

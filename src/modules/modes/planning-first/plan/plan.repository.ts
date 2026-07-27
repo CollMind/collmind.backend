@@ -7,6 +7,10 @@ import {
   PlanFu,
   PlanSku,
 } from '../../../../database/entities/plan.entity';
+import {
+  AccessScopeService,
+  EffectiveScope,
+} from '../../../shared/access-scope/access-scope.service';
 
 @Injectable()
 export class PlanRepository {
@@ -17,6 +21,7 @@ export class PlanRepository {
     private readonly planFuRepo: Repository<PlanFu>,
     @InjectRepository(PlanSku)
     private readonly planSkuRepo: Repository<PlanSku>,
+    private readonly accessScope: AccessScopeService,
   ) {}
 
   async create(data: Partial<Plan>): Promise<Plan> {
@@ -59,6 +64,13 @@ export class PlanRepository {
       channelId?: string;
       categoryId?: string;
     },
+    /**
+     * T-028b: CM kategori-scoped okuma (docs/analysis/0004-rbac-brd-alignment.md
+     * §3). Yalnızca çağıran taraf (PlanService) SCOPED bir scope geçtiğinde
+     * uygulanır — UNRESTRICTED için no-op, undefined için de no-op (geriye
+     * uyumlu; PLANNER enforcement T-028c'nin işi, burada bilerek dokunulmadı).
+     */
+    scope?: EffectiveScope,
   ): Promise<Plan[]> {
     const query = this.planRepo
       .createQueryBuilder('plan')
@@ -80,6 +92,9 @@ export class PlanRepository {
       query.andWhere('plan.categoryId = :categoryId', {
         categoryId: filters.categoryId,
       });
+    }
+    if (scope) {
+      this.accessScope.applyToQueryBuilder(query, 'plan', scope);
     }
 
     return (

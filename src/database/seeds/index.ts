@@ -12,6 +12,7 @@ import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
 import { seedSalesActuals } from './sales-actual.seed';
+import { seedUserScopes } from './user-scope.seed';
 
 export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   console.log('🌱 Starting seed process...\n');
@@ -101,6 +102,20 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   const productSeed = await seedProducts(dataSource, tenant.id, adminUser.id);
   console.log(
     `   Product master-data: ${productSeed.categories.length} categories, ${productSeed.genericUnits.length} GUs, ${productSeed.forecastingUnits.length} FUs, ${productSeed.skus.length} SKUs\n`,
+  );
+
+  // 7a-2. Seed UserScope (T-028b) — CM kategori-scoped onay + PLANNER
+  // cross-CPL negatif testler. cpls (adım 4) VE kategoriler (adım 7a) sonrası
+  // çalışmalı; deny-by-default (AccessScopeService R-2) açıldığında
+  // scope'suz PLANNER/CM hiçbir şey görmez — sıra kritik.
+  const userScopeSeed = await seedUserScopes(
+    dataSource,
+    tenant.id,
+    users,
+    adminUser.id,
+  );
+  console.log(
+    `   UserScope: ${userScopeSeed.rowsCreated} created, ${userScopeSeed.rowsSkipped} already present (${userScopeSeed.totalRows} total)\n`,
   );
 
   // 7b. Seed sales actuals (T-020) — Wella actuals_2026-01/02.csv fixture'ları.

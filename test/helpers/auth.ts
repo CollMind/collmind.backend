@@ -17,6 +17,9 @@ import { INestApplication } from '@nestjs/common';
 export const SEED_USERS = {
   ADMIN: { email: 'admin@wella.com', password: 'Collmind2026!' },
   PLANNER: { email: 'planner@wella.com', password: 'Collmind2026!' },
+  // T-028b: cross-planner (§9 N7/N8) ve cross-category (§9 N3/N4) negatif
+  // testler için ikinci scope'lu kullanıcılar.
+  PLANNER2: { email: 'planner2@wella.com', password: 'Collmind2026!' },
   MANAGER: { email: 'manager@wella.com', password: 'Collmind2026!' },
   FINANCE: { email: 'finance@wella.com', password: 'Collmind2026!' },
   FINANCE_MANAGER: {
@@ -25,6 +28,10 @@ export const SEED_USERS = {
   },
   CATEGORY_MANAGER: {
     email: 'category.manager@wella.com',
+    password: 'Collmind2026!',
+  },
+  CATEGORY_MANAGER2: {
+    email: 'category.manager2@wella.com',
     password: 'Collmind2026!',
   },
   READONLY: { email: 'readonly@wella.com', password: 'Collmind2026!' },

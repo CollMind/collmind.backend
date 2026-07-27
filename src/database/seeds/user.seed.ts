@@ -36,6 +36,21 @@ export async function seedUsers(
       tenantId,
     },
     {
+      // T-028b: cross-planner negatif test kullanıcısı (§9 N7/N8 ailesi) —
+      // UserScope Distribütör kanalı CPL'leriyle scope'lanır (user-scope.seed.ts).
+      email: 'planner2@wella.com',
+      fullName: 'Deniz Planner Two',
+      firstName: 'Deniz',
+      lastName: 'Planner Two',
+      role: UserRole.PLANNER,
+      status: UserStatus.ACTIVE,
+      department: 'Sales',
+      jobTitle: 'Trade Planner',
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
+      emailVerified: true,
+      tenantId,
+    },
+    {
       email: 'manager@wella.com',
       fullName: 'Jane Manager',
       firstName: 'Jane',
@@ -83,6 +98,22 @@ export async function seedUsers(
       fullName: 'Mike Category Manager',
       firstName: 'Mike',
       lastName: 'Category Manager',
+      role: UserRole.CATEGORY_MANAGER,
+      status: UserStatus.ACTIVE,
+      department: 'Sales',
+      jobTitle: 'Category Manager',
+      passwordHash: await bcrypt.hash('Collmind2026!', 10),
+      emailVerified: true,
+      tenantId,
+    },
+    {
+      // T-028b: cross-category negatif test kullanıcısı (§9 N3/N4) —
+      // UserScope category.manager@wella.com'la KESİŞMEYEN tek bir kategoriye
+      // scope'lanır (user-scope.seed.ts).
+      email: 'category.manager2@wella.com',
+      fullName: 'Ayşe Category Manager Two',
+      firstName: 'Ayşe',
+      lastName: 'Category Manager Two',
       role: UserRole.CATEGORY_MANAGER,
       status: UserStatus.ACTIVE,
       department: 'Sales',

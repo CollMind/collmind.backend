@@ -123,6 +123,7 @@ describe('PlanController', () => {
         mockUser.id,
         mockTenantId,
         filters,
+        mockUser.role,
       );
       expect(result).toEqual(mockQueue);
     });
@@ -215,6 +216,7 @@ describe('PlanController', () => {
         mockUser.id,
         body.reason,
         body.comments,
+        { userId: mockUser.id, role: mockUser.role },
       );
     });
   });
@@ -235,11 +237,18 @@ describe('PlanController', () => {
         mockHistory as any,
       );
 
-      const result = await controller.getApprovalHistory(planId, mockTenantId);
+      const result = await controller.getApprovalHistory(
+        planId,
+        mockTenantId,
+        mockUser,
+      );
 
       expect(
         approvalWorkflowService.getPlanApprovalHistory,
-      ).toHaveBeenCalledWith(planId, mockTenantId);
+      ).toHaveBeenCalledWith(planId, mockTenantId, {
+        userId: mockUser.id,
+        role: mockUser.role,
+      });
       expect(result).toEqual(mockHistory);
     });
   });

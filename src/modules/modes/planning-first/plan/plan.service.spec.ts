@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException } from '@nestjs/common';
 import { PlanService } from './plan.service';
 import { PlanRepository } from './plan.repository';
+import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
@@ -133,6 +134,15 @@ describe('PlanService', () => {
           provide: getRepositoryToken(Tactic),
           useValue: {
             find: jest.fn(),
+          },
+        },
+        {
+          provide: AccessScopeService,
+          useValue: {
+            resolveScope: jest.fn(),
+            isInScope: jest.fn().mockReturnValue(true),
+            assertEntityInScope: jest.fn(),
+            applyToQueryBuilder: jest.fn(),
           },
         },
       ],

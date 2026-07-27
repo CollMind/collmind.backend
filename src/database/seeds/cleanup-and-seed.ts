@@ -12,6 +12,7 @@ import { seedProducts } from './product.seed';
 import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
+import { seedUserScopes } from './user-scope.seed';
 
 config();
 
@@ -117,6 +118,17 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
   const productSeed = await seedProducts(dataSource, tenant.id, adminUser.id);
   console.log(
     `   Product master-data: ${productSeed.categories.length} categories, ${productSeed.genericUnits.length} GUs, ${productSeed.forecastingUnits.length} FUs, ${productSeed.skus.length} SKUs\n`,
+  );
+
+  // 7a-2. Seed UserScope (T-028b) — bkz. index.ts aynı adım için gerekçe.
+  const userScopeSeed = await seedUserScopes(
+    dataSource,
+    tenant.id,
+    users,
+    adminUser.id,
+  );
+  console.log(
+    `   UserScope: ${userScopeSeed.rowsCreated} created, ${userScopeSeed.rowsSkipped} already present (${userScopeSeed.totalRows} total)\n`,
   );
 
   // 8. Seed agreements (use CPL ID instead of customer ID)

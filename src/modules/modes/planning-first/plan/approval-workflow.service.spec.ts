@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ApprovalWorkflowService } from './approval-workflow.service';
 import { PlanRepository } from './plan.repository';
+import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
@@ -109,6 +110,15 @@ describe('ApprovalWorkflowService', () => {
             create: jest.fn(),
             save: jest.fn(),
             find: jest.fn(),
+          },
+        },
+        {
+          provide: AccessScopeService,
+          useValue: {
+            resolveScope: jest.fn(),
+            isInScope: jest.fn().mockReturnValue(true),
+            assertEntityInScope: jest.fn(),
+            applyToQueryBuilder: jest.fn(),
           },
         },
       ],

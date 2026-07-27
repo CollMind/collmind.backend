@@ -1063,7 +1063,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
   // ══════════════════════════════════════════════════════════════════════
 
   describe('B) Planner kapsam (CPL scope) kanıtı', () => {
-    it('B1. user_scopes tablosu boş mu (kanıt: scope verisi hiç yok)', async () => {
+    it('B1. user_scopes tablosu dolu mu (T-028b: user-scope.seed.ts kanıtı; PLANNER enforcement hâlâ T-028c işi)', async () => {
       const rows = await dataSource.query(
         `SELECT count(*)::int AS c FROM main.user_scopes WHERE tenant_id = $1`,
         [fixture.tenantId],
@@ -1072,10 +1072,12 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         step: 'B1',
         role: '-',
         endpoint: 'DB: main.user_scopes',
-        expected: '> 0 satır (PLANNER için CPL/kategori ataması olmalı)',
+        expected:
+          '> 0 satır (T-028b user-scope.seed.ts: planner/planner2/category.manager/category.manager2)',
         actual: rows[0].c,
-        note: 'user_scopes tablosu için hiç seed yok — planner.service.ts hiçbir yerde bu tabloyu okumuyor',
+        note: 'T-028b FIX: user-scope.seed.ts artık planner/planner2 (NKA/Distribütör CPL) ve category.manager/category.manager2 (kategori) satırlarını üretiyor (bkz. §9 N14). PLANNER için bu veri PlanService.findAll/create tarafından HENÜZ okunmuyor (T-028c) — bu satır sadece veri varlığını kanıtlar, enforcement B2/B3 hâlâ eski (bilinçli) davranışı gösterir.',
       });
+      expect(rows[0].c).toBeGreaterThan(0);
     });
 
     it('B2. PLANNER → PLANNER kullanıcısına atanmamış farklı bir CPL ile POST /plans dener', async () => {
@@ -1143,6 +1145,378 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // verilirse uygulanır; PLANNER'ın kendi scope'una göre otomatik
       // filtrelenmesi YOK → PLANNER = ADMIN sayısı bekleniyor.
       expect(plannerRes.body.length).toBe(adminRes.body.length);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // E) CM KATEGORİ-SCOPED ONAY (T-028b) — docs/analysis/0004 §3/§9
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // category.manager@wella.com  -> scope: CAT-SAC-BOYASI, CAT-SET-BOYA
+  // category.manager2@wella.com -> scope: CAT-SEKILLENDIRICI (KESİŞMEZ)
+  // (bkz. src/database/seeds/user-scope.seed.ts)
+
+  describe('E) CM kategori-scoped onay (T-028b)', () => {
+    let CATEGORY_OTHER: string; // CAT-SEKILLENDIRICI — category.manager'ın DIŞINDA
+    const scratchPlanIds: string[] = [];
+
+    beforeAll(async () => {
+      CATEGORY_OTHER = await resolveIdByCode(
+        dataSource,
+        fixture.tenantId,
+        'categories',
+        'CAT-SEKILLENDIRICI',
+      );
+    });
+
+    afterAll(async () => {
+      // Yalnızca DRAFT kalanlar silinebilir; APPROVED/PENDING olanlar BRD
+      // gereği kalıcıdır (dosya başlığı izolasyon notuyla tutarlı).
+      const admin = await loginAs(app, 'ADMIN');
+      for (const id of scratchPlanIds) {
+        try {
+          const res = await request(app.getHttpServer())
+            .get(`/plans/${id}`)
+            .set(admin.authHeader());
+          if (res.status === 200 && res.body?.status === 'DRAFT') {
+            await request(app.getHttpServer())
+              .delete(`/plans/${id}`)
+              .set(admin.authHeader());
+          }
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    });
+
+    async function createDraftPlan(
+      actor: Awaited<ReturnType<typeof loginAs>>,
+      categoryId: string,
+      namePrefix: string,
+    ): Promise<string> {
+      const res = await request(app.getHttpServer())
+        .post('/plans')
+        .set(actor.authHeader())
+        .send({
+          planName: `${namePrefix}-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      scratchPlanIds.push(res.body.id);
+      return res.body.id;
+    }
+
+    /** DRAFT plan + FU_WELLA_HC_500ML (COGS dolu fixture) + submit -> PENDING_APPROVAL, totalSpend > 0. */
+    async function createSubmittedPlan(
+      actor: Awaited<ReturnType<typeof loginAs>>,
+      categoryId: string,
+      namePrefix: string,
+    ): Promise<string> {
+      const id = await createDraftPlan(actor, categoryId, namePrefix);
+
+      await request(app.getHttpServer())
+        .post(`/plans/${id}/fus`)
+        .set(actor.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML })
+        .expect(201);
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${id}`)
+        .set(actor.authHeader())
+        .expect(200);
+      const planFu = planRes.body.planFus[0];
+      const skuId = planFu.planSkus[0].skuId;
+
+      await request(app.getHttpServer())
+        .patch(`/plans/${id}/fus/${FU_WELLA_HC_500ML}/skus/${skuId}/volume`)
+        .set(actor.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000 })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/plans/${id}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(actor.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 } })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post(`/plans/${id}/recalculate`)
+        .set(actor.authHeader())
+        .send({})
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post(`/plans/${id}/submit`)
+        .set(actor.authHeader())
+        .expect(200);
+
+      return id;
+    }
+
+    it('N1. CATEGORY_MANAGER → POST /plans → 403 (CM plan oluşturamaz)', async () => {
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const res = await request(app.getHttpServer())
+        .post('/plans')
+        .set(cm.authHeader())
+        .send({
+          planName: `E2E-N1-CM-CREATE-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        });
+
+      record({
+        step: 'N1',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'POST /plans',
+        expected: 403,
+        actual: res.status,
+        note: "BRD: CM plan düzenleyemez/oluşturamaz — @Roles(ADMIN, PLANNER) zaten CM'i dışlıyor (RolesGuard, değişmedi).",
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('N2. CATEGORY_MANAGER → PATCH /plans/:id → 403 (kendi kategorisindeki plan olsa dahi)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const ownCategoryPlanId = await createDraftPlan(
+        planner,
+        CATEGORY_SAC_BOYASI,
+        'E2E-N2-CM-UPDATE',
+      );
+
+      const res = await request(app.getHttpServer())
+        .patch(`/plans/${ownCategoryPlanId}`)
+        .set(cm.authHeader())
+        .send({ planName: 'hacked-by-cm' });
+
+      record({
+        step: 'N2',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'PATCH /plans/:id',
+        expected: 403,
+        actual: res.status,
+        note: 'BRD: CM plan düzenleyemez — kendi kategorisindeki bir plan olsa bile yazma yetkisi yok (@Roles(ADMIN, PLANNER)).',
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('N3. CATEGORY_MANAGER → GET /plans/:id (başka kategori) → 404 (varlık sızdırma yok)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const otherCategoryPlanId = await createDraftPlan(
+        planner,
+        CATEGORY_OTHER,
+        'E2E-N3-CM-OUT-OF-SCOPE-GET',
+      );
+
+      const res = await request(app.getHttpServer())
+        .get(`/plans/${otherCategoryPlanId}`)
+        .set(cm.authHeader());
+
+      record({
+        step: 'N3',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'GET /plans/:id (kapsam dışı kategori)',
+        expected: 404,
+        actual: res.status,
+        note: 'T-028b FIX: AccessScopeService.isInScope + PlanService#assertCmReadScope — CM kategori kesişimi yoksa 404 (varlık sızdırma yok, docs/analysis/0004 §3/§9 N3).',
+      });
+      expect(res.status).toBe(404);
+      expect(res.body?.code).toBe('OUT_OF_SCOPE');
+    });
+
+    it('N3b. CATEGORY_MANAGER2 → aynı plan → 200 (kendi kategorisi — kesişim var)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm2 = await loginAs(app, 'CATEGORY_MANAGER2');
+      const otherCategoryPlanId = await createDraftPlan(
+        planner,
+        CATEGORY_OTHER,
+        'E2E-N3b-CM2-IN-SCOPE-GET',
+      );
+
+      const res = await request(app.getHttpServer())
+        .get(`/plans/${otherCategoryPlanId}`)
+        .set(cm2.authHeader());
+
+      record({
+        step: 'N3b',
+        role: 'CATEGORY_MANAGER2',
+        endpoint: 'GET /plans/:id (kendi kategorisi)',
+        expected: 200,
+        actual: res.status,
+        note: 'Pozitif kontrol: N3 404 sonucunun rastgele değil, gerçek kategori kesişimine dayandığının kanıtı (category.manager2 -> CAT-SEKILLENDIRICI scope).',
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it('N4. CATEGORY_MANAGER → POST /plans/:id/approve (başka kategori, PENDING_APPROVAL) → 403', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const otherCategoryPlanId = await createSubmittedPlan(
+        planner,
+        CATEGORY_OTHER,
+        'E2E-N4-CM-OUT-OF-SCOPE-APPROVE',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${otherCategoryPlanId}/approve`)
+        .set(cm.authHeader())
+        .send({ comments: 'should be forbidden' });
+
+      record({
+        step: 'N4',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'POST /plans/:id/approve (kapsam dışı kategori)',
+        expected: 403,
+        actual: res.status,
+        note: "T-028b FIX: PlanService#assertCmDecisionScope — CM kategori kesişimi yoksa 403 (docs/analysis/0004 §3/§9 N4). approve() route ADMIN|CATEGORY_MANAGER'a açık (RolesGuard geçer), scope kontrolü servis katmanında.",
+      });
+      expect(res.status).toBe(403);
+
+      // Bütçe reserve edilmiş olabilir (submit sırasında) — temizlik: reject
+      // ile release et (admin, self-approval guard'ına takılmasın diye farklı hesap).
+      const admin = await loginAs(app, 'ADMIN');
+      await request(app.getHttpServer())
+        .post(`/plans/${otherCategoryPlanId}/reject`)
+        .set(admin.authHeader())
+        .send({ reason: 'E2E N4 cleanup' });
+    });
+
+    it('N5. PLANNER → POST /plans/:id/approve → 403 (BRD: Planner onaylayamaz)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${planId}/approve`)
+        .set(planner.authHeader())
+        .send({ comments: 'planner cannot approve' });
+
+      record({
+        step: 'N5',
+        role: 'PLANNER',
+        endpoint: 'POST /plans/:id/approve',
+        expected: 403,
+        actual: res.status,
+        note: "BRD: Planner plan onaylayamaz — @Roles(ADMIN, CATEGORY_MANAGER) zaten PLANNER'ı dışlıyor (RolesGuard, değişmedi).",
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('N11. FINANCE_MANAGER → POST /plans/:id/approve (PENDING_APPROVAL) → 403 (ADR-0002)', async () => {
+      const fm = await loginAs(app, 'FINANCE_MANAGER');
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${planId}/approve`)
+        .set(fm.authHeader())
+        .send({ comments: 'fm cannot approve normal queue' });
+
+      record({
+        step: 'N11',
+        role: 'FINANCE_MANAGER',
+        endpoint: 'POST /plans/:id/approve',
+        expected: 403,
+        actual: res.status,
+        note: "ADR-0002: FM yalnızca PENDING_FINANCE_REVIEW onaylar — /plans/:id/approve route'u zaten @Roles(ADMIN, CATEGORY_MANAGER) (FM listede yok), RolesGuard seviyesinde 403.",
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('N12. self-approval → 403 (F7: legacy PlanService.approve() self-approval guard)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const selfApprovePlanId = await createSubmittedPlan(
+        admin,
+        CATEGORY_SAC_BOYASI,
+        'E2E-N12-SELF-APPROVE',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${selfApprovePlanId}/approve`)
+        .set(admin.authHeader())
+        .send({ comments: 'self approving own submission' });
+
+      record({
+        step: 'N12',
+        role: 'ADMIN (submitter === approver)',
+        endpoint: 'POST /plans/:id/approve (self-approval)',
+        expected: 403,
+        actual: res.status,
+        note: "F7 FIX (docs/analysis/0004 §1/§9 N12): PlanService.approve() artık plan.submittedById === userId ise 403 atıyor — önceden legacy/kanonik yol (submit()+approve(), frontend'in fiilen kullandığı) self-approval kontrolü yapmıyordu (yalnızca ApprovalWorkflowService#reviewPlan'de vardı). submit() artık submittedById'yi de yazıyor (bu fix olmadan guard veri yokluğundan hiç tetiklenmezdi).",
+      });
+      expect(res.status).toBe(403);
+
+      // Temizlik: reject ile release et (farklı bir hesap — CATEGORY_MANAGER
+      // kendi kategorisinde: CAT-SAC-BOYASI, admin self-approval'a takılmaz
+      // çünkü submittedById === admin.id, reject de aynı guard'ı taşıyor —
+      // CM ile temizle).
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      await request(app.getHttpServer())
+        .post(`/plans/${selfApprovePlanId}/reject`)
+        .set(cm.authHeader())
+        .send({ reason: 'E2E N12 cleanup' });
+    });
+
+    it('N14. main.user_scopes satır sayısı > 0 (T-028b seed kanıtı — B1 ile aynı, burada da tekrarlanır)', async () => {
+      const rows = await dataSource.query(
+        `SELECT count(*)::int AS c FROM main.user_scopes WHERE tenant_id = $1`,
+        [fixture.tenantId],
+      );
+      record({
+        step: 'N14',
+        role: '-',
+        endpoint: 'DB: main.user_scopes',
+        expected: '> 0',
+        actual: rows[0].c,
+        note: 'docs/analysis/0004 §9 N14 — user-scope.seed.ts idempotent upsert.',
+      });
+      expect(rows[0].c).toBeGreaterThan(0);
+    });
+
+    it('POZİTİF: CATEGORY_MANAGER → kendi kategorisinde approval-queue 200 + approve 200 (APPROVED + bütçe COMMIT)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+
+      const ownCategoryPlanId = await createSubmittedPlan(
+        planner,
+        CATEGORY_SAC_BOYASI,
+        'E2E-POS-CM-OWN-CATEGORY',
+      );
+
+      const queueRes = await request(app.getHttpServer())
+        .get('/plans/approval-queue')
+        .set(cm.authHeader())
+        .expect(200);
+      const inQueue = (queueRes.body as any[]).some(
+        (p) => p.id === ownCategoryPlanId,
+      );
+
+      const approveRes = await request(app.getHttpServer())
+        .post(`/plans/${ownCategoryPlanId}/approve`)
+        .set(cm.authHeader())
+        .send({ comments: 'CM approves own-category plan' });
+
+      const commitTx = await dataSource.query(
+        `SELECT tx_type FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'COMMIT'`,
+        [ownCategoryPlanId],
+      );
+
+      record({
+        step: 'POS-CM',
+        role: 'CATEGORY_MANAGER',
+        endpoint:
+          'GET /plans/approval-queue + POST /plans/:id/approve (kendi kategorisi)',
+        expected: 'queue içinde=true, approve=200 APPROVED, >=1 COMMIT tx',
+        actual: `queue içinde=${inQueue}, approve=${approveRes.status}/${approveRes.body?.status}, commitTxCount=${commitTx.length}`,
+        note: "T-028b: F3 fix (approval-queue kategori kesişimi) + kendi kategorisinde approve akışının BRD state machine'i (PENDING_APPROVAL -> APPROVED, RESERVE -> COMMIT) bozmadığının kanıtı.",
+      });
+
+      expect(inQueue).toBe(true);
+      expect(approveRes.status).toBe(200);
+      expect(approveRes.body.status).toBe('APPROVED');
+      expect(commitTx.length).toBeGreaterThanOrEqual(1);
     });
   });
 
