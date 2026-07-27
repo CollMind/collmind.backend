@@ -196,14 +196,50 @@ export class ApprovalWorkflowService {
       );
     }
 
-    // Create history entry
-    await this.createHistoryEntry(
-      planId,
-      tenantId,
-      userId,
-      ApprovalHistoryAction.SUBMITTED,
-      dto.submissionNotes,
-    );
+    // Create history entry.
+    // NOTE: PlanRepository/BudgetService/approvalHistoryRepo do not currently share a
+    // single QueryRunner/EntityManager, so this cannot be wrapped in a real DB
+    // transaction without a broader refactor (tracked as an open point). To avoid
+    // leaving the plan in a PENDING_APPROVAL "limbo" state (status updated + budget
+    // reserved, but no audit trail and the client receiving a 500), we treat history
+    // write failure as fatal and compensate: release the reserved budget and revert
+    // the plan back to DRAFT before propagating the error to the client.
+    try {
+      await this.createHistoryEntry(
+        planId,
+        tenantId,
+        userId,
+        ApprovalHistoryAction.SUBMITTED,
+        dto.submissionNotes,
+      );
+    } catch (error) {
+      this.logger.error(
+        `createHistoryEntry failed after status update + budget reservation for plan ${planId}; compensating (release budget, revert to DRAFT): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      try {
+        await this.releaseBudgetForPlan(planId, tenantId, userId);
+      } catch (releaseError) {
+        this.logger.error(
+          `Compensation failed: could not release budget for plan ${planId} after history write failure: ${
+            releaseError instanceof Error
+              ? releaseError.message
+              : 'Unknown error'
+          }`,
+        );
+      }
+      // Consistent with the existing budget-reservation-failure rollback above:
+      // revert status to DRAFT. approvalRequestId/submittedAt/submittedById are left
+      // as-is (same as the existing rollback branch) — they get overwritten on the
+      // next successful submitForApproval call.
+      await this.planRepo.updateStatus(planId, tenantId, PlanStatus.DRAFT, {
+        updatedBy: userId,
+      });
+      throw new InternalServerErrorException(
+        'Failed to record approval history for plan submission; submission has been rolled back to DRAFT.',
+      );
+    }
 
     return {
       success: true,

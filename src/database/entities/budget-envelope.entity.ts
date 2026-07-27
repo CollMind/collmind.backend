@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Tenant } from './tenant.entity';
+import { DecimalTransformer } from '../transformers/decimal.transformer';
 
 export enum BudgetEnvelopeStatus {
   DRAFT = 'DRAFT',
@@ -38,6 +39,7 @@ export class BudgetEnvelope extends BaseEntity {
     type: 'decimal',
     precision: 15,
     scale: 2,
+    transformer: DecimalTransformer,
   })
   allocatedAmount!: number;
 
@@ -47,6 +49,7 @@ export class BudgetEnvelope extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   consumedAmount!: number;
 
@@ -55,6 +58,7 @@ export class BudgetEnvelope extends BaseEntity {
     type: 'decimal',
     precision: 15,
     scale: 2,
+    transformer: DecimalTransformer,
   })
   availableAmount!: number;
 

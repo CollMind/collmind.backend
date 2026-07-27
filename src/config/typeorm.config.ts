@@ -42,6 +42,7 @@ import { LTAPlanOverride } from '../database/entities/lta-plan-override.entity';
 import { BudgetAllocation } from '../database/entities/budget-allocation.entity';
 import { BudgetTransactionLog } from '../database/entities/budget-transaction-log.entity';
 import { BudgetAlertConfiguration } from '../database/entities/budget-alert-configuration.entity';
+import { PlanApprovalHistory } from '../database/entities/plan-approval-history.entity';
 import { join } from 'path';
 
 // Only load .env file if it exists (for local development)
@@ -123,6 +124,7 @@ export const dataSourceOptions: DataSourceOptions = {
     BudgetAllocation,
     BudgetTransactionLog,
     BudgetAlertConfiguration,
+    PlanApprovalHistory,
   ],
   migrations: (() => {
     // Use glob pattern for both development and production

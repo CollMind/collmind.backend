@@ -45,6 +45,7 @@ import { LTAPlanOverride } from './entities/lta-plan-override.entity';
 import { BudgetAllocation } from './entities/budget-allocation.entity';
 import { BudgetTransactionLog } from './entities/budget-transaction-log.entity';
 import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.entity';
+import { PlanApprovalHistory } from './entities/plan-approval-history.entity';
 
 @Module({
   imports: [
@@ -127,6 +128,7 @@ import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.
             BudgetAllocation,
             BudgetTransactionLog,
             BudgetAlertConfiguration,
+            PlanApprovalHistory,
           ],
           synchronize: false,
           logging: configService.get('NODE_ENV') === 'development',

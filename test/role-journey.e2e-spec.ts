@@ -1,0 +1,1111 @@
+/**
+ * role-journey.e2e-spec.ts
+ *
+ * QA teşhis testi — "Uçtan uca rol bazlı akış" (bkz. görev tanımı, 2026-07-27).
+ *
+ * AMAÇ: Kod okuyup tahmin etmek yerine, gerçek rol JWT'leri ile gerçek HTTP
+ * isteklerini uçtan uca çalıştırıp CollMind TPM'in Planning-First ve
+ * Actuals-First akışlarını, RBAC sınırlarını ve dashboard rol görünürlüğünü
+ * fiilen kanıtlamak. Bu dosya DÜZELTME içermez — yalnızca teşhis + regresyon.
+ *
+ * Her `record()` çağrısı bir satırı "role-journey sonuç tablosu"na ekler;
+ * bu tablo afterAll'da console.table ile basılır (raporlama için).
+ *
+ * Test verisi izolasyonu:
+ *   - Plan/agreement isimleri "E2E-ROLE-JOURNEY-" öneki taşır.
+ *   - Off-invoice transaction'lar "E2E-INV-" pattern'i kullanır → cleanupTestTransactions.
+ *   - Sales-actuals "2027-*" fiscalPeriod kullanır → cleanupSalesActuals.
+ *   - Plan/agreement DELETE endpoint'i olmadığından (yalnızca DRAFT plan silinebilir,
+ *     agreement'ın DELETE'i yok) bu kayıtlar DB'de "E2E-ROLE-JOURNEY-*" olarak kalır;
+ *     dev DB'de gürültü yaratmamak için testin sonunda mümkün olanlar temizlenir.
+ */
+
+import request from 'supertest';
+import { INestApplication } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
+import { loginAs, clearTokenCache } from './helpers/auth';
+import {
+  loadE2EFixture,
+  E2EFixture,
+  cleanupTestTransactions,
+  cleanupSalesActuals,
+} from './helpers/seed-e2e';
+
+// ── Seed sabitleri (gerçek dev DB'den doğrulanmış, bkz. görev teşhis notları) ──
+const CPL_1 = 'b39ade6a-ea33-413f-95a0-281c859f32fd'; // BS0501.50001 Gratis
+const CPL_2 = '4b3850a8-d598-49ca-a740-94730fd7cfa6'; // BS0501.50004 A.S.Watson
+const CHANNEL_NKA = '7ecd1c45-9697-4a06-8416-3ba599977494'; // code NKA
+const CATEGORY_SAC_BOYASI = 'ac979ec6-6dee-4816-8e37-191913aa3082'; // CAT-SAC-BOYASI
+const FU_TUP_BOYA = 'f44c4bb9-419e-4a65-af38-c9206a0f564b'; // FU-TUP-BOYA
+const FU_WELLA_HC_500ML = '8c500433-8582-4c97-8601-76bc5ba191ce'; // agreement seed FU
+const TACTIC_PROMO = 'e647e274-0ca6-49be-aa2f-0f6e4b380233'; // TAC-PROMO
+const MECHANIC_DISCOUNT = 'afcf9ffb-9741-42c5-b07b-e03c0de35588'; // MEC-DISCOUNT
+
+interface JourneyResult {
+  step: string;
+  role: string;
+  endpoint: string;
+  expected: string | number;
+  actual: string | number;
+  note: string;
+}
+
+const results: JourneyResult[] = [];
+function record(r: JourneyResult) {
+  results.push(r);
+}
+
+describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
+  let app: INestApplication;
+  let fixture: E2EFixture;
+  let dataSource: DataSource;
+
+  // A) Planning-first akışı boyunca doldurulan durum
+  let planId: string;
+  let planFuId: string;
+  let planSkuId: string;
+  let envelopeId: string | undefined;
+
+  // C) Actuals-first akışı
+  let agreementSettlementId: string; // settlement close için
+  let agreementReversalId: string; // reversal için
+  let reversalTransactionId: string;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+    clearTokenCache();
+    fixture = await loadE2EFixture(app);
+    dataSource = app.get<DataSource>(getDataSourceToken());
+    await cleanupSalesActuals(app, fixture.tenantId);
+  }, 60000);
+
+  afterAll(async () => {
+    // ── Temizlik: test verisi bırakma ──
+    try {
+      if (agreementReversalId) {
+        await cleanupTestTransactions(app, agreementReversalId);
+      }
+    } catch (e) {
+      console.warn('Cleanup (reversal tx) başarısız:', e);
+    }
+    try {
+      if (agreementSettlementId) {
+        await cleanupTestTransactions(app, agreementSettlementId);
+      }
+    } catch (e) {
+      console.warn('Cleanup (settlement tx) başarısız:', e);
+    }
+    try {
+      await cleanupSalesActuals(app, fixture.tenantId);
+    } catch (e) {
+      console.warn('Cleanup (sales-actuals) başarısız:', e);
+    }
+    // DRAFT plan varsa sil (yalnızca DRAFT silinebilir; APPROVED planlar BRD
+    // gereği silinemez — bu kasıtlı, temizlenmeyecek).
+    try {
+      if (planId) {
+        const admin = await loginAs(app, 'ADMIN');
+        const planRes = await request(app.getHttpServer())
+          .get(`/plans/${planId}`)
+          .set(admin.authHeader());
+        if (planRes.status === 200 && planRes.body?.status === 'DRAFT') {
+          await request(app.getHttpServer())
+            .delete(`/plans/${planId}`)
+            .set(admin.authHeader());
+        }
+      }
+    } catch (e) {
+      console.warn('Cleanup (plan) başarısız:', e);
+    }
+
+    // ── Sonuç tablosunu bas ──
+    // eslint-disable-next-line no-console
+    console.log('\n=== ROLE JOURNEY SONUÇ TABLOSU ===');
+    // eslint-disable-next-line no-console
+    console.table(results);
+
+    await closeTestApp();
+  }, 60000);
+
+  // ══════════════════════════════════════════════════════════════════════
+  // A) PLANNING-FIRST AKIŞI
+  // ══════════════════════════════════════════════════════════════════════
+
+  describe('A) Planning-first akışı', () => {
+    it('A1. PLANNER → POST /plans (gerçek CPL+kategori+dönem)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        });
+
+      record({
+        step: 'A1',
+        role: 'PLANNER',
+        endpoint: 'POST /plans',
+        expected: 201,
+        actual: res.status,
+        note:
+          res.status === 201
+            ? `planId=${res.body.id}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(201);
+      planId = res.body.id;
+      expect(res.body.status).toBe('DRAFT');
+    });
+
+    it('A2. PLANNER → POST /plans/:id/fus (FU-TUP-BOYA)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_TUP_BOYA });
+
+      record({
+        step: 'A2',
+        role: 'PLANNER',
+        endpoint: 'POST /plans/:id/fus',
+        expected: 201,
+        actual: res.status,
+        note:
+          res.status === 201
+            ? `planFuId=${res.body.id}, skuCount=?`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(201);
+      planFuId = res.body.id;
+
+      // İlk SKU'yu al (grid hiyerarşisi: FU eklenince SKU'lar otomatik miras alınır)
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const planFu = planRes.body.planFus.find((f: any) => f.id === planFuId);
+      expect(planFu).toBeDefined();
+      expect(planFu.planSkus.length).toBeGreaterThan(0);
+      planSkuId = planFu.planSkus[0].skuId;
+    });
+
+    it('A3. PLANNER → PATCH SKU volume', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/skus/${planSkuId}/volume`)
+        .set(planner.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000 });
+
+      record({
+        step: 'A3',
+        role: 'PLANNER',
+        endpoint: 'PATCH /plans/:id/fus/:fuId/skus/:skuId/volume',
+        expected: 200,
+        actual: res.status,
+        note:
+          res.status === 200
+            ? `plannedVolume=${res.body.plannedVolume}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('A4. PLANNER → PATCH FU tactic (CPP_ON_PCT=10, VIS_LS=2000)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 } });
+
+      record({
+        step: 'A4',
+        role: 'PLANNER',
+        endpoint: 'PATCH /plans/:id/fus/:fuId/tactics',
+        expected: 200,
+        actual: res.status,
+        note:
+          res.status === 200
+            ? `tactics=${JSON.stringify(res.body.tactics)}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('A5. PLANNER → POST /plans/:id/recalculate — KPI/ROI/RAG doluyor mu', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${planId}/recalculate`)
+        .set(planner.authHeader())
+        .send({});
+
+      const sku = res.body?.planFus?.[0]?.planSkus?.find(
+        (s: any) => s.id === planSkuId,
+      );
+
+      record({
+        step: 'A5',
+        role: 'PLANNER',
+        endpoint: 'POST /plans/:id/recalculate',
+        expected: 200,
+        actual: res.status,
+        note:
+          res.status === 200
+            ? `plan.overallRoi=${res.body.overallRoi}, plan.ragStatus=${res.body.ragStatus}, plan.totalSpend=${res.body.totalSpend}, sku.gpRoi=${sku?.gpRoi}, sku.ragStatus=${sku?.ragStatus}, sku.plannedTurnover=${sku?.plannedTurnover}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalSpend).not.toBeNull();
+
+      // ── GERÇEK DEFECT KANITI: "eksik veri → null" BRD kuralı ihlali ──
+      // Seed'deki HİÇBİR SKU'da cogs (main.skus.cogs) dolu değil (bkz. B1
+      // benzeri DB doğrulaması: `SELECT count(*) FROM main.skus WHERE cogs
+      // IS NOT NULL` → 0). BRD kuralı: eksik veri → null KPI. Ancak
+      // plan.service.ts:628 `const cogs = Number(sku.cogs) || 0;` yazıyor —
+      // `Number(null)` JS'te 0'dır, dolayısıyla eksik COGS sessizce 0'a
+      // düşüyor (null'a değil). Sonuç: PLANNED_COGS = PLAN_VOL * 0 = 0,
+      // PLANNED_GP = PLANNED_TO - 0 = PLANNED_TO (tam ciro), GP_ROI_PCT
+      // = %100, ragStatus = GREEN — GERÇEKTE karlılık verisi eksik olduğu
+      // için null/UNKNOWN olması gerekirken YANILTICI ŞEKİLDE "mükemmel"
+      // (%100 ROI, GREEN) gösteriliyor. DB'den doğrulandı:
+      //   plan_skus.planned_gp === plan_skus.planned_turnover (tam eşit)
+      //   plan_skus.gp_roi = 100.0000, rag_status = GREEN
+      // Bu, plan.service.ts:627-628 (unitPrice/cogs "|| 0" fallback) için net.
+      expect(res.body.overallRoi).not.toBeNull(); // BRD'ye göre NULL olmalıydı — bug'ı belgeliyoruz
+      expect(Number(res.body.overallRoi)).toBe(100); // gözlemlenen (buggy) değer
+
+      const skuRow = await dataSource.query(
+        `SELECT ps.planned_turnover, ps.planned_gp, ps.gp_roi, ps.rag_status
+         FROM main.plan_skus ps WHERE ps.id = $1`,
+        [planSkuId],
+      );
+      record({
+        step: 'A5b',
+        role: '-',
+        endpoint: 'DB: main.plan_skus (COGS eksik veri defecti)',
+        expected:
+          'planned_gp < planned_turnover VE gp_roi/rag_status NULL (eksik COGS)',
+        actual: `planned_turnover=${skuRow[0]?.planned_turnover}, planned_gp=${skuRow[0]?.planned_gp}, gp_roi=${skuRow[0]?.gp_roi}, rag_status=${skuRow[0]?.rag_status}`,
+        note: 'GERÇEK DEFECT: planned_gp === planned_turnover (COGS sessizce 0 kabul edildi) → GP_ROI_PCT=%100 GREEN. Kök neden: plan.service.ts:628 `Number(sku.cogs) || 0` — BRD "eksik veri → null" ihlali.',
+      });
+      expect(Number(skuRow[0]?.planned_gp)).toBe(
+        Number(skuRow[0]?.planned_turnover),
+      );
+    });
+
+    it('A6. PLANNER → GET /plans/:id/budget-check', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .get(`/plans/${planId}/budget-check`)
+        .set(planner.authHeader());
+
+      record({
+        step: 'A6',
+        role: 'PLANNER',
+        endpoint: 'GET /plans/:id/budget-check',
+        expected: '200 veya 403 (PLANNER Roles listesinde yok!)',
+        actual: res.status,
+        note: JSON.stringify(res.body).slice(0, 200),
+      });
+
+      if (res.status === 200) {
+        envelopeId = res.body.envelope?.id;
+      }
+      // Not: PlanController @Get(':id/budget-check') Roles = ADMIN, MANAGER,
+      // READONLY — PLANNER YOK. Bu adım BRD ihlali/mantık boşluğu adayı:
+      // planı hazırlayan PLANNER kendi planının bütçe uygunluğunu kontrol
+      // edemiyor olabilir (submit-for-approval zaten dahili budget-check
+      // yapıyor ama kullanıcı arayüzünden manuel kontrol imkânı yok).
+    });
+
+    it('A6b. ADMIN → GET /plans/:id/budget-check (fallback ile envelope doğrula)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+
+      const res = await request(app.getHttpServer())
+        .get(`/plans/${planId}/budget-check`)
+        .set(admin.authHeader())
+        .expect(200);
+
+      record({
+        step: 'A6b',
+        role: 'ADMIN',
+        endpoint: 'GET /plans/:id/budget-check',
+        expected: 200,
+        actual: res.status,
+        note: `hasBudget=${res.body.hasBudget}, sufficient=${res.body.sufficient}, envelope=${res.body.envelope?.code}`,
+      });
+
+      envelopeId = res.body.envelope?.id;
+      expect(res.body.hasBudget).toBe(true);
+    });
+
+    it('A7. PLANNER → GET /plans/:id/analysis', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .get(`/plans/${planId}/analysis`)
+        .set(planner.authHeader());
+
+      record({
+        step: 'A7',
+        role: 'PLANNER',
+        endpoint: 'GET /plans/:id/analysis',
+        expected: 200,
+        actual: res.status,
+        note: JSON.stringify(res.body).slice(0, 150),
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('A8. PLANNER → POST /plans/:id/submit-for-approval', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${planId}/submit-for-approval`)
+        .set(planner.authHeader())
+        .send({ submissionNotes: 'E2E role-journey submission' });
+
+      record({
+        step: 'A8',
+        role: 'PLANNER',
+        endpoint: 'POST /plans/:id/submit-for-approval',
+        expected: 200,
+        actual: res.status,
+        note: `status=${res.body.status}, budgetCheck.overallSufficient=${res.body.budgetCheck?.overallSufficient}`,
+      });
+
+      // T-026 (D-1) FIX: PlanApprovalHistory artık merkezi DataSource entity
+      // listelerinde (typeorm.config.ts + database.module.ts) kayıtlı → submit
+      // 200 + PENDING_APPROVAL dönüyor (BRD beklentisiyle uyumlu).
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('PENDING_APPROVAL');
+
+      const admin = await loginAs(app, 'ADMIN');
+      const planCheck = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(admin.authHeader())
+        .expect(200);
+
+      record({
+        step: 'A8b',
+        role: '-',
+        endpoint: 'GET /plans/:id (DB gerçek durum kontrolü)',
+        expected: 'PENDING_APPROVAL',
+        actual: planCheck.body.status,
+        note: 'submit-for-approval başarılı; plan durumu ve approval history tutarlı şekilde ilerledi',
+      });
+      expect(planCheck.body.status).toBe('PENDING_APPROVAL');
+    });
+
+    it('A9. CATEGORY_MANAGER → GET /plans/approval-queue (BRD: CM onaylamalı ama Roles listesinde yok)', async () => {
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .get('/plans/approval-queue')
+        .set(cm.authHeader());
+
+      record({
+        step: 'A9',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'GET /plans/approval-queue',
+        expected:
+          '200 (BRD beklentisi) — kod: 403 (Roles=ADMIN/MANAGER/FINANCE/READONLY)',
+        actual: res.status,
+        note: 'BRD SAPMASI: CATEGORY_MANAGER plan.controller.ts @Roles listelerinde HİÇ yok',
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('A9b. CATEGORY_MANAGER → GET /plans/pending-approvals → 403 (Roles=ADMIN/MANAGER/READONLY)', async () => {
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .get('/plans/pending-approvals')
+        .set(cm.authHeader());
+
+      record({
+        step: 'A9b',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'GET /plans/pending-approvals',
+        expected: '403 (kod davranışı)',
+        actual: res.status,
+        note: 'CM plan modülünde tamamen görünmez',
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('A9c. CATEGORY_MANAGER → GET /plans/:id (planı görüntüleyebiliyor mu?)', async () => {
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(cm.authHeader());
+
+      record({
+        step: 'A9c',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'GET /plans/:id',
+        expected: '403 (Roles=ADMIN/PLANNER/MANAGER/FINANCE/READONLY)',
+        actual: res.status,
+        note: 'CM tek bir planı bile göremiyor — kategori onayı BRD kuralı kod düzeyinde YOK',
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('A10. CATEGORY_MANAGER → POST /plans/:id/approve → BEKLENEN 403 (BRD ihlali kanıtı: CM plan onaylayamaz)', async () => {
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${planId}/approve`)
+        .set(cm.authHeader())
+        .send({});
+
+      record({
+        step: 'A10',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'POST /plans/:id/approve',
+        expected: 403,
+        actual: res.status,
+        note: 'BRD "Category Manager atanmış kategoriyi onaylar" kuralı KOD SEVİYESİNDE UYGULANMAMIŞ — CM approve endpoint Roles=ADMIN,MANAGER; CM asla plan onaylayamaz (kategori bazlı da değil, tamamen yok)',
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('A11. MANAGER → GET /budget/envelopes/:id/transactions (ÖNCESİ)', async () => {
+      const manager = await loginAs(app, 'MANAGER');
+      if (!envelopeId) {
+        record({
+          step: 'A11',
+          role: 'MANAGER',
+          endpoint: 'GET /budget/envelopes/:id/transactions',
+          expected: 200,
+          actual: 'SKIP',
+          note: 'envelopeId bulunamadı (A6b başarısız olmuş olabilir)',
+        });
+        return;
+      }
+      const res = await request(app.getHttpServer())
+        .get(`/budget/envelopes/${envelopeId}/transactions`)
+        .set(manager.authHeader())
+        .expect(200);
+
+      // NOT: budget.service.ts#reserveForPlan() plan akışında txType=COMMIT
+      // üretiyor (RESERVE değil). GET /reserved endpoint'i yalnızca
+      // txType=RESERVE transaction'larını topluyor, bu yüzden plan bazlı
+      // bütçe akışı için her zaman 0 döner — asıl bütçe kanıtı için
+      // COMMIT transaction'larına (bu endpoint) bakmak gerekiyor. Bu isim/
+      // davranış tutarsızlığı T-026 kapsamı dışında pre-existing bir mimari
+      // nüans (raporlandı, düzeltilmedi).
+      const planCommitTxs = (res.body as any[]).filter(
+        (tx) => tx.txType === 'COMMIT' && tx.sourceId === planId,
+      );
+      (global as any).__planCommitCountBefore = planCommitTxs.length;
+      (global as any).__planCommitSumBefore = planCommitTxs.reduce(
+        (sum, tx) => sum + Number(tx.amount),
+        0,
+      );
+
+      record({
+        step: 'A11',
+        role: 'MANAGER',
+        endpoint: 'GET /budget/envelopes/:id/transactions (ÖNCESİ)',
+        expected: 200,
+        actual: res.status,
+        note: `plan için COMMIT tx sayısı(önce)=${planCommitTxs.length}, toplam=${planCommitTxs.reduce((s, tx) => s + Number(tx.amount), 0)} (A8 submit anında zaten oluşmuş olmalı)`,
+      });
+    });
+
+    it('A12. MANAGER → POST /plans/:id/approve → bütçe rezerve ediliyor mu', async () => {
+      const manager = await loginAs(app, 'MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${planId}/approve`)
+        .set(manager.authHeader())
+        .send({ comments: 'E2E role-journey approval' });
+
+      record({
+        step: 'A12',
+        role: 'MANAGER',
+        endpoint: 'POST /plans/:id/approve',
+        expected: 200,
+        actual: res.status,
+        note: `status=${res.body.status}`,
+      });
+
+      // T-026 (D-2) FIX: BudgetSummaryView/BudgetEnvelope decimal kolonlarına
+      // DecimalTransformer uygulandı → checkBudgetAvailability artık NUMERIC
+      // karşılaştırma yapıyor (500000 >= 8187 === true). approve 200+APPROVED
+      // dönüyor (BRD beklentisiyle uyumlu).
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('APPROVED');
+
+      if (envelopeId) {
+        const after = await request(app.getHttpServer())
+          .get(`/budget/envelopes/${envelopeId}/transactions`)
+          .set(manager.authHeader())
+          .expect(200);
+
+        const planCommitTxsAfter = (after.body as any[]).filter(
+          (tx) => tx.txType === 'COMMIT' && tx.sourceId === planId,
+        );
+        const countBefore = (global as any).__planCommitCountBefore ?? 0;
+        const sumBefore = (global as any).__planCommitSumBefore ?? 0;
+        const sumAfter = planCommitTxsAfter.reduce(
+          (s, tx) => s + Number(tx.amount),
+          0,
+        );
+
+        record({
+          step: 'A12b',
+          role: 'MANAGER',
+          endpoint:
+            'GET /budget/envelopes/:id/transactions (SONRASI — approve, plan için COMMIT tx yaratmalı)',
+          expected: `count > ${countBefore}, sum > ${sumBefore}`,
+          actual: `count=${planCommitTxsAfter.length}, sum=${sumAfter}`,
+          note: `commitBudgetForPlan() (approvePlan içinde) idempotencyKey=COMMIT|PLAN|${planId}|${envelopeId} ile bir COMMIT transaction yaratıyor; bu D-2 fix'i sayesinde artık checkBudgetAvailability doğru NUMERIC karşılaştırma yaptığından başarıyla tamamlanıyor.`,
+        });
+
+        expect(planCommitTxsAfter.length).toBeGreaterThan(countBefore);
+        expect(sumAfter).toBeGreaterThan(sumBefore);
+      }
+    });
+
+    it('A13. FINANCE_MANAGER → GET /finance-reporting/budget-utilization', async () => {
+      const fm = await loginAs(app, 'FINANCE_MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .get('/finance-reporting/budget-utilization')
+        .set(fm.authHeader());
+
+      record({
+        step: 'A13',
+        role: 'FINANCE_MANAGER',
+        endpoint: 'GET /finance-reporting/budget-utilization',
+        expected:
+          '200 (mantıksal beklenti: Finance Manager bütçe okur) — kod: 403 (Roles=ADMIN,FINANCE,CATEGORY_MANAGER,READONLY — FINANCE_MANAGER YOK)',
+        actual: res.status,
+        note: 'BRD SAPMASI ADAYI: rol adı FINANCE_MANAGER olduğu halde finance-reporting Roles listesinde yalnızca FINANCE var, FINANCE_MANAGER yok',
+      });
+
+      // Kod gerçek davranışı: FINANCE_MANAGER bu endpoint'te YOK → 403 bekleniyor.
+      expect(res.status).toBe(403);
+    });
+
+    it('A13b. FINANCE → GET /finance-reporting/budget-utilization (kontrol: doğru rol çalışıyor mu)', async () => {
+      const finance = await loginAs(app, 'FINANCE');
+
+      const res = await request(app.getHttpServer())
+        .get('/finance-reporting/budget-utilization')
+        .set(finance.authHeader());
+
+      record({
+        step: 'A13b',
+        role: 'FINANCE',
+        endpoint: 'GET /finance-reporting/budget-utilization',
+        expected: 200,
+        actual: res.status,
+        note: `items=${Array.isArray(res.body) ? res.body.length : JSON.stringify(res.body).slice(0, 100)}`,
+      });
+
+      // T-026 (D-3) FIX: migration 1786000000000-AddMetadataToBudgetAllocations
+      // main.budget_allocations tablosuna eksik olan "metadata" jsonb kolonunu
+      // ekledi (entity ↔ DB şema kayması giderildi). FINANCE rolü artık 200 alıyor.
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // B) PLANNER KAPSAM (B-3 kanıtı)
+  // ══════════════════════════════════════════════════════════════════════
+
+  describe('B) Planner kapsam (CPL scope) kanıtı', () => {
+    it('B1. user_scopes tablosu boş mu (kanıt: scope verisi hiç yok)', async () => {
+      const rows = await dataSource.query(
+        `SELECT count(*)::int AS c FROM main.user_scopes WHERE tenant_id = $1`,
+        [fixture.tenantId],
+      );
+      record({
+        step: 'B1',
+        role: '-',
+        endpoint: 'DB: main.user_scopes',
+        expected: '> 0 satır (PLANNER için CPL/kategori ataması olmalı)',
+        actual: rows[0].c,
+        note: 'user_scopes tablosu için hiç seed yok — planner.service.ts hiçbir yerde bu tabloyu okumuyor',
+      });
+    });
+
+    it('B2. PLANNER → PLANNER kullanıcısına atanmamış farklı bir CPL ile POST /plans dener', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-SCOPE-${Date.now()}`,
+          cplId: CPL_2,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        });
+
+      record({
+        step: 'B2',
+        role: 'PLANNER',
+        endpoint: 'POST /plans (atanmamış CPL)',
+        expected:
+          '403 (BRD: yalnızca yetkili CPL+Category) — kod: 201 KABUL EDİYOR',
+        actual: res.status,
+        note: 'BRD İHLALİ: PlanService.create() hiçbir CPL/UserScope kontrolü yapmıyor — PLANNER herhangi bir CPL için plan açabiliyor',
+      });
+
+      expect(res.status).toBe(201);
+
+      // Bu test kaydını temizle (DRAFT plan → silinebilir)
+      if (res.status === 201) {
+        const admin = await loginAs(app, 'ADMIN');
+        await request(app.getHttpServer())
+          .delete(`/plans/${res.body.id}`)
+          .set(admin.authHeader());
+      }
+    });
+
+    it('B3. PLANNER → GET /plans → başka CPL planlarını görebiliyor mu (tenant-wide mi?)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const admin = await loginAs(app, 'ADMIN');
+
+      const plannerRes = await request(app.getHttpServer())
+        .get('/plans')
+        .set(planner.authHeader())
+        .expect(200);
+      const adminRes = await request(app.getHttpServer())
+        .get('/plans')
+        .set(admin.authHeader())
+        .expect(200);
+
+      record({
+        step: 'B3',
+        role: 'PLANNER vs ADMIN',
+        endpoint: 'GET /plans',
+        expected: 'PLANNER sayısı < ADMIN sayısı (scope filtreli)',
+        actual: `PLANNER=${plannerRes.body.length}, ADMIN=${adminRes.body.length}`,
+        note:
+          plannerRes.body.length === adminRes.body.length
+            ? 'BRD İHLALİ: PLANNER tüm tenant planlarını görüyor (tenant-wide, scope YOK)'
+            : 'PLANNER kısıtlı görüyor (ancak B1/B2 kanıtına göre bu CPL scope değil, başka bir filtre olabilir)',
+      });
+
+      // Kod gerçek davranışı: findAll() cplId filtresi yalnızca query param
+      // verilirse uygulanır; PLANNER'ın kendi scope'una göre otomatik
+      // filtrelenmesi YOK → PLANNER = ADMIN sayısı bekleniyor.
+      expect(plannerRes.body.length).toBe(adminRes.body.length);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // C) ACTUALS-FIRST AKIŞI
+  // ══════════════════════════════════════════════════════════════════════
+
+  describe('C) Actuals-first akışı', () => {
+    it('C1. PLANNER → POST /agreements (settlement testi için)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post('/agreements')
+        .set(planner.authHeader())
+        .send({
+          agreementName: `E2E-ROLE-JOURNEY-SETTLE-${Date.now()}`,
+          agreementType: 'STA',
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          fuId: FU_WELLA_HC_500ML,
+          tacticId: TACTIC_PROMO,
+          mechanicId: MECHANIC_DISCOUNT,
+          skuScope: 'FU',
+          capTotalAmount: 20000,
+          spendType: 'OFF_INVOICE',
+          startDate: '2026-02-05',
+          endDate: '2026-02-20',
+          justification: 'E2E role-journey — settlement close testi',
+        });
+
+      record({
+        step: 'C1',
+        role: 'PLANNER',
+        endpoint: 'POST /agreements',
+        expected: 201,
+        actual: res.status,
+        note:
+          res.status === 201
+            ? `agreementId=${res.body.id}, status=${res.body.status}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(201);
+      agreementSettlementId = res.body.id;
+    });
+
+    it('C2. PLANNER → POST /agreements/:id/submit', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post(`/agreements/${agreementSettlementId}/submit`)
+        .set(planner.authHeader())
+        .send({});
+
+      record({
+        step: 'C2',
+        role: 'PLANNER',
+        endpoint: 'POST /agreements/:id/submit',
+        expected: 200,
+        actual: res.status,
+        note:
+          res.status === 200
+            ? `status=${res.body.status}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('PENDING');
+    });
+
+    it('C3. MANAGER → POST /agreements/:id/approve (hangi rol çalışıyor?)', async () => {
+      const manager = await loginAs(app, 'MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .post(`/agreements/${agreementSettlementId}/approve`)
+        .set(manager.authHeader())
+        .send({});
+
+      record({
+        step: 'C3',
+        role: 'MANAGER',
+        endpoint: 'POST /agreements/:id/approve',
+        expected: 200,
+        actual: res.status,
+        note:
+          res.status === 200
+            ? `status=${res.body.status}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('APPROVED');
+    });
+
+    it('C4. ADMIN → POST /agreement-transactions (off-invoice)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+
+      const res = await request(app.getHttpServer())
+        .post('/agreement-transactions')
+        .set(admin.authHeader())
+        .send({
+          agreementId: agreementSettlementId,
+          invoiceNo: `E2E-INV-JOURNEY-${Date.now()}`,
+          invoiceDate: '2026-02-10',
+          fiscalPeriod: '2026-02',
+          amount: 5000,
+          currency: 'TRY',
+          notes: 'E2E role-journey transaction',
+        });
+
+      record({
+        step: 'C4',
+        role: 'ADMIN',
+        endpoint: 'POST /agreement-transactions',
+        expected: 201,
+        actual: res.status,
+        note:
+          res.status === 201 ? `txId=${res.body.id}` : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(201);
+    });
+
+    it('C5. PLANNER → GET /ledger/agreement/:id/consumed — DEBIT oluştu mu', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .get(`/ledger/agreement/${agreementSettlementId}/consumed`)
+        .set(planner.authHeader());
+
+      record({
+        step: 'C5',
+        role: 'PLANNER',
+        endpoint: 'GET /ledger/agreement/:id/consumed',
+        expected: 200,
+        actual: res.status,
+        note: JSON.stringify(res.body).slice(0, 150),
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('C6. CATEGORY_MANAGER → POST /actuals-first/settlements/close/:agreementId', async () => {
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .post(`/actuals-first/settlements/close/${agreementSettlementId}`)
+        .set(cm.authHeader())
+        .send({ justification: 'E2E role-journey settlement close' });
+
+      record({
+        step: 'C6',
+        role: 'CATEGORY_MANAGER',
+        endpoint: 'POST /actuals-first/settlements/close/:agreementId',
+        expected: 201,
+        actual: res.status,
+        note:
+          res.status === 201
+            ? `status=${res.body.status}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe('CLOSED');
+    });
+
+    // ── Reversal için AYRI bir agreement (settlement CLOSED yaptığı için
+    //    reversal APPROVED/ACTIVE state gerektirdiğinden aynısı kullanılamaz) ──
+
+    it('C7. ADMIN → POST /agreements (reversal testi için, ayrı agreement)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const manager = await loginAs(app, 'MANAGER');
+
+      const res = await request(app.getHttpServer())
+        .post('/agreements')
+        .set(admin.authHeader())
+        .send({
+          agreementName: `E2E-ROLE-JOURNEY-REVERSAL-${Date.now()}`,
+          agreementType: 'STA',
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          fuId: FU_WELLA_HC_500ML,
+          tacticId: TACTIC_PROMO,
+          mechanicId: MECHANIC_DISCOUNT,
+          skuScope: 'FU',
+          capTotalAmount: 20000,
+          spendType: 'OFF_INVOICE',
+          startDate: '2026-02-05',
+          endDate: '2026-02-20',
+          justification: 'E2E role-journey — reversal testi',
+        })
+        .expect(201);
+
+      agreementReversalId = res.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/agreements/${agreementReversalId}/submit`)
+        .set(admin.authHeader())
+        .expect(200);
+
+      // NOT: Aynı kullanıcı (ADMIN) hem submit hem approve ederse
+      // ApprovalService "You cannot approve your own request" (403) döner —
+      // bu BEKLENEN/DOĞRU bir self-approval segregation-of-duties davranışı
+      // (approval.service.ts:104). Bu yüzden approve için MANAGER kullanılır.
+      const approveRes = await request(app.getHttpServer())
+        .post(`/agreements/${agreementReversalId}/approve`)
+        .set(manager.authHeader())
+        .expect(200);
+
+      record({
+        step: 'C7',
+        role: 'ADMIN (create/submit) + MANAGER (approve)',
+        endpoint: 'POST /agreements + submit + approve (reversal fixture)',
+        expected: 'APPROVED',
+        actual: approveRes.body.status,
+        note: `agreementId=${agreementReversalId} — self-approval doğru şekilde 403 ile engelleniyor (approval.service.ts), bu yüzden approve farklı rol ile yapıldı`,
+      });
+    });
+
+    it('C8. ADMIN → POST /agreement-transactions (reversal edilecek tx)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+
+      const res = await request(app.getHttpServer())
+        .post('/agreement-transactions')
+        .set(admin.authHeader())
+        .send({
+          agreementId: agreementReversalId,
+          invoiceNo: `E2E-INV-REV-${Date.now()}`,
+          invoiceDate: '2026-02-12',
+          fiscalPeriod: '2026-02',
+          amount: 3000,
+          currency: 'TRY',
+          notes: 'E2E role-journey reversal tx',
+        })
+        .expect(201);
+
+      reversalTransactionId = res.body.id;
+
+      record({
+        step: 'C8',
+        role: 'ADMIN',
+        endpoint: 'POST /agreement-transactions (reversal fixture)',
+        expected: 201,
+        actual: res.status,
+        note: `txId=${reversalTransactionId}`,
+      });
+    });
+
+    it('C9. ADMIN → POST /actuals-first/reversals/agreement-transaction/:txId — ledger CREDIT + bütçe geri döndü mü', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+
+      const before = await request(app.getHttpServer())
+        .get(`/ledger/agreement/${agreementReversalId}/consumed`)
+        .set(admin.authHeader())
+        .expect(200);
+
+      const res = await request(app.getHttpServer())
+        .post(
+          `/actuals-first/reversals/agreement-transaction/${reversalTransactionId}`,
+        )
+        .set(admin.authHeader())
+        .send({ justification: 'E2E role-journey reversal' });
+
+      const after = await request(app.getHttpServer())
+        .get(`/ledger/agreement/${agreementReversalId}/consumed`)
+        .set(admin.authHeader())
+        .expect(200);
+
+      record({
+        step: 'C9',
+        role: 'ADMIN',
+        endpoint: 'POST /actuals-first/reversals/agreement-transaction/:txId',
+        expected: 200,
+        actual: res.status,
+        note: `consumed(önce)=${JSON.stringify(before.body)}, consumed(sonra)=${JSON.stringify(after.body)}, reversedAmount=${res.body.reversedAmount}`,
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('REVERSED');
+    });
+
+    it('C10. FINANCE → POST /actuals-first/sales-actuals/upload (2027-01 test CSV)', async () => {
+      const finance = await loginAs(app, 'FINANCE');
+      const cplRows = await dataSource.query(
+        `SELECT code FROM main.cpls WHERE id = $1`,
+        [CPL_1],
+      );
+      const cplCode = cplRows[0].code;
+      const nonce = Date.now() % 100000;
+
+      const csvContent = Buffer.from(
+        [
+          'cpl_code,category,channel_code,gross_amount,net_amount,discount_amount',
+          `${cplCode},Saç Boyası,NKA,${100000 + nonce},95000,5000`,
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/actuals-first/sales-actuals/upload?fiscalPeriod=2027-01')
+        .set(finance.authHeader())
+        .attach('file', csvContent, 'e2e_role_journey_actuals.csv');
+
+      record({
+        step: 'C10',
+        role: 'FINANCE',
+        endpoint: 'POST /actuals-first/sales-actuals/upload',
+        expected: 201,
+        actual: res.status,
+        note:
+          res.status === 201
+            ? `totalRows=${res.body.totalRows}, validRows=${res.body.validRows}, batches=${res.body.batches?.length}`
+            : JSON.stringify(res.body),
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.validRows).toBeGreaterThan(0);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // D) DASHBOARD/RAPOR ROL GÖRÜNÜRLÜĞÜ
+  // ══════════════════════════════════════════════════════════════════════
+
+  describe('D) Dashboard rol görünürlüğü', () => {
+    const roles = [
+      'PLANNER',
+      'CATEGORY_MANAGER',
+      'FINANCE_MANAGER',
+      'READONLY',
+    ] as const;
+    const endpoints = [
+      { path: '/dashboard/summary', step: 'D-summary' },
+      { path: '/dashboard/pending-tasks', step: 'D-pending' },
+      { path: '/dashboard/cpl-status', step: 'D-cpl-status' },
+    ];
+
+    for (const role of roles) {
+      for (const ep of endpoints) {
+        it(`${role} → GET ${ep.path} → 200 mü, içerik role uygun mu`, async () => {
+          const user = await loginAs(app, role);
+
+          const res = await request(app.getHttpServer())
+            .get(ep.path)
+            .set(user.authHeader());
+
+          record({
+            step: `${ep.step}`,
+            role,
+            endpoint: `GET ${ep.path}`,
+            expected: 200,
+            actual: res.status,
+            note: JSON.stringify(res.body).slice(0, 120),
+          });
+
+          expect(res.status).toBe(200);
+        });
+      }
+    }
+
+    it('D-scope. PLANNER summary → sonradan oluşturulan CPL_1 planı scope içinde mi (yeni approved plan var)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const admin = await loginAs(app, 'ADMIN');
+
+      const plannerRes = await request(app.getHttpServer())
+        .get('/dashboard/summary')
+        .set(planner.authHeader())
+        .expect(200);
+      const adminRes = await request(app.getHttpServer())
+        .get('/dashboard/summary')
+        .set(admin.authHeader())
+        .expect(200);
+
+      record({
+        step: 'D-scope',
+        role: 'PLANNER vs ADMIN',
+        endpoint: 'GET /dashboard/summary',
+        expected: 'PLANNER <= ADMIN (CPL scope)',
+        actual: `PLANNER.activeAgreementCount=${plannerRes.body.activeAgreementCount}, ADMIN.activeAgreementCount=${adminRes.body.activeAgreementCount}`,
+        note: 'Dashboard modülü UserScope tablosunu kullanıyor (dashboard.service.ts) — ancak B1 kanıtı user_scopes boş olduğundan, PLANNER burada da fiilen tenant-wide veri görüyor olabilir (scope fallback davranışı)',
+      });
+
+      expect(plannerRes.body.activeAgreementCount).toBeLessThanOrEqual(
+        adminRes.body.activeAgreementCount,
+      );
+    });
+  });
+});

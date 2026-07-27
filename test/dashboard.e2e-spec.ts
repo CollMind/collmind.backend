@@ -163,7 +163,7 @@ describe('Dashboard (E2E)', () => {
         .expect(400);
     });
 
-    it('budgetUtilization alanı null değil sayısal bir değer veya null (division-by-zero BRD)', async () => {
+    it('budgetUtilization sözleşmesi: null veya {onInvoice, offInvoice, total} objesi (division-by-zero BRD)', async () => {
       const admin = await loginAs(app, 'ADMIN');
 
       const res = await request(app.getHttpServer())
@@ -171,9 +171,17 @@ describe('Dashboard (E2E)', () => {
         .set(admin.authHeader())
         .expect(200);
 
-      // BRD: division-by-zero → null, aksi halde sayı
-      if (res.body.budgetUtilization !== null) {
-        expect(typeof res.body.budgetUtilization).toBe('number');
+      // Gerçek DTO sözleşmesi (T-005 dashboard-summary.dto): allocation yoksa null,
+      // varsa {onInvoice, offInvoice, total} — her biri sayısal utilizationPercent
+      // + GREEN/AMBER/RED status taşır. BRD: division-by-zero → null.
+      const bu = res.body.budgetUtilization;
+      if (bu !== null) {
+        expect(typeof bu).toBe('object');
+        for (const section of ['onInvoice', 'offInvoice', 'total']) {
+          expect(bu[section]).toBeDefined();
+          expect(typeof bu[section].utilizationPercent === 'number' || bu[section].utilizationPercent === null).toBe(true);
+          expect(['GREEN', 'AMBER', 'RED']).toContain(bu[section].status);
+        }
       }
     });
   });

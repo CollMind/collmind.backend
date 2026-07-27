@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Cpl } from './cpl.entity';
+import { DecimalTransformer } from '../transformers/decimal.transformer';
 
 export enum PeriodType {
   YEARLY = 'yearly',
@@ -67,6 +68,7 @@ export class BudgetAllocation extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   onInvoiceBudget!: number;
 
@@ -76,6 +78,7 @@ export class BudgetAllocation extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   offInvoiceBudget!: number;
 
@@ -87,6 +90,7 @@ export class BudgetAllocation extends BaseEntity {
     scale: 2,
     generatedType: 'STORED',
     asExpression: 'on_invoice_budget + off_invoice_budget',
+    transformer: DecimalTransformer,
   })
   totalBudget!: number;
 
@@ -97,6 +101,7 @@ export class BudgetAllocation extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   onInvoiceUtilized!: number;
 
@@ -106,6 +111,7 @@ export class BudgetAllocation extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   offInvoiceUtilized!: number;
 
@@ -116,6 +122,7 @@ export class BudgetAllocation extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   onInvoiceReserved!: number;
 
@@ -125,6 +132,7 @@ export class BudgetAllocation extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   offInvoiceReserved!: number;
 
@@ -137,6 +145,7 @@ export class BudgetAllocation extends BaseEntity {
     generatedType: 'STORED',
     asExpression:
       'on_invoice_budget - on_invoice_utilized - on_invoice_reserved',
+    transformer: DecimalTransformer,
   })
   onInvoiceAvailable!: number;
 
@@ -148,6 +157,7 @@ export class BudgetAllocation extends BaseEntity {
     generatedType: 'STORED',
     asExpression:
       'off_invoice_budget - off_invoice_utilized - off_invoice_reserved',
+    transformer: DecimalTransformer,
   })
   offInvoiceAvailable!: number;
 
@@ -172,7 +182,7 @@ export class BudgetAllocation extends BaseEntity {
   @Column({ name: 'allow_carry_forward', type: 'boolean', default: false })
   allowCarryForward!: boolean;
 
-  @Column({ type: 'jsonb', nullable: true })
+  @Column({ name: 'metadata', type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
 
   // Relations

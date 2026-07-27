@@ -1,4 +1,5 @@
 import { ViewEntity, ViewColumn } from 'typeorm';
+import { DecimalTransformer } from '../transformers/decimal.transformer';
 
 /**
  * Budget Summary View Entity
@@ -127,7 +128,7 @@ export class BudgetSummaryView {
   @ViewColumn()
   period!: string;
 
-  @ViewColumn()
+  @ViewColumn({ transformer: DecimalTransformer })
   allocatedAmount!: number;
 
   @ViewColumn()
@@ -136,16 +137,16 @@ export class BudgetSummaryView {
   @ViewColumn()
   status!: string;
 
-  @ViewColumn()
+  @ViewColumn({ transformer: DecimalTransformer })
   reservedAmount!: number;
 
-  @ViewColumn()
+  @ViewColumn({ transformer: DecimalTransformer })
   consumedAmount!: number;
 
-  @ViewColumn()
+  @ViewColumn({ transformer: DecimalTransformer })
   availableAmount!: number;
 
-  @ViewColumn()
+  @ViewColumn({ transformer: DecimalTransformer })
   utilizationPct!: number;
 
   @ViewColumn()
