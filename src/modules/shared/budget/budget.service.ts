@@ -323,9 +323,15 @@ export class BudgetService {
   }
 
   /**
-   * Reserve budget for an approved plan
-   * Creates COMMIT transaction with idempotency
-   * Automatically finds the matching envelope by dimensions
+   * T-029: Reserve budget for a plan submitted for approval.
+   * Creates a RESERVE transaction (BRD state machine: Pending Approval → RESERVE).
+   * Idempotent per plan (any existing POSTED RESERVE for this plan is returned as-is).
+   *
+   * NOTE (pre-T-029 bug, fixed here): this method used to create a COMMIT
+   * transaction regardless of plan state, which meant GET /envelopes/:id/reserved
+   * (RESERVE-only) always read 0 for plan-driven reservations, and approval never
+   * actually converted anything (submit and approve both silently no-op'd into
+   * the same COMMIT). See commitReservedForPlan() for the Approved→COMMIT step.
    */
   async reserveForPlan(
     planId: string,
@@ -336,17 +342,17 @@ export class BudgetService {
     tenantId: string,
     userId: string,
   ): Promise<BudgetTransaction> {
-    // Check for existing COMMIT transaction for this plan (true idempotency)
-    const existingReserveTransactions =
+    // Idempotency: an outstanding POSTED RESERVE for this plan already exists.
+    const existingTransactions =
       await this.budgetRepository.findTransactionsBySource(
         tenantId,
         BudgetTransactionSourceType.PLAN,
         planId,
       );
 
-    const existingReserve = existingReserveTransactions.find(
+    const existingReserve = existingTransactions.find(
       (tx) =>
-        tx.txType === BudgetTransactionType.COMMIT &&
+        tx.txType === BudgetTransactionType.RESERVE &&
         tx.txStatus === BudgetTransactionStatus.POSTED,
     );
 
@@ -367,7 +373,7 @@ export class BudgetService {
       );
     }
 
-    // Check availability using view
+    // Check availability using view (accounts for existing RESERVE+COMMIT-RELEASE)
     const { available, sufficient } =
       await this.budgetRepository.checkBudgetAvailability(
         envelope.id,
@@ -381,11 +387,148 @@ export class BudgetService {
       );
     }
 
-    // Generate idempotency key
-    const idempotencyKey = `COMMIT|PLAN|${planId}|${envelope.id}`;
+    const idempotencyKey = `RESERVE|PLAN|${planId}|${envelope.id}`;
 
-    // Create COMMIT transaction
     const transaction = await this.budgetRepository.createTransaction({
+      tenantId,
+      envelopeId: envelope.id,
+      txType: BudgetTransactionType.RESERVE,
+      txStatus: BudgetTransactionStatus.POSTED,
+      sourceType: BudgetTransactionSourceType.PLAN,
+      sourceId: planId,
+      amount,
+      currency: currency || 'TRY',
+      idempotencyKey,
+      description: `Budget reservation for plan ${planId} (submitted for approval)`,
+      createdBy: userId,
+    });
+
+    return transaction;
+  }
+
+  /**
+   * T-029: Convert a plan's outstanding RESERVE into a COMMIT on approval
+   * (BRD state machine: Approved → COMMIT, budget actually consumed/earmarked).
+   *
+   * If an outstanding POSTED RESERVE exists for the plan, this releases it
+   * (idempotency key suffixed `|CONVERT`, distinct from the plain reject/cancel
+   * release key so both can coexist in the audit trail without key collision)
+   * and creates a COMMIT transaction of the same amount — net encumbrance on
+   * the envelope is unchanged (see v_budget_summary: reserved_amount now sums
+   * RESERVE+COMMIT-RELEASE, migration 1789000000000), it merely moves the plan
+   * from the "reserved" bucket to the "committed" bucket.
+   *
+   * Idempotent: if a COMMIT already exists for this plan, it is returned as-is
+   * (no double release/commit on repeated approve calls).
+   *
+   * Falls back to a fresh direct COMMIT (legacy behaviour, availability
+   * re-checked) if no prior RESERVE exists — covers plans approved without
+   * having gone through the reserving submit path.
+   */
+  async commitReservedForPlan(
+    planId: string,
+    amount: number,
+    channel: string,
+    periodMonth: string,
+    currency: string,
+    tenantId: string,
+    userId: string,
+  ): Promise<BudgetTransaction> {
+    const existingTransactions =
+      await this.budgetRepository.findTransactionsBySource(
+        tenantId,
+        BudgetTransactionSourceType.PLAN,
+        planId,
+      );
+
+    const existingCommit = existingTransactions.find(
+      (tx) =>
+        tx.txType === BudgetTransactionType.COMMIT &&
+        tx.txStatus === BudgetTransactionStatus.POSTED,
+    );
+    if (existingCommit) {
+      return existingCommit;
+    }
+
+    const outstandingReserve = existingTransactions.find(
+      (tx) =>
+        tx.txType === BudgetTransactionType.RESERVE &&
+        tx.txStatus === BudgetTransactionStatus.POSTED,
+    );
+
+    if (outstandingReserve) {
+      const envelopeId = outstandingReserve.envelopeId;
+      const commitAmount = Number(outstandingReserve.amount);
+
+      // Release the RESERVE as part of the conversion (idempotent).
+      const releaseKey = `RELEASE|PLAN|${planId}|${envelopeId}|CONVERT`;
+      const existingConvertRelease =
+        await this.budgetRepository.findTransactionByIdempotencyKey(
+          tenantId,
+          releaseKey,
+        );
+      if (!existingConvertRelease) {
+        await this.budgetRepository.createTransaction({
+          tenantId,
+          envelopeId,
+          txType: BudgetTransactionType.RELEASE,
+          txStatus: BudgetTransactionStatus.POSTED,
+          sourceType: BudgetTransactionSourceType.PLAN,
+          sourceId: planId,
+          amount: commitAmount,
+          currency: outstandingReserve.currency,
+          idempotencyKey: releaseKey,
+          description: `Release RESERVE (converted to COMMIT on approval) for plan ${planId}`,
+          createdBy: userId,
+        });
+      }
+
+      const commitKey = `COMMIT|PLAN|${planId}|${envelopeId}`;
+      return this.budgetRepository.createTransaction({
+        tenantId,
+        envelopeId,
+        txType: BudgetTransactionType.COMMIT,
+        txStatus: BudgetTransactionStatus.POSTED,
+        sourceType: BudgetTransactionSourceType.PLAN,
+        sourceId: planId,
+        amount: commitAmount,
+        currency: outstandingReserve.currency,
+        idempotencyKey: commitKey,
+        description: `Budget commit for plan ${planId} (converted from RESERVE on approval)`,
+        createdBy: userId,
+      });
+    }
+
+    // Fallback: no prior RESERVE — commit directly (legacy / plan approved
+    // without submit-for-approval reservation). Availability re-checked since
+    // this is a fresh encumbrance, not a bucket transfer.
+    const envelope = await this.budgetRepository.findEnvelopeByDimensions(
+      tenantId,
+      channel,
+      periodMonth,
+    );
+
+    if (!envelope) {
+      throw new BadRequestException(
+        `No active budget envelope found for channel: ${channel}, period: ${periodMonth}`,
+      );
+    }
+
+    const { available, sufficient } =
+      await this.budgetRepository.checkBudgetAvailability(
+        envelope.id,
+        tenantId,
+        amount,
+      );
+
+    if (!sufficient) {
+      throw new BadRequestException(
+        `Insufficient budget. Available: ${available}, Required: ${amount}`,
+      );
+    }
+
+    const commitKey = `COMMIT|PLAN|${planId}|${envelope.id}`;
+    return this.budgetRepository.createTransaction({
       tenantId,
       envelopeId: envelope.id,
       txType: BudgetTransactionType.COMMIT,
@@ -394,12 +537,10 @@ export class BudgetService {
       sourceId: planId,
       amount,
       currency: currency || 'TRY',
-      idempotencyKey,
+      idempotencyKey: commitKey,
       description: `Budget commit for plan ${planId}`,
       createdBy: userId,
     });
-
-    return transaction;
   }
 
   /**
@@ -487,25 +628,52 @@ export class BudgetService {
     return transaction;
   }
 
-  async releaseForPlan(planId: string, tenantId: string): Promise<void> {
-    // Find all COMMIT transactions for this plan
+  /**
+   * T-029: Release ALL outstanding budget encumbrances for a plan — both
+   * RESERVE (Pending Approval rejected/cancelled before approval) and COMMIT
+   * (Approved plan reverted/deleted). Each gets its own idempotency-keyed
+   * RELEASE transaction (suffixed by the type being released) so a plan that
+   * went RESERVE→COMMIT→released still has one audit-clean RELEASE per leg,
+   * and a repeat call (idempotent) does not double-release either.
+   *
+   * RELEASE is generic in v_budget_summary (nets against RESERVE+COMMIT pool,
+   * see migration 1789000000000) so releasing either type correctly restores
+   * available_amount.
+   */
+  async releaseForPlan(
+    planId: string,
+    tenantId: string,
+    userId?: string,
+  ): Promise<void> {
     const transactions = await this.budgetRepository.findTransactionsBySource(
       tenantId,
       BudgetTransactionSourceType.PLAN,
       planId,
     );
 
-    const commitTransactions = transactions.filter(
-      (tx) =>
-        tx.txType === BudgetTransactionType.COMMIT &&
-        tx.txStatus === BudgetTransactionStatus.POSTED,
-    );
+    const outstandingByType: Array<{
+      tx: BudgetTransaction;
+      label: 'RESERVE' | 'COMMIT';
+    }> = [
+      ...transactions
+        .filter(
+          (tx) =>
+            tx.txType === BudgetTransactionType.RESERVE &&
+            tx.txStatus === BudgetTransactionStatus.POSTED,
+        )
+        .map((tx) => ({ tx, label: 'RESERVE' as const })),
+      ...transactions
+        .filter(
+          (tx) =>
+            tx.txType === BudgetTransactionType.COMMIT &&
+            tx.txStatus === BudgetTransactionStatus.POSTED,
+        )
+        .map((tx) => ({ tx, label: 'COMMIT' as const })),
+    ];
 
-    // Release each COMMIT transaction
-    for (const commitTx of commitTransactions) {
-      const idempotencyKey = `RELEASE|PLAN|${planId}|${commitTx.envelopeId}`;
+    for (const { tx, label } of outstandingByType) {
+      const idempotencyKey = `RELEASE|PLAN|${planId}|${tx.envelopeId}|${label}`;
 
-      // Check if already released (idempotency)
       const existing =
         await this.budgetRepository.findTransactionByIdempotencyKey(
           tenantId,
@@ -515,18 +683,18 @@ export class BudgetService {
         continue;
       }
 
-      // Create RELEASE transaction
       await this.budgetRepository.createTransaction({
         tenantId,
-        envelopeId: commitTx.envelopeId,
+        envelopeId: tx.envelopeId,
         txType: BudgetTransactionType.RELEASE,
-        amount: commitTx.amount,
-        currency: commitTx.currency,
+        amount: tx.amount,
+        currency: tx.currency,
         txStatus: BudgetTransactionStatus.POSTED,
         sourceType: BudgetTransactionSourceType.PLAN,
         sourceId: planId,
         idempotencyKey,
-        description: `Budget release for deleted plan ${planId}`,
+        description: `Budget release (${label}) for plan ${planId}`,
+        createdBy: userId,
       });
     }
   }

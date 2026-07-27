@@ -5,8 +5,13 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
  * Budget Summary View Entity
  *
  * Maps to v_budget_summary database view that computes:
- * - reserved_amount: from budget_transactions (RESERVE - RELEASE)
- * - consumed_amount: from ledger_entries (DEBIT - CREDIT)
+ * - reserved_amount: from budget_transactions (RESERVE + COMMIT - RELEASE)
+ *   (T-029: COMMIT included — plan approval creates COMMIT transactions;
+ *   previously invisible here, so approved plans never reduced availability,
+ *   a budget double-counting/leak. RELEASE is generic and can net out either
+ *   an outstanding RESERVE or a COMMIT — see budget.service.ts#releaseForPlan.)
+ * - consumed_amount: from ledger_entries (DEBIT - CREDIT) — real invoiced/
+ *   settled spend, a separate bucket from "encumbered" (reserved+committed).
  * - available_amount: allocated - reserved - consumed
  * - utilization_pct: (reserved + consumed) / allocated * 100
  *
@@ -17,7 +22,7 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
   name: 'v_budget_summary',
   schema: 'main',
   expression: `
-    SELECT 
+    SELECT
       be.id AS envelope_id,
       be.tenant_id,
       be.code,
@@ -29,71 +34,71 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
       be.status,
       COALESCE(
         (
-          SELECT 
-            SUM(CASE WHEN bt.tx_type = 'RESERVE' THEN bt.amount ELSE 0 END) - 
+          SELECT
+            SUM(CASE WHEN bt.tx_type IN ('RESERVE', 'COMMIT') THEN bt.amount ELSE 0 END) -
             SUM(CASE WHEN bt.tx_type = 'RELEASE' THEN bt.amount ELSE 0 END)
           FROM main.budget_transactions bt
-          WHERE bt.envelope_id = be.id 
-            AND bt.tx_status = 'POSTED' 
+          WHERE bt.envelope_id = be.id
+            AND bt.tx_status = 'POSTED'
             AND bt.deleted_at IS NULL
         ),
         0
       ) AS reserved_amount,
       COALESCE(
         (
-          SELECT 
+          SELECT
             SUM(CASE WHEN le.entry_direction = 'DEBIT' THEN le.amount ELSE -le.amount END)
           FROM main.ledger_entries le
-          WHERE le.budget_envelope_id = be.id 
+          WHERE le.budget_envelope_id = be.id
             AND le.deleted_at IS NULL
         ),
         0
       ) AS consumed_amount,
-      be.allocated_amount - 
+      be.allocated_amount -
       COALESCE(
         (
-          SELECT 
-            SUM(CASE WHEN bt.tx_type = 'RESERVE' THEN bt.amount ELSE 0 END) - 
+          SELECT
+            SUM(CASE WHEN bt.tx_type IN ('RESERVE', 'COMMIT') THEN bt.amount ELSE 0 END) -
             SUM(CASE WHEN bt.tx_type = 'RELEASE' THEN bt.amount ELSE 0 END)
           FROM main.budget_transactions bt
-          WHERE bt.envelope_id = be.id 
-            AND bt.tx_status = 'POSTED' 
+          WHERE bt.envelope_id = be.id
+            AND bt.tx_status = 'POSTED'
             AND bt.deleted_at IS NULL
         ),
         0
-      ) - 
+      ) -
       COALESCE(
         (
-          SELECT 
+          SELECT
             SUM(CASE WHEN le.entry_direction = 'DEBIT' THEN le.amount ELSE -le.amount END)
           FROM main.ledger_entries le
-          WHERE le.budget_envelope_id = be.id 
+          WHERE le.budget_envelope_id = be.id
             AND le.deleted_at IS NULL
         ),
         0
       ) AS available_amount,
-      CASE 
-        WHEN be.allocated_amount > 0 THEN 
+      CASE
+        WHEN be.allocated_amount > 0 THEN
           ROUND(
             (
               COALESCE(
                 (
-                  SELECT 
-                    SUM(CASE WHEN bt.tx_type = 'RESERVE' THEN bt.amount ELSE 0 END) - 
+                  SELECT
+                    SUM(CASE WHEN bt.tx_type IN ('RESERVE', 'COMMIT') THEN bt.amount ELSE 0 END) -
                     SUM(CASE WHEN bt.tx_type = 'RELEASE' THEN bt.amount ELSE 0 END)
                 FROM main.budget_transactions bt
-                WHERE bt.envelope_id = be.id 
-                  AND bt.tx_status = 'POSTED' 
+                WHERE bt.envelope_id = be.id
+                  AND bt.tx_status = 'POSTED'
                   AND bt.deleted_at IS NULL
               ),
               0
-            ) + 
+            ) +
             COALESCE(
               (
-                SELECT 
+                SELECT
                   SUM(CASE WHEN le.entry_direction = 'DEBIT' THEN le.amount ELSE -le.amount END)
                 FROM main.ledger_entries le
-                WHERE le.budget_envelope_id = be.id 
+                WHERE le.budget_envelope_id = be.id
                   AND le.deleted_at IS NULL
               ),
               0
@@ -101,7 +106,7 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
           ) / be.allocated_amount * 100,
           2
         )
-        ELSE 0 
+        ELSE 0
       END AS utilization_pct,
       be.created_at,
       be.updated_at

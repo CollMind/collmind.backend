@@ -778,6 +778,279 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // ekledi (entity ↔ DB şema kayması giderildi). FINANCE rolü artık 200 alıyor.
       expect(res.status).toBe(200);
     });
+
+    // ────────────────────────────────────────────────────────────────────
+    // T-029: audit ihlali + reserve/commit semantiği fix'lerinin kanıtı.
+    // A1-A13 PLANNER→submit-for-approval / review akışını (ApprovalWorkflowService)
+    // kullanır; burada frontend'in fiilen çağırdığı ve BRD state machine'inin
+    // kanonik yolu olan `/plans/:id/submit` + `/approve` + `/reject`
+    // (PlanService) doğrudan test edilir — SQL kanıtı ile.
+    // ────────────────────────────────────────────────────────────────────
+
+    async function createT029TestPlan(
+      planner: Awaited<ReturnType<typeof loginAs>>,
+      namePrefix: string,
+    ): Promise<{ planId: string }> {
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `${namePrefix}-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const t029PlanId = createRes.body.id;
+
+      // COGS dolu fixture FU (bkz. A5c) → totalSpend garanti > 0.
+      await request(app.getHttpServer())
+        .post(`/plans/${t029PlanId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML })
+        .expect(201);
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${t029PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const planFu = planRes.body.planFus[0];
+      const skuId = planFu.planSkus[0].skuId;
+
+      await request(app.getHttpServer())
+        .patch(
+          `/plans/${t029PlanId}/fus/${FU_WELLA_HC_500ML}/skus/${skuId}/volume`,
+        )
+        .set(planner.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000 })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/plans/${t029PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 } })
+        .expect(200);
+
+      const recalcRes = await request(app.getHttpServer())
+        .post(`/plans/${t029PlanId}/recalculate`)
+        .set(planner.authHeader())
+        .send({})
+        .expect(200);
+      expect(Number(recalcRes.body.totalSpend)).toBeGreaterThan(0);
+
+      return { planId: t029PlanId };
+    }
+
+    it('A14. T-029: PLANNER /plans/:id/submit → RESERVE + SUBMITTED history; MANAGER /plans/:id/approve → RESERVE→COMMIT + APPROVED history (SQL kanıtı)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const manager = await loginAs(app, 'MANAGER');
+
+      const { planId: t029PlanId } = await createT029TestPlan(
+        planner,
+        'E2E-ROLE-JOURNEY-T029-RESERVE',
+      );
+
+      // ── SUBMIT (PlanService.submit — frontend'in fiilen çağırdığı endpoint) ──
+      const submitRes = await request(app.getHttpServer())
+        .post(`/plans/${t029PlanId}/submit`)
+        .set(planner.authHeader())
+        .expect(200);
+      expect(submitRes.body.status).toBe('PENDING_APPROVAL');
+
+      const historyAfterSubmit = await dataSource.query(
+        `SELECT action FROM main.plan_approval_history WHERE plan_id = $1 ORDER BY created_at ASC`,
+        [t029PlanId],
+      );
+      record({
+        step: 'A14a',
+        role: '-',
+        endpoint: 'DB: main.plan_approval_history (submit sonrası)',
+        expected: '[SUBMITTED]',
+        actual: JSON.stringify(historyAfterSubmit.map((r: any) => r.action)),
+        note: 'T-029 FIX (SORUN 1): PlanService.submit() artık PlanApprovalHistory.SUBMITTED yazıyor — önceden /plans/:id/submit + /approve + /reject (fiilen kullanılan endpoint) hiçbir audit satırı üretmiyordu.',
+      });
+      expect(historyAfterSubmit.map((r: any) => r.action)).toEqual([
+        'SUBMITTED',
+      ]);
+
+      const budgetTxAfterSubmit = await dataSource.query(
+        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        [t029PlanId],
+      );
+      record({
+        step: 'A14b',
+        role: '-',
+        endpoint: 'DB: main.budget_transactions (submit sonrası)',
+        expected: '1x RESERVE (POSTED)',
+        actual: JSON.stringify(budgetTxAfterSubmit),
+        note: 'T-029 FIX (SORUN 2): budget.service.ts#reserveForPlan artık RESERVE tipi üretiyor (önceden yanlışlıkla her zaman COMMIT üretiyordu → /reserved endpoint plan rezervasyonları için hep 0 dönüyordu).',
+      });
+      expect(budgetTxAfterSubmit.length).toBe(1);
+      expect(budgetTxAfterSubmit[0].tx_type).toBe('RESERVE');
+      expect(budgetTxAfterSubmit[0].tx_status).toBe('POSTED');
+
+      if (envelopeId) {
+        const reservedRes = await request(app.getHttpServer())
+          .get(`/budget/envelopes/${envelopeId}/reserved`)
+          .set(manager.authHeader())
+          .expect(200);
+        record({
+          step: 'A14c',
+          role: 'MANAGER',
+          endpoint: 'GET /budget/envelopes/:id/reserved (submit sonrası)',
+          expected: '> 0 (bu planın RESERVE tutarını içermeli)',
+          actual: reservedRes.body.reservedAmount,
+          note: 'T-029 FIX: reserveForPlan artık RESERVE ürettiği için bu endpoint artık plan bazlı rezervasyonu doğru gösteriyor (önceden her zaman 0 dönüyordu, bkz. görev tanımı SORUN 2).',
+        });
+        expect(Number(reservedRes.body.reservedAmount)).toBeGreaterThan(0);
+      }
+
+      // ── APPROVE (PlanService.approve) ──
+      const approveRes = await request(app.getHttpServer())
+        .post(`/plans/${t029PlanId}/approve`)
+        .set(manager.authHeader())
+        .send({ comments: 'T-029 e2e approve' })
+        .expect(200);
+      expect(approveRes.body.status).toBe('APPROVED');
+
+      const historyAfterApprove = await dataSource.query(
+        `SELECT action FROM main.plan_approval_history WHERE plan_id = $1 ORDER BY created_at ASC`,
+        [t029PlanId],
+      );
+      record({
+        step: 'A14d',
+        role: '-',
+        endpoint: 'DB: main.plan_approval_history (approve sonrası)',
+        expected: '[SUBMITTED, APPROVED]',
+        actual: JSON.stringify(historyAfterApprove.map((r: any) => r.action)),
+        note: 'T-029 FIX (SORUN 1): PlanService.approve() artık PlanApprovalHistory.APPROVED yazıyor.',
+      });
+      expect(historyAfterApprove.map((r: any) => r.action)).toEqual([
+        'SUBMITTED',
+        'APPROVED',
+      ]);
+
+      const budgetTxAfterApprove = await dataSource.query(
+        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        [t029PlanId],
+      );
+      record({
+        step: 'A14e',
+        role: '-',
+        endpoint: 'DB: main.budget_transactions (approve sonrası)',
+        expected: 'RESERVE + RELEASE(convert) + COMMIT (aynı tutar)',
+        actual: JSON.stringify(budgetTxAfterApprove),
+        note: "T-029 FIX (SORUN 2): budget.service.ts#commitReservedForPlan, submit'teki RESERVE'i RELEASE ile netleyip COMMIT'e çeviriyor (BRD: Approved → COMMIT).",
+      });
+      const types = budgetTxAfterApprove.map((r: any) => r.tx_type);
+      expect(types).toContain('RESERVE');
+      expect(types).toContain('COMMIT');
+      expect(
+        types.filter((t: string) => t === 'RELEASE').length,
+      ).toBeGreaterThanOrEqual(1);
+      const reserveAmt = Number(
+        budgetTxAfterApprove.find((r: any) => r.tx_type === 'RESERVE')?.amount,
+      );
+      const commitAmt = Number(
+        budgetTxAfterApprove.find((r: any) => r.tx_type === 'COMMIT')?.amount,
+      );
+      expect(commitAmt).toBe(reserveAmt);
+
+      if (envelopeId) {
+        const reservedAfter = await request(app.getHttpServer())
+          .get(`/budget/envelopes/${envelopeId}/reserved`)
+          .set(manager.authHeader())
+          .expect(200);
+        record({
+          step: 'A14f',
+          role: 'MANAGER',
+          endpoint: 'GET /budget/envelopes/:id/reserved (approve sonrası)',
+          expected: 'RESERVE COMMIT’e dönüştüğü için bu planın payı düşmeli',
+          actual: reservedAfter.body.reservedAmount,
+          note: 'RESERVE, approve sırasında RELEASE ile netlendi; COMMIT artık ayrı bir kovada (v_budget_summary.reserved_amount içinde sayılıyor — migration 1789000000000 — ama getReservedAmount() bilinçli olarak yalnızca RESERVE-RELEASE’i sayar).',
+        });
+      }
+    });
+
+    it('A15. T-029: yeni plan → PLANNER submit → MANAGER reject → REJECTED history + RESERVE RELEASE (SQL kanıtı)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const manager = await loginAs(app, 'MANAGER');
+
+      const { planId: rejectPlanId } = await createT029TestPlan(
+        planner,
+        'E2E-ROLE-JOURNEY-T029-REJECT',
+      );
+
+      await request(app.getHttpServer())
+        .post(`/plans/${rejectPlanId}/submit`)
+        .set(planner.authHeader())
+        .expect(200);
+
+      const budgetTxAfterSubmit = await dataSource.query(
+        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        [rejectPlanId],
+      );
+      expect(
+        budgetTxAfterSubmit.some((r: any) => r.tx_type === 'RESERVE'),
+      ).toBe(true);
+
+      const rejectRes = await request(app.getHttpServer())
+        .post(`/plans/${rejectPlanId}/reject`)
+        .set(manager.authHeader())
+        .send({ reason: 'T-029 e2e reject test' })
+        .expect(200);
+      expect(rejectRes.body.status).toBe('REJECTED');
+
+      const historyAfterReject = await dataSource.query(
+        `SELECT action, rejection_reason FROM main.plan_approval_history WHERE plan_id = $1 ORDER BY created_at ASC`,
+        [rejectPlanId],
+      );
+      record({
+        step: 'A15a',
+        role: '-',
+        endpoint: 'DB: main.plan_approval_history (reject sonrası)',
+        expected: '[SUBMITTED, REJECTED]',
+        actual: JSON.stringify(historyAfterReject.map((r: any) => r.action)),
+        note: 'T-029 FIX (SORUN 1): PlanService.reject() artık PlanApprovalHistory.REJECTED yazıyor (rejection_reason dahil) — önceden reject hiçbir audit satırı üretmiyordu.',
+      });
+      expect(historyAfterReject.map((r: any) => r.action)).toEqual([
+        'SUBMITTED',
+        'REJECTED',
+      ]);
+      expect(historyAfterReject[1].rejection_reason).toBe(
+        'T-029 e2e reject test',
+      );
+
+      const budgetTxAfterReject = await dataSource.query(
+        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        [rejectPlanId],
+      );
+      record({
+        step: 'A15b',
+        role: '-',
+        endpoint: 'DB: main.budget_transactions (reject sonrası)',
+        expected: 'RESERVE + RELEASE (aynı tutar)',
+        actual: JSON.stringify(budgetTxAfterReject),
+        note: 'T-029 FIX (SORUN 2): PlanService.reject() artık budgetService.releaseForPlan() çağırıyor (BRD: Rejected → RELEASE) — önceden reject bütçeyi hiç serbest bırakmıyordu (bütçe sızıntısı).',
+      });
+      const reserveTx = budgetTxAfterReject.find(
+        (r: any) => r.tx_type === 'RESERVE',
+      );
+      const releaseTx = budgetTxAfterReject.find(
+        (r: any) => r.tx_type === 'RELEASE',
+      );
+      expect(reserveTx).toBeDefined();
+      expect(releaseTx).toBeDefined();
+      expect(Number(releaseTx.amount)).toBe(Number(reserveTx.amount));
+
+      // Temizlik notu: REJECTED plan silinemez (yalnızca DRAFT silinebilir,
+      // plan.controller.ts @Delete Roles/guard) — bu kayıt DB'de
+      // "E2E-ROLE-JOURNEY-T029-REJECT-*" adıyla kalır (dosya başlığındaki
+      // izolasyon/temizlik notuyla tutarlı, afterAll yalnızca ana `planId`'yi
+      // hedefler).
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════

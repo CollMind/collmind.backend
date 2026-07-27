@@ -17,6 +17,10 @@ import { Sku } from '../../../../database/entities/sku.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { UtilizationStatus } from '../../../shared/finance-reporting/dto/budget-utilization.dto';
+import {
+  PlanApprovalHistory,
+  ApprovalHistoryAction,
+} from '../../../../database/entities/plan-approval-history.entity';
 
 describe('PlanService', () => {
   let service: PlanService;
@@ -25,6 +29,10 @@ describe('PlanService', () => {
   let approvalService: jest.Mocked<ApprovalService>;
   let kpiEngine: jest.Mocked<KpiEngineService>;
   let spendCalc: jest.Mocked<SpendCalculationService>;
+  let approvalHistoryRepo: {
+    create: jest.Mock;
+    save: jest.Mock;
+  };
 
   const mockTenantId = 'tenant-1';
   const mockUserId = 'user-1';
@@ -74,7 +82,15 @@ describe('PlanService', () => {
             findEnvelopeByDimensions: jest.fn(),
             getBudgetStatus: jest.fn(),
             reserveForPlan: jest.fn(),
+            commitReservedForPlan: jest.fn(),
             releaseForPlan: jest.fn(),
+          },
+        },
+        {
+          provide: getRepositoryToken(PlanApprovalHistory),
+          useValue: {
+            create: jest.fn(),
+            save: jest.fn(),
           },
         },
         {
@@ -128,6 +144,11 @@ describe('PlanService', () => {
     approvalService = module.get(ApprovalService);
     kpiEngine = module.get(KpiEngineService);
     spendCalc = module.get(SpendCalculationService);
+    approvalHistoryRepo = module.get(getRepositoryToken(PlanApprovalHistory));
+    approvalHistoryRepo.create.mockImplementation((data: any) => data);
+    approvalHistoryRepo.save.mockImplementation((data: any) =>
+      Promise.resolve(data),
+    );
   });
 
   afterEach(() => {
@@ -160,6 +181,9 @@ describe('PlanService', () => {
         status: PlanStatus.PENDING_APPROVAL,
         approvalRequestId: mockApprovalRequest.id,
       } as Plan);
+      // No envelope yet for this channel/period → reservation is skipped
+      // (best-effort; submission itself must not be blocked).
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(null);
 
       const result = await service.submit(mockPlanId, mockTenantId, mockUserId);
 
@@ -180,6 +204,49 @@ describe('PlanService', () => {
         expect.objectContaining({
           approvalRequestId: mockApprovalRequest.id,
         }),
+      );
+      // T-029: audit — submit must write a SUBMITTED PlanApprovalHistory row.
+      expect(approvalHistoryRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          planId: mockPlanId,
+          tenantId: mockTenantId,
+          actionedById: mockUserId,
+          action: ApprovalHistoryAction.SUBMITTED,
+        }),
+      );
+      expect(approvalHistoryRepo.save).toHaveBeenCalled();
+    });
+
+    it('T-029: reserves budget (RESERVE) when an envelope already exists for the channel/period', async () => {
+      const planWithFus = {
+        ...mockPlan,
+        totalSpend: 100000,
+        planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
+      } as Plan;
+
+      planRepo.findById.mockResolvedValue(planWithFus as Plan);
+      approvalService.createRequest.mockResolvedValue({
+        id: 'approval-request-1',
+      } as any);
+      planRepo.updateStatus.mockResolvedValue({
+        ...planWithFus,
+        status: PlanStatus.PENDING_APPROVAL,
+      } as Plan);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue({
+        id: 'envelope-1',
+      } as any);
+      budgetService.reserveForPlan.mockResolvedValue({} as any);
+
+      await service.submit(mockPlanId, mockTenantId, mockUserId);
+
+      expect(budgetService.reserveForPlan).toHaveBeenCalledWith(
+        mockPlanId,
+        planWithFus.totalSpend,
+        planWithFus.channel?.code,
+        planWithFus.periodMonth,
+        'TRY',
+        mockTenantId,
+        mockUserId,
       );
     });
 
@@ -265,7 +332,7 @@ describe('PlanService', () => {
       budgetService.findEnvelopeByDimensions.mockResolvedValue(
         mockEnvelope as any,
       );
-      budgetService.reserveForPlan.mockResolvedValue({} as any);
+      budgetService.commitReservedForPlan.mockResolvedValue({} as any);
       approvalService.approve.mockResolvedValue({} as any);
       planRepo.updateStatus.mockResolvedValue({
         ...pendingPlan,
@@ -282,8 +349,27 @@ describe('PlanService', () => {
       );
 
       expect(result.status).toBe(PlanStatus.APPROVED);
-      expect(budgetService.reserveForPlan).toHaveBeenCalled();
+      expect(budgetService.commitReservedForPlan).toHaveBeenCalledWith(
+        mockPlanId,
+        pendingPlan.totalSpend,
+        pendingPlan.channel?.code,
+        pendingPlan.periodMonth,
+        'TRY',
+        mockTenantId,
+        mockUserId,
+      );
       expect(approvalService.approve).toHaveBeenCalled();
+      // T-029: audit — approve must write an APPROVED PlanApprovalHistory row.
+      expect(approvalHistoryRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          planId: mockPlanId,
+          tenantId: mockTenantId,
+          actionedById: mockUserId,
+          action: ApprovalHistoryAction.APPROVED,
+          comments: 'Comments',
+        }),
+      );
+      expect(approvalHistoryRepo.save).toHaveBeenCalled();
     });
 
     it('should fail if plan is not in PENDING_APPROVAL status', async () => {
@@ -315,6 +401,7 @@ describe('PlanService', () => {
         rejectedById: mockUserId,
         rejectionReason: 'Budget insufficient',
       } as Plan);
+      budgetService.releaseForPlan.mockResolvedValue(undefined);
 
       const result = await service.reject(
         mockPlanId,
@@ -325,6 +412,23 @@ describe('PlanService', () => {
 
       expect(result.status).toBe(PlanStatus.REJECTED);
       expect(approvalService.reject).toHaveBeenCalled();
+      // T-029: audit — reject must write a REJECTED PlanApprovalHistory row.
+      expect(approvalHistoryRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          planId: mockPlanId,
+          tenantId: mockTenantId,
+          actionedById: mockUserId,
+          action: ApprovalHistoryAction.REJECTED,
+          rejectionReason: 'Budget insufficient',
+        }),
+      );
+      expect(approvalHistoryRepo.save).toHaveBeenCalled();
+      // T-029: BRD Rejected → RELEASE outstanding budget encumbrance.
+      expect(budgetService.releaseForPlan).toHaveBeenCalledWith(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+      );
     });
   });
 

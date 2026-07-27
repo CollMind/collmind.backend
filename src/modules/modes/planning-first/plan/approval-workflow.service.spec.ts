@@ -91,6 +91,7 @@ describe('ApprovalWorkflowService', () => {
             findEnvelopeByDimensions: jest.fn(),
             getBudgetStatus: jest.fn(),
             reserveForPlan: jest.fn(),
+            commitReservedForPlan: jest.fn(),
             releaseForPlan: jest.fn(),
           },
         },
@@ -566,8 +567,9 @@ describe('ApprovalWorkflowService', () => {
         approvedById: 'reviewer-1',
       } as Plan);
       approvalService.approve.mockResolvedValue({} as any);
-      // commitBudgetForPlan uses reserveForPlan internally, so we mock that
-      budgetService.reserveForPlan.mockResolvedValue({} as any);
+      // T-029: commitBudgetForPlan now delegates to commitReservedForPlan
+      // (RESERVE→COMMIT conversion), not the raw reserveForPlan.
+      budgetService.commitReservedForPlan.mockResolvedValue({} as any);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
@@ -627,6 +629,7 @@ describe('ApprovalWorkflowService', () => {
       expect(budgetService.releaseForPlan).toHaveBeenCalledWith(
         mockPlanId,
         mockTenantId,
+        'reviewer-1',
       );
       expect(approvalService.reject).toHaveBeenCalled();
     });

@@ -782,10 +782,10 @@ export class ApprovalWorkflowService {
     userId: string,
     spendType: 'ON_INVOICE' | 'OFF_INVOICE',
   ): Promise<void> {
-    // Budget commit: Convert RESERVE to COMMIT
-    // For now, we use reserveForPlan which creates COMMIT transactions for plans
-    // The actual commit happens when plan is approved (reserved budget becomes utilized)
-    await this.budgetService.reserveForPlan(
+    // T-029: Convert the outstanding RESERVE (created at submitForApproval)
+    // into a COMMIT — actual budget consumption on approval (BRD: Approved →
+    // COMMIT). Idempotent; falls back to a fresh COMMIT if no RESERVE exists.
+    await this.budgetService.commitReservedForPlan(
       planId,
       amount,
       channel,
@@ -801,7 +801,7 @@ export class ApprovalWorkflowService {
     tenantId: string,
     userId: string,
   ): Promise<void> {
-    await this.budgetService.releaseForPlan(planId, tenantId);
+    await this.budgetService.releaseForPlan(planId, tenantId, userId);
   }
 
   private async createHistoryEntry(

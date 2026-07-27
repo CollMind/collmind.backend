@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   ConflictException,
@@ -38,6 +39,10 @@ import { Repository } from 'typeorm';
 import { ForecastingUnit } from '../../../../database/entities/forecasting-unit.entity';
 import { Sku } from '../../../../database/entities/sku.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
+import {
+  PlanApprovalHistory,
+  ApprovalHistoryAction,
+} from '../../../../database/entities/plan-approval-history.entity';
 
 /**
  * T-027: Convert a raw (possibly string-typed decimal column, null, or
@@ -68,7 +73,38 @@ export class PlanService {
     private readonly skuRepo: Repository<Sku>,
     @InjectRepository(Tactic)
     private readonly tacticRepo: Repository<Tactic>,
+    @InjectRepository(PlanApprovalHistory)
+    private readonly approvalHistoryRepo: Repository<PlanApprovalHistory>,
   ) {}
+
+  /**
+   * T-029: Write an immutable PlanApprovalHistory entry. Mirrors the pattern
+   * already established in ApprovalWorkflowService#createHistoryEntry (same
+   * entity/table) — duplicated here (not delegated cross-service) because
+   * PlanService.submit/approve/reject are the endpoints actually wired to the
+   * frontend (plans.endpoints.ts) and to the BRD-proven role-journey e2e flow
+   * (`/plans/:id/submit`, `/approve`, `/reject`), so this is the canonical
+   * path for those three actions. See T-029 task report for the full
+   * canonical-implementation rationale.
+   */
+  private async createHistoryEntry(
+    planId: string,
+    tenantId: string,
+    userId: string,
+    action: ApprovalHistoryAction,
+    comments?: string,
+    rejectionReason?: string,
+  ): Promise<PlanApprovalHistory> {
+    const history = this.approvalHistoryRepo.create({
+      planId,
+      tenantId,
+      actionedById: userId,
+      action,
+      comments,
+      rejectionReason,
+    });
+    return this.approvalHistoryRepo.save(history);
+  }
 
   async create(
     dto: CreatePlanDto,
@@ -376,7 +412,7 @@ export class PlanService {
       userId,
     );
 
-    return this.planRepo.updateStatus(
+    const updated = await this.planRepo.updateStatus(
       id,
       tenantId,
       PlanStatus.PENDING_APPROVAL,
@@ -385,6 +421,90 @@ export class PlanService {
         updatedBy: userId,
       },
     );
+
+    // T-029 (SORUN 2): BRD plan state machine — Pending Approval → RESERVE.
+    // Best-effort: only reserves if a budget envelope already exists for this
+    // channel/period (auto-create-on-approve, via approve()'s autoCreateBudget
+    // flag, remains supported for plans submitted before any envelope exists —
+    // matches pre-existing checkBudget()/approve() permissiveness, this does
+    // not newly block submission when there is simply no envelope yet).
+    const channelCode = plan.channel?.code || '';
+    let reserved = false;
+    if (Number(plan.totalSpend) > 0) {
+      const envelope = await this.budgetService.findEnvelopeByDimensions(
+        tenantId,
+        channelCode,
+        plan.periodMonth,
+      );
+      if (envelope) {
+        try {
+          await this.budgetService.reserveForPlan(
+            id,
+            plan.totalSpend,
+            channelCode,
+            plan.periodMonth,
+            'TRY',
+            tenantId,
+            userId,
+          );
+          reserved = true;
+        } catch (error) {
+          // Compensate: revert to DRAFT so the plan is not left PENDING with
+          // no reservation and no audit trail.
+          await this.planRepo.updateStatus(id, tenantId, PlanStatus.DRAFT, {
+            updatedBy: userId,
+          });
+          const message =
+            error instanceof Error ? error.message : 'Unknown error';
+          throw new BadRequestException(
+            `Budget reservation failed: ${message}`,
+          );
+        }
+      }
+    }
+
+    // T-029 (SORUN 1): audit immutable — submit must be recorded in
+    // PlanApprovalHistory. Same compensate-on-failure pattern as T-026
+    // (ApprovalWorkflowService#submitForApproval): PlanRepository/BudgetService/
+    // approvalHistoryRepo do not share a single QueryRunner, so this is not a
+    // real DB transaction — on history-write failure we release any
+    // reservation just made and revert status to DRAFT rather than leave the
+    // plan PENDING_APPROVAL with no audit trail.
+    try {
+      await this.createHistoryEntry(
+        id,
+        tenantId,
+        userId,
+        ApprovalHistoryAction.SUBMITTED,
+      );
+    } catch (error) {
+      this.logger.error(
+        `createHistoryEntry failed after submit for plan ${id}; compensating (release budget if reserved, revert to DRAFT): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      if (reserved) {
+        try {
+          await this.budgetService.releaseForPlan(id, tenantId, userId);
+        } catch (releaseError) {
+          this.logger.error(
+            `Compensation failed: could not release budget for plan ${id} after history write failure: ${
+              releaseError instanceof Error
+                ? releaseError.message
+                : 'Unknown error'
+            }`,
+          );
+        }
+      }
+      await this.planRepo.updateStatus(id, tenantId, PlanStatus.DRAFT, {
+        updatedBy: userId,
+      });
+      throw new InternalServerErrorException(
+        'Failed to record approval history for plan submission; submission has been rolled back to DRAFT.',
+      );
+    }
+
+    return updated;
   }
 
   /**
@@ -511,9 +631,13 @@ export class PlanService {
       );
     }
 
-    // Create budget reservation
+    // T-029 (SORUN 2): BRD plan state machine — Approved → COMMIT. Converts
+    // the RESERVE created at submit() (if any) into a COMMIT; falls back to a
+    // fresh direct COMMIT for plans that reached PENDING_APPROVAL without a
+    // prior reservation (e.g. envelope created only now via autoCreateBudget
+    // above). Idempotent — repeat approve calls do not double-commit.
     try {
-      await this.budgetService.reserveForPlan(
+      await this.budgetService.commitReservedForPlan(
         plan.id,
         plan.totalSpend,
         channelCode,
@@ -525,9 +649,7 @@ export class PlanService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(
-        `Budget reservation failed: ${errorMessage}`,
-      );
+      throw new BadRequestException(`Budget commit failed: ${errorMessage}`);
     }
 
     // Update approval request
@@ -538,11 +660,61 @@ export class PlanService {
       { comments },
     );
 
-    return this.planRepo.updateStatus(id, tenantId, PlanStatus.APPROVED, {
-      approvedAt: new Date(),
-      approvedById: userId,
-      updatedBy: userId,
-    });
+    const updated = await this.planRepo.updateStatus(
+      id,
+      tenantId,
+      PlanStatus.APPROVED,
+      {
+        approvedAt: new Date(),
+        approvedById: userId,
+        updatedBy: userId,
+      },
+    );
+
+    // T-029 (SORUN 1): audit immutable — approve must be recorded. On
+    // history-write failure, compensate by releasing the just-created COMMIT
+    // and reverting status back to PENDING_APPROVAL (approvalService.approve
+    // itself is not compensated — its own audit trail already correctly
+    // records the approval action; only the plan-status/budget side effects
+    // introduced by this call are unwound, same limited-compensation
+    // trade-off documented in T-026 for submit).
+    try {
+      await this.createHistoryEntry(
+        id,
+        tenantId,
+        userId,
+        ApprovalHistoryAction.APPROVED,
+        comments,
+      );
+    } catch (error) {
+      this.logger.error(
+        `createHistoryEntry failed after approve for plan ${id}; compensating (release COMMIT, revert to PENDING_APPROVAL): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      try {
+        await this.budgetService.releaseForPlan(id, tenantId, userId);
+      } catch (releaseError) {
+        this.logger.error(
+          `Compensation failed: could not release budget for plan ${id} after history write failure: ${
+            releaseError instanceof Error
+              ? releaseError.message
+              : 'Unknown error'
+          }`,
+        );
+      }
+      await this.planRepo.updateStatus(
+        id,
+        tenantId,
+        PlanStatus.PENDING_APPROVAL,
+        { updatedBy: userId },
+      );
+      throw new InternalServerErrorException(
+        'Failed to record approval history for plan approval; approval has been rolled back to PENDING_APPROVAL.',
+      );
+    }
+
+    return updated;
   }
 
   async reject(
@@ -570,12 +742,70 @@ export class PlanService {
       { reason },
     );
 
-    return this.planRepo.updateStatus(id, tenantId, PlanStatus.REJECTED, {
-      rejectedAt: new Date(),
-      rejectedById: userId,
-      rejectionReason: reason,
-      updatedBy: userId,
-    });
+    const updated = await this.planRepo.updateStatus(
+      id,
+      tenantId,
+      PlanStatus.REJECTED,
+      {
+        rejectedAt: new Date(),
+        rejectedById: userId,
+        rejectionReason: reason,
+        updatedBy: userId,
+      },
+    );
+
+    // T-029 (SORUN 1): audit immutable — reject must be recorded. Note the
+    // ordering: budget release (below, after a successful history write) is
+    // deliberately the LAST step. approvalService.reject + status→REJECTED
+    // are recorded first; if the history write then fails we revert status
+    // back to PENDING_APPROVAL (no budget has moved yet, so no release/
+    // re-reserve compensation is needed — a real transaction would be
+    // preferable, tracked as the same open point as T-026's submit path).
+    try {
+      await this.createHistoryEntry(
+        id,
+        tenantId,
+        userId,
+        ApprovalHistoryAction.REJECTED,
+        undefined,
+        reason,
+      );
+    } catch (error) {
+      this.logger.error(
+        `createHistoryEntry failed after reject for plan ${id}; compensating (revert to PENDING_APPROVAL, budget untouched): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      await this.planRepo.updateStatus(
+        id,
+        tenantId,
+        PlanStatus.PENDING_APPROVAL,
+        { updatedBy: userId },
+      );
+      throw new InternalServerErrorException(
+        'Failed to record approval history for plan rejection; rejection has been rolled back to PENDING_APPROVAL.',
+      );
+    }
+
+    // T-029 (SORUN 2): BRD plan state machine — Rejected → RELEASE. Releases
+    // any outstanding RESERVE (submit()) and/or COMMIT (defensive — a plan
+    // should not be PENDING_APPROVAL with a COMMIT, but releaseForPlan is a
+    // no-op for whichever type is absent).
+    try {
+      await this.budgetService.releaseForPlan(id, tenantId, userId);
+    } catch (error) {
+      // Budget already correctly reflects a REJECTED plan's intent (nothing
+      // should be encumbered); a release failure here is an ops-visible issue
+      // (logged), not one that should un-reject an already-recorded,
+      // immutably-audited rejection.
+      this.logger.error(
+        `Budget release failed after reject for plan ${id} (status/history already committed as REJECTED): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+    }
+
+    return updated;
   }
 
   async delete(id: string, tenantId: string): Promise<void> {
