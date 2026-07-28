@@ -9,7 +9,6 @@ import {
   AgreementType,
   SpendType,
 } from '../../../database/entities/agreement.entity';
-import { UserScope } from '../../../database/entities/user-scope.entity';
 import { Cpl } from '../../../database/entities/cpl.entity';
 import {
   ApprovalRequest,
@@ -17,6 +16,10 @@ import {
 } from '../../../database/entities/approval-request.entity';
 import { UserRole } from '../../../database/entities/user.entity';
 import { UtilizationStatus } from '../finance-reporting/dto/budget-utilization.dto';
+import {
+  AccessScopeService,
+  EffectiveScope,
+} from '../access-scope/access-scope.service';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -27,6 +30,17 @@ const USER_ADMIN_ID = 'user-admin-001';
 const USER_PLANNER_ID = 'user-planner-001';
 const CPL_ID_1 = 'cpl-001';
 const CPL_ID_2 = 'cpl-002';
+
+const UNRESTRICTED: EffectiveScope = { kind: 'UNRESTRICTED' };
+const scopedPairs = (
+  pairs: Array<{ cplId: string | null; categoryId?: string | null }>,
+): EffectiveScope => ({
+  kind: 'SCOPED',
+  pairs: pairs.map((p) => ({
+    cplId: p.cplId,
+    categoryId: p.categoryId ?? null,
+  })),
+});
 
 // ---------------------------------------------------------------------------
 // Factory helpers
@@ -47,15 +61,6 @@ function buildAgreement(overrides: Partial<Agreement> = {}): Agreement {
     periodMonth: '2026-06',
     ...overrides,
   } as Agreement;
-}
-
-function buildUserScope(cplId: string): Partial<UserScope> {
-  return {
-    userId: USER_PLANNER_ID,
-    cplId,
-    isActive: true,
-    tenantId: TENANT_ID,
-  };
 }
 
 const mockBudgetUtilization = {
@@ -120,7 +125,7 @@ describe('DashboardService', () => {
     find: jest.MockedFunction<any>;
     createQueryBuilder: jest.MockedFunction<any>;
   };
-  let userScopeRepo: { find: jest.MockedFunction<any> };
+  let accessScopeService: { resolveScope: jest.MockedFunction<any> };
   let cplRepo: { find: jest.MockedFunction<any> };
   let approvalRequestRepo: { createQueryBuilder: jest.MockedFunction<any> };
   let financeReportingService: {
@@ -133,7 +138,7 @@ describe('DashboardService', () => {
       find: jest.fn(),
       createQueryBuilder: jest.fn(),
     };
-    userScopeRepo = { find: jest.fn() };
+    accessScopeService = { resolveScope: jest.fn() };
     cplRepo = { find: jest.fn() };
     approvalRequestRepo = { createQueryBuilder: jest.fn() };
     financeReportingService = { getBudgetUtilization: jest.fn() };
@@ -142,13 +147,13 @@ describe('DashboardService', () => {
       providers: [
         DashboardService,
         { provide: getRepositoryToken(Agreement), useValue: agreementRepo },
-        { provide: getRepositoryToken(UserScope), useValue: userScopeRepo },
         { provide: getRepositoryToken(Cpl), useValue: cplRepo },
         {
           provide: getRepositoryToken(ApprovalRequest),
           useValue: approvalRequestRepo,
         },
         { provide: FinanceReportingService, useValue: financeReportingService },
+        { provide: AccessScopeService, useValue: accessScopeService },
       ],
     }).compile();
 
@@ -156,65 +161,73 @@ describe('DashboardService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // resolveCplScope
+  // resolveScopedCplIds — adapts AccessScopeService.EffectiveScope to the
+  // legacy cplId-only filter shape used throughout this service. T-028d:
+  // role semantics live SOLELY in AccessScopeService; this only tests the
+  // shape adaptation + the F6 fix.
   // -------------------------------------------------------------------------
 
-  describe('CPL scope resolution', () => {
-    it('returns null for ADMIN (tenant-wide access)', async () => {
-      userScopeRepo.find.mockResolvedValue([]);
-      // ADMIN should not call userScopeRepo at all — returns null directly
-      const scope = await (service as any).resolveCplScope(
+  describe('CPL scope resolution (resolveScopedCplIds)', () => {
+    it('returns null when AccessScopeService reports UNRESTRICTED', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(UNRESTRICTED);
+
+      const scope = await (service as any).resolveScopedCplIds(
         TENANT_ID,
         USER_ADMIN_ID,
         UserRole.ADMIN,
       );
-      expect(scope).toBeNull();
-      expect(userScopeRepo.find).not.toHaveBeenCalled();
-    });
 
-    it('returns null for MANAGER', async () => {
-      const scope = await (service as any).resolveCplScope(
+      expect(scope).toBeNull();
+      expect(accessScopeService.resolveScope).toHaveBeenCalledWith(
         TENANT_ID,
         USER_ADMIN_ID,
-        UserRole.MANAGER,
+        UserRole.ADMIN,
       );
-      expect(scope).toBeNull();
     });
 
-    it('returns null for FINANCE', async () => {
-      const scope = await (service as any).resolveCplScope(
-        TENANT_ID,
-        USER_ADMIN_ID,
-        UserRole.FINANCE,
+    it('flattens SCOPED pairs into a distinct cplId[] list', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(
+        scopedPairs([{ cplId: CPL_ID_1 }, { cplId: CPL_ID_2 }]),
       );
-      expect(scope).toBeNull();
-    });
 
-    it('returns PLANNER assigned cplIds', async () => {
-      userScopeRepo.find.mockResolvedValue([
-        buildUserScope(CPL_ID_1),
-        buildUserScope(CPL_ID_2),
-      ]);
-      const scope = await (service as any).resolveCplScope(
+      const scope = await (service as any).resolveScopedCplIds(
         TENANT_ID,
         USER_PLANNER_ID,
         UserRole.PLANNER,
       );
+
       expect(scope).toEqual([CPL_ID_1, CPL_ID_2]);
-      expect(userScopeRepo.find).toHaveBeenCalledWith({
-        where: { userId: USER_PLANNER_ID, tenantId: TENANT_ID, isActive: true },
-        select: ['cplId'],
-      });
     });
 
-    it('returns empty array for PLANNER with no scope assignments', async () => {
-      userScopeRepo.find.mockResolvedValue([]);
-      const scope = await (service as any).resolveCplScope(
+    it('returns empty array when SCOPED with zero pairs (fail-closed, R-2)', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(scopedPairs([]));
+
+      const scope = await (service as any).resolveScopedCplIds(
         TENANT_ID,
         USER_PLANNER_ID,
         UserRole.PLANNER,
       );
+
       expect(scope).toEqual([]);
+    });
+
+    // F6 regression — see access-scope.service.ts header + task T-028d.
+    // Previously: `scopes.map(s => s.cplId).filter(id => !!id)` silently
+    // dropped a NULL-cplId row, turning "all CPLs" into "no CPLs" for a
+    // NULL-scoped (unrestricted-for-cpl) user. Now: a pair with cplId===null
+    // must make the whole cplId dimension unrestricted (null), not empty.
+    it('F6: a SCOPED pair with cplId===null resolves to null (unrestricted), not []', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(
+        scopedPairs([{ cplId: null, categoryId: null }]),
+      );
+
+      const scope = await (service as any).resolveScopedCplIds(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+      );
+
+      expect(scope).toBeNull();
     });
   });
 
@@ -224,8 +237,7 @@ describe('DashboardService', () => {
 
   describe('getSummary', () => {
     beforeEach(() => {
-      // admin: cplScope = null (tenant-wide)
-      userScopeRepo.find.mockResolvedValue([]);
+      accessScopeService.resolveScope.mockResolvedValue(UNRESTRICTED);
 
       // agreementRepo.count: ACTIVE count = 5, APPROVED count = 3
       agreementRepo.count
@@ -273,7 +285,7 @@ describe('DashboardService', () => {
 
       const callArgs = financeReportingService.getBudgetUtilization.mock
         .calls[0] as [string, { cplIds?: string[] }];
-      // Admin path: cplIds should NOT be present in filter (null scope → no cplIds key)
+      // Admin path: cplIds should NOT be present in filter (UNRESTRICTED scope → no cplIds key)
       expect(callArgs[1].cplIds).toBeUndefined();
     });
 
@@ -311,7 +323,9 @@ describe('DashboardService', () => {
 
   describe('getSummary — PLANNER scope', () => {
     it('passes Planner cplIds to getBudgetUtilization', async () => {
-      userScopeRepo.find.mockResolvedValue([buildUserScope(CPL_ID_1)]);
+      accessScopeService.resolveScope.mockResolvedValue(
+        scopedPairs([{ cplId: CPL_ID_1 }]),
+      );
 
       agreementRepo.count.mockResolvedValue(2);
 
@@ -335,7 +349,7 @@ describe('DashboardService', () => {
     });
 
     it('returns empty counts when Planner has no CPL assignments', async () => {
-      userScopeRepo.find.mockResolvedValue([]);
+      accessScopeService.resolveScope.mockResolvedValue(scopedPairs([]));
 
       // with empty cplIds, countPendingApprovals returns 0 immediately
       agreementRepo.count.mockResolvedValue(0);
@@ -360,6 +374,45 @@ describe('DashboardService', () => {
       // openTaskCount is 0 because awaitingInvoice count returns 0 for empty scope
       expect(result.openTaskCount).toBe(0);
     });
+
+    // F6 regression (end-to-end through getSummary): a NULL-cplId scope row
+    // must unlock ALL CPLs, not zero. Before the fix, this user would get an
+    // empty dashboard (cplIds=[] → all counts 0, budget filter cplIds:[]).
+    it('F6: PLANNER with a NULL-cplId scope row sees ALL CPLs (no cplIds filter)', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(
+        scopedPairs([{ cplId: null, categoryId: null }]),
+      );
+
+      // agreementRepo.count is invoked once with an OR-condition array
+      // (buildAgreementWhere) — a single resolved value covers that call.
+      agreementRepo.count.mockResolvedValue(5);
+
+      const approvalQb = buildMockQb(2);
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(approvalQb);
+
+      const awaitingQb = buildMockQb(4);
+      agreementRepo.createQueryBuilder.mockReturnValue(awaitingQb);
+
+      financeReportingService.getBudgetUtilization.mockResolvedValue(
+        mockBudgetUtilization,
+      );
+
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+        { period: '2026-06' },
+      );
+
+      // Same counts as the UNRESTRICTED/admin path — not zeroed out.
+      expect(result.activeAgreementCount).toBe(5);
+      expect(result.pendingApprovalCount).toBe(2);
+      expect(result.openTaskCount).toBe(4);
+
+      const callArgs = financeReportingService.getBudgetUtilization.mock
+        .calls[0] as [string, { cplIds?: string[] }];
+      expect(callArgs[1].cplIds).toBeUndefined();
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -368,7 +421,7 @@ describe('DashboardService', () => {
 
   describe('getPendingTasks', () => {
     it('returns structured pending tasks with empty arrays when no data', async () => {
-      userScopeRepo.find.mockResolvedValue([]);
+      accessScopeService.resolveScope.mockResolvedValue(UNRESTRICTED);
 
       const emptyQb = buildMockQb([]);
       agreementRepo.createQueryBuilder.mockReturnValue(emptyQb);
@@ -389,7 +442,7 @@ describe('DashboardService', () => {
     });
 
     it('maps agreement fields to PendingApprovalItemDto correctly', async () => {
-      userScopeRepo.find.mockResolvedValue([]);
+      accessScopeService.resolveScope.mockResolvedValue(UNRESTRICTED);
 
       const pendingAgreement = buildAgreement({
         id: 'agr-pending-01',
@@ -429,7 +482,7 @@ describe('DashboardService', () => {
     });
 
     it('returns empty arrays immediately for PLANNER with no CPL scope', async () => {
-      userScopeRepo.find.mockResolvedValue([]);
+      accessScopeService.resolveScope.mockResolvedValue(scopedPairs([]));
 
       const result = await service.getPendingTasks(
         TENANT_ID,
@@ -453,7 +506,7 @@ describe('DashboardService', () => {
 
   describe('getCplStatus', () => {
     it('returns empty items when no CPLs in scope', async () => {
-      userScopeRepo.find.mockResolvedValue([]);
+      accessScopeService.resolveScope.mockResolvedValue(scopedPairs([]));
       cplRepo.find.mockResolvedValue([]);
 
       const result = await service.getCplStatus(
@@ -466,6 +519,7 @@ describe('DashboardService', () => {
     });
 
     it('computes isUpToDate=true when all counters are zero', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(UNRESTRICTED);
       cplRepo.find.mockResolvedValue([
         { id: CPL_ID_1, name: 'Migros NKA', channel: { code: 'MODERN_TRADE' } },
       ]);
@@ -491,6 +545,7 @@ describe('DashboardService', () => {
     });
 
     it('computes isUpToDate=false when pendingApproval > 0', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(UNRESTRICTED);
       cplRepo.find.mockResolvedValue([
         { id: CPL_ID_1, name: 'Migros NKA', channel: { code: 'MT' } },
       ]);
@@ -515,6 +570,7 @@ describe('DashboardService', () => {
     });
 
     it('counts STA and LTA separately', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(UNRESTRICTED);
       cplRepo.find.mockResolvedValue([
         { id: CPL_ID_1, name: 'Migros', channel: { code: 'MT' } },
       ]);
@@ -552,7 +608,9 @@ describe('DashboardService', () => {
     });
 
     it('scopes CPLs for PLANNER — passes cplIds to cplRepo.find', async () => {
-      userScopeRepo.find.mockResolvedValue([buildUserScope(CPL_ID_1)]);
+      accessScopeService.resolveScope.mockResolvedValue(
+        scopedPairs([{ cplId: CPL_ID_1 }]),
+      );
       cplRepo.find.mockResolvedValue([]);
       agreementRepo.find.mockResolvedValue([]);
 
@@ -644,7 +702,7 @@ describe('DashboardService', () => {
       // This test asserts at the source-code level that getSummary delegates
       // budget utilization rather than computing it. We verify this by checking
       // getBudgetUtilization is called and the result is passed through unchanged.
-      userScopeRepo.find.mockResolvedValue([]);
+      accessScopeService.resolveScope.mockResolvedValue(UNRESTRICTED);
       agreementRepo.count.mockResolvedValue(0);
 
       const approvalQb = buildMockQb(0);

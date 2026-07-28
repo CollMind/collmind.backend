@@ -208,6 +208,65 @@ export async function cleanupSalesActuals(
   );
 }
 
+/**
+ * E2E'nin ürettiği planları ve bunların bütçe/audit izlerini temizler.
+ *
+ * NEDEN GEREKLİ: T-029'dan sonra onaylanan planlar bütçeyi doğru şekilde tutuyor
+ * (COMMIT transaction). Ama BRD gereği yalnızca DRAFT plan API'den silinebiliyor —
+ * yani e2e'nin ürettiği APPROVED planlar zarfı KALICI olarak tüketiyor. Birkaç koşum
+ * sonra `ENV-2026-NKA-Q1` tükeniyor ve submit/approve testleri "Insufficient budget"
+ * ile 400 alıyor (kod hatası değil, state birikimi).
+ *
+ * Bu temizlik uygulama katmanının immutability kuralını İHLAL ETMEZ: doğrudan SQL ile,
+ * yalnızca test fixture'larını (`E2E-` önekli) siler — tıpkı `cleanupTestTransactions`ın
+ * ledger/agreement_transactions temizlemesi gibi.
+ */
+export async function cleanupTestPlans(
+  app: INestApplication,
+  tenantId: string,
+  namePrefix: string = 'E2E-',
+): Promise<void> {
+  const dataSource = app.get<DataSource>(getDataSourceToken());
+
+  const plans = await dataSource.query(
+    `SELECT id FROM main.plans
+      WHERE tenant_id = $1 AND (plan_name LIKE $2 OR plan_code LIKE $2)`,
+    [tenantId, `${namePrefix}%`],
+  );
+  const planIds: string[] = plans.map((p: { id: string }) => p.id);
+  if (planIds.length === 0) {
+    return;
+  }
+
+  // FK sırası: bütçe/audit izleri → plan alt kayıtları → plan
+  await dataSource.query(
+    `DELETE FROM main.budget_transactions
+      WHERE tenant_id = $1 AND source_type = 'PLAN' AND source_id = ANY($2::uuid[])`,
+    [tenantId, planIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.plan_approval_history WHERE plan_id = ANY($1::uuid[])`,
+    [planIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.plan_mechanic_values
+      WHERE plan_fu_id IN (SELECT id FROM main.plan_fus WHERE plan_id = ANY($1::uuid[]))`,
+    [planIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.plan_skus
+      WHERE plan_fu_id IN (SELECT id FROM main.plan_fus WHERE plan_id = ANY($1::uuid[]))`,
+    [planIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.plan_fus WHERE plan_id = ANY($1::uuid[])`,
+    [planIds],
+  );
+  await dataSource.query(`DELETE FROM main.plans WHERE id = ANY($1::uuid[])`, [
+    planIds,
+  ]);
+}
+
 /** Kod → id çözümlemesi; bulunamazsa anlaşılır hata (seed eksik demektir). */
 export async function resolveIdByCode(
   app: INestApplication,

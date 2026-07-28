@@ -5,17 +5,18 @@ import { SettlementSummaryService } from './settlement-summary.service';
 import { SettlementCloseService } from './settlement-close.service';
 import { SettlementGuard } from './settlement.guard';
 import { Agreement } from '../../../../database/entities/agreement.entity';
-import { UserScope } from '../../../../database/entities/user-scope.entity';
 import { LedgerModule } from '../ledger/ledger.module';
 import { CommonModule } from '../../../../common/common.module';
 import { BudgetModule } from '../../../shared/budget/budget.module';
+import { AccessScopeModule } from '../../../shared/access-scope/access-scope.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Agreement, UserScope]),
+    TypeOrmModule.forFeature([Agreement]),
     LedgerModule,
     CommonModule,
     BudgetModule,
+    AccessScopeModule,
   ],
   controllers: [SettlementController],
   providers: [

@@ -7,8 +7,11 @@ import {
   AgreementStatus,
   SpendType,
 } from '../../../../database/entities/agreement.entity';
-import { UserScope } from '../../../../database/entities/user-scope.entity';
 import { UserRole } from '../../../../database/entities/user.entity';
+import {
+  AccessScopeService,
+  EffectiveScope,
+} from '../../../shared/access-scope/access-scope.service';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -20,6 +23,17 @@ const AGR_ID_1 = 'agr-001';
 const AGR_ID_2 = 'agr-002';
 const CPL_ID_1 = 'cpl-001';
 const CPL_ID_2 = 'cpl-002';
+
+const UNRESTRICTED: EffectiveScope = { kind: 'UNRESTRICTED' };
+const scopedPairs = (
+  pairs: Array<{ cplId: string | null; categoryId?: string | null }>,
+): EffectiveScope => ({
+  kind: 'SCOPED',
+  pairs: pairs.map((p) => ({
+    cplId: p.cplId,
+    categoryId: p.categoryId ?? null,
+  })),
+});
 
 // ---------------------------------------------------------------------------
 // Factory helpers
@@ -43,14 +57,6 @@ function buildAgreement(
     closedAt: undefined,
     closedBy: undefined,
     ...overrides,
-  };
-}
-
-function buildUserScope(cplId: string): Partial<UserScope> {
-  return {
-    userId: USER_ID,
-    cplId,
-    isActive: true,
   };
 }
 
@@ -82,19 +88,43 @@ describe('SettlementSummaryService', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockAgreementRepo: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mockUserScopeRepo: any;
+  let mockAccessScopeService: {
+    resolveScope: jest.Mock;
+    applyToQueryBuilder: jest.Mock;
+  };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockLedgerRepo: any;
 
+  /**
+   * Mirrors AccessScopeService.applyToQueryBuilder's *observable effect* on
+   * the mock query builder (adds an andWhere call) without re-implementing
+   * its pair semantics — those are covered by access-scope.service.spec.ts.
+   * Tests assert against `_qb.andWhere` call count/args where relevant.
+   */
+  function wireApplyToQueryBuilder() {
+    mockAccessScopeService.applyToQueryBuilder.mockImplementation(
+      (qb: any, _alias: string, scope: EffectiveScope) => {
+        if (scope.kind === 'UNRESTRICTED') return;
+        if (scope.pairs.length === 0) {
+          qb.andWhere('1=0');
+          return;
+        }
+        qb.andWhere('SCOPE_BRACKETS', { scopePairs: scope.pairs });
+      },
+    );
+  }
+
   async function buildModule(
     agreements: Partial<Agreement>[],
-    userScopes: Partial<UserScope>[],
+    scope: EffectiveScope,
     ledgerSums: Map<string, number>,
   ) {
     mockAgreementRepo = buildAgreementRepoMock(agreements);
-    mockUserScopeRepo = {
-      find: jest.fn().mockResolvedValue(userScopes),
+    mockAccessScopeService = {
+      resolveScope: jest.fn().mockResolvedValue(scope),
+      applyToQueryBuilder: jest.fn(),
     };
+    wireApplyToQueryBuilder();
     mockLedgerRepo = {
       sumByAgreementId: jest
         .fn()
@@ -110,11 +140,8 @@ describe('SettlementSummaryService', () => {
           provide: getRepositoryToken(Agreement),
           useValue: mockAgreementRepo,
         },
-        {
-          provide: getRepositoryToken(UserScope),
-          useValue: mockUserScopeRepo,
-        },
         { provide: LedgerRepository, useValue: mockLedgerRepo },
+        { provide: AccessScopeService, useValue: mockAccessScopeService },
       ],
     }).compile();
 
@@ -127,9 +154,7 @@ describe('SettlementSummaryService', () => {
 
   describe('Planner scope: empty CPL scope → empty summary', () => {
     it('returns zero counts and empty lines when Planner has no assigned CPLs', async () => {
-      service = await buildModule([], [], new Map());
-      // Planner with no active scopes
-      mockUserScopeRepo.find = jest.fn().mockResolvedValue([]);
+      service = await buildModule([], scopedPairs([]), new Map());
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -145,14 +170,13 @@ describe('SettlementSummaryService', () => {
       expect(result.totalRemainingAmount).toBeNull();
     });
 
-    it('does NOT call agreementRepo when Planner scope is empty (short-circuit)', async () => {
-      service = await buildModule([], [], new Map());
-      mockUserScopeRepo.find = jest.fn().mockResolvedValue([]);
+    it('applies fail-closed (1=0) filter when Planner scope is empty', async () => {
+      service = await buildModule([], scopedPairs([]), new Map());
 
       await service.getSummary(TENANT_ID, USER_ID, UserRole.PLANNER, {});
 
-      // Agreement repo should not be queried at all
-      expect(mockAgreementRepo.createQueryBuilder).not.toHaveBeenCalled();
+      expect(mockAccessScopeService.applyToQueryBuilder).toHaveBeenCalled();
+      expect(mockAgreementRepo._qb.andWhere).toHaveBeenCalledWith('1=0');
     });
   });
 
@@ -166,7 +190,7 @@ describe('SettlementSummaryService', () => {
       // Net after reversal: 60000 (DEBIT=80000 − CREDIT=20000)
       const ledgerSums = new Map([[AGR_ID_1, 60000]]);
 
-      service = await buildModule([agr], [], ledgerSums);
+      service = await buildModule([agr], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -185,7 +209,7 @@ describe('SettlementSummaryService', () => {
       const agr = buildAgreement(AGR_ID_1, { capTotalAmount: 50000 });
       const ledgerSums = new Map([[AGR_ID_1, 35000]]);
 
-      service = await buildModule([agr], [], ledgerSums);
+      service = await buildModule([agr], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -212,7 +236,7 @@ describe('SettlementSummaryService', () => {
       const agr = buildAgreement(AGR_ID_1, { capTotalAmount: 0 });
       const ledgerSums = new Map([[AGR_ID_1, 0]]);
 
-      service = await buildModule([agr], [], ledgerSums);
+      service = await buildModule([agr], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -225,7 +249,7 @@ describe('SettlementSummaryService', () => {
     });
 
     it('returns null totalRemainingAmount when totalClaimAmount is 0', async () => {
-      service = await buildModule([], [], new Map());
+      service = await buildModule([], UNRESTRICTED, new Map());
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -253,7 +277,7 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 0],
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -275,7 +299,7 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 0],
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -295,7 +319,7 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 0],
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -309,11 +333,11 @@ describe('SettlementSummaryService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Planner scope: CPL-scoped filter
+  // Scope resolution: AccessScopeService is the single source of truth
   // -------------------------------------------------------------------------
 
-  describe('Planner scope: filters by assigned CPLs', () => {
-    it('non-Planner (ADMIN) does not apply CPL scope restriction', async () => {
+  describe('Scope resolution delegates to AccessScopeService (T-028d)', () => {
+    it('resolves scope via AccessScopeService and applies it to the query builder', async () => {
       const agr1 = buildAgreement(AGR_ID_1, { cplId: CPL_ID_1 });
       const agr2 = buildAgreement(AGR_ID_2, { cplId: CPL_ID_2 });
       const ledgerSums = new Map([
@@ -321,29 +345,69 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 0],
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       await service.getSummary(TENANT_ID, USER_ID, UserRole.ADMIN, {});
 
-      // UserScope should NOT be queried for ADMIN
-      expect(mockUserScopeRepo.find).not.toHaveBeenCalled();
+      expect(mockAccessScopeService.resolveScope).toHaveBeenCalledWith(
+        TENANT_ID,
+        USER_ID,
+        UserRole.ADMIN,
+      );
+      expect(mockAccessScopeService.applyToQueryBuilder).toHaveBeenCalledWith(
+        mockAgreementRepo._qb,
+        'agreement',
+        UNRESTRICTED,
+      );
     });
 
-    it('Planner queries userScopeRepo to get allowed CPLs', async () => {
-      const scopes = [buildUserScope(CPL_ID_1)];
+    it('Planner: passes the SCOPED effective scope through unchanged (no local re-derivation)', async () => {
+      const scope = scopedPairs([{ cplId: CPL_ID_1 }]);
       const agr = buildAgreement(AGR_ID_1, { cplId: CPL_ID_1 });
       const ledgerSums = new Map([[AGR_ID_1, 0]]);
 
-      service = await buildModule([agr], scopes, ledgerSums);
-      mockUserScopeRepo.find = jest.fn().mockResolvedValue(scopes);
+      service = await buildModule([agr], scope, ledgerSums);
 
       await service.getSummary(TENANT_ID, USER_ID, UserRole.PLANNER, {});
 
-      // tenantId ZORUNLU — cross-tenant CPL sızıntısını önler (B-1)
-      expect(mockUserScopeRepo.find).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { userId: USER_ID, tenantId: TENANT_ID, isActive: true },
-        }),
+      expect(mockAccessScopeService.resolveScope).toHaveBeenCalledWith(
+        TENANT_ID,
+        USER_ID,
+        UserRole.PLANNER,
+      );
+      expect(mockAccessScopeService.applyToQueryBuilder).toHaveBeenCalledWith(
+        mockAgreementRepo._qb,
+        'agreement',
+        scope,
+      );
+    });
+
+    // F6 regression — a NULL-cplId/categoryId scope pair must resolve to
+    // UNRESTRICTED via AccessScopeService (NULL = "hepsi"), so
+    // applyToQueryBuilder is a no-op and every agreement is visible. Before
+    // T-028d this service had its own ad-hoc `.filter(id => !!id)` copy that
+    // (like dashboard.service.ts) would have silently dropped this row.
+    it('F6: NULL-cplId scope resolves to UNRESTRICTED — all agreements visible', async () => {
+      const agr1 = buildAgreement(AGR_ID_1, { cplId: CPL_ID_1 });
+      const agr2 = buildAgreement(AGR_ID_2, { cplId: CPL_ID_2 });
+      const ledgerSums = new Map([
+        [AGR_ID_1, 0],
+        [AGR_ID_2, 0],
+      ]);
+
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
+
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_ID,
+        UserRole.PLANNER,
+        {},
+      );
+
+      // UNRESTRICTED → applyToQueryBuilder no-ops, both agreements present.
+      expect(result.totalCount).toBe(2);
+      expect(result.lines.map((l) => l.agreementId).sort()).toEqual(
+        [AGR_ID_1, AGR_ID_2].sort(),
       );
     });
   });
@@ -353,36 +417,11 @@ describe('SettlementSummaryService', () => {
   // -------------------------------------------------------------------------
 
   describe('tenant isolation', () => {
-    // B-1: cross-tenant CPL sızıntısı testi
-    // userScopeRepo.find her zaman tenantId ile çağrılmalı;
-    // aksi hâlde farklı tenant'a ait UserScope satırları Planner'a görünür.
-    it('Planner CPL scope query includes tenantId to prevent cross-tenant leakage (B-1)', async () => {
-      const OTHER_TENANT_ID = 'tenant-OTHER';
-      const scopes = [buildUserScope(CPL_ID_1)];
-      const agr = buildAgreement(AGR_ID_1, { cplId: CPL_ID_1 });
-      const ledgerSums = new Map([[AGR_ID_1, 0]]);
-
-      service = await buildModule([agr], scopes, ledgerSums);
-      mockUserScopeRepo.find = jest.fn().mockResolvedValue(scopes);
-
-      // Caller tenant = TENANT_ID; başka bir tenant'ın (OTHER_TENANT_ID) scope'u sızmamalı
-      await service.getSummary(TENANT_ID, USER_ID, UserRole.PLANNER, {});
-
-      const callArgs = mockUserScopeRepo.find.mock.calls[0][0];
-      // tenantId TENANT_ID olmalı — OTHER_TENANT_ID ASLA eşleşmemeli
-      expect(callArgs.where).toMatchObject({
-        userId: USER_ID,
-        tenantId: TENANT_ID,
-        isActive: true,
-      });
-      expect(callArgs.where.tenantId).not.toBe(OTHER_TENANT_ID);
-    });
-
     it('all ledger queries use the caller tenantId', async () => {
       const agr = buildAgreement(AGR_ID_1);
       const ledgerSums = new Map([[AGR_ID_1, 25000]]);
 
-      service = await buildModule([agr], [], ledgerSums);
+      service = await buildModule([agr], UNRESTRICTED, ledgerSums);
 
       await service.getSummary(TENANT_ID, USER_ID, UserRole.ADMIN, {});
 
@@ -400,7 +439,7 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 20000],
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       await service.getSummary(TENANT_ID, USER_ID, UserRole.ADMIN, {});
 
@@ -412,6 +451,25 @@ describe('SettlementSummaryService', () => {
       expect(mockLedgerRepo.sumByAgreementId).toHaveBeenCalledWith(
         AGR_ID_2,
         TENANT_ID,
+      );
+    });
+
+    it('resolveScope is always called with the caller tenantId (B-1)', async () => {
+      const agr = buildAgreement(AGR_ID_1, { cplId: CPL_ID_1 });
+      const ledgerSums = new Map([[AGR_ID_1, 0]]);
+
+      service = await buildModule(
+        [agr],
+        scopedPairs([{ cplId: CPL_ID_1 }]),
+        ledgerSums,
+      );
+
+      await service.getSummary(TENANT_ID, USER_ID, UserRole.PLANNER, {});
+
+      expect(mockAccessScopeService.resolveScope).toHaveBeenCalledWith(
+        TENANT_ID,
+        USER_ID,
+        UserRole.PLANNER,
       );
     });
   });
@@ -432,7 +490,7 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 20000],
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -458,7 +516,7 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 0],
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -482,7 +540,7 @@ describe('SettlementSummaryService', () => {
       const agr = buildAgreement(AGR_ID_1, { capTotalAmount: 50000 });
       const ledgerSums = new Map([[AGR_ID_1, 60000]]); // 10000 over-invoiced
 
-      service = await buildModule([agr], [], ledgerSums);
+      service = await buildModule([agr], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -507,7 +565,7 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 18000], // under by 2000
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -534,7 +592,7 @@ describe('SettlementSummaryService', () => {
       });
       const ledgerSums = new Map([[AGR_ID_1, 0]]);
 
-      service = await buildModule([agr], [], ledgerSums);
+      service = await buildModule([agr], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -557,7 +615,7 @@ describe('SettlementSummaryService', () => {
         [AGR_ID_2, 0],
       ]);
 
-      service = await buildModule([agr1, agr2], [], ledgerSums);
+      service = await buildModule([agr1, agr2], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -570,33 +628,6 @@ describe('SettlementSummaryService', () => {
       expect(result.pendingCount).toBe(2); // APPROVED + ACTIVE
       expect(result.closedCount).toBe(0);
     });
-  });
-
-  // -------------------------------------------------------------------------
-  // RBAC: non-Planner roles must NOT query UserScope
-  // -------------------------------------------------------------------------
-
-  describe('RBAC: non-Planner roles skip UserScope query', () => {
-    const nonPlannerRoles = [
-      UserRole.ADMIN,
-      UserRole.CATEGORY_MANAGER,
-      UserRole.FINANCE_MANAGER,
-      UserRole.FINANCE,
-      UserRole.READONLY,
-    ] as const;
-
-    for (const role of nonPlannerRoles) {
-      it(`${role} does not call userScopeRepo.find`, async () => {
-        const agr = buildAgreement(AGR_ID_1);
-        const ledgerSums = new Map([[AGR_ID_1, 0]]);
-
-        service = await buildModule([agr], [], ledgerSums);
-
-        await service.getSummary(TENANT_ID, USER_ID, role, {});
-
-        expect(mockUserScopeRepo.find).not.toHaveBeenCalled();
-      });
-    }
   });
 
   // -------------------------------------------------------------------------
@@ -614,7 +645,7 @@ describe('SettlementSummaryService', () => {
       });
       const ledgerSums = new Map([[AGR_ID_1, 50000]]);
 
-      service = await buildModule([agr], [], ledgerSums);
+      service = await buildModule([agr], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,
@@ -635,7 +666,7 @@ describe('SettlementSummaryService', () => {
       });
       const ledgerSums = new Map([[AGR_ID_1, 0]]);
 
-      service = await buildModule([agr], [], ledgerSums);
+      service = await buildModule([agr], UNRESTRICTED, ledgerSums);
 
       const result = await service.getSummary(
         TENANT_ID,

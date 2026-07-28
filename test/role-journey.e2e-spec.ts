@@ -31,6 +31,7 @@ import {
   E2EFixture,
   cleanupTestTransactions,
   cleanupSalesActuals,
+  cleanupTestPlans,
 } from './helpers/seed-e2e';
 
 // ── Seed sabitleri — beforeAll'da KODA göre çözülür (hardcoded UUID YASAK:
@@ -144,20 +145,12 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     } catch (e) {
       console.warn('Cleanup (sales-actuals) başarısız:', e);
     }
-    // DRAFT plan varsa sil (yalnızca DRAFT silinebilir; APPROVED planlar BRD
-    // gereği silinemez — bu kasıtlı, temizlenmeyecek).
+    // Bu spec'in ürettiği TÜM planları (DRAFT + APPROVED) ve bütçe/audit izlerini temizle.
+    // APPROVED planlar API'den silinemez (BRD) ama T-029'dan sonra bütçeyi kalıcı tutuyorlar
+    // → temizlenmezse birkaç koşumda zarf tükeniyor ve submit/approve testleri "Insufficient
+    // budget" ile kırılıyor (kod hatası değil, state birikimi). Test-only doğrudan SQL.
     try {
-      if (planId) {
-        const admin = await loginAs(app, 'ADMIN');
-        const planRes = await request(app.getHttpServer())
-          .get(`/plans/${planId}`)
-          .set(admin.authHeader());
-        if (planRes.status === 200 && planRes.body?.status === 'DRAFT') {
-          await request(app.getHttpServer())
-            .delete(`/plans/${planId}`)
-            .set(admin.authHeader());
-        }
-      }
+      await cleanupTestPlans(app, fixture.tenantId, 'E2E-');
     } catch (e) {
       console.warn('Cleanup (plan) başarısız:', e);
     }

@@ -5,8 +5,8 @@ import {
   Agreement,
   AgreementStatus,
 } from '../../../../database/entities/agreement.entity';
-import { UserScope } from '../../../../database/entities/user-scope.entity';
 import { UserRole } from '../../../../database/entities/user.entity';
+import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
 import { LedgerRepository } from '../ledger/ledger.repository';
 import {
   SettlementSummaryQueryDto,
@@ -29,9 +29,11 @@ import {
  * remainingAmount = claimAmount − invoicedAmount
  *   → null if claimAmount === 0 (division-by-zero guard, BRD)
  *
- * Planner scope: yalnızca kendi CPL'lerine atanmış agreements görür.
- *   Scope boşsa → boş summary (zero counts, empty lines).
- * Admin/Manager: tenant-wide.
+ * Scope: AccessScopeService üzerinden çözülür (T-028d — tek scope çıkış
+ *   noktası; rol semantiği yalnızca orada tanımlı). PLANNER yalnızca kendi
+ *   pair-scoped CPL/kategori kombinasyonlarına ait agreements görür. Scope
+ *   boşsa (fail-closed) → boş summary (zero counts, empty lines).
+ * Admin/Finance/Readonly: tenant-wide (UNRESTRICTED — AccessScopeService).
  *
  * Her sorgu tenant-scoped. <500ms (mevcut indexler yeterli).
  */
@@ -49,9 +51,8 @@ export class SettlementSummaryService {
   constructor(
     @InjectRepository(Agreement)
     private readonly agreementRepo: Repository<Agreement>,
-    @InjectRepository(UserScope)
-    private readonly userScopeRepo: Repository<UserScope>,
     private readonly ledgerRepo: LedgerRepository,
+    private readonly accessScopeService: AccessScopeService,
   ) {}
 
   async getSummary(
@@ -60,23 +61,14 @@ export class SettlementSummaryService {
     userRole: UserRole,
     query: SettlementSummaryQueryDto,
   ): Promise<SettlementSummaryResponseDto> {
-    // 1. Planner scope kısıtlaması
-    let allowedCplIds: string[] | null = null; // null = tenant-wide (no restriction)
-
-    if (userRole === UserRole.PLANNER) {
-      const scopes = await this.userScopeRepo.find({
-        where: { userId, tenantId, isActive: true },
-        select: ['cplId'],
-      });
-      allowedCplIds = scopes
-        .map((s) => s.cplId)
-        .filter((id): id is string => !!id);
-
-      // Scope boşsa boş summary dön
-      if (allowedCplIds.length === 0) {
-        return this.buildEmptySummary();
-      }
-    }
+    // 1. Scope çözümü — AccessScopeService tek çıkış noktası (T-028d).
+    // Rol semantiği (kim UNRESTRICTED, pair vs. kategori-only) burada
+    // TEKRARLANMAZ; yalnızca AccessScopeService'te tanımlı.
+    const scope = await this.accessScopeService.resolveScope(
+      tenantId,
+      userId,
+      userRole,
+    );
 
     // 2. Agreement sorgusunu oluştur
     const qb = this.agreementRepo
@@ -87,10 +79,9 @@ export class SettlementSummaryService {
         excluded: EXCLUDED_STATUSES,
       });
 
-    // Planner: yalnızca yetkili CPL'ler
-    if (allowedCplIds !== null) {
-      qb.andWhere('agreement.cplId IN (:...allowedCplIds)', { allowedCplIds });
-    }
+    // Scope kısıtı — UNRESTRICTED ise no-op; SCOPED ise pair-bazlı OR-grubu;
+    // scope satırı yoksa fail-closed (1=0).
+    this.accessScopeService.applyToQueryBuilder(qb, 'agreement', scope);
 
     // Query filtreleri
     if (query.cplId) {

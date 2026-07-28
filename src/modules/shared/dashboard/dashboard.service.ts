@@ -7,8 +7,11 @@ import {
   AgreementType,
   SpendType,
 } from '../../../database/entities/agreement.entity';
-import { UserScope } from '../../../database/entities/user-scope.entity';
 import { Cpl } from '../../../database/entities/cpl.entity';
+import {
+  AccessScopeService,
+  EffectiveScope,
+} from '../access-scope/access-scope.service';
 import {
   ApprovalRequest,
   ApprovalRequestStatus,
@@ -37,7 +40,8 @@ import {
  * BRD RULE: This service contains ZERO formula / KPI / ROI / RAG / threshold computations.
  * - Count aggregation on Agreement/ApprovalRequest rows is allowed (simple count/sum-of-counts).
  * - Budget utilization, RAG status, spend figures → delegated 100% to FinanceReportingService.
- * - All queries are tenant-scoped. Planner role resolves CPL scope from UserScope first.
+ * - All queries are tenant-scoped. CPL scope is resolved via AccessScopeService
+ *   (T-028d — single scope resolution source; role semantics live there only).
  * - Sub-service calls are parallelised via Promise.all for <500ms target.
  *
  * No raw SQL. Repository / service pattern only.
@@ -50,9 +54,6 @@ export class DashboardService {
     @InjectRepository(Agreement)
     private readonly agreementRepo: Repository<Agreement>,
 
-    @InjectRepository(UserScope)
-    private readonly userScopeRepo: Repository<UserScope>,
-
     @InjectRepository(Cpl)
     private readonly cplRepo: Repository<Cpl>,
 
@@ -60,6 +61,8 @@ export class DashboardService {
     private readonly approvalRequestRepo: Repository<ApprovalRequest>,
 
     private readonly financeReportingService: FinanceReportingService,
+
+    private readonly accessScopeService: AccessScopeService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -73,7 +76,7 @@ export class DashboardService {
     query: DashboardSummaryQueryDto,
   ): Promise<DashboardSummaryResponseDto> {
     const periodCode = this.resolveEffectivePeriod(query.period);
-    const cplIds = await this.resolveCplScope(tenantId, userId, userRole);
+    const cplIds = await this.resolveScopedCplIds(tenantId, userId, userRole);
 
     // Derive date range for budget utilization from period code
     const { startDate, endDate } = this.periodToDateRange(periodCode);
@@ -150,7 +153,7 @@ export class DashboardService {
   ): Promise<PendingTasksResponseDto> {
     const periodCode = this.resolveEffectivePeriod(query.period);
     const includePast = query.includePast ?? false;
-    const cplIds = await this.resolveCplScope(tenantId, userId, userRole);
+    const cplIds = await this.resolveScopedCplIds(tenantId, userId, userRole);
 
     // Fetch in parallel
     const [
@@ -187,7 +190,7 @@ export class DashboardService {
     userId: string,
     userRole: UserRole,
   ): Promise<CplStatusResponseDto> {
-    const cplIds = await this.resolveCplScope(tenantId, userId, userRole);
+    const cplIds = await this.resolveScopedCplIds(tenantId, userId, userRole);
 
     // Fetch CPL records
     const cpls = await this.fetchCpls(tenantId, cplIds);
@@ -281,27 +284,51 @@ export class DashboardService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Resolves the CPL IDs the user is allowed to see.
-   * - PLANNER: only their UserScope CPL assignments.
-   * - All other roles (ADMIN, MANAGER, FINANCE, CATEGORY_MANAGER, READONLY): null = tenant-wide.
-   * Returns null for unrestricted access, or string[] (may be empty for Planner with no scope).
+   * Resolves the CPL IDs the user is allowed to see, adapted from
+   * AccessScopeService's EffectiveScope to this service's legacy
+   * `string[] | null` filter shape (dashboard queries only filter by cplId,
+   * not category). Role semantics (who is UNRESTRICTED, pair vs. category-only
+   * scoping) live SOLELY in AccessScopeService — nothing here inspects
+   * `userRole`.
+   *
+   * Returns null for unrestricted access, or string[] (may be empty when the
+   * caller has no scope rows — fail-closed, R-2).
    */
-  private async resolveCplScope(
+  private async resolveScopedCplIds(
     tenantId: string,
     userId: string,
     userRole: UserRole,
   ): Promise<string[] | null> {
-    if (userRole !== UserRole.PLANNER) {
-      return null; // tenant-wide access
+    const scope = await this.accessScopeService.resolveScope(
+      tenantId,
+      userId,
+      userRole,
+    );
+    return this.cplIdsFromScope(scope);
+  }
+
+  /**
+   * Flattens an EffectiveScope into the cplId-only filter shape used by this
+   * service's queries.
+   *
+   * F6 fix (T-028d): a scope pair with cplId === null means "all CPLs" for
+   * that pair (NULL = "hepsi", user-scope.entity.ts:22). Previously this
+   * service's own copy of the scope logic dropped null cplId rows via
+   * `.filter(id => !!id)`, silently turning "all CPLs" into "no CPLs" — a
+   * NULL-scoped (i.e. unrestricted) user saw an empty dashboard. Here, any
+   * pair with cplId === null makes the whole cplId dimension unrestricted.
+   */
+  private cplIdsFromScope(scope: EffectiveScope): string[] | null {
+    if (scope.kind === 'UNRESTRICTED') {
+      return null;
     }
-
-    // tenantId WHERE zorunlu — cross-tenant CPL yalıtımı için kritik, KALDIRMAYIN.
-    const scopes = await this.userScopeRepo.find({
-      where: { userId, tenantId, isActive: true },
-      select: ['cplId'] as any,
-    });
-
-    return scopes.map((s) => s.cplId).filter((id): id is string => !!id);
+    if (scope.pairs.length === 0) {
+      return []; // R-2 fail-closed: no scope rows => nothing visible
+    }
+    if (scope.pairs.some((pair) => pair.cplId === null)) {
+      return null; // F6: NULL cplId pair matches every CPL
+    }
+    return Array.from(new Set(scope.pairs.map((pair) => pair.cplId as string)));
   }
 
   /**
