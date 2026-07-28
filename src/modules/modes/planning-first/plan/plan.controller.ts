@@ -459,6 +459,31 @@ export class PlanController {
     });
   }
 
+  // T-033: BRD plan state machine — Rejected → Draft. CATEGORY_MANAGER is
+  // intentionally excluded from @Roles (BRD "CM plan düzenleyemez") — the
+  // guard alone yields 403 for CM, no service-level role check needed.
+  // Ownership (PLANNER may only return their own plan) is enforced in
+  // PlanService#returnToDraft.
+  @Post(':id/return-to-draft')
+  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Return a REJECTED plan to DRAFT for revision' })
+  @ApiResponse({ status: 200, description: 'Plan returned to draft' })
+  @ApiResponse({
+    status: 409,
+    description: 'Only REJECTED plans can be returned to draft',
+  })
+  returnToDraft(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.planService.returnToDraft(id, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
+  }
+
   @Delete(':id')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @HttpCode(HttpStatus.NO_CONTENT)

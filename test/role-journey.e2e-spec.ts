@@ -1056,6 +1056,164 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // izolasyon/temizlik notuyla tutarlı, afterAll yalnızca ana `planId`'yi
       // hedefler).
     });
+
+    it('A16. T-033: tam döngü — PLANNER submit → MANAGER reject → PLANNER return-to-draft → PLANNER resubmit → MANAGER approve (SQL kanıtı, tam action zinciri + bütçe akışı)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const manager = await loginAs(app, 'MANAGER');
+      const otherPlanner = await loginAs(app, 'PLANNER2');
+
+      const { planId: fullLoopPlanId } = await createT029TestPlan(
+        planner,
+        'E2E-ROLE-JOURNEY-T033-FULLLOOP',
+      );
+
+      // ── 1) SUBMIT ──────────────────────────────────────────────────────
+      await request(app.getHttpServer())
+        .post(`/plans/${fullLoopPlanId}/submit`)
+        .set(planner.authHeader())
+        .expect(200);
+
+      // ── 2) REJECT (MANAGER == CATEGORY_MANAGER fixture role) ───────────
+      const rejectRes = await request(app.getHttpServer())
+        .post(`/plans/${fullLoopPlanId}/reject`)
+        .set(manager.authHeader())
+        .send({ reason: 'T-033 e2e: needs volume correction' })
+        .expect(200);
+      expect(rejectRes.body.status).toBe('REJECTED');
+
+      // ── Negative: wrong-status guard — a non-REJECTED plan must 409. The
+      // module-level golden-path `planId` fixture is already APPROVED by
+      // A12 (runs earlier in this same describe block) — reuse it here.
+      const notRejectedRes = await request(app.getHttpServer())
+        .post(`/plans/${planId}/return-to-draft`)
+        .set(planner.authHeader());
+      record({
+        step: 'A16a',
+        role: 'PLANNER',
+        endpoint: 'POST /plans/:id/return-to-draft (APPROVED plan → 409)',
+        expected: '409 NOT_REJECTED',
+        actual: notRejectedRes.status,
+        note: 'T-033: return-to-draft yalnızca REJECTED statüsünde çalışır.',
+      });
+      expect(notRejectedRes.status).toBe(409);
+
+      // ── Negative: CATEGORY_MANAGER cannot return-to-draft (BRD: CM plan
+      // düzenleyemez) — blocked at RolesGuard level → 403.
+      const cmAttempt = await request(app.getHttpServer())
+        .post(`/plans/${fullLoopPlanId}/return-to-draft`)
+        .set(manager.authHeader());
+      expect(cmAttempt.status).toBe(403);
+
+      // ── Negative: a different PLANNER (not the owner) → 404 OUT_OF_SCOPE.
+      const otherPlannerAttempt = await request(app.getHttpServer())
+        .post(`/plans/${fullLoopPlanId}/return-to-draft`)
+        .set(otherPlanner.authHeader());
+      record({
+        step: 'A16b',
+        role: 'PLANNER (non-owner)',
+        endpoint: 'POST /plans/:id/return-to-draft (başka planner’ın planı)',
+        expected: '404 OUT_OF_SCOPE (varlık sızdırma yok)',
+        actual: `${otherPlannerAttempt.status} ${JSON.stringify(otherPlannerAttempt.body)}`,
+        note: 'T-033: sahip olmayan PLANNER için 403 değil 404 — diğer scope kontrolleriyle tutarlı.',
+      });
+      expect(otherPlannerAttempt.status).toBe(404);
+
+      // ── 3) RETURN TO DRAFT (owner PLANNER) ──────────────────────────────
+      const returnRes = await request(app.getHttpServer())
+        .post(`/plans/${fullLoopPlanId}/return-to-draft`)
+        .set(planner.authHeader())
+        .expect(200);
+      expect(returnRes.body.status).toBe('DRAFT');
+
+      const budgetTxAfterReturn = await dataSource.query(
+        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        [fullLoopPlanId],
+      );
+      record({
+        step: 'A16c',
+        role: '-',
+        endpoint: 'DB: main.budget_transactions (return-to-draft sonrası)',
+        expected:
+          'RESERVE + RELEASE ile aynı (return-to-draft bütçeye dokunmaz — yeni RESERVE yalnızca resubmit ile)',
+        actual: JSON.stringify(budgetTxAfterReturn),
+        note: 'T-033: BudgetService çağrılmıyor — reject() zaten RELEASE etmişti (T-029); işlem satır sayısı burada değişmemeli.',
+      });
+      expect(budgetTxAfterReturn.length).toBe(2); // RESERVE + RELEASE only
+
+      // ── 4) RESUBMIT (must work from DRAFT again) ────────────────────────
+      const resubmitRes = await request(app.getHttpServer())
+        .post(`/plans/${fullLoopPlanId}/submit`)
+        .set(planner.authHeader())
+        .expect(200);
+      expect(resubmitRes.body.status).toBe('PENDING_APPROVAL');
+
+      // ── 5) APPROVE ───────────────────────────────────────────────────────
+      const approveRes = await request(app.getHttpServer())
+        .post(`/plans/${fullLoopPlanId}/approve`)
+        .set(manager.authHeader())
+        .send({ comments: 'T-033 e2e: approved after correction' })
+        .expect(200);
+      expect(approveRes.body.status).toBe('APPROVED');
+
+      // ── Full action-chain SQL proof ─────────────────────────────────────
+      const fullHistory = await dataSource.query(
+        `SELECT action, rejection_reason FROM main.plan_approval_history WHERE plan_id = $1 ORDER BY created_at ASC`,
+        [fullLoopPlanId],
+      );
+      record({
+        step: 'A16d',
+        role: '-',
+        endpoint: 'DB: main.plan_approval_history (tam döngü sonrası)',
+        expected:
+          '[SUBMITTED, REJECTED, RETURNED_TO_DRAFT, SUBMITTED, APPROVED] — eski satırlar silinmedi (audit immutable)',
+        actual: JSON.stringify(fullHistory.map((r: any) => r.action)),
+        note: 'T-033: BRD "Rejected → Draft (audit korunur)" — geçmiş satırlar SİLİNMEDİ, yeni RETURNED_TO_DRAFT satırı eklendi.',
+      });
+      expect(fullHistory.map((r: any) => r.action)).toEqual([
+        'SUBMITTED',
+        'REJECTED',
+        'RETURNED_TO_DRAFT',
+        'SUBMITTED',
+        'APPROVED',
+      ]);
+      expect(fullHistory[1].rejection_reason).toBe(
+        'T-033 e2e: needs volume correction',
+      );
+
+      const finalBudgetTx = await dataSource.query(
+        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        [fullLoopPlanId],
+      );
+      record({
+        step: 'A16e',
+        role: '-',
+        endpoint: 'DB: main.budget_transactions (tam döngü sonrası)',
+        expected: 'RESERVE, RELEASE, RESERVE, RELEASE(convert), COMMIT',
+        actual: JSON.stringify(finalBudgetTx),
+        note: 'T-033: return-to-draft rezerv KURMADI (satır eklemedi) — yalnızca resubmit yeni bir RESERVE üretti; approve bunu COMMIT’e çevirdi (T-029 semantiği korunuyor).',
+      });
+      const finalTypes = finalBudgetTx.map((r: any) => r.tx_type);
+      expect(finalTypes.filter((t: string) => t === 'RESERVE').length).toBe(2);
+      expect(finalTypes.filter((t: string) => t === 'COMMIT').length).toBe(1);
+      expect(
+        finalTypes.filter((t: string) => t === 'RELEASE').length,
+      ).toBeGreaterThanOrEqual(2);
+
+      // Sanity: final plan row's stale rejection/submission-of-record fields
+      // were cleared by return-to-draft's DRAFT reset — the live row should
+      // no longer show the original rejection, only the fresh
+      // submit()/approve() actor.
+      const finalPlanRow = await dataSource.query(
+        `SELECT status, rejected_at, rejection_reason, submitted_by, approved_by
+           FROM main.plans WHERE id = $1`,
+        [fullLoopPlanId],
+      );
+      expect(finalPlanRow[0].status).toBe('APPROVED');
+      expect(finalPlanRow[0].rejected_at).toBeNull();
+      expect(finalPlanRow[0].rejection_reason).toBeNull();
+      expect(finalPlanRow[0].submitted_by).toBe(planner.userId);
+      expect(finalPlanRow[0].approved_by).toBe(manager.userId);
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════

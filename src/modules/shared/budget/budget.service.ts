@@ -347,24 +347,6 @@ export class BudgetService {
     tenantId: string,
     userId: string,
   ): Promise<BudgetTransaction> {
-    // Idempotency: an outstanding POSTED RESERVE for this plan already exists.
-    const existingTransactions =
-      await this.budgetRepository.findTransactionsBySource(
-        tenantId,
-        BudgetTransactionSourceType.PLAN,
-        planId,
-      );
-
-    const existingReserve = existingTransactions.find(
-      (tx) =>
-        tx.txType === BudgetTransactionType.RESERVE &&
-        tx.txStatus === BudgetTransactionStatus.POSTED,
-    );
-
-    if (existingReserve) {
-      return existingReserve;
-    }
-
     // Find matching envelope by dimensions
     const envelope = await this.budgetRepository.findEnvelopeByDimensions(
       tenantId,
@@ -376,6 +358,57 @@ export class BudgetService {
       throw new BadRequestException(
         `No active budget envelope found for channel: ${channel}, period: ${periodMonth}`,
       );
+    }
+
+    const existingTransactions =
+      await this.budgetRepository.findTransactionsBySource(
+        tenantId,
+        BudgetTransactionSourceType.PLAN,
+        planId,
+      );
+    // Scoped to THIS envelope — a plan can (in principle) span more than one
+    // envelope over its lifetime (T-019 kısıtı, same caveat as
+    // BudgetReservationService#releaseNetReservation).
+    const envelopeReserves = existingTransactions.filter(
+      (tx) =>
+        tx.envelopeId === envelope.id &&
+        tx.txType === BudgetTransactionType.RESERVE &&
+        tx.txStatus === BudgetTransactionStatus.POSTED,
+    );
+
+    // T-033: idempotency must be NET-based (RESERVE+COMMIT-RELEASE), not
+    // "does any POSTED RESERVE row exist" — this is an append-only ledger,
+    // so a RESERVE row's txStatus stays POSTED forever even after it has
+    // been fully offset by a RELEASE (reject()/PlanService#reject already
+    // nets it out via BudgetReservationService#releaseNetReservation). Before
+    // T-033 (Rejected→Draft), no code path ever called reserveForPlan twice
+    // for the same plan after a release, so this distinction was latent;
+    // T-033's return-to-draft→resubmit loop makes it reachable — without
+    // this fix, a resubmit after reject would silently find the OLD,
+    // already-released RESERVE row and skip creating a real new one, leaving
+    // the plan's eventual COMMIT converted from a stale reservation and the
+    // envelope under-encumbered.
+    const netOutstanding = existingTransactions
+      .filter((tx) => tx.envelopeId === envelope.id)
+      .reduce((net, tx) => {
+        const amt = Number(tx.amount);
+        if (
+          tx.txType === BudgetTransactionType.RESERVE ||
+          tx.txType === BudgetTransactionType.COMMIT
+        ) {
+          return net + amt;
+        }
+        if (tx.txType === BudgetTransactionType.RELEASE) {
+          return net - amt;
+        }
+        return net;
+      }, 0);
+
+    if (netOutstanding > 0 && envelopeReserves.length > 0) {
+      // Genuinely still outstanding (no intervening release) — idempotent
+      // no-op, return the most recent RESERVE (findTransactionsBySource
+      // orders by createdAt DESC).
+      return envelopeReserves[0];
     }
 
     // Check availability using view (accounts for existing RESERVE+COMMIT-RELEASE)
@@ -392,7 +425,15 @@ export class BudgetService {
       );
     }
 
-    const idempotencyKey = `RESERVE|PLAN|${planId}|${envelope.id}`;
+    // T-033: generation-aware idempotency key. idempotencyKey is immutable
+    // once written (unique on tenantId+idempotencyKey), so a second
+    // reservation cycle for the same plan+envelope (post return-to-draft)
+    // must use a distinct key from the first cycle's, or this insert would
+    // violate the unique index.
+    const idempotencyKey =
+      envelopeReserves.length === 0
+        ? `RESERVE|PLAN|${planId}|${envelope.id}`
+        : `RESERVE|PLAN|${planId}|${envelope.id}|GEN${envelopeReserves.length + 1}`;
 
     const transaction = await this.budgetRepository.createTransaction({
       tenantId,

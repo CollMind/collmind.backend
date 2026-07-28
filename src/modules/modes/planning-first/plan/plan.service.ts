@@ -982,6 +982,121 @@ export class PlanService {
     return updated;
   }
 
+  /**
+   * T-033: BRD plan state machine — Rejected → Draft (audit korunur).
+   * Prior to this, a REJECTED plan had no way back to DRAFT: the only
+   * existing Pending→Draft path (ApprovalWorkflowService#requestChanges) is
+   * a DIFFERENT transition (a reviewer sending a still-pending plan back
+   * before deciding), not the BRD-mandated Rejected→Draft transition that
+   * lets the planner fix and resubmit a plan that was already reviewed and
+   * turned down.
+   *
+   * Ownership: only the PLANNER who owns the plan (createdBy OR
+   * submittedById — a plan may have been created by one PLANNER and
+   * submitted by another in edge cases) or ADMIN may return it to DRAFT.
+   * CATEGORY_MANAGER is blocked at the route (@Roles(ADMIN, PLANNER) only)
+   * — BRD "CM plan düzenleyemez" — so RolesGuard already yields 403 before
+   * this method runs; the ownership check below only needs to handle the
+   * PLANNER-but-not-owner case, which mirrors the OUT_OF_SCOPE 404 pattern
+   * used elsewhere (no varlık sızdırma — a PLANNER should not learn that a
+   * plan they don't own exists via a differentiated 403 vs 404 response).
+   */
+  async returnToDraft(
+    id: string,
+    tenantId: string,
+    userId: string,
+    actor?: PlanActor,
+  ): Promise<Plan> {
+    // T-028c: scope-aware read — out-of-scope (wrong CPL/Category) PLANNER
+    // -> 404 (OUT_OF_SCOPE), same as every other mutation entrypoint.
+    const plan = await this.findById(id, tenantId, actor);
+
+    if (plan.status !== PlanStatus.REJECTED) {
+      throw new ConflictException({
+        statusCode: 409,
+        message: 'Only REJECTED plans can be returned to draft',
+        code: 'NOT_REJECTED',
+      });
+    }
+
+    if (
+      actor?.role === UserRole.PLANNER &&
+      actor.userId !== plan.createdBy &&
+      actor.userId !== plan.submittedById
+    ) {
+      throw new NotFoundException({
+        statusCode: 404,
+        message: `Plan with ID ${id} not found`,
+        code: 'OUT_OF_SCOPE',
+      });
+    }
+
+    // T-033: Draft->Draft "current state" fields (rejection + the closed
+    // submission/approval-request they belonged to) are cleared — the
+    // REJECTED PlanApprovalHistory row written at reject() time already
+    // immutably preserves the rejection reason/actor/timestamp (BRD "audit
+    // korunur"), so nothing is lost. Leaving them on the live Plan row would
+    // make an eventually-APPROVED plan display stale rejectedAt/
+    // rejectionReason alongside approvedAt, which is misleading current
+    // state. submittedAt/submittedById/approvalRequestId are cleared for
+    // the same reason (the closed approval request is done; submit() sets
+    // fresh values on resubmission, including submittedById — required for
+    // the approve()/reject() self-approval guard, F7/T-028b).
+    // TypeORM's `.update()` (via PlanRepository#update/#updateStatus) skips
+    // `undefined` fields but persists explicit `null` (same as the T-027
+    // pattern used for calculatedKpis/gpRoi), so `null` here reliably clears
+    // the columns in one write.
+    const updated = await this.planRepo.updateStatus(
+      id,
+      tenantId,
+      PlanStatus.DRAFT,
+      {
+        rejectedAt: null,
+        rejectedById: null,
+        rejectionReason: null,
+        submittedAt: null,
+        submittedById: null,
+        approvalRequestId: null,
+        updatedBy: userId,
+      } as unknown as Partial<Plan>,
+    );
+
+    // T-033 (audit immutable): record the transition. Budget is
+    // deliberately untouched here — reject() already RELEASEd any
+    // outstanding RESERVE/COMMIT (T-029), and a fresh RESERVE is only
+    // created on the next submit(), never here (BRD state machine: only
+    // Pending Approval creates a reservation).
+    try {
+      await this.createHistoryEntry(
+        id,
+        tenantId,
+        userId,
+        ApprovalHistoryAction.RETURNED_TO_DRAFT,
+      );
+    } catch (error) {
+      this.logger.error(
+        `createHistoryEntry failed after returnToDraft for plan ${id}; compensating (revert to REJECTED): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      await this.planRepo.update(id, tenantId, {
+        status: PlanStatus.REJECTED,
+        rejectedAt: plan.rejectedAt ?? null,
+        rejectedById: plan.rejectedById ?? null,
+        rejectionReason: plan.rejectionReason ?? null,
+        submittedAt: plan.submittedAt ?? null,
+        submittedById: plan.submittedById ?? null,
+        approvalRequestId: plan.approvalRequestId ?? null,
+        updatedBy: userId,
+      } as any);
+      throw new InternalServerErrorException(
+        'Failed to record approval history for plan return-to-draft; the plan has been rolled back to REJECTED.',
+      );
+    }
+
+    return updated;
+  }
+
   async delete(id: string, tenantId: string, actor?: PlanActor): Promise<void> {
     const plan = await this.findById(id, tenantId, actor);
 

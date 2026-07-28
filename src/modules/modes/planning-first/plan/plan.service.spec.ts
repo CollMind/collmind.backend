@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PlanService } from './plan.service';
 import { PlanRepository } from './plan.repository';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
@@ -13,6 +17,7 @@ import {
   PlanStatus,
   PlanFu,
 } from '../../../../database/entities/plan.entity';
+import { UserRole } from '../../../../database/entities/user.entity';
 import { ForecastingUnit } from '../../../../database/entities/forecasting-unit.entity';
 import { Sku } from '../../../../database/entities/sku.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
@@ -438,6 +443,148 @@ describe('PlanService', () => {
         mockPlanId,
         mockTenantId,
         mockUserId,
+      );
+    });
+  });
+
+  describe('returnToDraft (T-033: Rejected → Draft)', () => {
+    const rejectedPlan = {
+      ...mockPlan,
+      status: PlanStatus.REJECTED,
+      createdBy: mockUserId,
+      submittedById: mockUserId,
+      rejectedAt: new Date('2026-01-01'),
+      rejectedById: 'reviewer-1',
+      rejectionReason: 'Budget insufficient',
+      approvalRequestId: 'approval-request-1',
+      submittedAt: new Date('2025-12-31'),
+    } as unknown as Plan;
+
+    it('successfully returns a REJECTED plan to DRAFT', async () => {
+      planRepo.findById.mockResolvedValue(rejectedPlan);
+      planRepo.updateStatus.mockResolvedValue({
+        ...rejectedPlan,
+        status: PlanStatus.DRAFT,
+        rejectedAt: undefined,
+        rejectedById: undefined,
+        rejectionReason: undefined,
+        submittedAt: undefined,
+        submittedById: undefined,
+        approvalRequestId: undefined,
+      } as Plan);
+
+      const result = await service.returnToDraft(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        { userId: mockUserId, role: UserRole.PLANNER },
+      );
+
+      expect(result.status).toBe(PlanStatus.DRAFT);
+      expect(planRepo.updateStatus).toHaveBeenCalledWith(
+        mockPlanId,
+        mockTenantId,
+        PlanStatus.DRAFT,
+        expect.objectContaining({
+          rejectedAt: null,
+          rejectedById: null,
+          rejectionReason: null,
+          submittedAt: null,
+          submittedById: null,
+          approvalRequestId: null,
+        }),
+      );
+      // T-033: audit — RETURNED_TO_DRAFT history row is written, existing
+      // history is never deleted/updated (immutable, BRD "audit korunur").
+      expect(approvalHistoryRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          planId: mockPlanId,
+          tenantId: mockTenantId,
+          actionedById: mockUserId,
+          action: ApprovalHistoryAction.RETURNED_TO_DRAFT,
+        }),
+      );
+      expect(approvalHistoryRepo.save).toHaveBeenCalled();
+      // T-033: no budget movement — reject() already RELEASEd; a fresh
+      // RESERVE is only created by a subsequent submit().
+      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+      expect(budgetService.releaseForPlan).not.toHaveBeenCalled();
+      expect(budgetService.commitReservedForPlan).not.toHaveBeenCalled();
+    });
+
+    it('rejects with 409 NOT_REJECTED if plan is not REJECTED', async () => {
+      planRepo.findById.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+      } as Plan);
+
+      await expect(
+        service.returnToDraft(mockPlanId, mockTenantId, mockUserId, {
+          userId: mockUserId,
+          role: UserRole.PLANNER,
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('rejects a non-owner PLANNER with 404 OUT_OF_SCOPE', async () => {
+      planRepo.findById.mockResolvedValue(rejectedPlan);
+
+      await expect(
+        service.returnToDraft(mockPlanId, mockTenantId, 'other-planner', {
+          userId: 'other-planner',
+          role: UserRole.PLANNER,
+        }),
+      ).rejects.toThrow(NotFoundException);
+      expect(planRepo.updateStatus).not.toHaveBeenCalled();
+    });
+
+    it('allows ADMIN regardless of plan ownership', async () => {
+      planRepo.findById.mockResolvedValue(rejectedPlan);
+      planRepo.updateStatus.mockResolvedValue({
+        ...rejectedPlan,
+        status: PlanStatus.DRAFT,
+      } as Plan);
+
+      const result = await service.returnToDraft(
+        mockPlanId,
+        mockTenantId,
+        'admin-1',
+        { userId: 'admin-1', role: UserRole.ADMIN },
+      );
+
+      expect(result.status).toBe(PlanStatus.DRAFT);
+    });
+
+    it('compensates (reverts to REJECTED) if history write fails', async () => {
+      planRepo.findById.mockResolvedValue(rejectedPlan);
+      planRepo.updateStatus.mockResolvedValueOnce({
+        ...rejectedPlan,
+        status: PlanStatus.DRAFT,
+      } as Plan);
+      planRepo.update.mockResolvedValueOnce({
+        ...rejectedPlan,
+        status: PlanStatus.REJECTED,
+      } as Plan);
+      approvalHistoryRepo.save.mockRejectedValueOnce(new Error('DB down'));
+
+      await expect(
+        service.returnToDraft(mockPlanId, mockTenantId, mockUserId, {
+          userId: mockUserId,
+          role: UserRole.PLANNER,
+        }),
+      ).rejects.toThrow('Failed to record approval history');
+
+      // Compensation reverts status back to REJECTED with the original
+      // rejection fields restored (not via updateStatus — a direct #update
+      // call, since #updateStatus's `status` param is DRAFT-transition-
+      // specific elsewhere in this file).
+      expect(planRepo.update).toHaveBeenCalledWith(
+        mockPlanId,
+        mockTenantId,
+        expect.objectContaining({
+          status: PlanStatus.REJECTED,
+          rejectionReason: rejectedPlan.rejectionReason,
+        }),
       );
     });
   });
