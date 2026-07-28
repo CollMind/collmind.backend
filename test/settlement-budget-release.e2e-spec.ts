@@ -300,10 +300,15 @@ describe('Settlement — Budget Reservation Release (T-030, E2E)', () => {
         namePrefix: 'E2E-BR05',
       });
 
-      const manager = await loginAs(app, 'MANAGER'); // segregation-of-duties
+      // T-028e: reject() de AgreementService#assertCmDecisionScope'a tabi —
+      // FU_WELLA_HC_500ML (HAIR_CARE) manager@wella.com'un (CATEGORY_MANAGER)
+      // scope'unda (CAT-SAC-BOYASI/CAT-SET-BOYA) DEĞİL, bu yüzden kategori
+      // scope'una tabi OLMAYAN FINANCE_MANAGER kullanılır (segregation-of-duties
+      // korunur — reject eden farklı hesap).
+      const financeApprover = await loginAs(app, 'FINANCE_MANAGER');
       const rejectRes = await request(app.getHttpServer())
         .post(`/agreements/${agreementId}/reject`)
-        .set(manager.authHeader())
+        .set(financeApprover.authHeader())
         .send({ reason: 'BR-E2E-05' })
         .expect(200);
       expect(rejectRes.body.status).toBe('REJECTED');

@@ -1528,6 +1528,344 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
   });
 
   // ══════════════════════════════════════════════════════════════════════
+  // E2) CM AGREEMENT KATEGORİ-SCOPE (T-028e) — code-review bulgusu (T-028c):
+  // agreement.approve()/reject()/findById()/findAll() actor'suzdu, CM
+  // herhangi bir kategorideki agreement'ı onaylayabiliyordu. Ürün kararı:
+  // agreements.category_id neredeyse her satırda boş — efektif kategori
+  // fuId -> forecasting_units.gu_id -> generic_units.category_id zincirinden
+  // TÜRETİLİR (bkz. AgreementService#resolveEffectiveCategoryId).
+  //
+  // FU -> kategori eşleşmesi (DB'de doğrulandı, main.forecasting_units JOIN
+  // main.generic_units JOIN main.categories):
+  //   FU-TUP-BOYA  -> CAT-SAC-BOYASI     (category.manager@wella.com kapsamında)
+  //   FU-NEW-WAVE  -> CAT-SEKILLENDIRICI (category.manager2@wella.com kapsamında,
+  //                                       category.manager@wella.com'un DIŞINDA)
+  // ══════════════════════════════════════════════════════════════════════
+
+  describe('E2) CM agreement kategori-scoped onay/red/okuma (T-028e)', () => {
+    let FU_NEW_WAVE: string; // CAT-SEKILLENDIRICI — category.manager'ın DIŞINDA
+    const scratchAgreementIds: string[] = [];
+
+    beforeAll(async () => {
+      FU_NEW_WAVE = await resolveIdByCode(
+        dataSource,
+        fixture.tenantId,
+        'forecasting_units',
+        'FU-NEW-WAVE',
+      );
+    });
+
+    /** DRAFT agreement — categoryId DTO'ya kasıtlı olarak GEÇİLMEZ (agreements.category_id
+     * boş kalır), efektif kategori yalnızca fuId->gu->category zincirinden türetilebilsin diye. */
+    async function createDraftAgreement(
+      actor: Awaited<ReturnType<typeof loginAs>>,
+      fuId: string,
+      namePrefix: string,
+      startDate: string,
+      endDate: string,
+      capTotalAmount = 3000,
+    ): Promise<string> {
+      const res = await request(app.getHttpServer())
+        .post('/agreements')
+        .set(actor.authHeader())
+        .send({
+          agreementName: `${namePrefix}-${Date.now()}`,
+          agreementType: 'STA',
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          fuId,
+          tacticId: TACTIC_PROMO,
+          mechanicId: MECHANIC_DISCOUNT,
+          skuScope: 'FU',
+          capTotalAmount,
+          spendType: 'OFF_INVOICE',
+          startDate,
+          endDate,
+          justification: `E2E T-028e — ${namePrefix}`,
+        })
+        .expect(201);
+      scratchAgreementIds.push(res.body.id);
+      expect(res.body.categoryId ?? null).toBeNull();
+      return res.body.id;
+    }
+
+    async function createSubmittedAgreement(
+      actor: Awaited<ReturnType<typeof loginAs>>,
+      fuId: string,
+      namePrefix: string,
+      startDate: string,
+      endDate: string,
+    ): Promise<string> {
+      const id = await createDraftAgreement(
+        actor,
+        fuId,
+        namePrefix,
+        startDate,
+        endDate,
+      );
+      await request(app.getHttpServer())
+        .post(`/agreements/${id}/submit`)
+        .set(actor.authHeader())
+        .send({})
+        .expect(200);
+      return id;
+    }
+
+    it('G1. CATEGORY_MANAGER → GET /agreements/:id (kendi kategorisi, FU->GU türetilmiş) → 200', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const ownCategoryAgreementId = await createDraftAgreement(
+        planner,
+        FU_TUP_BOYA,
+        'E2E-G1-CM-OWN-CATEGORY-GET',
+        '2026-01-05',
+        '2026-01-15',
+      );
+
+      const res = await request(app.getHttpServer())
+        .get(`/agreements/${ownCategoryAgreementId}`)
+        .set(cm.authHeader());
+
+      record({
+        step: 'G1',
+        role: 'CATEGORY_MANAGER',
+        endpoint:
+          'GET /agreements/:id (FU-TUP-BOYA -> CAT-SAC-BOYASI, kendi kategorisi)',
+        expected: 200,
+        actual: res.status,
+        note: 'T-028e FIX: AgreementService#resolveEffectiveCategoryId — agreement.categoryId boş, kategori fuId->gu->category zincirinden türetildi ve CM scope kesişimi buldu.',
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it('G2. CATEGORY_MANAGER → GET /agreements/:id (başka kategori, FU->GU türetilmiş) → 404 OUT_OF_SCOPE', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const otherCategoryAgreementId = await createDraftAgreement(
+        planner,
+        FU_NEW_WAVE,
+        'E2E-G2-CM-OUT-OF-SCOPE-GET',
+        '2026-01-05',
+        '2026-01-15',
+      );
+
+      const res = await request(app.getHttpServer())
+        .get(`/agreements/${otherCategoryAgreementId}`)
+        .set(cm.authHeader());
+
+      record({
+        step: 'G2',
+        role: 'CATEGORY_MANAGER',
+        endpoint:
+          'GET /agreements/:id (FU-NEW-WAVE -> CAT-SEKILLENDIRICI, kapsam dışı)',
+        expected: 404,
+        actual: res.status,
+        note: "T-028e FIX: varlık sızdırma yok — CM önceden findById(id,tenantId) actor'suz olduğu için HERHANGİ agreement'ı görebiliyordu (SORUN). Artık AgreementActor thread edilip 404 dönüyor.",
+      });
+      expect(res.status).toBe(404);
+      expect(res.body?.code).toBe('OUT_OF_SCOPE');
+    });
+
+    it('G2b. CATEGORY_MANAGER2 → aynı agreement (kendi kategorisi) → 200 (pozitif kontrol)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm2 = await loginAs(app, 'CATEGORY_MANAGER2');
+      const otherCategoryAgreementId = await createDraftAgreement(
+        planner,
+        FU_NEW_WAVE,
+        'E2E-G2b-CM2-IN-SCOPE-GET',
+        '2026-01-05',
+        '2026-01-15',
+      );
+
+      const res = await request(app.getHttpServer())
+        .get(`/agreements/${otherCategoryAgreementId}`)
+        .set(cm2.authHeader());
+
+      record({
+        step: 'G2b',
+        role: 'CATEGORY_MANAGER2',
+        endpoint: 'GET /agreements/:id (kendi kategorisi)',
+        expected: 200,
+        actual: res.status,
+        note: 'Pozitif kontrol: G2 404 sonucunun rastgele değil, gerçek türetilmiş kategori kesişimine dayandığının kanıtı (category.manager2 -> CAT-SEKILLENDIRICI scope).',
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it('G3. CATEGORY_MANAGER → POST /agreements/:id/approve (kendi kategorisi, PENDING) → 200 APPROVED', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const ownCategoryAgreementId = await createSubmittedAgreement(
+        planner,
+        FU_TUP_BOYA,
+        'E2E-G3-CM-OWN-CATEGORY-APPROVE',
+        '2026-01-05',
+        '2026-01-15',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/agreements/${ownCategoryAgreementId}/approve`)
+        .set(cm.authHeader())
+        .send({ comments: 'CM approves own-category agreement' });
+
+      record({
+        step: 'G3',
+        role: 'CATEGORY_MANAGER',
+        endpoint:
+          'POST /agreements/:id/approve (FU-TUP-BOYA -> CAT-SAC-BOYASI, kendi kategorisi)',
+        expected: 200,
+        actual: res.status,
+        note: 'T-028e FIX: AgreementService#assertCmDecisionScope — kesişim var, BRD state machine bozulmadan APPROVED + RESERVE.',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('APPROVED');
+
+      // Temizlik: APPROVED agreement'lar silinemez (BRD) ve dev DB'de kalıcı
+      // kalırsa `loadE2EFixture`'ın "en eski APPROVED agreement" seçim
+      // stratejisini (test/helpers/seed-e2e.ts) dar tarih penceresiyle (2026-01)
+      // bozup BAŞKA e2e dosyalarını (örn. reversal.e2e-spec.ts, sabit
+      // invoiceDate=2026-02-15 varsayar) kırabilir. CANCEL ile APPROVED
+      // havuzundan çıkar (ADMIN — cancel route @Roles(ADMIN, PLANNER)).
+      const admin = await loginAs(app, 'ADMIN');
+      await request(app.getHttpServer())
+        .post(`/agreements/${ownCategoryAgreementId}/cancel`)
+        .set(admin.authHeader())
+        .send({
+          reason: 'E2E G3 cleanup — APPROVED havuzunu kirletmemek için',
+        });
+    });
+
+    it('G4. CATEGORY_MANAGER → POST /agreements/:id/approve (başka kategori, PENDING) → 403', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const otherCategoryAgreementId = await createSubmittedAgreement(
+        planner,
+        FU_NEW_WAVE,
+        'E2E-G4-CM-OUT-OF-SCOPE-APPROVE',
+        '2026-01-06',
+        '2026-01-16',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/agreements/${otherCategoryAgreementId}/approve`)
+        .set(cm.authHeader())
+        .send({ comments: 'should be forbidden' });
+
+      record({
+        step: 'G4',
+        role: 'CATEGORY_MANAGER',
+        endpoint:
+          'POST /agreements/:id/approve (FU-NEW-WAVE -> CAT-SEKILLENDIRICI, kapsam dışı)',
+        expected: 403,
+        actual: res.status,
+        note: "T-028e FIX (SORUN): önceden approve() actor almıyordu, CM HERHANGİ kategorideki agreement'ı onaylayabiliyordu. Artık AgreementService#assertCmDecisionScope 403 döner.",
+      });
+      expect(res.status).toBe(403);
+
+      // Temizlik: kendi kategorisindeki CM2 ile reject et (PENDING'de henüz
+      // bütçe reserve edilmemiş — RESERVE yalnızca approve() içinde yazılır —
+      // ama agreement'ı PENDING'de bırakmamak için formel olarak kapatıyoruz).
+      const cm2 = await loginAs(app, 'CATEGORY_MANAGER2');
+      await request(app.getHttpServer())
+        .post(`/agreements/${otherCategoryAgreementId}/reject`)
+        .set(cm2.authHeader())
+        .send({ reason: 'E2E G4 cleanup (kendi kategorisi)' });
+    });
+
+    it('G5. CATEGORY_MANAGER → POST /agreements/:id/reject (başka kategori, PENDING) → 403', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+      const otherCategoryAgreementId = await createSubmittedAgreement(
+        planner,
+        FU_NEW_WAVE,
+        'E2E-G5-CM-OUT-OF-SCOPE-REJECT',
+        '2026-01-07',
+        '2026-01-17',
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/agreements/${otherCategoryAgreementId}/reject`)
+        .set(cm.authHeader())
+        .send({ reason: 'should be forbidden' });
+
+      record({
+        step: 'G5',
+        role: 'CATEGORY_MANAGER',
+        endpoint:
+          'POST /agreements/:id/reject (FU-NEW-WAVE -> CAT-SEKILLENDIRICI, kapsam dışı)',
+        expected: 403,
+        actual: res.status,
+        note: 'T-028e FIX: reject() de approve() ile aynı assertCmDecisionScope kontrolünden geçiyor.',
+      });
+      expect(res.status).toBe(403);
+
+      // Temizlik: kendi kategorisindeki CM2 ile kapat.
+      const cm2 = await loginAs(app, 'CATEGORY_MANAGER2');
+      await request(app.getHttpServer())
+        .post(`/agreements/${otherCategoryAgreementId}/reject`)
+        .set(cm2.authHeader())
+        .send({ reason: 'E2E G5 cleanup (kendi kategorisi)' });
+    });
+
+    it('G6. GET /agreements — CATEGORY_MANAGER sonuç sayısı < ADMIN sonuç sayısı (liste JOINli türetilmiş kategori filtresi)', async () => {
+      // Kapsam dışı en az bir agreement'ın var olduğundan emin ol (G2/G2b/G4/G5
+      // zaten üretti, ama bu test bağımsız çalışabilsin diye kendi de üretiyor).
+      const planner = await loginAs(app, 'PLANNER');
+      await createDraftAgreement(
+        planner,
+        FU_NEW_WAVE,
+        'E2E-G6-LIST-OUT-OF-SCOPE',
+        '2026-01-08',
+        '2026-01-18',
+      );
+
+      const admin = await loginAs(app, 'ADMIN');
+      const cm = await loginAs(app, 'CATEGORY_MANAGER');
+
+      const [adminRes, cmRes] = await Promise.all([
+        request(app.getHttpServer())
+          .get('/agreements')
+          .set(admin.authHeader())
+          .expect(200),
+        request(app.getHttpServer())
+          .get('/agreements')
+          .set(cm.authHeader())
+          .expect(200),
+      ]);
+
+      record({
+        step: 'G6',
+        role: 'CATEGORY_MANAGER vs ADMIN',
+        endpoint: 'GET /agreements',
+        expected: 'CM sayısı < ADMIN sayısı',
+        actual: `CM=${cmRes.body.length}, ADMIN=${adminRes.body.length}`,
+        note: 'T-028e FIX: AgreementRepository#findAll artık LEFT JOIN forecasting_units+generic_units ile türetilmiş kategoriyi filtreliyor (N+1 yok, tek sorgu).',
+      });
+      expect(cmRes.body.length).toBeLessThan(adminRes.body.length);
+    });
+
+    afterAll(async () => {
+      // Yalnızca DRAFT kalanlar silinebilir (agreement DELETE endpoint'i
+      // DRAFT'ı destekler); PENDING/APPROVED/REJECTED kalıcıdır (BRD).
+      const admin = await loginAs(app, 'ADMIN');
+      for (const id of scratchAgreementIds) {
+        try {
+          const res = await request(app.getHttpServer())
+            .get(`/agreements/${id}`)
+            .set(admin.authHeader());
+          if (res.status === 200 && res.body?.status === 'DRAFT') {
+            await request(app.getHttpServer())
+              .delete(`/agreements/${id}`)
+              .set(admin.authHeader());
+          }
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
   // F) PLANNER CPL/CATEGORY SCOPE ENFORCEMENT (T-028c) — docs/analysis/0004 §9
   // ══════════════════════════════════════════════════════════════════════
   //
@@ -2098,17 +2436,28 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(res.body.status).toBe('PENDING');
     });
 
-    it('C3. MANAGER → POST /agreements/:id/approve (hangi rol çalışıyor?)', async () => {
-      const manager = await loginAs(app, 'MANAGER');
+    it('C3. FINANCE_MANAGER → POST /agreements/:id/approve (hangi rol çalışıyor?)', async () => {
+      // T-028e NOT: bu adım daha önce 'MANAGER' (=CATEGORY_MANAGER alias,
+      // manager@wella.com) kullanıyordu ve FU_WELLA_HC_500ML -> HAIR_CARE
+      // kategorisi manager@wella.com'un scope'unda (CAT-SAC-BOYASI/CAT-SET-BOYA)
+      // OLMADIĞI için AgreementService#assertCmDecisionScope artık haklı
+      // olarak 403 döndürüyor (bu SORUN'un ta kendisiydi — CM önceden
+      // kapsam dışı agreement'ları onaylayabiliyordu). Bu test agreement
+      // approve akışının genel mekaniğini (settlement/reversal fixture'ı)
+      // kanıtlamak içindi, CM kategori-scope'unu değil (bu artık E2 bloğunun
+      // işi) — approve() route'u zaten @Roles(ADMIN, CATEGORY_MANAGER,
+      // FINANCE_MANAGER) olduğundan, kapsam kısıtına tabi olmayan (BRD: FM
+      // okuma+bütçe, kategori scope'una tabi değil) FINANCE_MANAGER kullanılır.
+      const fm = await loginAs(app, 'FINANCE_MANAGER');
 
       const res = await request(app.getHttpServer())
         .post(`/agreements/${agreementSettlementId}/approve`)
-        .set(manager.authHeader())
+        .set(fm.authHeader())
         .send({});
 
       record({
         step: 'C3',
-        role: 'MANAGER',
+        role: 'FINANCE_MANAGER',
         endpoint: 'POST /agreements/:id/approve',
         expected: 200,
         actual: res.status,
@@ -2199,7 +2548,11 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
     it('C7. ADMIN → POST /agreements (reversal testi için, ayrı agreement)', async () => {
       const admin = await loginAs(app, 'ADMIN');
-      const manager = await loginAs(app, 'MANAGER');
+      // T-028e NOT: 'MANAGER' (=CATEGORY_MANAGER, manager@wella.com) FU_WELLA_HC_500ML
+      // -> HAIR_CARE kategorisinde scope'u olmadığından artık 403 alır (bkz. C3 notu).
+      // Bu adımın amacı self-approval guard'ını (submit eden ADMIN approve edemez)
+      // aşacak, kategori scope'una tabi OLMAYAN ikinci bir onaylayıcı — FINANCE_MANAGER.
+      const financeApprover = await loginAs(app, 'FINANCE_MANAGER');
 
       const res = await request(app.getHttpServer())
         .post('/agreements')
@@ -2231,15 +2584,16 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // NOT: Aynı kullanıcı (ADMIN) hem submit hem approve ederse
       // ApprovalService "You cannot approve your own request" (403) döner —
       // bu BEKLENEN/DOĞRU bir self-approval segregation-of-duties davranışı
-      // (approval.service.ts:104). Bu yüzden approve için MANAGER kullanılır.
+      // (approval.service.ts:104). Bu yüzden approve için FINANCE_MANAGER
+      // kullanılır (T-028e: CATEGORY_MANAGER artık kategori-scope'una tabi).
       const approveRes = await request(app.getHttpServer())
         .post(`/agreements/${agreementReversalId}/approve`)
-        .set(manager.authHeader())
+        .set(financeApprover.authHeader())
         .expect(200);
 
       record({
         step: 'C7',
-        role: 'ADMIN (create/submit) + MANAGER (approve)',
+        role: 'ADMIN (create/submit) + FINANCE_MANAGER (approve)',
         endpoint: 'POST /agreements + submit + approve (reversal fixture)',
         expected: 'APPROVED',
         actual: approveRes.body.status,

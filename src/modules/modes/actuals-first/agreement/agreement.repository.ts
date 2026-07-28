@@ -31,7 +31,12 @@ export class AgreementRepository {
         'cpl',
         'channel',
         'category',
-        'forecastingUnit',
+        // T-028e: forecastingUnit.genericUnit — CM kategori-scope türetme
+        // zinciri (agreement.categoryId çoğu satırda boş; kategori
+        // fuId -> forecasting_units.gu_id -> generic_units.category_id
+        // üzerinden çözülür, bkz. AgreementService#resolveEffectiveCategoryId).
+        // Tek query'de LEFT JOIN (TypeORM nested relations), N+1 yok.
+        'forecastingUnit.genericUnit',
         'tactic',
         'mechanic',
       ],
@@ -86,8 +91,21 @@ export class AgreementRepository {
         channelId: filters.channelId,
       });
     }
-    if (scope) {
-      this.accessScope.applyToQueryBuilder(query, 'agreement', scope);
+    if (scope && scope.kind !== 'UNRESTRICTED') {
+      // T-028e: agreement.categoryId is empty on almost every row — the
+      // effective category is derived via fuId -> forecasting_units.gu_id ->
+      // generic_units.category_id (product decision, see task doc). Plain
+      // LEFT JOIN (no *AndSelect*, columns not needed on the result set) so
+      // this stays a single query — no N+1 for CM/PLANNER list filtering.
+      query
+        .leftJoin('agreement.forecastingUnit', 'scopeFu')
+        .leftJoin('scopeFu.genericUnit', 'scopeGu');
+      this.accessScope.applyToQueryBuilder(
+        query,
+        'agreement',
+        scope,
+        'COALESCE(agreement.categoryId, scopeGu.categoryId)',
+      );
     }
 
     return query.orderBy('agreement.createdAt', 'DESC').getMany();

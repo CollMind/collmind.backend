@@ -278,6 +278,39 @@ export class AgreementService {
     }
   }
 
+  /**
+   * T-028e: agreement's effective category for scope purposes. Product
+   * decision (task doc, DB-verified): `agreements.category_id` is empty on
+   * essentially every row (133/133 in prod snapshot) — the real category is
+   * carried by the product hierarchy and must be DERIVED:
+   *   1. agreement.categoryId if set (priority — explicit wins).
+   *   2. else agreement.fuId -> forecasting_units.gu_id ->
+   *      generic_units.category_id (loaded via the
+   *      'forecastingUnit.genericUnit' relation — no extra query).
+   *   3. else fail-closed: return null and log a warning. A null category
+   *      never matches a CATEGORY_MANAGER's (non-null) scope pair, so this
+   *      agreement becomes invisible/unapprovable to CM without any special
+   *      casing in AccessScopeService (PLANNER's cpl-only pairs, which carry
+   *      categoryId:null meaning "any category", are unaffected).
+   * DO NOT backfill agreements.category_id from this — a copied value goes
+   * stale the moment the FU's category assignment changes upstream.
+   */
+  private resolveEffectiveCategoryId(agreement: Agreement): string | null {
+    if (agreement.categoryId) {
+      return agreement.categoryId;
+    }
+    const derived = agreement.forecastingUnit?.genericUnit?.categoryId;
+    if (derived) {
+      return derived;
+    }
+    this.logger.warn(
+      `Agreement ${agreement.id} (code=${agreement.agreementCode ?? 'n/a'}) has no resolvable category ` +
+        `(categoryId is null; fuId=${agreement.fuId ?? 'null'} -> forecastingUnit.genericUnit.categoryId ` +
+        `did not resolve either). Failing closed: CATEGORY_MANAGER scope checks will deny this agreement.`,
+    );
+    return null;
+  }
+
   async findById(
     id: string,
     tenantId: string,
@@ -289,6 +322,9 @@ export class AgreementService {
     }
     // T-028c: out-of-scope PLANNER -> 404 (varlık sızdırma yok, plan.service
     // ile aynı desen). No actor -> unchanged (internal callers).
+    // T-028e: categoryId artık türetilmiş değer (bkz. resolveEffectiveCategoryId)
+    // — CM için agreement.categoryId kolonu çoğunlukla boş, ham kolonu
+    // kullanmak CM'i fail-open (UNRESTRICTED gibi davranış) yapardı.
     if (actor) {
       const scope = await this.accessScope.resolveScope(
         tenantId,
@@ -298,7 +334,7 @@ export class AgreementService {
       if (
         !this.accessScope.isInScope(scope, {
           cplId: agreement.cplId,
-          categoryId: agreement.categoryId ?? null,
+          categoryId: this.resolveEffectiveCategoryId(agreement),
         })
       ) {
         throw new NotFoundException({
@@ -309,6 +345,27 @@ export class AgreementService {
       }
     }
     return agreement;
+  }
+
+  /**
+   * T-028e: CM kategori-scoped onay/red — kesişim yoksa 403 (plan.service
+   * #assertCmDecisionScope ile aynı desen: varlık zaten biliniyor/aksiyon
+   * denendi, bu yüzden 404 değil 403). No-op for non-CM roles/no actor.
+   */
+  private async assertCmDecisionScope(
+    agreement: Agreement,
+    tenantId: string,
+    actor?: AgreementActor,
+  ): Promise<void> {
+    if (!actor || actor.role !== UserRole.CATEGORY_MANAGER) return;
+    const scope = await this.accessScope.resolveScope(
+      tenantId,
+      actor.userId,
+      actor.role,
+    );
+    this.accessScope.assertEntityInScope(scope, {
+      categoryId: this.resolveEffectiveCategoryId(agreement),
+    });
   }
 
   async findByCode(code: string, tenantId: string): Promise<Agreement> {
@@ -476,12 +533,17 @@ export class AgreementService {
     tenantId: string,
     userId: string,
     comments?: string,
+    actor?: AgreementActor,
   ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId);
 
     if (agreement.status !== AgreementStatus.PENDING) {
       throw new BadRequestException('Only PENDING agreements can be approved');
     }
+
+    // T-028e: CM kategori-scoped onay (BRD "Category Manager ATANMIŞ
+    // kategoriyi onaylar"). Kesişim yoksa 403.
+    await this.assertCmDecisionScope(agreement, tenantId, actor);
 
     // Validate that approval request exists for PENDING agreements
     // PENDING agreements should always have approvalRequestId from submit() flow
@@ -556,12 +618,16 @@ export class AgreementService {
     tenantId: string,
     userId: string,
     reason: string,
+    actor?: AgreementActor,
   ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId);
 
     if (agreement.status !== AgreementStatus.PENDING) {
       throw new BadRequestException('Only PENDING agreements can be rejected');
     }
+
+    // T-028e: CM kategori-scoped red — kesişim yoksa 403.
+    await this.assertCmDecisionScope(agreement, tenantId, actor);
 
     // Validate that approval request exists for PENDING agreements
     // PENDING agreements should always have approvalRequestId from submit() flow

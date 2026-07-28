@@ -303,9 +303,20 @@ export interface CreateAgreementFixtureInput {
 
 /**
  * T-030 e2e fixture'ları için: bir agreement'ı DRAFT → PENDING → APPROVED'a
- * taşır (create: ADMIN, submit: ADMIN, approve: MANAGER — self-approval
- * segregation-of-duties, bkz. role-journey.e2e-spec.ts C7). Approve sonrası
- * envelope'u da (RESERVE transaction'ından) döner.
+ * taşır (create: ADMIN, submit: ADMIN, approve: FINANCE_MANAGER —
+ * self-approval segregation-of-duties, bkz. role-journey.e2e-spec.ts C7).
+ * Approve sonrası envelope'u da (RESERVE transaction'ından) döner.
+ *
+ * T-028e NOT: önceden approve 'MANAGER' (=CATEGORY_MANAGER alias,
+ * manager@wella.com) ile yapılıyordu. AgreementService#approve artık CM
+ * kategori-scope'unu zorunlu kılıyor (bkz. AgreementService#assertCmDecisionScope)
+ * ve bu fixture çağrıları tenant'taki HERHANGİ bir FU'yu (dolayısıyla
+ * herhangi bir kategoriyi) kullanabildiğinden, manager@wella.com'un sabit
+ * scope'una (CAT-SAC-BOYASI/CAT-SET-BOYA) bağımlı kalmak kırılgan olurdu.
+ * FINANCE_MANAGER kategori-scope'una tabi değildir (BRD: FM okuma+bütçe) ve
+ * approve() route'u zaten @Roles(ADMIN, CATEGORY_MANAGER, FINANCE_MANAGER) —
+ * bu yüzden fixture-genel (kategori-agnostik) bir onaylayıcı olarak doğru
+ * seçim budur.
  */
 export async function createAndApproveAgreement(
   app: INestApplication,
@@ -316,7 +327,7 @@ export async function createAndApproveAgreement(
   capTotalAmount: number;
 }> {
   const admin = await loginAs(app, 'ADMIN');
-  const manager = await loginAs(app, 'MANAGER');
+  const manager = await loginAs(app, 'FINANCE_MANAGER');
 
   const createRes = await request(app.getHttpServer())
     .post('/agreements')

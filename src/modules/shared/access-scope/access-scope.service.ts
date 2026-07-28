@@ -235,6 +235,15 @@ export class AccessScopeService {
     qb: SelectQueryBuilder<T>,
     alias: string,
     scope: EffectiveScope,
+    /**
+     * T-028e: bazı entity'lerde (Agreement) categoryId kolonu doğrudan
+     * güvenilir değildir (çoğu satırda boş — FU→GU zincirinden türetilir).
+     * Çağıran, kendi JOIN'lediği türetilmiş ifadeyi (örn.
+     * `COALESCE(agreement.categoryId, gu.categoryId)`) buradan geçirebilir;
+     * verilmezse varsayılan `${alias}.categoryId` (mevcut davranış,
+     * değişmez).
+     */
+    categoryColumnExpr?: string,
   ): void {
     if (scope.kind === 'UNRESTRICTED') {
       return;
@@ -244,6 +253,8 @@ export class AccessScopeService {
       qb.andWhere('1=0');
       return;
     }
+
+    const categoryExpr = categoryColumnExpr ?? `${alias}.categoryId`;
 
     qb.andWhere(
       new Brackets((qbInner) => {
@@ -258,7 +269,7 @@ export class AccessScopeService {
           }
           if (pair.categoryId !== null) {
             const paramName = `scopeCat${idx}`;
-            conditions.push(`${alias}.categoryId = :${paramName}`);
+            conditions.push(`${categoryExpr} = :${paramName}`);
             params[paramName] = pair.categoryId;
           }
 

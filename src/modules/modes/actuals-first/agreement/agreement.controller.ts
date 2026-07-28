@@ -194,9 +194,12 @@ export class AgreementController {
     @Param('id') id: string,
     @Body('comments') comments: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.agreementService.approve(id, tenantId, user.id, comments);
+    return this.agreementService.approve(id, tenantId, user.id, comments, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/reject')
@@ -212,9 +215,12 @@ export class AgreementController {
     @Param('id') id: string,
     @Body('reason') reason: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.agreementService.reject(id, tenantId, user.id, reason);
+    return this.agreementService.reject(id, tenantId, user.id, reason, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/cancel')
