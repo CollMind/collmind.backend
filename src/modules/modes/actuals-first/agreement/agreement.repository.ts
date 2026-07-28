@@ -6,12 +6,17 @@ import {
   AgreementStatus,
   AgreementType,
 } from '../../../../database/entities/agreement.entity';
+import {
+  AccessScopeService,
+  EffectiveScope,
+} from '../../../shared/access-scope/access-scope.service';
 
 @Injectable()
 export class AgreementRepository {
   constructor(
     @InjectRepository(Agreement)
     private readonly repo: Repository<Agreement>,
+    private readonly accessScope: AccessScopeService,
   ) {}
 
   async create(data: Partial<Agreement>): Promise<Agreement> {
@@ -57,6 +62,13 @@ export class AgreementRepository {
       cplId?: string;
       channelId?: string;
     },
+    /**
+     * T-028c: PLANNER cpl-scoped okuma (docs/analysis/0004-rbac-brd-alignment.md
+     * §4/§5, agreement row aynı desen — plan.repository.ts#findAll ile
+     * tutarlı). Yalnızca çağıran taraf (AgreementService) bir scope
+     * geçtiğinde uygulanır — undefined için no-op (geriye uyumlu).
+     */
+    scope?: EffectiveScope,
   ): Promise<Agreement[]> {
     const query = this.repo
       .createQueryBuilder('agreement')
@@ -73,6 +85,9 @@ export class AgreementRepository {
       query.andWhere('agreement.channelId = :channelId', {
         channelId: filters.channelId,
       });
+    }
+    if (scope) {
+      this.accessScope.applyToQueryBuilder(query, 'agreement', scope);
     }
 
     return query.orderBy('agreement.createdAt', 'DESC').getMany();

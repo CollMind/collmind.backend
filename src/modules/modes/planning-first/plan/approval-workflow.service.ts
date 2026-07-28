@@ -55,10 +55,36 @@ export class ApprovalWorkflowService {
     tenantId: string,
     userId: string,
     dto: SubmitForApprovalDto,
+    actor?: PlanActor,
   ): Promise<SubmissionResult> {
     const plan = await this.planRepo.findById(planId, tenantId);
     if (!plan) {
       throw new NotFoundException(`Plan with ID ${planId} not found`);
+    }
+
+    // T-028c: this is a PLANNER-only route (@Roles(ADMIN, PLANNER)) that
+    // resolves the plan directly via planRepo (bypassing PlanService's
+    // scope-aware findById) — an out-of-scope PLANNER could otherwise
+    // submit-for-approval a plan outside their assigned CPL+Category.
+    // Out-of-scope -> 404 (varlık sızdırma yok, same as PlanService#findById).
+    if (actor) {
+      const scope = await this.accessScope.resolveScope(
+        tenantId,
+        actor.userId,
+        actor.role,
+      );
+      if (
+        !this.accessScope.isInScope(scope, {
+          cplId: plan.cplId,
+          categoryId: plan.categoryId,
+        })
+      ) {
+        throw new NotFoundException({
+          statusCode: 404,
+          message: `Plan with ID ${planId} not found`,
+          code: 'OUT_OF_SCOPE',
+        });
+      }
     }
 
     if (plan.status !== PlanStatus.DRAFT) {
@@ -712,9 +738,10 @@ export class ApprovalWorkflowService {
     tenantId: string,
     actor?: PlanActor,
   ): Promise<PlanApprovalHistory[]> {
-    // T-028b: CM kategori-scoped okuma — kapsam dışı plan -> 404 (varlık
-    // sızdırma yok, §3 tablosu "approval-history: kategori-scoped okuma").
-    if (actor?.role === UserRole.CATEGORY_MANAGER) {
+    // T-028b (CM) / T-028c (PLANNER, generalized): scope-aware read —
+    // kapsam dışı plan -> 404 (varlık sızdırma yok, §3/§5 tablosu
+    // "approval-history: R(c)/R(s) — kategori/CPL-scoped okuma").
+    if (actor) {
       const plan = await this.planRepo.findById(planId, tenantId);
       if (!plan) {
         throw new NotFoundException(`Plan with ID ${planId} not found`);
@@ -724,7 +751,12 @@ export class ApprovalWorkflowService {
         actor.userId,
         actor.role,
       );
-      if (!this.accessScope.isInScope(scope, { categoryId: plan.categoryId })) {
+      if (
+        !this.accessScope.isInScope(scope, {
+          cplId: plan.cplId,
+          categoryId: plan.categoryId,
+        })
+      ) {
         throw new NotFoundException({
           statusCode: 404,
           message: `Plan with ID ${planId} not found`,

@@ -93,22 +93,32 @@ export class PlanService {
   ) {}
 
   /**
-   * T-028b: CM kategori-scoped okuma. Yalnızca CATEGORY_MANAGER için scope
-   * çözer; diğer roller (PLANNER dahil — T-028c'nin işi) etkilenmez. Bulunan
-   * planı 404'e düşürür (varlık sızdırma yok — BRD/§9 N3).
+   * T-028b (CM) + T-028c (PLANNER, generalized): scope-aware read guard,
+   * used by findById. AccessScopeService.resolveScope already encodes the
+   * per-role semantics (ADMIN/FM/READONLY -> UNRESTRICTED, CM -> category-
+   * only pairs, PLANNER -> full cpl+category pairs, flag-gated) — so this
+   * helper can stay role-agnostic: it just resolves whatever scope the
+   * actor's role produces and checks the plan against it. Out-of-scope ->
+   * 404 (varlık sızdırma yok — BRD/§9 N3/N8). No actor (internal callers,
+   * e.g. recalculatePlanWithKpiEngine) -> unscoped, unchanged.
    */
-  private async assertCmReadScope(
+  private async assertReadScope(
     plan: Plan,
     tenantId: string,
     actor?: PlanActor,
   ): Promise<void> {
-    if (!actor || actor.role !== UserRole.CATEGORY_MANAGER) return;
+    if (!actor) return;
     const scope = await this.accessScope.resolveScope(
       tenantId,
       actor.userId,
       actor.role,
     );
-    if (!this.accessScope.isInScope(scope, { categoryId: plan.categoryId })) {
+    if (
+      !this.accessScope.isInScope(scope, {
+        cplId: plan.cplId,
+        categoryId: plan.categoryId,
+      })
+    ) {
       throw new NotFoundException({
         statusCode: 404,
         message: `Plan with ID ${plan.id} not found`,
@@ -171,7 +181,25 @@ export class PlanService {
     dto: CreatePlanDto,
     tenantId: string,
     userId: string,
+    actor?: PlanActor,
   ): Promise<Plan> {
+    // T-028c: PLANNER may only create plans within their assigned CPL+
+    // Category scope (BRD "Planner sadece yetkili CPL+Category"). ADMIN is
+    // always UNRESTRICTED (route also allows only ADMIN|PLANNER). Flag-
+    // gated inside AccessScopeService — no-op while SCOPE_ENFORCEMENT_ENABLED
+    // is false.
+    if (actor) {
+      const scope = await this.accessScope.resolveScope(
+        tenantId,
+        actor.userId,
+        actor.role,
+      );
+      this.accessScope.assertEntityInScope(scope, {
+        cplId: dto.cplId,
+        categoryId: dto.categoryId,
+      });
+    }
+
     // Calculate period month from start date
     const startDate = new Date(dto.startDate);
     const periodMonth = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
@@ -254,8 +282,9 @@ export class PlanService {
     if (!plan) {
       throw new NotFoundException(`Plan with ID ${id} not found`);
     }
-    // T-028b: CM kategori dışı plan -> 404 (varlık sızdırma yok, §9 N3).
-    await this.assertCmReadScope(plan, tenantId, actor);
+    // T-028b (CM) / T-028c (PLANNER): out-of-scope plan -> 404 (varlık
+    // sızdırma yok, §9 N3/N8).
+    await this.assertReadScope(plan, tenantId, actor);
     return plan;
   }
 
@@ -269,7 +298,7 @@ export class PlanService {
     },
     actor?: PlanActor,
   ): Promise<Plan[]> {
-    const scope = await this.resolveCmScopeForFilter(tenantId, actor);
+    const scope = await this.resolveScopeForFilter(tenantId, actor);
     return this.planRepo.findAll(tenantId, filters, scope);
   }
 
@@ -277,7 +306,7 @@ export class PlanService {
     tenantId: string,
     actor?: PlanActor,
   ): Promise<Plan[]> {
-    const scope = await this.resolveCmScopeForFilter(tenantId, actor);
+    const scope = await this.resolveScopeForFilter(tenantId, actor);
     return this.planRepo.findAll(
       tenantId,
       { status: PlanStatus.PENDING_APPROVAL },
@@ -286,14 +315,16 @@ export class PlanService {
   }
 
   /**
-   * T-028b: only resolves (and returns) a scope when the actor is
-   * CATEGORY_MANAGER — used to filter list/queue reads by category
-   * intersection. Returns undefined for every other actor (including no
-   * actor at all), which PlanRepository#findAll treats as a no-op filter —
-   * PLANNER list scoping remains T-028c's job, not touched here.
+   * T-028b (CM) / T-028c (PLANNER, generalized): resolves (and returns) the
+   * actor's scope for list/queue filtering. For ADMIN/FINANCE_MANAGER/
+   * READONLY this is a cheap no-DB-query UNRESTRICTED result (see
+   * AccessScopeService.resolveScope), so resolving unconditionally whenever
+   * an actor is present is safe — PlanRepository#findAll treats an
+   * UNRESTRICTED scope as a no-op filter. undefined actor (internal
+   * callers) -> undefined scope -> no-op filter, unchanged.
    */
-  private async resolveCmScopeForFilter(tenantId: string, actor?: PlanActor) {
-    if (!actor || actor.role !== UserRole.CATEGORY_MANAGER) return undefined;
+  private async resolveScopeForFilter(tenantId: string, actor?: PlanActor) {
+    if (!actor) return undefined;
     return this.accessScope.resolveScope(tenantId, actor.userId, actor.role);
   }
 
@@ -302,8 +333,15 @@ export class PlanService {
     dto: UpdatePlanDto,
     tenantId: string,
     userId: string,
+    actor?: PlanActor,
   ): Promise<Plan> {
-    const plan = await this.findById(id, tenantId);
+    // T-028c: findById already throws 404 (OUT_OF_SCOPE) when actor is
+    // out-of-scope PLANNER — threading actor here closes the write-path gap
+    // (a PLANNER could otherwise reach an out-of-scope plan's mutation
+    // endpoints via any of update/addFu/updateFuTactic/updateSkuVolume/
+    // removeFu/delete/submit, all of which resolve the plan through
+    // findById).
+    const plan = await this.findById(id, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be edited');
@@ -333,8 +371,9 @@ export class PlanService {
     dto: AddFuDto,
     tenantId: string,
     userId: string,
+    actor?: PlanActor,
   ): Promise<PlanFu> {
-    const plan = await this.findById(planId, tenantId);
+    const plan = await this.findById(planId, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be modified');
@@ -389,8 +428,9 @@ export class PlanService {
     fuId: string,
     dto: UpdateFuTacticDto,
     tenantId: string,
+    actor?: PlanActor,
   ): Promise<PlanFu> {
-    const plan = await this.findById(planId, tenantId);
+    const plan = await this.findById(planId, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be modified');
@@ -418,8 +458,9 @@ export class PlanService {
     skuId: string,
     dto: UpdateSkuVolumeDto,
     tenantId: string,
+    actor?: PlanActor,
   ): Promise<PlanSku> {
-    const plan = await this.findById(planId, tenantId);
+    const plan = await this.findById(planId, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be modified');
@@ -459,8 +500,9 @@ export class PlanService {
     planId: string,
     fuId: string,
     tenantId: string,
+    actor?: PlanActor,
   ): Promise<void> {
-    const plan = await this.findById(planId, tenantId);
+    const plan = await this.findById(planId, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be modified');
@@ -475,8 +517,13 @@ export class PlanService {
     await this.recalculatePlanWithKpiEngine(planId, tenantId);
   }
 
-  async submit(id: string, tenantId: string, userId: string): Promise<Plan> {
-    const plan = await this.findById(id, tenantId);
+  async submit(
+    id: string,
+    tenantId: string,
+    userId: string,
+    actor?: PlanActor,
+  ): Promise<Plan> {
+    const plan = await this.findById(id, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be submitted');
@@ -935,8 +982,8 @@ export class PlanService {
     return updated;
   }
 
-  async delete(id: string, tenantId: string): Promise<void> {
-    const plan = await this.findById(id, tenantId);
+  async delete(id: string, tenantId: string, actor?: PlanActor): Promise<void> {
+    const plan = await this.findById(id, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be deleted');
@@ -961,8 +1008,9 @@ export class PlanService {
   async recalculatePlanWithKpiEngine(
     planId: string,
     tenantId: string,
+    actor?: PlanActor,
   ): Promise<void> {
-    const plan = await this.findById(planId, tenantId);
+    const plan = await this.findById(planId, tenantId, actor);
     if (!plan.planFus || plan.planFus.length === 0) return;
 
     const allFuResults: Array<Record<string, CalculationResult>> = [];
@@ -1199,7 +1247,7 @@ export class PlanService {
     let planTotalGp = 0;
 
     // Re-read FUs to get updated aggregations
-    const updatedPlan = await this.findById(planId, tenantId);
+    const updatedPlan = await this.findById(planId, tenantId, actor);
     for (const planFu of updatedPlan.planFus || []) {
       planTotalPlannedVolume += Number(planFu.totalPlannedVolume) || 0;
       planTotalSpend += Number(planFu.totalSpend) || 0;
@@ -1244,6 +1292,7 @@ export class PlanService {
   async calculateKpis(
     planId: string,
     tenantId: string,
+    actor?: PlanActor,
   ): Promise<{
     planKpis: Record<string, CalculationResult>;
     fuKpis: Array<{
@@ -1253,10 +1302,10 @@ export class PlanService {
     }>;
   }> {
     // Trigger full recalculation (single authoritative path)
-    await this.recalculatePlanWithKpiEngine(planId, tenantId);
+    await this.recalculatePlanWithKpiEngine(planId, tenantId, actor);
 
     // Read stored KPI results (already computed above, no duplicate recalc)
-    const plan = await this.findById(planId, tenantId);
+    const plan = await this.findById(planId, tenantId, actor);
 
     const fuKpis: Array<{
       fuId: string;

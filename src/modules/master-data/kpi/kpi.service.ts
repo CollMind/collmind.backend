@@ -1,7 +1,9 @@
 import {
   Injectable,
   ConflictException,
+  Inject,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { KpiRepository } from './kpi.repository';
 import { CreateKpiDto } from './dto/create-kpi.dto';
@@ -13,13 +15,17 @@ import {
   DisplayFormat,
   AggregationMethod,
 } from '../../../database/entities/kpi.entity';
-import { PlanRepository } from '../../modes/planning-first/plan/plan.repository';
+import {
+  PlanService,
+  PlanActor,
+} from '../../modes/planning-first/plan/plan.service';
 
 @Injectable()
 export class KpiService {
   constructor(
     private readonly kpiRepository: KpiRepository,
-    private readonly planRepository: PlanRepository,
+    @Inject(forwardRef(() => PlanService))
+    private readonly planService: PlanService,
   ) {}
 
   async create(tenantId: string, createKpiDto: CreateKpiDto): Promise<Kpi> {
@@ -68,13 +74,17 @@ export class KpiService {
     return this.kpiRepository.findGridKpis(tenantId);
   }
 
-  async getGridKpisForPlan(planId: string, tenantId: string): Promise<Kpi[]> {
-    // Get plan information
-    const plan = await this.planRepository.findById(planId, tenantId);
-
-    if (!plan) {
-      throw new NotFoundException('Plan not found');
-    }
+  async getGridKpisForPlan(
+    planId: string,
+    tenantId: string,
+    actor?: PlanActor,
+  ): Promise<Kpi[]> {
+    // Get plan information. T-028c SHOULD-FIX: routed through PlanService
+    // (not the raw repository) so an out-of-scope PLANNER's assertReadScope
+    // 404 applies here too — otherwise this endpoint would still leak plan
+    // existence via a 200-vs-404 oracle even though it never returns plan
+    // content (grid KPI defs only).
+    await this.planService.findById(planId, tenantId, actor);
 
     // Get KPIs that should be shown in grid
     // show_in_grid = true olanları getir

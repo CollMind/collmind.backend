@@ -91,6 +91,7 @@ describe('PlanController', () => {
         mockTenantId,
         mockUser.id,
         dto,
+        { userId: mockUser.id, role: mockUser.role },
       );
       expect(result).toEqual(mockResult);
     });

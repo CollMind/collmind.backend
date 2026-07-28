@@ -8,6 +8,7 @@ import { BudgetModule } from '../../../shared/budget/budget.module';
 import { ApprovalModule } from '../../../shared/approval/approval.module';
 import { KpiEngineModule } from '../../../shared/kpi-engine/kpi-engine.module';
 import { MasterDataModule } from '../../../master-data/master-data.module';
+import { AccessScopeModule } from '../../../shared/access-scope/access-scope.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { MasterDataModule } from '../../../master-data/master-data.module';
     ApprovalModule,
     KpiEngineModule,
     MasterDataModule,
+    AccessScopeModule,
   ],
   controllers: [AgreementController],
   providers: [AgreementService, AgreementRepository],

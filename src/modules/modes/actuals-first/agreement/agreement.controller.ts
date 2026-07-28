@@ -43,9 +43,12 @@ export class AgreementController {
   create(
     @Body() dto: CreateAgreementDto,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.agreementService.create(dto, tenantId, user.id);
+    return this.agreementService.create(dto, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Get()
@@ -60,11 +63,16 @@ export class AgreementController {
   @ApiResponse({ status: 200, description: 'List of agreements' })
   findAll(
     @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
     @Query('status') status?: AgreementStatus,
     @Query('cplId') cplId?: string,
     @Query('channel') channel?: string,
   ) {
-    return this.agreementService.findAll(tenantId, { status, cplId, channel });
+    return this.agreementService.findAll(
+      tenantId,
+      { status, cplId, channel },
+      { userId: user.id, role: user.role },
+    );
   }
 
   // Spesifik route'lar parametrik route'lardan (:id) önce tanımlanmalı
@@ -122,8 +130,15 @@ export class AgreementController {
   @ApiOperation({ summary: 'Get agreement by ID' })
   @ApiResponse({ status: 200, description: 'Agreement details' })
   @ApiResponse({ status: 404, description: 'Agreement not found' })
-  findOne(@Param('id') id: string, @TenantId() tenantId: string) {
-    return this.agreementService.findById(id, tenantId);
+  findOne(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.agreementService.findById(id, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Patch(':id')
@@ -138,9 +153,12 @@ export class AgreementController {
     @Param('id') id: string,
     @Body() dto: UpdateAgreementDto,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.agreementService.update(id, dto, tenantId, user.id);
+    return this.agreementService.update(id, dto, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/submit')
@@ -155,9 +173,12 @@ export class AgreementController {
   submit(
     @Param('id') id: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.agreementService.submit(id, tenantId, user.id);
+    return this.agreementService.submit(id, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/approve')
@@ -209,9 +230,12 @@ export class AgreementController {
     @Param('id') id: string,
     @Body('reason') reason: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.agreementService.cancel(id, tenantId, user.id, reason);
+    return this.agreementService.cancel(id, tenantId, user.id, reason, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Delete(':id')
@@ -226,8 +250,11 @@ export class AgreementController {
   delete(
     @Param('id') id: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.agreementService.delete(id, tenantId, user.id);
+    return this.agreementService.delete(id, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 }

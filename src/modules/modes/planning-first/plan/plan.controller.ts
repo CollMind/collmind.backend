@@ -56,9 +56,12 @@ export class PlanController {
   create(
     @Body() dto: CreatePlanDto,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.create(dto, tenantId, user.id);
+    return this.planService.create(dto, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Get()
@@ -209,9 +212,12 @@ export class PlanController {
     @Param('id') id: string,
     @Body() dto: UpdatePlanDto,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.update(id, dto, tenantId, user.id);
+    return this.planService.update(id, dto, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/fus')
@@ -223,9 +229,12 @@ export class PlanController {
     @Param('id') planId: string,
     @Body() dto: AddFuDto,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.addFu(planId, dto, tenantId, user.id);
+    return this.planService.addFu(planId, dto, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Patch(':id/fus/:fuId/tactics')
@@ -237,8 +246,12 @@ export class PlanController {
     @Param('fuId') fuId: string,
     @Body() dto: UpdateFuTacticDto,
     @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.updateFuTactic(planId, fuId, dto, tenantId);
+    return this.planService.updateFuTactic(planId, fuId, dto, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Delete(':id/fus/:fuId')
@@ -250,8 +263,12 @@ export class PlanController {
     @Param('id') planId: string,
     @Param('fuId') fuId: string,
     @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.removeFu(planId, fuId, tenantId);
+    return this.planService.removeFu(planId, fuId, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Patch(':id/fus/:fuId/skus/:skuId/volume')
@@ -264,8 +281,16 @@ export class PlanController {
     @Param('skuId') skuId: string,
     @Body() dto: UpdateSkuVolumeDto,
     @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.updateSkuVolume(planId, fuId, skuId, dto, tenantId);
+    return this.planService.updateSkuVolume(
+      planId,
+      fuId,
+      skuId,
+      dto,
+      tenantId,
+      { userId: user.id, role: user.role },
+    );
   }
 
   @Post(':id/submit')
@@ -280,9 +305,12 @@ export class PlanController {
   submit(
     @Param('id') id: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.submit(id, tenantId, user.id);
+    return this.planService.submit(id, tenantId, user.id, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/submit-for-approval')
@@ -300,13 +328,14 @@ export class PlanController {
     @Param('id') id: string,
     @Body() dto: SubmitForApprovalDto,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
     return this.approvalWorkflowService.submitForApproval(
       id,
       tenantId,
       user.id,
       dto,
+      { userId: user.id, role: user.role },
     );
   }
 
@@ -436,8 +465,15 @@ export class PlanController {
   @ApiOperation({ summary: 'Delete plan (DRAFT only)' })
   @ApiResponse({ status: 204, description: 'Plan deleted successfully' })
   @ApiResponse({ status: 400, description: 'Only DRAFT plans can be deleted' })
-  delete(@Param('id') id: string, @TenantId() tenantId: string) {
-    return this.planService.delete(id, tenantId);
+  delete(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.planService.delete(id, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/calculate-kpis')
@@ -445,8 +481,15 @@ export class PlanController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Calculate KPIs for a plan using KPI engine' })
   @ApiResponse({ status: 200, description: 'KPI calculation results' })
-  calculateKpis(@Param('id') id: string, @TenantId() tenantId: string) {
-    return this.planService.calculateKpis(id, tenantId);
+  calculateKpis(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    return this.planService.calculateKpis(id, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Post(':id/recalculate')
@@ -454,8 +497,13 @@ export class PlanController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger full recalculation for a plan' })
   @ApiResponse({ status: 200, description: 'Recalculation complete' })
-  async recalculate(@Param('id') id: string, @TenantId() tenantId: string) {
-    await this.planService.recalculatePlanWithKpiEngine(id, tenantId);
-    return this.planService.findById(id, tenantId);
+  async recalculate(
+    @Param('id') id: string,
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+  ) {
+    const actor = { userId: user.id, role: user.role };
+    await this.planService.recalculatePlanWithKpiEngine(id, tenantId, actor);
+    return this.planService.findById(id, tenantId, actor);
   }
 }

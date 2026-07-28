@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { ForbiddenException } from '@nestjs/common';
 import { SelectQueryBuilder } from 'typeorm';
 import { AccessScopeService } from './access-scope.service';
@@ -26,6 +27,9 @@ describe('AccessScopeService', () => {
   let service: AccessScopeService;
   let userScopeRepo: { find: jest.Mock };
 
+  // T-028c: this file exercises the SCOPED pair-semantics engine itself, so
+  // SCOPE_ENFORCEMENT_ENABLED='true' throughout — the flag's OFF behavior
+  // (PLANNER bypass) has its own dedicated describe block below.
   beforeEach(async () => {
     userScopeRepo = { find: jest.fn() };
 
@@ -33,6 +37,10 @@ describe('AccessScopeService', () => {
       providers: [
         AccessScopeService,
         { provide: getRepositoryToken(UserScope), useValue: userScopeRepo },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue('true') },
+        },
       ],
     }).compile();
 
@@ -267,6 +275,82 @@ describe('AccessScopeService', () => {
       service.clearCache();
       await service.resolveScope(TENANT, USER, UserRole.PLANNER);
       expect(userScopeRepo.find).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('T-028c — SCOPE_ENFORCEMENT_ENABLED feature flag (PLANNER only)', () => {
+    async function buildServiceWithFlag(
+      flagValue: string | undefined,
+    ): Promise<{ svc: AccessScopeService; repo: { find: jest.Mock } }> {
+      const repo = { find: jest.fn() };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AccessScopeService,
+          { provide: getRepositoryToken(UserScope), useValue: repo },
+          {
+            provide: ConfigService,
+            useValue: { get: jest.fn().mockReturnValue(flagValue) },
+          },
+        ],
+      }).compile();
+      return { svc: module.get(AccessScopeService), repo };
+    }
+
+    it('flag unset (undefined) => default false => PLANNER is UNRESTRICTED, no UserScope query (bugünkü davranış)', async () => {
+      const { svc, repo } = await buildServiceWithFlag(undefined);
+      const scope = await svc.resolveScope(TENANT, USER, UserRole.PLANNER);
+      expect(scope).toEqual({ kind: 'UNRESTRICTED' });
+      expect(repo.find).not.toHaveBeenCalled();
+    });
+
+    it("flag='false' (explicit) => PLANNER is UNRESTRICTED", async () => {
+      const { svc, repo } = await buildServiceWithFlag('false');
+      const scope = await svc.resolveScope(TENANT, USER, UserRole.PLANNER);
+      expect(scope).toEqual({ kind: 'UNRESTRICTED' });
+      expect(repo.find).not.toHaveBeenCalled();
+    });
+
+    it("flag='true' => PLANNER resolves real pair scope (fail-closed, R-2, for a PLANNER with no rows)", async () => {
+      const { svc, repo } = await buildServiceWithFlag('true');
+      repo.find.mockResolvedValue([]);
+      const scope = await svc.resolveScope(TENANT, USER, UserRole.PLANNER);
+      expect(scope).toEqual({ kind: 'SCOPED', pairs: [] });
+      expect(repo.find).toHaveBeenCalled();
+    });
+
+    it('flag does NOT affect CATEGORY_MANAGER (T-028b enforcement unchanged regardless of flag)', async () => {
+      const { svc: svcOff, repo: repoOff } =
+        await buildServiceWithFlag(undefined);
+      repoOff.find.mockResolvedValue([
+        buildScopeRow({ cplId: 'CPL1', categoryId: 'CatA' }),
+      ]);
+      const scopeOff = await svcOff.resolveScope(
+        TENANT,
+        USER,
+        UserRole.CATEGORY_MANAGER,
+      );
+      expect(scopeOff).toEqual({
+        kind: 'SCOPED',
+        pairs: [{ cplId: null, categoryId: 'CatA' }],
+      });
+
+      const { svc: svcOn, repo: repoOn } = await buildServiceWithFlag('true');
+      repoOn.find.mockResolvedValue([
+        buildScopeRow({ cplId: 'CPL1', categoryId: 'CatA' }),
+      ]);
+      const scopeOn = await svcOn.resolveScope(
+        TENANT,
+        USER,
+        UserRole.CATEGORY_MANAGER,
+      );
+      expect(scopeOn).toEqual(scopeOff);
+    });
+
+    it('flag does NOT affect UNRESTRICTED roles (ADMIN/FM/READONLY) — no UserScope query either way', async () => {
+      const { svc, repo } = await buildServiceWithFlag(undefined);
+      const scope = await svc.resolveScope(TENANT, USER, UserRole.ADMIN);
+      expect(scope).toEqual({ kind: 'UNRESTRICTED' });
+      expect(repo.find).not.toHaveBeenCalled();
     });
   });
 });

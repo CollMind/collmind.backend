@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Brackets, Repository, SelectQueryBuilder } from 'typeorm';
 import { UserScope } from '../../../database/entities/user-scope.entity';
 import { UserRole } from '../../../database/entities/user.entity';
@@ -49,6 +50,24 @@ import { UserRole } from '../../../database/entities/user.entity';
  *   Guard değil SERVİS — enforcement noktaları (controller/service) DTO'ya
  *   göre heterojen; RolesGuard yalnızca kaba rol filtresi yapmaya devam
  *   eder, entity-seviyesi scope kararı bu serviste.
+ *
+ * T-028c — SCOPE_ENFORCEMENT_ENABLED feature flag (env, ConfigService):
+ *   PLANNER scope enforcement'ı açıldığı anda scope satırı olmayan HER
+ *   PLANNER "her şeyi kaybeder" (fail-closed, R-2) — prod/UAT'de backfill
+ *   migration'ı (main.user_scopes) doğrulanana kadar bu YIKICI olur. Bu
+ *   yüzden flag TEK bu serviste uygulanır (çağrı noktalarında değil):
+ *     - Tek yer = rol semantiği zaten burada toplu (yukarıdaki not); PLANNER
+ *       davranışını PlanService/AgreementService/ApprovalWorkflowService'in
+ *       HER çağrı noktasında ayrı ayrı flag kontrolü yapmadan, tek satırda
+ *       aç/kapa yapabilmek regresyon riskini (bir çağrı noktası unutulursa
+ *       kısmi enforcement) ortadan kaldırır.
+ *     - Varsayılan `false` (env yoksa) = bugünkü davranış (PLANNER
+ *       UNRESTRICTED, T-028c öncesi durum) — mevcut deploy'larda hiçbir
+ *       şey değişmez.
+ *     - `true` iken PLANNER gerçek pair scope'una tabi olur (buildScope).
+ *     - CATEGORY_MANAGER / ADMIN / FINANCE_MANAGER / READONLY flag'den
+ *       ETKİLENMEZ (CM enforcement T-028b'de zaten prod'a gitti; flag
+ *       yalnızca PLANNER'ın T-028c'de YENİ eklenen enforcement'ını kapsar).
  */
 
 export interface ScopePair {
@@ -82,10 +101,22 @@ export class AccessScopeService {
     { value: EffectiveScope; expiresAt: number }
   >();
 
+  /**
+   * T-028c: default `false` (env unset/anything other than the literal
+   * string 'true') — enforcement stays OFF until the backfill migration
+   * (`main.user_scopes` for existing PLANNERs) has been verified in the
+   * target environment. See class header for why this lives here.
+   */
+  private readonly scopeEnforcementEnabled: boolean;
+
   constructor(
     @InjectRepository(UserScope)
     private readonly userScopeRepo: Repository<UserScope>,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.scopeEnforcementEnabled =
+      this.configService.get<string>('SCOPE_ENFORCEMENT_ENABLED') === 'true';
+  }
 
   /**
    * Resolves the caller's effective scope. tenantId is mandatory (multi-tenant
@@ -104,6 +135,12 @@ export class AccessScopeService {
     }
 
     if (UNRESTRICTED_ROLES.has(role)) {
+      return { kind: 'UNRESTRICTED' };
+    }
+
+    // T-028c: PLANNER enforcement is flag-gated (see class header). CM keeps
+    // T-028b's already-shipped behavior regardless of this flag.
+    if (role === UserRole.PLANNER && !this.scopeEnforcementEnabled) {
       return { kind: 'UNRESTRICTED' };
     }
 

@@ -38,6 +38,13 @@ import {
 // cleanup-and-seed master-data'yı yeniden yaratınca id'ler değişir; kod sabittir) ──
 let CPL_1: string; // BS0501.50001 Gratis
 let CPL_2: string; // BS0501.50004 A.S.Watson
+
+// T-028c: SCOPE_ENFORCEMENT_ENABLED is resolved ONCE at app bootstrap
+// (AccessScopeService constructor reads ConfigService) — it cannot be
+// toggled mid-run, so every PLANNER-scope assertion in this file branches on
+// this same env read to stay correct whether the suite is run with the flag
+// on or off (both runs must be green — see T-028c task report).
+const SCOPE_ENFORCEMENT_ON = process.env.SCOPE_ENFORCEMENT_ENABLED === 'true';
 let CHANNEL_NKA: string; // code NKA
 let CATEGORY_SAC_BOYASI: string; // CAT-SAC-BOYASI
 let FU_TUP_BOYA: string; // FU-TUP-BOYA
@@ -1126,18 +1133,25 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         step: 'B3',
         role: 'PLANNER vs ADMIN',
         endpoint: 'GET /plans',
-        expected: 'PLANNER sayısı < ADMIN sayısı (scope filtreli)',
+        expected: SCOPE_ENFORCEMENT_ON
+          ? 'PLANNER sayısı <= ADMIN sayısı (scope filtreli, T-028c)'
+          : 'PLANNER sayısı == ADMIN sayısı (SCOPE_ENFORCEMENT_ENABLED=false, bugünkü davranış)',
         actual: `PLANNER=${plannerRes.body.length}, ADMIN=${adminRes.body.length}`,
-        note:
-          plannerRes.body.length === adminRes.body.length
-            ? 'BRD İHLALİ: PLANNER tüm tenant planlarını görüyor (tenant-wide, scope YOK)'
-            : 'PLANNER kısıtlı görüyor (ancak B1/B2 kanıtına göre bu CPL scope değil, başka bir filtre olabilir)',
+        note: SCOPE_ENFORCEMENT_ON
+          ? 'T-028c: findAll() artık AccessScopeService.applyToQueryBuilder ile PLANNER cpl+category pair scope’una göre filtreleniyor (kesin fark için bkz. F) bölümü N7).'
+          : 'BRD İHLALİ (bilinçli — flag kapalı): PlanService.findAll() PLANNER için hiçbir CPL/UserScope kontrolü yapmıyor, tenant-wide görüyor. T-028c bunu flag AÇIKKEN düzeltiyor (bkz. F) bölümü).',
       });
 
-      // Kod gerçek davranışı: findAll() cplId filtresi yalnızca query param
-      // verilirse uygulanır; PLANNER'ın kendi scope'una göre otomatik
-      // filtrelenmesi YOK → PLANNER = ADMIN sayısı bekleniyor.
-      expect(plannerRes.body.length).toBe(adminRes.body.length);
+      // Flag kapalıyken (varsayılan, bugünkü davranış): tam eşitlik.
+      // Flag açıkken: PLANNER en fazla ADMIN kadar görür (kesin "<" kanıtı
+      // için bkz. F) N7 — burada sadece genel gözlem, deterministik değil).
+      if (SCOPE_ENFORCEMENT_ON) {
+        expect(plannerRes.body.length).toBeLessThanOrEqual(
+          adminRes.body.length,
+        );
+      } else {
+        expect(plannerRes.body.length).toBe(adminRes.body.length);
+      }
     });
   });
 
@@ -1510,6 +1524,510 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(approveRes.status).toBe(200);
       expect(approveRes.body.status).toBe('APPROVED');
       expect(commitTx.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // F) PLANNER CPL/CATEGORY SCOPE ENFORCEMENT (T-028c) — docs/analysis/0004 §9
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // ⚠️ TUZAK (görev talimatı): CPL_1 (BS0501.50001, Gratis) VE CPL_2
+  // (BS0501.50004, A.S.Watson) ikisi de Ulusal->NKA kanalı, yani ikisi de
+  // planner@wella.com'un kapsamındadır (user-scope.seed.ts: NKA CPL'leri).
+  // "Yetkisiz CPL" testleri için CPL_2 KULLANILAMAZ — yanlış yeşil verir.
+  // Bunun yerine bir DİSTRİBÜTÖR CPL'i kullanılır (BS0502.50002 —
+  // planner2@wella.com'un kapsamında, planner@wella.com'un DEĞİL).
+  //
+  // Bu describe bloğu SCOPE_ENFORCEMENT_ON'a göre dallanır — dosyanın hem
+  // flag KAPALI hem flag AÇIK koşumlarında da yeşil kalması gerekir (T-028c
+  // görev talimatı: iki koşum da raporlanacak).
+
+  describe('F) PLANNER CPL/Category scope enforcement (T-028c)', () => {
+    let DISTRIBUTOR_CPL_ID: string; // BS0502.50002 — planner2 kapsamında
+    let DISTRIBUTOR_CHANNEL_ID: string; // code DISTRIBUTOR
+    const scratchPlanIds: string[] = [];
+    const scratchAgreementIds: string[] = [];
+
+    beforeAll(async () => {
+      [DISTRIBUTOR_CPL_ID, DISTRIBUTOR_CHANNEL_ID] = await Promise.all([
+        resolveIdByCode(dataSource, fixture.tenantId, 'cpls', 'BS0502.50002'),
+        resolveIdByCode(
+          dataSource,
+          fixture.tenantId,
+          'channels',
+          'DISTRIBUTOR',
+        ),
+      ]);
+    });
+
+    afterAll(async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      for (const id of scratchPlanIds) {
+        try {
+          const res = await request(app.getHttpServer())
+            .get(`/plans/${id}`)
+            .set(admin.authHeader());
+          if (res.status === 200 && res.body?.status === 'DRAFT') {
+            await request(app.getHttpServer())
+              .delete(`/plans/${id}`)
+              .set(admin.authHeader());
+          }
+        } catch {
+          // best-effort cleanup
+        }
+      }
+      // Agreements: DELETE endpoint yok — DRAFT'ları test verisi olarak
+      // bırakıyoruz (dosya başlığı izolasyon notuyla tutarlı, "E2E-N" öneki).
+      void scratchAgreementIds;
+    });
+
+    it('N6. PLANNER → yetkisiz CPL (Distribütör, planner’ın DEĞİL) ile POST /plans', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-N6-PLANNER-OUT-OF-SCOPE-${Date.now()}`,
+          cplId: DISTRIBUTOR_CPL_ID,
+          channelId: DISTRIBUTOR_CHANNEL_ID,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        });
+
+      record({
+        step: 'N6',
+        role: 'PLANNER',
+        endpoint: 'POST /plans (Distribütör CPL — planner kapsamı DIŞI)',
+        expected: SCOPE_ENFORCEMENT_ON
+          ? '403 (T-028c enforcement AÇIK)'
+          : '201 (SCOPE_ENFORCEMENT_ENABLED=false, bugünkü davranış — bkz. B2)',
+        actual: res.status,
+        note: 'docs/analysis/0004 §9 N6 — PlanService.create() artık AccessScopeService.assertEntityInScope ile PLANNER cpl+category pair scope’unu kontrol ediyor (flag AÇIKKEN).',
+      });
+
+      if (SCOPE_ENFORCEMENT_ON) {
+        expect(res.status).toBe(403);
+      } else {
+        expect(res.status).toBe(201);
+        if (res.status === 201) {
+          scratchPlanIds.push(res.body.id);
+        }
+      }
+    });
+
+    it('N6-POZİTİF. PLANNER → kendi NKA CPL’inde POST /plans → 201 (golden path bozulmadı)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-N6-POS-PLANNER-IN-SCOPE-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        });
+
+      record({
+        step: 'N6-POZİTİF',
+        role: 'PLANNER',
+        endpoint: 'POST /plans (kendi NKA CPL kapsamı)',
+        expected: 201,
+        actual: res.status,
+        note: 'Enforcement açık ya da kapalı fark etmeksizin, kendi scope’undaki CPL için PLANNER her zaman 201 almalı (regresyon koruması).',
+      });
+
+      expect(res.status).toBe(201);
+      if (res.status === 201) {
+        scratchPlanIds.push(res.body.id);
+      }
+    });
+
+    it('N7. GET /plans PLANNER sonuç sayısı < ADMIN (Distribütör kanalında ADMIN’in oluşturduğu ekstra plan planner’a görünmez)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const planner = await loginAs(app, 'PLANNER');
+
+      const extraRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(admin.authHeader())
+        .send({
+          planName: `E2E-N7-ADMIN-DISTRIBUTOR-${Date.now()}`,
+          cplId: DISTRIBUTOR_CPL_ID,
+          channelId: DISTRIBUTOR_CHANNEL_ID,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      scratchPlanIds.push(extraRes.body.id);
+
+      const plannerRes = await request(app.getHttpServer())
+        .get('/plans')
+        .set(planner.authHeader())
+        .expect(200);
+      const adminRes = await request(app.getHttpServer())
+        .get('/plans')
+        .set(admin.authHeader())
+        .expect(200);
+
+      const plannerSeesExtra = (plannerRes.body as any[]).some(
+        (p) => p.id === extraRes.body.id,
+      );
+      const adminSeesExtra = (adminRes.body as any[]).some(
+        (p) => p.id === extraRes.body.id,
+      );
+
+      record({
+        step: 'N7',
+        role: 'PLANNER vs ADMIN',
+        endpoint: 'GET /plans (deterministik: ADMIN’in Distribütör planı)',
+        expected: SCOPE_ENFORCEMENT_ON
+          ? 'PLANNER extra planı GÖRMEZ, ADMIN görür → PLANNER < ADMIN'
+          : 'PLANNER de görür (flag kapalı, tenant-wide)',
+        actual: `plannerSeesExtra=${plannerSeesExtra}, adminSeesExtra=${adminSeesExtra}, PLANNER=${plannerRes.body.length}, ADMIN=${adminRes.body.length}`,
+        note: 'docs/analysis/0004 §9 N7 — PlanRepository#findAll artık AccessScopeService.applyToQueryBuilder ile PLANNER cpl+category pair scope’una göre filtreleniyor (flag AÇIKKEN).',
+      });
+
+      expect(adminSeesExtra).toBe(true);
+      if (SCOPE_ENFORCEMENT_ON) {
+        expect(plannerSeesExtra).toBe(false);
+        expect(plannerRes.body.length).toBeLessThan(adminRes.body.length);
+      } else {
+        expect(plannerSeesExtra).toBe(true);
+      }
+    });
+
+    it('N8. PLANNER → planner2’nin (Distribütör CPL) planını GET /plans/:id → 404 (varlık sızdırma yok)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planner2 = await loginAs(app, 'PLANNER2');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner2.authHeader())
+        .send({
+          planName: `E2E-N8-PLANNER2-DISTRIBUTOR-${Date.now()}`,
+          cplId: DISTRIBUTOR_CPL_ID,
+          channelId: DISTRIBUTOR_CHANNEL_ID,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      scratchPlanIds.push(createRes.body.id);
+
+      const res = await request(app.getHttpServer())
+        .get(`/plans/${createRes.body.id}`)
+        .set(planner.authHeader());
+
+      record({
+        step: 'N8',
+        role: 'PLANNER',
+        endpoint: 'GET /plans/:id (planner2’nin Distribütör planı)',
+        expected: SCOPE_ENFORCEMENT_ON ? 404 : 200,
+        actual: res.status,
+        note: SCOPE_ENFORCEMENT_ON
+          ? "docs/analysis/0004 §9 N8 — PlanService.findById() out-of-scope -> 404, body.code='OUT_OF_SCOPE' (varlık sızdırma yok)."
+          : 'Flag kapalı: PLANNER hâlâ tenant-wide okuyor (bugünkü davranış).',
+      });
+
+      if (SCOPE_ENFORCEMENT_ON) {
+        expect(res.status).toBe(404);
+        expect(res.body.code).toBe('OUT_OF_SCOPE');
+      } else {
+        expect(res.status).toBe(200);
+      }
+    });
+
+    it('N8-RECALC. PLANNER → planner2’nin (Distribütör CPL) planında POST /:id/recalculate → 404 (varlık/scope kaçağı yok)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planner2 = await loginAs(app, 'PLANNER2');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner2.authHeader())
+        .send({
+          planName: `E2E-N8-RECALC-PLANNER2-DISTRIBUTOR-${Date.now()}`,
+          cplId: DISTRIBUTOR_CPL_ID,
+          channelId: DISTRIBUTOR_CHANNEL_ID,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      scratchPlanIds.push(createRes.body.id);
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${createRes.body.id}/recalculate`)
+        .set(planner.authHeader());
+
+      record({
+        step: 'N8-RECALC',
+        role: 'PLANNER',
+        endpoint:
+          'POST /plans/:id/recalculate (planner2’nin Distribütör planı)',
+        expected: SCOPE_ENFORCEMENT_ON ? 404 : 200,
+        actual: res.status,
+        note: SCOPE_ENFORCEMENT_ON
+          ? 'T-028c BLOCKER FIX — PlanController#recalculate artık @CurrentUser() actor’ını PlanService.recalculatePlanWithKpiEngine/findById’a geçiriyor; out-of-scope PLANNER artık planı yazdıramıyor/içeriğini göremiyor (önceden actor’suzdu → 200 ile tam plan sızıyordu).'
+          : 'Flag kapalı: PLANNER hâlâ tenant-wide yazabiliyor (bugünkü davranış).',
+      });
+
+      if (SCOPE_ENFORCEMENT_ON) {
+        expect(res.status).toBe(404);
+        expect(res.body.code).toBe('OUT_OF_SCOPE');
+      } else {
+        expect(res.status).toBe(200);
+      }
+    });
+
+    it('N8-CALCKPIS. PLANNER → planner2’nin (Distribütör CPL) planında POST /:id/calculate-kpis → 404 (varlık/scope kaçağı yok)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planner2 = await loginAs(app, 'PLANNER2');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner2.authHeader())
+        .send({
+          planName: `E2E-N8-CALCKPIS-PLANNER2-DISTRIBUTOR-${Date.now()}`,
+          cplId: DISTRIBUTOR_CPL_ID,
+          channelId: DISTRIBUTOR_CHANNEL_ID,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      scratchPlanIds.push(createRes.body.id);
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${createRes.body.id}/calculate-kpis`)
+        .set(planner.authHeader());
+
+      record({
+        step: 'N8-CALCKPIS',
+        role: 'PLANNER',
+        endpoint:
+          'POST /plans/:id/calculate-kpis (planner2’nin Distribütör planı)',
+        expected: SCOPE_ENFORCEMENT_ON ? 404 : 200,
+        actual: res.status,
+        note: SCOPE_ENFORCEMENT_ON
+          ? 'T-028c BLOCKER FIX — PlanController#calculateKpis artık @CurrentUser() actor’ını PlanService.calculateKpis’e geçiriyor; out-of-scope PLANNER artık kapsam dışı planın KPI sonuçlarını alamıyor.'
+          : 'Flag kapalı: PLANNER hâlâ tenant-wide okuyabiliyor (bugünkü davranış).',
+      });
+
+      if (SCOPE_ENFORCEMENT_ON) {
+        expect(res.status).toBe(404);
+        expect(res.body.code).toBe('OUT_OF_SCOPE');
+      } else {
+        expect(res.status).toBe(200);
+      }
+    });
+
+    it('N8-POZİTİF. PLANNER → kendi NKA CPL planında POST /:id/recalculate ve /:id/calculate-kpis → 200/201 (golden path bozulmadı)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-N8-POS-PLANNER-IN-SCOPE-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      scratchPlanIds.push(createRes.body.id);
+
+      const recalcRes = await request(app.getHttpServer())
+        .post(`/plans/${createRes.body.id}/recalculate`)
+        .set(planner.authHeader());
+
+      const calcKpisRes = await request(app.getHttpServer())
+        .post(`/plans/${createRes.body.id}/calculate-kpis`)
+        .set(planner.authHeader());
+
+      record({
+        step: 'N8-POZİTİF',
+        role: 'PLANNER',
+        endpoint:
+          'POST /plans/:id/recalculate ve /plans/:id/calculate-kpis (kendi NKA CPL kapsamı)',
+        expected: '200/201 ikisi de',
+        actual: `recalculate=${recalcRes.status}, calculate-kpis=${calcKpisRes.status}`,
+        note: 'Enforcement açık ya da kapalı fark etmeksizin, kendi scope’undaki plan için PLANNER her zaman başarılı olmalı (regresyon koruması).',
+      });
+
+      expect([200, 201]).toContain(recalcRes.status);
+      expect([200, 201]).toContain(calcKpisRes.status);
+    });
+
+    it('N9. Scope satırı OLMAYAN yeni bir PLANNER → GET /plans → [] (fail-closed, R-2)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-n9-scopeless-planner-${Date.now()}@wella.com`;
+      const password = 'Collmind2026!';
+
+      const createUserRes = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password,
+          fullName: 'E2E N9 Scopeless Planner',
+          role: 'PLANNER',
+          status: 'ACTIVE',
+        })
+        .expect(201);
+
+      const loginRes = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email, password })
+        .expect(200);
+      const authHeader = {
+        Authorization: `Bearer ${loginRes.body.accessToken}`,
+      };
+
+      const res = await request(app.getHttpServer())
+        .get('/plans')
+        .set(authHeader);
+
+      record({
+        step: 'N9',
+        role: 'PLANNER (scope satırı yok)',
+        endpoint: 'GET /plans',
+        expected: SCOPE_ENFORCEMENT_ON
+          ? '[] (fail-closed, R-2)'
+          : 'tenant-wide (flag kapalı)',
+        actual: `status=${res.status}, count=${Array.isArray(res.body) ? res.body.length : 'n/a'}`,
+        note: 'docs/analysis/0004 §7 R-2 — main.user_scopes satırı olmayan PLANNER hiçbir şey görmemeli (deny-by-default). Bu kullanıcı user-scope.seed.ts/backfill migration’ının KAPSAMI DIŞINDA (POST /users ile şimdi oluşturuldu, geçmiş plan yok) — tam olarak T-028c task raporunun "planı olmayan Planner" uyarısının kanıtı.',
+      });
+
+      expect(res.status).toBe(200);
+      if (SCOPE_ENFORCEMENT_ON) {
+        expect(res.body).toEqual([]);
+      } else {
+        expect(res.body.length).toBeGreaterThan(0);
+      }
+
+      // Temizlik: test kullanıcısını deaktive et (silme endpoint'i yok / hard
+      // delete istenmiyor — deactivate en yakın temiz kapama).
+      try {
+        await request(app.getHttpServer())
+          .post(`/users/${createUserRes.body.id}/deactivate`)
+          .set(admin.authHeader());
+      } catch {
+        // best-effort cleanup
+      }
+    });
+
+    it('N13. Cross-tenant izolasyon (proxy) — PLANNER’ın gördüğü TÜM planlar kendi tenant’ına ait', async () => {
+      // Bu ortamda tek tenant seed edilmiştir (dashboard.e2e-spec.ts'teki
+      // aynı sınırlama) — gerçek 2-tenant fixture yok. AccessScopeService'in
+      // tenantId zorunluluğu ve cache-anahtarı ayrımı zaten birim testlerle
+      // kanıtlı (access-scope.service.spec.ts "tenant isolation"). Burada
+      // dolaylı kanıt: PLANNER'a dönen HER planın tenantId'si fixture
+      // tenant'ı ile birebir aynı olmalı (tenantId sızıntısı yok).
+      const planner = await loginAs(app, 'PLANNER');
+      const res = await request(app.getHttpServer())
+        .get('/plans')
+        .set(planner.authHeader())
+        .expect(200);
+
+      const foreignTenantRows = (res.body as any[]).filter(
+        (p) => p.tenantId && p.tenantId !== fixture.tenantId,
+      );
+
+      record({
+        step: 'N13',
+        role: 'PLANNER',
+        endpoint: 'GET /plans (proxy: tenantId tutarlılığı)',
+        expected: '0 (yabancı tenant satırı yok)',
+        actual: foreignTenantRows.length,
+        note: 'Gerçek çok-tenant e2e fixture yok (bkz. dashboard.e2e-spec.ts aynı not) — asıl kanıt access-scope.service.spec.ts "tenant isolation" birim testlerinde (WHERE tenantId hiç atlanmıyor, farklı tenant için scope cache paylaşılmıyor).',
+      });
+
+      expect(foreignTenantRows.length).toBe(0);
+    });
+
+    it('AGREEMENT-POZİTİF. PLANNER → kendi NKA CPL’inde POST /agreements → 201', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post('/agreements')
+        .set(planner.authHeader())
+        .send({
+          agreementName: `E2E-N-AGR-POS-${Date.now()}`,
+          agreementType: 'STA',
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          fuId: FU_WELLA_HC_500ML,
+          tacticId: TACTIC_PROMO,
+          mechanicId: MECHANIC_DISCOUNT,
+          skuScope: 'FU',
+          capTotalAmount: 5000,
+          spendType: 'OFF_INVOICE',
+          startDate: '2026-03-05',
+          endDate: '2026-03-20',
+          justification: 'E2E N-AGR-POS — PLANNER kendi CPL scope’u',
+        });
+
+      record({
+        step: 'AGREEMENT-POZİTİF',
+        role: 'PLANNER',
+        endpoint: 'POST /agreements (kendi NKA CPL)',
+        expected: 201,
+        actual: res.status,
+        note: 'Enforcement açık ya da kapalı fark etmeksizin, kendi scope’undaki CPL için PLANNER her zaman 201 almalı (regresyon koruması).',
+      });
+
+      expect(res.status).toBe(201);
+      if (res.status === 201) {
+        scratchAgreementIds.push(res.body.id);
+      }
+    });
+
+    it('AGREEMENT-NEGATİF. PLANNER → yetkisiz CPL (Distribütör) ile POST /agreements', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const res = await request(app.getHttpServer())
+        .post('/agreements')
+        .set(planner.authHeader())
+        .send({
+          agreementName: `E2E-N-AGR-NEG-${Date.now()}`,
+          agreementType: 'STA',
+          cplId: DISTRIBUTOR_CPL_ID,
+          channelId: DISTRIBUTOR_CHANNEL_ID,
+          fuId: FU_WELLA_HC_500ML,
+          tacticId: TACTIC_PROMO,
+          mechanicId: MECHANIC_DISCOUNT,
+          skuScope: 'FU',
+          capTotalAmount: 5000,
+          spendType: 'OFF_INVOICE',
+          startDate: '2026-03-05',
+          endDate: '2026-03-20',
+          justification: 'E2E N-AGR-NEG — planner kapsamı DIŞI CPL',
+        });
+
+      record({
+        step: 'AGREEMENT-NEGATİF',
+        role: 'PLANNER',
+        endpoint: 'POST /agreements (Distribütör CPL — kapsam dışı)',
+        expected: SCOPE_ENFORCEMENT_ON ? 403 : 201,
+        actual: res.status,
+        note: 'AgreementService.create() artık AccessScopeService.assertEntityInScope ile PLANNER cpl(+category) pair scope’unu kontrol ediyor (flag AÇIKKEN) — plan.service.ts ile aynı desen.',
+      });
+
+      if (SCOPE_ENFORCEMENT_ON) {
+        expect(res.status).toBe(403);
+      } else {
+        expect(res.status).toBe(201);
+        if (res.status === 201) {
+          scratchAgreementIds.push(res.body.id);
+        }
+      }
     });
   });
 

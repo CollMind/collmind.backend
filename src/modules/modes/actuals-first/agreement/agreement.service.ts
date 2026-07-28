@@ -26,6 +26,19 @@ import { ChannelService } from '../../../master-data/channel/channel.service';
 import { MechanicService } from '../../../master-data/mechanic/mechanic.service';
 import { CategoryService } from '../../../master-data/category/category.service';
 import { FuService } from '../../../master-data/forecasting-unit/fu.service';
+import { UserRole } from '../../../../database/entities/user.entity';
+import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
+
+/**
+ * T-028c: caller identity for scope-aware create/read (mirrors
+ * plan.service.ts#PlanActor — Agreement has no CATEGORY_MANAGER-facing
+ * read/decision flow analogous to Plan's, so this is deliberately a
+ * separate, minimal type rather than a cross-module import).
+ */
+export interface AgreementActor {
+  userId: string;
+  role: UserRole;
+}
 
 @Injectable()
 export class AgreementService {
@@ -43,13 +56,35 @@ export class AgreementService {
     private readonly mechanicService: MechanicService,
     private readonly categoryService: CategoryService,
     private readonly forecastingUnitService: FuService,
+    private readonly accessScope: AccessScopeService,
   ) {}
 
   async create(
     dto: CreateAgreementDto,
     tenantId: string,
     userId: string,
+    actor?: AgreementActor,
   ): Promise<Agreement> {
+    // T-028c: PLANNER may only create agreements within their assigned
+    // CPL+Category scope (BRD "Planner sadece yetkili CPL+Category").
+    // categoryId is optional on CreateAgreementDto — undefined maps to
+    // entity.categoryId=null, matching the PLANNER seed convention (a
+    // planner's CPL scope row has categoryId=null="tüm kategoriler"), so an
+    // agreement with no category is checked purely on the cplId dimension.
+    // Flag-gated inside AccessScopeService — no-op while
+    // SCOPE_ENFORCEMENT_ENABLED is false.
+    if (actor) {
+      const scope = await this.accessScope.resolveScope(
+        tenantId,
+        actor.userId,
+        actor.role,
+      );
+      this.accessScope.assertEntityInScope(scope, {
+        cplId: dto.cplId,
+        categoryId: dto.categoryId ?? null,
+      });
+    }
+
     try {
       // Validate STA/LTA duration rules
       const startDate = new Date(dto.startDate);
@@ -243,10 +278,35 @@ export class AgreementService {
     }
   }
 
-  async findById(id: string, tenantId: string): Promise<Agreement> {
+  async findById(
+    id: string,
+    tenantId: string,
+    actor?: AgreementActor,
+  ): Promise<Agreement> {
     const agreement = await this.agreementRepo.findById(id, tenantId);
     if (!agreement) {
       throw new NotFoundException(`Agreement with ID ${id} not found`);
+    }
+    // T-028c: out-of-scope PLANNER -> 404 (varlık sızdırma yok, plan.service
+    // ile aynı desen). No actor -> unchanged (internal callers).
+    if (actor) {
+      const scope = await this.accessScope.resolveScope(
+        tenantId,
+        actor.userId,
+        actor.role,
+      );
+      if (
+        !this.accessScope.isInScope(scope, {
+          cplId: agreement.cplId,
+          categoryId: agreement.categoryId ?? null,
+        })
+      ) {
+        throw new NotFoundException({
+          statusCode: 404,
+          message: `Agreement with ID ${id} not found`,
+          code: 'OUT_OF_SCOPE',
+        });
+      }
     }
     return agreement;
   }
@@ -266,8 +326,16 @@ export class AgreementService {
       cplId?: string;
       channel?: string;
     },
+    actor?: AgreementActor,
   ): Promise<Agreement[]> {
-    return this.agreementRepo.findAll(tenantId, filters);
+    // T-028c: cheap no-DB-query UNRESTRICTED for ADMIN/CM/FM/READONLY (see
+    // AccessScopeService.resolveScope), real cpl+category pair filtering for
+    // PLANNER. undefined actor (internal callers) -> undefined scope ->
+    // no-op filter, unchanged.
+    const scope = actor
+      ? await this.accessScope.resolveScope(tenantId, actor.userId, actor.role)
+      : undefined;
+    return this.agreementRepo.findAll(tenantId, filters, scope);
   }
 
   async findPendingApprovals(tenantId: string): Promise<Agreement[]> {
@@ -281,8 +349,11 @@ export class AgreementService {
     dto: UpdateAgreementDto,
     tenantId: string,
     userId: string,
+    actor?: AgreementActor,
   ): Promise<Agreement> {
-    const agreement = await this.findById(id, tenantId);
+    // T-028c: threading actor closes the write-path gap for PLANNER (mirrors
+    // plan.service.ts#update — findById already 404s out-of-scope).
+    const agreement = await this.findById(id, tenantId, actor);
 
     // Only DRAFT agreements can be edited
     if (agreement.status !== AgreementStatus.DRAFT) {
@@ -369,8 +440,9 @@ export class AgreementService {
     id: string,
     tenantId: string,
     userId: string,
+    actor?: AgreementActor,
   ): Promise<Agreement> {
-    const agreement = await this.findById(id, tenantId);
+    const agreement = await this.findById(id, tenantId, actor);
 
     if (agreement.status !== AgreementStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT agreements can be submitted');
@@ -555,8 +627,9 @@ export class AgreementService {
     tenantId: string,
     userId: string,
     reason?: string,
+    actor?: AgreementActor,
   ): Promise<Agreement> {
-    const agreement = await this.findById(id, tenantId);
+    const agreement = await this.findById(id, tenantId, actor);
 
     if (
       ![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(
@@ -597,8 +670,13 @@ export class AgreementService {
     );
   }
 
-  async delete(id: string, tenantId: string, userId: string): Promise<void> {
-    const agreement = await this.findById(id, tenantId);
+  async delete(
+    id: string,
+    tenantId: string,
+    userId: string,
+    actor?: AgreementActor,
+  ): Promise<void> {
+    const agreement = await this.findById(id, tenantId, actor);
 
     // Only DRAFT agreements can be deleted
     if (agreement.status !== AgreementStatus.DRAFT) {

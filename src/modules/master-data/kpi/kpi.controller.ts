@@ -24,6 +24,7 @@ import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 import { Kpi } from '../../../database/entities/kpi.entity';
 
@@ -64,8 +65,12 @@ export class KpiController {
   getGridKpisForPlan(
     @TenantId() tenantId: string,
     @Param('planId') planId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.kpiService.getGridKpisForPlan(planId, tenantId);
+    return this.kpiService.getGridKpisForPlan(planId, tenantId, {
+      userId: user.id,
+      role: user.role,
+    });
   }
 
   @Get('grid')
