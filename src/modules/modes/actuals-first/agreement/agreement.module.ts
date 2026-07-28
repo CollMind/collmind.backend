@@ -9,6 +9,7 @@ import { ApprovalModule } from '../../../shared/approval/approval.module';
 import { KpiEngineModule } from '../../../shared/kpi-engine/kpi-engine.module';
 import { MasterDataModule } from '../../../master-data/master-data.module';
 import { AccessScopeModule } from '../../../shared/access-scope/access-scope.module';
+import { CommonModule } from '../../../../common/common.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AccessScopeModule } from '../../../shared/access-scope/access-scope.mod
     KpiEngineModule,
     MasterDataModule,
     AccessScopeModule,
+    CommonModule,
   ],
   controllers: [AgreementController],
   providers: [AgreementService, AgreementRepository],

@@ -80,6 +80,18 @@ export class AdminAuditService {
       { action: 'DELETE', entity: 'budget_envelope' }, // Budget envelope deletions
       { action: 'REVERSE', entity: 'AGREEMENT_TRANSACTION' }, // Financial reversal (BRD: high-risk)
       { action: 'CLOSE', entity: 'AGREEMENT' }, // Settlement close — irreversible state (T-013 pending)
+      // T-032: agreement lifecycle audit gap fix. APPROVE commits budget
+      // (RESERVE -> approvalService.approve -> status=APPROVED) — same
+      // financial-exposure class as CLOSE. CANCEL is a terminal,
+      // irreversible state transition that releases the outstanding
+      // reservation — same class as CLOSE/REVERSE. REJECT is deliberately
+      // NOT flagged high-risk: it is a normal negative workflow decision at
+      // the PENDING stage where, per agreement.service.ts#reject's own
+      // comment, there is typically no budget reservation yet to unwind
+      // (agreement approve() is what reserves budget, not submit()) — lower
+      // financial stakes than APPROVE/CANCEL/CLOSE/REVERSE.
+      { action: 'APPROVE', entity: 'AGREEMENT' },
+      { action: 'CANCEL', entity: 'AGREEMENT' },
     ];
 
     return highRiskActions.some(

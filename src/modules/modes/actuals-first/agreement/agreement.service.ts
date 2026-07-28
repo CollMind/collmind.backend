@@ -18,6 +18,7 @@ import {
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { BudgetReservationService } from '../../../shared/budget/budget-reservation.service';
 import { ApprovalService } from '../../../shared/approval/approval.service';
+import { AdminAuditService } from '../../../../common/services/admin-audit.service';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
 import { TacticService } from '../../../master-data/tactic/tactic.service';
@@ -57,6 +58,7 @@ export class AgreementService {
     private readonly categoryService: CategoryService,
     private readonly forecastingUnitService: FuService,
     private readonly accessScope: AccessScopeService,
+    private readonly adminAuditService: AdminAuditService,
   ) {}
 
   async create(
@@ -406,6 +408,7 @@ export class AgreementService {
     dto: UpdateAgreementDto,
     tenantId: string,
     userId: string,
+    userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
     // T-028c: threading actor closes the write-path gap for PLANNER (mirrors
@@ -476,6 +479,49 @@ export class AgreementService {
       updateData,
     );
 
+    // T-032: audit immutable — BRD "her işlem loglanır" also covers field
+    // edits of a DRAFT agreement, not just state transitions. before/after
+    // are scoped to the fields actually present in the DTO (not the full
+    // entity) to keep the log focused and avoid dumping unrelated columns.
+    // Best-effort / non-blocking (unlike submit/approve/reject/cancel
+    // below): a DRAFT edit is freely repeatable and has no budget/approval
+    // side effect to compensate, so a logging failure here must not fail
+    // the edit that has already been persisted — same trade-off already
+    // accepted for the "KPI recalculation failed" catch further down.
+    const changedKeys = Object.keys(dto).filter(
+      (key) => (dto as Record<string, unknown>)[key] !== undefined,
+    );
+    if (changedKeys.length > 0) {
+      const beforeValues: Record<string, unknown> = {};
+      const afterValues: Record<string, unknown> = {};
+      for (const key of changedKeys) {
+        beforeValues[key] = (agreement as unknown as Record<string, unknown>)[
+          key
+        ];
+        afterValues[key] = (dto as unknown as Record<string, unknown>)[key];
+      }
+      try {
+        await this.adminAuditService.logAdminAction(
+          tenantId,
+          userId,
+          userEmail ?? 'unknown',
+          'UPDATE',
+          'AGREEMENT',
+          id,
+          undefined,
+          'SUCCESS',
+          beforeValues,
+          afterValues,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Audit log failed for agreement ${id} update (edit already committed): ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+        );
+      }
+    }
+
     if (shouldRecalculate) {
       try {
         const fullAgreement = await this.findById(id, tenantId);
@@ -497,6 +543,7 @@ export class AgreementService {
     id: string,
     tenantId: string,
     userId: string,
+    userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId, actor);
@@ -517,7 +564,7 @@ export class AgreementService {
     );
 
     // Update agreement with approval request ID and status
-    return this.agreementRepo.updateStatus(
+    const updated = await this.agreementRepo.updateStatus(
       id,
       tenantId,
       AgreementStatus.PENDING,
@@ -526,6 +573,52 @@ export class AgreementService {
         updatedBy: userId,
       },
     );
+
+    // T-032 (BRD "audit immutable ... onay/red dahil her işlem loglanır"):
+    // this endpoint (POST /agreements/:id/submit) previously wrote ZERO rows
+    // to admin_audit_logs for AGREEMENT SUBMIT/APPROVE/REJECT/CANCEL — only
+    // settlement-close (CLOSE) and reversal (REVERSE) did. Compensate-on-
+    // failure pattern (T-026/T-029, plan.service.ts#submit): agreementRepo/
+    // approvalService/adminAuditService do not share a single QueryRunner,
+    // so this is not a real DB transaction — on audit-write failure we
+    // revert status back to DRAFT rather than leave the agreement PENDING
+    // with no audit trail. No budget has moved at submit() time (agreement
+    // reserves budget in approve(), unlike Plan), so no budget compensation
+    // is needed here.
+    try {
+      await this.adminAuditService.logAdminAction(
+        tenantId,
+        userId,
+        userEmail ?? 'unknown',
+        'SUBMIT',
+        'AGREEMENT',
+        id,
+        undefined,
+        'SUCCESS',
+        { previousStatus: AgreementStatus.DRAFT },
+        {
+          newStatus: AgreementStatus.PENDING,
+          approvalRequestId: approvalRequest.id,
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Audit log failed after submit for agreement ${id}; compensating (revert to DRAFT): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      await this.agreementRepo.updateStatus(
+        id,
+        tenantId,
+        AgreementStatus.DRAFT,
+        { updatedBy: userId },
+      );
+      throw new InternalServerErrorException(
+        'Failed to record audit log for agreement submission; submission has been rolled back to DRAFT.',
+      );
+    }
+
+    return updated;
   }
 
   async approve(
@@ -533,6 +626,7 @@ export class AgreementService {
     tenantId: string,
     userId: string,
     comments?: string,
+    userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId);
@@ -601,7 +695,7 @@ export class AgreementService {
     );
 
     // Update agreement status
-    return this.agreementRepo.updateStatus(
+    const updated = await this.agreementRepo.updateStatus(
       id,
       tenantId,
       AgreementStatus.APPROVED,
@@ -611,6 +705,69 @@ export class AgreementService {
         updatedBy: userId,
       },
     );
+
+    // T-032: audit immutable — approve must be recorded (BRD: "onay/red
+    // dahil her işlem loglanır"). Compensate-on-failure pattern (T-026/
+    // T-029, mirrors plan.service.ts#approve): agreementRepo/budgetService/
+    // approvalService/adminAuditService do not share a single QueryRunner,
+    // so this is not a real DB transaction — on audit-write failure we
+    // release the RESERVE just created above and revert status back to
+    // PENDING. approvalService.approve() itself is NOT compensated (its own
+    // audit trail already correctly records the approval decision) — only
+    // the agreement-status/budget side effects introduced by this call are
+    // unwound, same limited-compensation trade-off T-026/T-029 documented.
+    try {
+      await this.adminAuditService.logAdminAction(
+        tenantId,
+        userId,
+        userEmail ?? 'unknown',
+        'APPROVE',
+        'AGREEMENT',
+        id,
+        undefined,
+        'SUCCESS',
+        { previousStatus: AgreementStatus.PENDING },
+        {
+          newStatus: AgreementStatus.APPROVED,
+          capTotalAmount: Number(agreementWithChannel.capTotalAmount),
+          comments,
+        },
+        comments,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Audit log failed after approve for agreement ${id}; compensating (release RESERVE, revert to PENDING): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      try {
+        await this.budgetReservationService.releaseAgreementReservation(
+          id,
+          tenantId,
+          userId,
+          'APPROVE_COMPENSATION',
+        );
+      } catch (releaseError) {
+        this.logger.error(
+          `Compensation failed: could not release budget for agreement ${id} after audit-log failure: ${
+            releaseError instanceof Error
+              ? releaseError.message
+              : 'Unknown error'
+          }`,
+        );
+      }
+      await this.agreementRepo.updateStatus(
+        id,
+        tenantId,
+        AgreementStatus.PENDING,
+        { updatedBy: userId },
+      );
+      throw new InternalServerErrorException(
+        'Failed to record audit log for agreement approval; approval has been rolled back to PENDING.',
+      );
+    }
+
+    return updated;
   }
 
   async reject(
@@ -618,6 +775,7 @@ export class AgreementService {
     tenantId: string,
     userId: string,
     reason: string,
+    userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId);
@@ -657,6 +815,45 @@ export class AgreementService {
       },
     );
 
+    // T-032: audit immutable — reject must be recorded (BRD: "onay/red
+    // dahil her işlem loglanır"; this endpoint previously wrote ZERO rows to
+    // admin_audit_logs). Compensate-on-failure pattern (T-026/T-029, mirrors
+    // plan.service.ts#reject): written BEFORE the defensive budget-release
+    // block below, so on audit-write failure no budget has moved yet and we
+    // can safely revert status back to PENDING (real transactionality would
+    // be preferable — same open point already tracked for T-026's submit
+    // path).
+    try {
+      await this.adminAuditService.logAdminAction(
+        tenantId,
+        userId,
+        userEmail ?? 'unknown',
+        'REJECT',
+        'AGREEMENT',
+        id,
+        undefined,
+        'SUCCESS',
+        { previousStatus: AgreementStatus.PENDING },
+        { newStatus: AgreementStatus.REJECTED, rejectionReason: reason },
+        reason,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Audit log failed after reject for agreement ${id}; compensating (revert to PENDING, budget untouched): ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      await this.agreementRepo.updateStatus(
+        id,
+        tenantId,
+        AgreementStatus.PENDING,
+        { updatedBy: userId },
+      );
+      throw new InternalServerErrorException(
+        'Failed to record audit log for agreement rejection; rejection has been rolled back to PENDING.',
+      );
+    }
+
     // T-030 (F3, defensive): PENDING agreements normally have no budget
     // reservation yet (RESERVE only happens on approve()), so this is
     // expected to be a no-op today. Kept defensive in case reservation
@@ -667,9 +864,9 @@ export class AgreementService {
     // cancel(), where release happens before the status write and a
     // BadRequestException correctly blocks the transition). Throwing after
     // the status write would surface a 500 for an already-committed,
-    // immutably-audited rejection, and a retry would then hit "Only PENDING
-    // agreements can be rejected" — confusing. Log and continue, same
-    // defensive no-op-on-failure pattern as PlanService#reject (T-029).
+    // now-audited (T-032) rejection, and a retry would then hit "Only
+    // PENDING agreements can be rejected" — confusing. Log and continue,
+    // same defensive no-op-on-failure pattern as PlanService#reject (T-029).
     try {
       await this.budgetReservationService.releaseAgreementReservation(
         id,
@@ -693,9 +890,11 @@ export class AgreementService {
     tenantId: string,
     userId: string,
     reason?: string,
+    userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
     const agreement = await this.findById(id, tenantId, actor);
+    const previousStatus = agreement.status;
 
     if (
       ![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(
@@ -726,7 +925,7 @@ export class AgreementService {
     }
 
     // Update agreement status
-    return this.agreementRepo.updateStatus(
+    const updated = await this.agreementRepo.updateStatus(
       id,
       tenantId,
       AgreementStatus.CANCELLED,
@@ -734,6 +933,58 @@ export class AgreementService {
         updatedBy: userId,
       },
     );
+
+    // T-032: audit immutable — cancel must be recorded (BRD: "her işlem
+    // loglanır"; this endpoint previously wrote ZERO rows to
+    // admin_audit_logs). isHighRisk (admin-audit.service.ts): CANCEL is a
+    // terminal, irreversible state transition that releases budget, same
+    // class as CLOSE.
+    //
+    // NO state-revert compensation on audit-write failure here — unlike
+    // submit/approve/reject above. By this point the budget RELEASE (a
+    // separate side effect, above) has ALREADY been committed, and
+    // BudgetReservationService's release idempotency key is
+    // `RELEASE|AGREEMENT|<id>|<envelope>` (reason-agnostic — see
+    // budget-reservation.service.ts), i.e. a one-shot, non-reversible
+    // operation with no "re-reserve" counterpart. Reverting status back to
+    // APPROVED/ACTIVE here would make things WORSE, not better: the
+    // agreement would claim to still hold a reservation that budget-side has
+    // already released, a strictly more misleading inconsistency than
+    // "CANCELLED with a missing audit row". So on failure we do the other
+    // half of the T-026/T-029 compensation contract ("ya da en azından
+    // tutarsızlık loglanır" — or at least log the inconsistency): log loudly
+    // for ops/manual reconciliation and surface a 500 to the caller, while
+    // leaving the already-correct CANCELLED state untouched. Same
+    // audit-outside-the-state-transition trade-off already accepted (and
+    // documented at the top of this file's sibling,
+    // settlement-close.service.ts) for CLOSE, tracked under the same T-014
+    // "real transactional audit" umbrella.
+    try {
+      await this.adminAuditService.logAdminAction(
+        tenantId,
+        userId,
+        userEmail ?? 'unknown',
+        'CANCEL',
+        'AGREEMENT',
+        id,
+        undefined,
+        'SUCCESS',
+        { previousStatus },
+        { newStatus: AgreementStatus.CANCELLED, reason },
+        reason,
+      );
+    } catch (error) {
+      this.logger.error(
+        `AUDIT LOG MISSING for agreement ${id} cancel — state (CANCELLED) and budget release are ALREADY COMMITTED and are NOT being reverted (see T-032 comment above for why). Manual reconciliation may be required: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      throw new InternalServerErrorException(
+        'Agreement was cancelled and budget released successfully, but failed to record the audit log. This has been logged for manual review.',
+      );
+    }
+
+    return updated;
   }
 
   async delete(

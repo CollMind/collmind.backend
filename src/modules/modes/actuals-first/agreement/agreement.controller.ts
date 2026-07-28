@@ -153,12 +153,16 @@ export class AgreementController {
     @Param('id') id: string,
     @Body() dto: UpdateAgreementDto,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string; role: UserRole },
+    @CurrentUser() user: { id: string; email: string; role: UserRole },
   ) {
-    return this.agreementService.update(id, dto, tenantId, user.id, {
-      userId: user.id,
-      role: user.role,
-    });
+    return this.agreementService.update(
+      id,
+      dto,
+      tenantId,
+      user.id,
+      user.email,
+      { userId: user.id, role: user.role },
+    );
   }
 
   @Post(':id/submit')
@@ -173,9 +177,9 @@ export class AgreementController {
   submit(
     @Param('id') id: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string; role: UserRole },
+    @CurrentUser() user: { id: string; email: string; role: UserRole },
   ) {
-    return this.agreementService.submit(id, tenantId, user.id, {
+    return this.agreementService.submit(id, tenantId, user.id, user.email, {
       userId: user.id,
       role: user.role,
     });
@@ -194,12 +198,16 @@ export class AgreementController {
     @Param('id') id: string,
     @Body('comments') comments: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string; role: UserRole },
+    @CurrentUser() user: { id: string; email: string; role: UserRole },
   ) {
-    return this.agreementService.approve(id, tenantId, user.id, comments, {
-      userId: user.id,
-      role: user.role,
-    });
+    return this.agreementService.approve(
+      id,
+      tenantId,
+      user.id,
+      comments,
+      user.email,
+      { userId: user.id, role: user.role },
+    );
   }
 
   @Post(':id/reject')
@@ -215,12 +223,16 @@ export class AgreementController {
     @Param('id') id: string,
     @Body('reason') reason: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string; role: UserRole },
+    @CurrentUser() user: { id: string; email: string; role: UserRole },
   ) {
-    return this.agreementService.reject(id, tenantId, user.id, reason, {
-      userId: user.id,
-      role: user.role,
-    });
+    return this.agreementService.reject(
+      id,
+      tenantId,
+      user.id,
+      reason,
+      user.email,
+      { userId: user.id, role: user.role },
+    );
   }
 
   @Post(':id/cancel')
@@ -236,12 +248,16 @@ export class AgreementController {
     @Param('id') id: string,
     @Body('reason') reason: string,
     @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string; role: UserRole },
+    @CurrentUser() user: { id: string; email: string; role: UserRole },
   ) {
-    return this.agreementService.cancel(id, tenantId, user.id, reason, {
-      userId: user.id,
-      role: user.role,
-    });
+    return this.agreementService.cancel(
+      id,
+      tenantId,
+      user.id,
+      reason,
+      user.email,
+      { userId: user.id, role: user.role },
+    );
   }
 
   @Delete(':id')

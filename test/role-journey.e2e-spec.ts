@@ -2471,6 +2471,38 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(res.body.status).toBe('APPROVED');
     });
 
+    it('C3b. T-032: SUBMIT + APPROVE agreement lifecycle audit rows exist in admin_audit_logs (SQL kanıtı)', async () => {
+      // BRD: "Audit immutable; ... onay/red dahil her işlem loglanır." Before
+      // T-032, AgreementService made ZERO calls to AdminAuditService for
+      // SUBMIT/APPROVE/REJECT/CANCEL — only settlement-close (CLOSE) and
+      // reversal (REVERSE) wrote to admin_audit_logs for entity_type=AGREEMENT.
+      const rows = await dataSource.query(
+        `SELECT action_type, entity_type, result, is_high_risk
+           FROM main.admin_audit_logs
+          WHERE entity_type = 'AGREEMENT' AND entity_id = $1
+          ORDER BY created_at ASC`,
+        [agreementSettlementId],
+      );
+      record({
+        step: 'C3b',
+        role: '-',
+        endpoint:
+          'DB: main.admin_audit_logs (submit+approve sonrası, agreementSettlementId)',
+        expected: '[SUBMIT, APPROVE] (APPROVE is_high_risk=true)',
+        actual: JSON.stringify(rows),
+        note: 'T-032 FIX: agreement.service.ts#submit/#approve artık AdminAuditService.logAdminAction çağırıyor — önceden bu iki endpoint hiçbir admin_audit_logs satırı üretmiyordu (CLOSE/REVERSE dışında).',
+      });
+      expect(rows.map((r: any) => r.action_type)).toEqual([
+        'SUBMIT',
+        'APPROVE',
+      ]);
+      expect(rows.every((r: any) => r.result === 'SUCCESS')).toBe(true);
+      const approveRow = rows.find((r: any) => r.action_type === 'APPROVE');
+      expect(approveRow.is_high_risk).toBe(true);
+      const submitRow = rows.find((r: any) => r.action_type === 'SUBMIT');
+      expect(submitRow.is_high_risk).toBe(false);
+    });
+
     it('C4. ADMIN → POST /agreement-transactions (off-invoice)', async () => {
       const admin = await loginAs(app, 'ADMIN');
 
@@ -2661,6 +2693,148 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('REVERSED');
+    });
+
+    it('C9b. T-032: REJECT agreement lifecycle audit row exists in admin_audit_logs (SQL kanıtı)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const fm = await loginAs(app, 'FINANCE_MANAGER');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/agreements')
+        .set(planner.authHeader())
+        .send({
+          agreementName: `E2E-ROLE-JOURNEY-T032-REJECT-${Date.now()}`,
+          agreementType: 'STA',
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          fuId: FU_WELLA_HC_500ML,
+          tacticId: TACTIC_PROMO,
+          mechanicId: MECHANIC_DISCOUNT,
+          skuScope: 'FU',
+          capTotalAmount: 15000,
+          spendType: 'OFF_INVOICE',
+          startDate: '2026-02-05',
+          endDate: '2026-02-20',
+          justification: 'E2E role-journey — T-032 reject audit testi',
+        })
+        .expect(201);
+      const rejectAgreementId: string = createRes.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/agreements/${rejectAgreementId}/submit`)
+        .set(planner.authHeader())
+        .send({})
+        .expect(200);
+
+      const rejectRes = await request(app.getHttpServer())
+        .post(`/agreements/${rejectAgreementId}/reject`)
+        .set(fm.authHeader())
+        .send({ reason: 'E2E T-032 reject audit test' })
+        .expect(200);
+      expect(rejectRes.body.status).toBe('REJECTED');
+
+      const rows = await dataSource.query(
+        `SELECT action_type, result, is_high_risk, justification
+           FROM main.admin_audit_logs
+          WHERE entity_type = 'AGREEMENT' AND entity_id = $1
+          ORDER BY created_at ASC`,
+        [rejectAgreementId],
+      );
+      record({
+        step: 'C9b',
+        role: '-',
+        endpoint: 'DB: main.admin_audit_logs (submit+reject sonrası)',
+        expected:
+          '[SUBMIT, REJECT] (REJECT is_high_risk=false — tartışmalı, gerekçe: reject genelde bütçe rezervi henüz yokken olur)',
+        actual: JSON.stringify(rows),
+        note: 'T-032 FIX: agreement.service.ts#reject artık AdminAuditService.logAdminAction çağırıyor — önceden POST /agreements/:id/reject hiçbir admin_audit_logs satırı üretmiyordu.',
+      });
+      expect(rows.map((r: any) => r.action_type)).toEqual(['SUBMIT', 'REJECT']);
+      const rejectRow = rows.find((r: any) => r.action_type === 'REJECT');
+      expect(rejectRow.result).toBe('SUCCESS');
+      expect(rejectRow.is_high_risk).toBe(false);
+      expect(rejectRow.justification).toBe('E2E T-032 reject audit test');
+    });
+
+    it('C9c. T-032: CANCEL agreement lifecycle audit row exists in admin_audit_logs (SQL kanıtı)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const fm = await loginAs(app, 'FINANCE_MANAGER');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/agreements')
+        .set(planner.authHeader())
+        .send({
+          agreementName: `E2E-ROLE-JOURNEY-T032-CANCEL-${Date.now()}`,
+          agreementType: 'STA',
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          fuId: FU_WELLA_HC_500ML,
+          tacticId: TACTIC_PROMO,
+          mechanicId: MECHANIC_DISCOUNT,
+          skuScope: 'FU',
+          capTotalAmount: 12000,
+          spendType: 'OFF_INVOICE',
+          startDate: '2026-02-05',
+          endDate: '2026-02-20',
+          justification: 'E2E role-journey — T-032 cancel audit testi',
+        })
+        .expect(201);
+      const cancelAgreementId: string = createRes.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/agreements/${cancelAgreementId}/submit`)
+        .set(planner.authHeader())
+        .send({})
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post(`/agreements/${cancelAgreementId}/approve`)
+        .set(fm.authHeader())
+        .send({})
+        .expect(200);
+
+      // BRD "her işlem loglanır" — cancel budget'ı release ettiği için
+      // (T-030, releaseAgreementReservation) bu testin sonunda zarf tekrar
+      // boşalır; dev DB'yi kirletmez (cleanupTestPlans'daki mantıkla aynı
+      // ilke — bkz. görev tanımı).
+      const cancelRes = await request(app.getHttpServer())
+        .post(`/agreements/${cancelAgreementId}/cancel`)
+        .set(planner.authHeader())
+        .send({ reason: 'E2E T-032 cancel audit test' })
+        .expect(200);
+      expect(cancelRes.body.status).toBe('CANCELLED');
+
+      const rows = await dataSource.query(
+        `SELECT action_type, result, is_high_risk, justification
+           FROM main.admin_audit_logs
+          WHERE entity_type = 'AGREEMENT' AND entity_id = $1
+          ORDER BY created_at ASC`,
+        [cancelAgreementId],
+      );
+      record({
+        step: 'C9c',
+        role: '-',
+        endpoint: 'DB: main.admin_audit_logs (submit+approve+cancel sonrası)',
+        expected: '[SUBMIT, APPROVE, CANCEL] (CANCEL is_high_risk=true)',
+        actual: JSON.stringify(rows),
+        note: 'T-032 FIX: agreement.service.ts#cancel artık AdminAuditService.logAdminAction çağırıyor — önceden POST /agreements/:id/cancel hiçbir admin_audit_logs satırı üretmiyordu.',
+      });
+      expect(rows.map((r: any) => r.action_type)).toEqual([
+        'SUBMIT',
+        'APPROVE',
+        'CANCEL',
+      ]);
+      const cancelRow = rows.find((r: any) => r.action_type === 'CANCEL');
+      expect(cancelRow.result).toBe('SUCCESS');
+      expect(cancelRow.is_high_risk).toBe(true);
+      expect(cancelRow.justification).toBe('E2E T-032 cancel audit test');
+
+      const releaseTx = await dataSource.query(
+        `SELECT tx_type FROM main.budget_transactions
+          WHERE source_type = 'AGREEMENT' AND source_id = $1 AND tx_type = 'RELEASE'`,
+        [cancelAgreementId],
+      );
+      expect(releaseTx.length).toBeGreaterThan(0);
     });
 
     it('C10. FINANCE → POST /actuals-first/sales-actuals/upload (2027-01 test CSV)', async () => {

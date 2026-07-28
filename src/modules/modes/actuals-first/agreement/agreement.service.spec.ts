@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { AgreementService } from './agreement.service';
 import { AgreementRepository } from './agreement.repository';
 import { BudgetService } from '../../../shared/budget/budget.service';
@@ -13,21 +17,24 @@ import { MechanicService } from '../../../master-data/mechanic/mechanic.service'
 import { CategoryService } from '../../../master-data/category/category.service';
 import { FuService } from '../../../master-data/forecasting-unit/fu.service';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
+import { AdminAuditService } from '../../../../common/services/admin-audit.service';
 import {
   Agreement,
   AgreementStatus,
 } from '../../../../database/entities/agreement.entity';
 import { UserRole } from '../../../../database/entities/user.entity';
 
-describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)', () => {
+describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement) / T-032 (audit)', () => {
   let service: AgreementService;
   let agreementRepo: jest.Mocked<AgreementRepository>;
   let accessScope: jest.Mocked<AccessScopeService>;
   let budgetReservationService: jest.Mocked<BudgetReservationService>;
   let approvalService: jest.Mocked<ApprovalService>;
+  let adminAuditService: jest.Mocked<AdminAuditService>;
 
   const tenantId = 'tenant-1';
   const userId = 'user-1';
+  const userEmail = 'user-1@wella.com';
   const cmActor = { userId: 'cm-1', role: UserRole.CATEGORY_MANAGER };
   const adminActor = { userId: 'admin-1', role: UserRole.ADMIN };
 
@@ -97,6 +104,10 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
             applyToQueryBuilder: jest.fn(),
           },
         },
+        {
+          provide: AdminAuditService,
+          useValue: { logAdminAction: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
@@ -105,6 +116,7 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
     accessScope = module.get(AccessScopeService);
     budgetReservationService = module.get(BudgetReservationService);
     approvalService = module.get(ApprovalService);
+    adminAuditService = module.get(AdminAuditService);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -194,6 +206,7 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
         tenantId,
         userId,
         'ok',
+        userEmail,
         cmActor,
       );
 
@@ -217,10 +230,19 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
       });
 
       await expect(
-        service.approve('agreement-1', tenantId, userId, 'ok', cmActor),
+        service.approve(
+          'agreement-1',
+          tenantId,
+          userId,
+          'ok',
+          userEmail,
+          cmActor,
+        ),
       ).rejects.toThrow(ForbiddenException);
 
       expect(approvalService.approve).not.toHaveBeenCalled();
+      // T-032: 403 short-circuits before any state change — no audit row.
+      expect(adminAuditService.logAdminAction).not.toHaveBeenCalled();
     });
 
     it('ADMIN actor: no scope check performed (assertEntityInScope not called)', async () => {
@@ -230,7 +252,14 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
         status: AgreementStatus.APPROVED,
       } as Agreement);
 
-      await service.approve('agreement-1', tenantId, userId, 'ok', adminActor);
+      await service.approve(
+        'agreement-1',
+        tenantId,
+        userId,
+        'ok',
+        userEmail,
+        adminActor,
+      );
 
       expect(accessScope.resolveScope).not.toHaveBeenCalled();
       expect(accessScope.assertEntityInScope).not.toHaveBeenCalled();
@@ -256,13 +285,22 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
       });
 
       await expect(
-        service.reject('agreement-1', tenantId, userId, 'nope', cmActor),
+        service.reject(
+          'agreement-1',
+          tenantId,
+          userId,
+          'nope',
+          userEmail,
+          cmActor,
+        ),
       ).rejects.toThrow(ForbiddenException);
 
       expect(approvalService.reject).not.toHaveBeenCalled();
       expect(
         budgetReservationService.releaseAgreementReservation,
       ).not.toHaveBeenCalled();
+      // T-032: 403 short-circuits before any state change — no audit row.
+      expect(adminAuditService.logAdminAction).not.toHaveBeenCalled();
     });
 
     it('CM within scope: reject succeeds', async () => {
@@ -282,10 +320,357 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
         tenantId,
         userId,
         'nope',
+        userEmail,
         cmActor,
       );
 
       expect(result.status).toBe(AgreementStatus.REJECTED);
+    });
+  });
+
+  describe('T-032: audit immutable — submit/approve/reject/cancel write to admin_audit_logs', () => {
+    it('submit: writes SUBMIT audit row with previous/new status', async () => {
+      const draftAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.DRAFT,
+        approvalRequestId: undefined,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(draftAgreement);
+      approvalService.createRequest.mockResolvedValue({
+        id: 'approval-2',
+      } as any);
+      agreementRepo.updateStatus.mockResolvedValue({
+        ...draftAgreement,
+        status: AgreementStatus.PENDING,
+        approvalRequestId: 'approval-2',
+      } as Agreement);
+
+      await service.submit('agreement-1', tenantId, userId, userEmail);
+
+      expect(adminAuditService.logAdminAction).toHaveBeenCalledWith(
+        tenantId,
+        userId,
+        userEmail,
+        'SUBMIT',
+        'AGREEMENT',
+        'agreement-1',
+        undefined,
+        'SUCCESS',
+        { previousStatus: AgreementStatus.DRAFT },
+        expect.objectContaining({ newStatus: AgreementStatus.PENDING }),
+      );
+    });
+
+    it('submit: audit-write failure compensates by reverting status to DRAFT and throws 500', async () => {
+      const draftAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.DRAFT,
+        approvalRequestId: undefined,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(draftAgreement);
+      approvalService.createRequest.mockResolvedValue({
+        id: 'approval-2',
+      } as any);
+      agreementRepo.updateStatus.mockResolvedValue({
+        ...draftAgreement,
+        status: AgreementStatus.PENDING,
+      } as Agreement);
+      adminAuditService.logAdminAction.mockRejectedValueOnce(
+        new Error('db down'),
+      );
+
+      await expect(
+        service.submit('agreement-1', tenantId, userId, userEmail),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      expect(agreementRepo.updateStatus).toHaveBeenLastCalledWith(
+        'agreement-1',
+        tenantId,
+        AgreementStatus.DRAFT,
+        expect.objectContaining({ updatedBy: userId }),
+      );
+    });
+
+    it('approve: writes APPROVE audit row (high-risk)', async () => {
+      const pendingAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.PENDING,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(pendingAgreement);
+      agreementRepo.updateStatus.mockResolvedValue({
+        ...pendingAgreement,
+        status: AgreementStatus.APPROVED,
+      } as Agreement);
+
+      await service.approve(
+        'agreement-1',
+        tenantId,
+        userId,
+        'ok',
+        userEmail,
+        adminActor,
+      );
+
+      expect(adminAuditService.logAdminAction).toHaveBeenCalledWith(
+        tenantId,
+        userId,
+        userEmail,
+        'APPROVE',
+        'AGREEMENT',
+        'agreement-1',
+        undefined,
+        'SUCCESS',
+        { previousStatus: AgreementStatus.PENDING },
+        expect.objectContaining({ newStatus: AgreementStatus.APPROVED }),
+        'ok',
+      );
+    });
+
+    it('approve: audit-write failure compensates (release RESERVE, revert to PENDING) and throws 500', async () => {
+      const pendingAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.PENDING,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(pendingAgreement);
+      agreementRepo.updateStatus.mockResolvedValue({
+        ...pendingAgreement,
+        status: AgreementStatus.APPROVED,
+      } as Agreement);
+      adminAuditService.logAdminAction.mockRejectedValueOnce(
+        new Error('db down'),
+      );
+
+      await expect(
+        service.approve(
+          'agreement-1',
+          tenantId,
+          userId,
+          'ok',
+          userEmail,
+          adminActor,
+        ),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      expect(
+        budgetReservationService.releaseAgreementReservation,
+      ).toHaveBeenCalledWith(
+        'agreement-1',
+        tenantId,
+        userId,
+        'APPROVE_COMPENSATION',
+      );
+      expect(agreementRepo.updateStatus).toHaveBeenLastCalledWith(
+        'agreement-1',
+        tenantId,
+        AgreementStatus.PENDING,
+        expect.objectContaining({ updatedBy: userId }),
+      );
+    });
+
+    it('reject: writes REJECT audit row and does not release budget itself (defensive release is separate)', async () => {
+      const pendingAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.PENDING,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(pendingAgreement);
+      agreementRepo.updateStatus.mockResolvedValue({
+        ...pendingAgreement,
+        status: AgreementStatus.REJECTED,
+      } as Agreement);
+
+      await service.reject(
+        'agreement-1',
+        tenantId,
+        userId,
+        'nope',
+        userEmail,
+        adminActor,
+      );
+
+      expect(adminAuditService.logAdminAction).toHaveBeenCalledWith(
+        tenantId,
+        userId,
+        userEmail,
+        'REJECT',
+        'AGREEMENT',
+        'agreement-1',
+        undefined,
+        'SUCCESS',
+        { previousStatus: AgreementStatus.PENDING },
+        { newStatus: AgreementStatus.REJECTED, rejectionReason: 'nope' },
+        'nope',
+      );
+    });
+
+    it('reject: audit-write failure compensates by reverting to PENDING (budget untouched) and throws 500', async () => {
+      const pendingAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.PENDING,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(pendingAgreement);
+      agreementRepo.updateStatus.mockResolvedValue({
+        ...pendingAgreement,
+        status: AgreementStatus.REJECTED,
+      } as Agreement);
+      adminAuditService.logAdminAction.mockRejectedValueOnce(
+        new Error('db down'),
+      );
+
+      await expect(
+        service.reject(
+          'agreement-1',
+          tenantId,
+          userId,
+          'nope',
+          userEmail,
+          adminActor,
+        ),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      expect(agreementRepo.updateStatus).toHaveBeenLastCalledWith(
+        'agreement-1',
+        tenantId,
+        AgreementStatus.PENDING,
+        expect.objectContaining({ updatedBy: userId }),
+      );
+      // Defensive release block must not run once we already threw.
+      expect(
+        budgetReservationService.releaseAgreementReservation,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('cancel: writes CANCEL audit row after budget release + status update', async () => {
+      const approvedAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.APPROVED,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(approvedAgreement);
+      agreementRepo.updateStatus.mockResolvedValue({
+        ...approvedAgreement,
+        status: AgreementStatus.CANCELLED,
+      } as Agreement);
+
+      await service.cancel(
+        'agreement-1',
+        tenantId,
+        userId,
+        'no longer needed',
+        userEmail,
+      );
+
+      expect(
+        budgetReservationService.releaseAgreementReservation,
+      ).toHaveBeenCalledWith('agreement-1', tenantId, userId, 'CANCEL');
+      expect(adminAuditService.logAdminAction).toHaveBeenCalledWith(
+        tenantId,
+        userId,
+        userEmail,
+        'CANCEL',
+        'AGREEMENT',
+        'agreement-1',
+        undefined,
+        'SUCCESS',
+        { previousStatus: AgreementStatus.APPROVED },
+        {
+          newStatus: AgreementStatus.CANCELLED,
+          reason: 'no longer needed',
+        },
+        'no longer needed',
+      );
+    });
+
+    it('cancel: audit-write failure does NOT revert already-committed CANCELLED state (budget already released, irreversible) — throws 500', async () => {
+      const approvedAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.APPROVED,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(approvedAgreement);
+      agreementRepo.updateStatus.mockResolvedValue({
+        ...approvedAgreement,
+        status: AgreementStatus.CANCELLED,
+      } as Agreement);
+      adminAuditService.logAdminAction.mockRejectedValueOnce(
+        new Error('db down'),
+      );
+
+      await expect(
+        service.cancel(
+          'agreement-1',
+          tenantId,
+          userId,
+          'no longer needed',
+          userEmail,
+        ),
+      ).rejects.toThrow(InternalServerErrorException);
+
+      // Exactly one updateStatus call (to CANCELLED) — no compensating revert call.
+      expect(agreementRepo.updateStatus).toHaveBeenCalledTimes(1);
+      expect(agreementRepo.updateStatus).toHaveBeenCalledWith(
+        'agreement-1',
+        tenantId,
+        AgreementStatus.CANCELLED,
+        expect.objectContaining({ updatedBy: userId }),
+      );
+    });
+
+    it('update: writes UPDATE audit row scoped to changed fields only (DRAFT agreement)', async () => {
+      const draftAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.DRAFT,
+        capTotalAmount: 1000,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(draftAgreement);
+      agreementRepo.update.mockResolvedValue({
+        ...draftAgreement,
+        capTotalAmount: 2000,
+      } as Agreement);
+
+      await service.update(
+        'agreement-1',
+        { capTotalAmount: 2000 } as any,
+        tenantId,
+        userId,
+        userEmail,
+      );
+
+      expect(adminAuditService.logAdminAction).toHaveBeenCalledWith(
+        tenantId,
+        userId,
+        userEmail,
+        'UPDATE',
+        'AGREEMENT',
+        'agreement-1',
+        undefined,
+        'SUCCESS',
+        { capTotalAmount: 1000 },
+        { capTotalAmount: 2000 },
+      );
+    });
+
+    it('update: audit-write failure does NOT fail the (already persisted) edit — best-effort, non-blocking', async () => {
+      const draftAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.DRAFT,
+        capTotalAmount: 1000,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(draftAgreement);
+      agreementRepo.update.mockResolvedValue({
+        ...draftAgreement,
+        capTotalAmount: 2000,
+      } as Agreement);
+      adminAuditService.logAdminAction.mockRejectedValueOnce(
+        new Error('db down'),
+      );
+
+      const result = await service.update(
+        'agreement-1',
+        { capTotalAmount: 2000 } as any,
+        tenantId,
+        userId,
+        userEmail,
+      );
+
+      expect(result.capTotalAmount).toBe(2000);
     });
   });
 });

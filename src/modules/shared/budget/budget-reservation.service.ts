@@ -8,7 +8,20 @@ import {
   BudgetTransactionSourceType,
 } from '../../../database/entities/budget-transaction.entity';
 
-export type AgreementReservationReleaseReason = 'CLOSE' | 'CANCEL' | 'REJECT';
+export type AgreementReservationReleaseReason =
+  | 'CLOSE'
+  | 'CANCEL'
+  | 'REJECT'
+  /**
+   * T-032: agreement.service.ts#approve compensation path — mirrors Plan's
+   * 'APPROVE_COMPENSATION' (see PlanReservationReleaseReason below). Used
+   * when the immutable audit-log write after a successful RESERVE fails and
+   * the approve() call must unwind back to PENDING. Idempotency key is
+   * reason-agnostic (`RELEASE|AGREEMENT|<id>|<envelope>` — see
+   * releaseNetReservation), so this is safe to call exactly once per
+   * agreement+envelope, same as the other reasons.
+   */
+  | 'APPROVE_COMPENSATION';
 
 /**
  * T-029 fix (code-review, 2026-07-27): plan-side release reasons. Mirrors
