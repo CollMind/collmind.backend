@@ -1,5 +1,6 @@
 import { DataSource } from 'typeorm';
 import { config } from 'dotenv';
+import { SnakeCaseNamingStrategy } from '../strategies/snake-case-naming.strategy';
 import { cleanupAgreementsBudgetPlans } from './cleanup-data';
 import { seedTenants } from './tenant.seed';
 import { seedUsers } from './user.seed';
@@ -189,6 +190,10 @@ async function bootstrap() {
     schema: process.env.DB_SCHEMA || 'main',
     entities: [__dirname + '/../entities/*.entity{.ts,.js}'],
     synchronize: false,
+    // T-035: uygulama DataSource'u (config/typeorm.config.ts) ile AYNI strateji
+    // olmak zorunda. Eksik olduğunda, açık `name:` verilmemiş her kolon
+    // ("us.isActive does not exist") bu script'te patlar.
+    namingStrategy: new SnakeCaseNamingStrategy(),
   });
 
   let exitCode = 0;

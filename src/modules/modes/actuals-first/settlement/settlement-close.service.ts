@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
@@ -38,18 +39,23 @@ import { CloseSettlementDto } from './dto';
  * commit/rollback sınırı) — aksi halde close rollback olsa bile rezerv
  * bırakılmış kalırdı.
  *
- * DÜZELTME (code-review, 2026-07-27, #3): AUDIT LOG BU TRANSACTION'IN
- * İÇİNDE DEĞİL. `AdminAuditService` kendi `@InjectRepository(AdminAuditLog)`
- * repository'sini kullanır (default connection/manager) — `queryRunner.manager`
- * DEĞİL. Yani audit yazması anında commit olur; adım 5'teki RELEASE ile aynı
- * commit/rollback sınırını PAYLAŞMAZ. Bu servisin geri kalanı rollback olursa
- * (ör. adım 6'dan sonra commitTransaction() başarısız olursa) audit log
- * "SUCCESS + budgetReleases: [...]" olarak KALIR, ama RELEASE ve status=CLOSED
- * geri alınmış olur — audit gerçek durumu yanlış anlatır. Gerçek çözüm
- * (audit'i de aynı queryRunner.manager üzerinden yazan transactional bir audit
- * API'si) T-014 kapsamında; bu servis o güne kadar bu bilinen sınırlamayla
- * yaşar (pratikte commitTransaction() adım 6'dan hemen sonra geldiği için
- * pencere çok dar, ama sıfır değil).
+ * DÜZELTİLDİ (T-014, 2026-07-29): AUDIT LOG artık BU TRANSACTION'IN İÇİNDE.
+ * `AdminAuditService.logAdminAction` çağrısına `{ manager: queryRunner.manager }`
+ * options'ı verilir — audit satırı bu manager üzerinden yazılır, yani adım
+ * 5'teki RELEASE ile AYNI commit/rollback sınırını paylaşır. Eskiden
+ * (code-review, 2026-07-27, #3) `AdminAuditService` kendi default-connection
+ * repository'sini kullanıyordu ve rollback senaryosunda "SUCCESS" audit
+ * kaydı yanlışlıkla kalıcı oluyordu; bu sınırlama artık YOK — SQL kanıtı
+ * için T-014 raporuna bkz. High-risk alarm da artık commit'ten SONRA
+ * (`flushPendingAlert`) tetiklenir, aksi halde rollback olan bir close için
+ * alarm gitmiş olurdu.
+ *
+ * flushPendingAlert çağrısı KENDİ try/catch'i içindedir (ana try bloğunun
+ * catch'iyle paylaşılmaz): alarm gönderimi gerçek bir DB yazması içerir
+ * (triggerAlert → alertSent güncellemesi) ve başarısız olursa, zaten commit
+ * edilmiş queryRunner'da rollbackTransaction() çağrılmamalı — aksi halde
+ * asıl hata maskelenir ve commit olmuş bir close için kullanıcıya
+ * yanlışlıkla 500 döner. Alarm hatası yutulur, yalnızca ERROR loglanır.
  */
 
 /** Close yalnızca APPROVED veya ACTIVE anlaşmalar için geçerlidir. */
@@ -60,6 +66,8 @@ const SETTLEABLE_STATES: AgreementStatus[] = [
 
 @Injectable()
 export class SettlementCloseService {
+  private readonly logger = new Logger(SettlementCloseService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly adminAuditService: AdminAuditService,
@@ -76,13 +84,15 @@ export class SettlementCloseService {
    *  4. status = CLOSED, closedAt, closedBy güncelle (optimistic lock: version bump)
    *  5. T-030: outstanding bütçe rezervini (net RESERVE−RELEASE) TAM release et
    *     (queryRunner.manager ile — aynı transaction sınırı)
-   *  6. Audit log (immutable) — kod sırası olarak commit'ten ÖNCE çağrılır,
-   *     ama #3 (code-review, 2026-07-27): bu, `queryRunner`'ın transaction'ı
-   *     İÇİNDE DEĞİLDİR (AdminAuditService kendi default-connection repository'sini
-   *     kullanır) — audit yazması anında commit olur, adım 7'deki commit/rollback'i
-   *     BEKLEMEZ. Bkz. dosya başındaki DÜZELTME notu; gerçek çözüm T-014.
-   *  7. Commit; hata → rollback (adım 5'teki RELEASE geri alınır, adım 6'daki
-   *     audit log GERİ ALINMAZ — zaten ayrı connection'da commit olmuştu).
+   *  6. Audit log (immutable) — T-014: `queryRunner.manager` üzerinden
+   *     yazılır, yani adım 5'teki RELEASE ile AYNI transaction'ın içinde.
+   *     High-risk alarm burada TETİKLENMEZ (bkz. dosya başı notu).
+   *  7. Commit; hata → rollback (adım 5'teki RELEASE ve adım 6'daki audit
+   *     log BİRLİKTE geri alınır — atomik). Commit başarılı olursa, adım
+   *     6'da dönen log ile `flushPendingAlert` çağrılır (high-risk alarm
+   *     yalnızca gerçekten commit olmuş bir close için tetiklenir) — bu
+   *     çağrı KENDİ try/catch'i içindedir (bkz. dosya başı notu): alarm
+   *     hatası, zaten commit olmuş bir close'u ASLA 500'e çevirmemeli.
    *
    * NOT: LEDGER'a YAZILMAZ (çift-sayım önlemi — yukarıdaki açıklamaya bkz.).
    * Budget (RELEASE) yazılır — bu artık kasıtlı ve gerekli (F1 sızıntı fix'i).
@@ -154,12 +164,10 @@ export class SettlementCloseService {
           queryRunner.manager,
         );
 
-      // 6. Immutable audit log. NOT rollback scope içinde (#3, code-review
-      //    2026-07-27): AdminAuditService kendi default-connection repository'sini
-      //    kullanır, queryRunner.manager'ı DEĞİL — bu satır anında commit olur.
-      //    Aşağıdaki commitTransaction() (adım 7) rollback olursa bu audit
-      //    kaydı geri alınmaz. Gerçek çözüm (transactional audit) T-014.
-      await this.adminAuditService.logAdminAction(
+      // 6. Immutable audit log — T-014: queryRunner.manager üzerinden yazılır,
+      //    aynı transaction'ın içinde (rollback scope). Commit başarısız
+      //    olursa bu satır da hiç yazılmamış olur (atomik).
+      const auditLog = await this.adminAuditService.logAdminAction(
         tenantId,
         userId,
         userEmail,
@@ -179,9 +187,28 @@ export class SettlementCloseService {
           })),
         },
         dto?.justification,
+        { manager: queryRunner.manager },
       );
 
       await queryRunner.commitTransaction();
+
+      // T-014: CLOSE high-risk aksiyon alarmı, audit satırı gerçekten commit
+      // olduktan SONRA tetiklenir (rollback olan bir close için alarm
+      // gitmesini önlemek amacıyla). AYRI try/catch: alarm gönderimi
+      // (gerçek bir DB yazması içerir) başarısız olursa dıştaki catch'e
+      // düşüp zaten commit edilmiş bu queryRunner'da rollbackTransaction()
+      // çağrılmamalı — bu hem asıl sonucu maskeler hem de commit olmuş bir
+      // close için kullanıcıya yanlışlıkla 500 döndürür. Alarm kaybı,
+      // başarılı bir işlemi başarısız göstermekten kat kat iyidir.
+      try {
+        await this.adminAuditService.flushPendingAlert(auditLog);
+      } catch (alertErr) {
+        this.logger.error(
+          `HIGH-RISK ALERT FAILED — AGREEMENT ${agreementId} closed successfully; alert not delivered: ${
+            alertErr instanceof Error ? alertErr.message : 'Unknown error'
+          }`,
+        );
+      }
 
       return {
         agreementId,

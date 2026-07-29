@@ -92,7 +92,12 @@ describe('SettlementCloseService', () => {
       createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
     };
     mockAuditService = {
-      logAdminAction: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+      logAdminAction: jest.fn().mockResolvedValue({
+        id: 'audit-1',
+        isHighRisk: true,
+        alertSent: false,
+      }),
+      flushPendingAlert: jest.fn().mockResolvedValue(undefined),
     };
     mockBudgetReservationService = {
       releaseAgreementReservation: jest.fn().mockResolvedValue([]),
@@ -169,6 +174,64 @@ describe('SettlementCloseService', () => {
         USER_EMAIL,
       );
       expect(mockQueryRunner.release).toHaveBeenCalled();
+    });
+
+    // T-014: high-risk alarm must fire only AFTER commit succeeds — not
+    // before, and never inside the queryRunner transaction.
+    it('T-014: passes queryRunner.manager to logAdminAction and calls flushPendingAlert only after commitTransaction()', async () => {
+      const callOrder: string[] = [];
+      mockAuditService.logAdminAction.mockImplementation(async () => {
+        callOrder.push('logAdminAction');
+        return { id: 'audit-1', isHighRisk: true, alertSent: false };
+      });
+      mockQueryRunner.commitTransaction.mockImplementation(async () => {
+        callOrder.push('commitTransaction');
+      });
+      mockAuditService.flushPendingAlert.mockImplementation(async () => {
+        callOrder.push('flushPendingAlert');
+      });
+
+      await service.closeAgreement(
+        AGREEMENT_ID,
+        TENANT_ID,
+        USER_ID,
+        USER_EMAIL,
+      );
+
+      const auditCall = mockAuditService.logAdminAction.mock.calls[0];
+      expect(auditCall[auditCall.length - 1]).toEqual({
+        manager: mockQueryRunner.manager,
+      });
+      expect(callOrder).toEqual([
+        'logAdminAction',
+        'commitTransaction',
+        'flushPendingAlert',
+      ]);
+      expect(mockAuditService.flushPendingAlert).toHaveBeenCalledWith({
+        id: 'audit-1',
+        isHighRisk: true,
+        alertSent: false,
+      });
+    });
+
+    // Coordinator-flagged bug fix: flushPendingAlert failing must NOT cause
+    // a rollback of an already-committed transaction (would mask the real
+    // outcome and return a false 500 for a successful close).
+    it('T-014 fix: still returns success and does NOT roll back when flushPendingAlert rejects', async () => {
+      mockAuditService.flushPendingAlert.mockRejectedValue(
+        new Error('alert channel unavailable'),
+      );
+
+      const result = await service.closeAgreement(
+        AGREEMENT_ID,
+        TENANT_ID,
+        USER_ID,
+        USER_EMAIL,
+      );
+
+      expect(result.status).toBe('CLOSED');
+      expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
+      expect(mockQueryRunner.rollbackTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -446,6 +509,7 @@ describe('SettlementCloseService', () => {
         expect.objectContaining({ previousStatus: AgreementStatus.APPROVED }),
         expect.objectContaining({ newStatus: AgreementStatus.CLOSED }),
         undefined, // no justification
+        { manager: mockQueryRunner.manager },
       );
     });
 
@@ -472,6 +536,7 @@ describe('SettlementCloseService', () => {
         expect.any(Object),
         expect.objectContaining({ justification }),
         justification,
+        { manager: mockQueryRunner.manager },
       );
     });
 
@@ -587,6 +652,7 @@ describe('SettlementCloseService', () => {
         expect.objectContaining({ previousStatus: AgreementStatus.ACTIVE }),
         expect.objectContaining({ newStatus: AgreementStatus.CLOSED }),
         undefined,
+        { manager: mockQueryRunner.manager },
       );
     });
   });
@@ -754,6 +820,7 @@ describe('SettlementCloseService', () => {
           budgetReleases: [{ envelopeId: 'env-1', amount: 20000 }],
         }),
         undefined,
+        { manager: mockQueryRunner.manager },
       );
     });
 

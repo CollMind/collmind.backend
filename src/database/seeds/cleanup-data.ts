@@ -1,4 +1,5 @@
 import { DataSource } from 'typeorm';
+import { SnakeCaseNamingStrategy } from '../strategies/snake-case-naming.strategy';
 import { config } from 'dotenv';
 
 config();
@@ -131,6 +132,8 @@ async function bootstrap() {
     schema: process.env.DB_SCHEMA || 'main',
     entities: [__dirname + '/../entities/*.entity{.ts,.js}'],
     synchronize: false,
+    // T-035: uygulama DataSource'u ile AYNI strateji olmak zorunda.
+    namingStrategy: new SnakeCaseNamingStrategy(),
   });
 
   let exitCode = 0;

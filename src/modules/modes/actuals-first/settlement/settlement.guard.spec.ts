@@ -50,6 +50,15 @@ describe('SettlementGuard', () => {
     );
   });
 
+  // Deprecated/frozen role (migration 1775 -> MANAGER, migration 1791
+  // MANAGER -> CATEGORY_MANAGER). No user should carry this value anymore,
+  // but the guard must not accidentally allow it if one somehow does.
+  it('denies deprecated UserRole.MANAGER', () => {
+    expect(() => guard.canActivate(makeCtx(UserRole.MANAGER))).toThrow(
+      ForbiddenException,
+    );
+  });
+
   it('denies unauthenticated (no user)', () => {
     expect(() => guard.canActivate(makeCtx(null))).toThrow(ForbiddenException);
   });

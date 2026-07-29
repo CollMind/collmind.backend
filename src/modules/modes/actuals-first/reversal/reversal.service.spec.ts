@@ -143,7 +143,12 @@ describe('ReversalService', () => {
     };
 
     mockAuditService = {
-      logAdminAction: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+      logAdminAction: jest.fn().mockResolvedValue({
+        id: 'audit-1',
+        isHighRisk: true,
+        alertSent: false,
+      }),
+      flushPendingAlert: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -248,11 +253,67 @@ describe('ReversalService', () => {
         expect.objectContaining({ originalLedgerId: LEDGER_ID }),
         expect.objectContaining({ justification: 'test reason' }),
         'test reason',
+        { manager: mockQueryRunner.manager },
       );
     });
 
     it('commits transaction on success', async () => {
       await service.reverseTransaction(TX_ID, TENANT_ID, USER_ID, USER_EMAIL);
+      expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
+      expect(mockQueryRunner.rollbackTransaction).not.toHaveBeenCalled();
+    });
+
+    // T-014: high-risk alarm must fire only AFTER commit succeeds — not
+    // before, and never inside the queryRunner transaction.
+    it('T-014: passes queryRunner.manager to logAdminAction and calls flushPendingAlert only after commitTransaction()', async () => {
+      const callOrder: string[] = [];
+      mockAuditService.logAdminAction.mockImplementation(async () => {
+        callOrder.push('logAdminAction');
+        return { id: 'audit-1', isHighRisk: true, alertSent: false };
+      });
+      mockQueryRunner.commitTransaction.mockImplementation(async () => {
+        callOrder.push('commitTransaction');
+      });
+      mockAuditService.flushPendingAlert.mockImplementation(async () => {
+        callOrder.push('flushPendingAlert');
+      });
+
+      await service.reverseTransaction(TX_ID, TENANT_ID, USER_ID, USER_EMAIL);
+
+      // audit was written transactionally (manager option present)
+      const auditCall = mockAuditService.logAdminAction.mock.calls[0];
+      expect(auditCall[auditCall.length - 1]).toEqual({
+        manager: mockQueryRunner.manager,
+      });
+      // alert is deferred until after commit
+      expect(callOrder).toEqual([
+        'logAdminAction',
+        'commitTransaction',
+        'flushPendingAlert',
+      ]);
+      expect(mockAuditService.flushPendingAlert).toHaveBeenCalledWith({
+        id: 'audit-1',
+        isHighRisk: true,
+        alertSent: false,
+      });
+    });
+
+    // Coordinator-flagged bug fix: flushPendingAlert failing must NOT cause
+    // a rollback of an already-committed transaction (would mask the real
+    // outcome and return a false 500 for a successful reversal).
+    it('T-014 fix: still returns success and does NOT roll back when flushPendingAlert rejects', async () => {
+      mockAuditService.flushPendingAlert.mockRejectedValue(
+        new Error('alert channel unavailable'),
+      );
+
+      const result = await service.reverseTransaction(
+        TX_ID,
+        TENANT_ID,
+        USER_ID,
+        USER_EMAIL,
+      );
+
+      expect(result.status).toBe('REVERSED');
       expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
       expect(mockQueryRunner.rollbackTransaction).not.toHaveBeenCalled();
     });
@@ -888,6 +949,7 @@ describe('ReversalService', () => {
           reversalLedgerId: REVERSAL_LEDGER_ID,
         }),
         undefined, // no justification
+        { manager: mockQueryRunner.manager },
       );
     });
 
@@ -910,6 +972,7 @@ describe('ReversalService', () => {
         expect.any(Object),
         expect.objectContaining({ justification }),
         justification,
+        { manager: mockQueryRunner.manager },
       );
     });
 
@@ -947,6 +1010,7 @@ describe('ReversalService', () => {
         expect.anything(),
         expect.objectContaining({ reversalLedgerId: CUSTOM_REVERSAL_ID }),
         undefined, // justification not provided
+        { manager: mockQueryRunner.manager },
       );
     });
   });

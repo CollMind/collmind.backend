@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
@@ -20,6 +21,8 @@ const REVERSIBLE_AGREEMENT_STATES: AgreementStatus[] = [
 
 @Injectable()
 export class ReversalService {
+  private readonly logger = new Logger(ReversalService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly txRepo: AgreementTransactionRepository,
@@ -43,8 +46,19 @@ export class ReversalService {
    *  6. Reversal (CREDIT) ledger entry oluştur (queryRunner içinde)
    *  7. Orijinal ledger entry'yi is_reversed=true olarak işaretle (LedgerRepository.markAsReversed)
    *  8. AgreementTransaction.isReversed = true
-   *  9. Audit log (immutable) — queryRunner transaction commit'ten önce yazılır
-   * 10. Commit; hata → rollback
+   *  9. Audit log (immutable) — T-014: queryRunner.manager üzerinden yazılır,
+   *     yani AYNI transaction'ın içinde (atomik: rollback olursa audit da
+   *     hiç yazılmamış olur). REVERSE high-risk alarmı burada TETİKLENMEZ —
+   *     commit'ten önce alarm gönderip sonra rollback etme riskini önlemek
+   *     için adım 10'daki commit'ten SONRA flushPendingAlert ile tetiklenir.
+   * 10. Commit; hata → rollback (audit dahil, aynı transaction'da). Commit
+   *     başarılı olduktan sonraki flushPendingAlert çağrısı KENDİ try/catch'i
+   *     içindedir — dıştaki catch'in ana try bloğuyla paylaşılmaz. Sebep:
+   *     alarm gönderimi gerçek bir DB yazması içerir (bkz. triggerAlert) ve
+   *     başarısız olursa, zaten commit edilmiş bu queryRunner'da
+   *     rollbackTransaction() çağrılmamalı — bu hem asıl hatayı maskeler
+   *     hem de commit olmuş bir reversal için kullanıcıya yanlışlıkla 500
+   *     döndürür. Alarm hatası burada yutulur ve yalnızca ERROR loglanır.
    *
    * NOT — Budget RELEASE (B-1 simetri analizi):
    *   v_budget_summary: available = allocated − reserved − consumed
@@ -150,8 +164,10 @@ export class ReversalService {
         { isReversed: true },
       );
 
-      // 9. Immutable audit log — queryRunner commit'ten önce, rollback scope içinde
-      await this.adminAuditService.logAdminAction(
+      // 9. Immutable audit log — T-014: queryRunner.manager üzerinden yazılır,
+      //    yani bu adımın kendisi de transaction'ın İÇİNDE. Rollback olursa
+      //    audit satırı da DB'ye hiç yazılmamış olur (atomik).
+      const auditLog = await this.adminAuditService.logAdminAction(
         tenantId,
         userId,
         userEmail,
@@ -170,9 +186,30 @@ export class ReversalService {
           justification: dto?.justification,
         },
         dto?.justification,
+        { manager: queryRunner.manager },
       );
 
       await queryRunner.commitTransaction();
+
+      // T-014: REVERSE high-risk aksiyon alarmı, audit satırı gerçekten
+      // commit olduktan SONRA tetiklenir — aksi halde rollback olan bir
+      // reversal için "high-risk aksiyon oldu" alarmı gitmiş olurdu.
+      // AYRI try/catch: alarm gönderimi (gerçek bir DB yazması içerir)
+      // başarısız olursa dıştaki catch'e düşüp zaten commit edilmiş bu
+      // queryRunner'da rollbackTransaction() çağrılmamalı — bu hem asıl
+      // hatayı maskeler hem de commit olmuş bir reversal için kullanıcıya
+      // yanlışlıkla 500 döndürür. Alarm kaybı, başarılı bir işlemi
+      // başarısız göstermekten kat kat iyidir; hata burada yutulur ve
+      // yalnızca ERROR seviyesinde loglanır.
+      try {
+        await this.adminAuditService.flushPendingAlert(auditLog);
+      } catch (alertErr) {
+        this.logger.error(
+          `HIGH-RISK ALERT FAILED — AGREEMENT_TRANSACTION ${transactionId} reversed successfully; alert not delivered: ${
+            alertErr instanceof Error ? alertErr.message : 'Unknown error'
+          }`,
+        );
+      }
 
       return {
         transactionId,
