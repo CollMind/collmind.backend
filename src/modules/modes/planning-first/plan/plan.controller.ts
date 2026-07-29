@@ -23,6 +23,8 @@ import {
   CreatePlanDto,
   UpdatePlanDto,
   AddFuDto,
+  RemoveFuDto,
+  DeletePlanDto,
   UpdateFuTacticDto,
   UpdateSkuVolumeDto,
   SubmitForApprovalDto,
@@ -259,13 +261,18 @@ export class PlanController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove FU from plan' })
   @ApiResponse({ status: 204, description: 'FU removed successfully' })
+  @ApiResponse({
+    status: 409,
+    description: 'STALE_VERSION / MISSING_VERSION (optimistic locking, T-034)',
+  })
   removeFu(
     @Param('id') planId: string,
     @Param('fuId') fuId: string,
+    @Body() dto: RemoveFuDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.removeFu(planId, fuId, tenantId, {
+    return this.planService.removeFu(planId, fuId, tenantId, dto, {
       userId: user.id,
       role: user.role,
     });
@@ -490,12 +497,17 @@ export class PlanController {
   @ApiOperation({ summary: 'Delete plan (DRAFT only)' })
   @ApiResponse({ status: 204, description: 'Plan deleted successfully' })
   @ApiResponse({ status: 400, description: 'Only DRAFT plans can be deleted' })
+  @ApiResponse({
+    status: 409,
+    description: 'STALE_VERSION / MISSING_VERSION (optimistic locking, T-034)',
+  })
   delete(
     @Param('id') id: string,
+    @Body() dto: DeletePlanDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.delete(id, tenantId, {
+    return this.planService.delete(id, tenantId, dto, {
       userId: user.id,
       role: user.role,
     });

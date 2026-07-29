@@ -63,7 +63,8 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
             findById: jest.fn(),
             findByCode: jest.fn(),
             findAll: jest.fn(),
-            update: jest.fn(),
+            updateUnversioned: jest.fn(),
+            updateVersioned: jest.fn(),
             updateStatus: jest.fn(),
             softDelete: jest.fn(),
             generateAgreementCode: jest.fn(),
@@ -620,14 +621,14 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
         capTotalAmount: 1000,
       } as Agreement;
       agreementRepo.findById.mockResolvedValue(draftAgreement);
-      agreementRepo.update.mockResolvedValue({
+      agreementRepo.updateVersioned.mockResolvedValue({
         ...draftAgreement,
         capTotalAmount: 2000,
       } as Agreement);
 
       await service.update(
         'agreement-1',
-        { capTotalAmount: 2000 } as any,
+        { capTotalAmount: 2000, version: 1 } as any,
         tenantId,
         userId,
         userEmail,
@@ -654,7 +655,7 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
         capTotalAmount: 1000,
       } as Agreement;
       agreementRepo.findById.mockResolvedValue(draftAgreement);
-      agreementRepo.update.mockResolvedValue({
+      agreementRepo.updateVersioned.mockResolvedValue({
         ...draftAgreement,
         capTotalAmount: 2000,
       } as Agreement);
@@ -664,7 +665,7 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
 
       const result = await service.update(
         'agreement-1',
-        { capTotalAmount: 2000 } as any,
+        { capTotalAmount: 2000, version: 1 } as any,
         tenantId,
         userId,
         userEmail,

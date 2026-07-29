@@ -81,7 +81,9 @@ export class SettlementCloseService {
    *  1. Agreement'ı tenant-scoped FOR UPDATE ile çek → yoksa 404
    *  2. status === CLOSED → 409 ALREADY_SETTLED
    *  3. status APPROVED/ACTIVE değil → 409 NOT_SETTLEABLE_STATE
-   *  4. status = CLOSED, closedAt, closedBy güncelle (optimistic lock: version bump)
+   *  4. status = CLOSED, closedAt, closedBy güncelle (koruma: adım 1'deki
+   *     FOR UPDATE + adım 2/3'teki status guard — optimistic version YOK,
+   *     bkz. docs/analysis/0005-optimistic-locking-design.md §7.4/K5)
    *  5. T-030: outstanding bütçe rezervini (net RESERVE−RELEASE) TAM release et
    *     (queryRunner.manager ile — aynı transaction sınırı)
    *  6. Audit log (immutable) — T-014: `queryRunner.manager` üzerinden
@@ -109,7 +111,9 @@ export class SettlementCloseService {
     await queryRunner.startTransaction();
 
     try {
-      // 1. Agreement'ı tenant-scoped FOR UPDATE ile çek (optimistic lock için version)
+      // 1. Agreement'ı tenant-scoped FOR UPDATE (pessimistic_write) ile çek —
+      // bu yol bilinçli olarak pessimistic'tir (para hareketi + saga),
+      // version-CAS kullanmaz (bkz. docs/analysis/0005 §7.4/K5)
       const agreement = await queryRunner.manager.findOne(Agreement, {
         where: { id: agreementId, tenantId },
         lock: { mode: 'pessimistic_write' },

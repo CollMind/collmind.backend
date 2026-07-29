@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -11,6 +11,10 @@ import {
   AccessScopeService,
   EffectiveScope,
 } from '../../../shared/access-scope/access-scope.service';
+import {
+  applyVersionedUpdate,
+  staleVersionConflict,
+} from '../../../shared/persistence/versioned-update.helper';
 
 @Injectable()
 export class PlanRepository {
@@ -115,12 +119,68 @@ export class PlanRepository {
     );
   }
 
-  async update(
+  /**
+   * T-034: deliberate CAS bypass — see versioned-update.helper.ts header
+   * comment. Used by (a) state-transition writes via #updateStatus
+   * (submit/approve/reject/returnToDraft/approval-workflow — status-CAS is
+   * T-034b's job, not this task's) and (b) recalc/compensation writes
+   * (`recalculatePlanWithKpiEngine`, submit/approve/reject's own rollback
+   * branches) where the held-in-memory `plan` is expected to be behind the
+   * version a preceding forward write already bumped — a CAS there would
+   * fail every single time. Grep-able on purpose (T-034 acceptance
+   * criteria / code-reviewer checklist item).
+   */
+  async updateUnversioned(
     id: string,
     tenantId: string,
     data: Partial<Plan>,
   ): Promise<Plan> {
     await this.planRepo.update({ id, tenantId }, data);
+    const updated = await this.findById(id, tenantId);
+    if (!updated) {
+      throw new Error('Plan not found after update');
+    }
+    return updated;
+  }
+
+  /**
+   * T-034: CAS write for the user-input plan-header edit path
+   * (PlanService#update) and the plan.version bump gate used by structural
+   * changes (addFu/removeFu — see PlanService). `affected === 0` means
+   * either not-found or stale; a version-less re-read tells the two apart.
+   */
+  async updateVersioned(
+    id: string,
+    tenantId: string,
+    expectedVersion: number,
+    data: Partial<Plan>,
+  ): Promise<Plan> {
+    const affected = await applyVersionedUpdate(
+      this.planRepo,
+      { id, tenantId },
+      expectedVersion,
+      data as any,
+    );
+    if (affected === 0) {
+      const current = await this.planRepo.findOne({ where: { id, tenantId } });
+      if (!current) {
+        throw new NotFoundException(`Plan with ID ${id} not found`);
+      }
+      throw staleVersionConflict({
+        entity: 'PLAN',
+        entityId: id,
+        expectedVersion,
+        currentVersion: current.version,
+        current: {
+          planName: current.planName,
+          description: current.description,
+          startDate: current.startDate,
+          endDate: current.endDate,
+          updatedBy: current.updatedBy,
+          updatedAt: current.updatedAt,
+        },
+      });
+    }
     const updated = await this.findById(id, tenantId);
     if (!updated) {
       throw new Error('Plan not found after update');
@@ -135,11 +195,46 @@ export class PlanRepository {
     additionalFields?: Partial<Plan>,
   ): Promise<Plan> {
     const updateData = { status, ...additionalFields };
-    return this.update(id, tenantId, updateData);
+    return this.updateUnversioned(id, tenantId, updateData);
   }
 
-  async softDelete(id: string, tenantId: string): Promise<void> {
-    await this.planRepo.softDelete({ id, tenantId });
+  /**
+   * T-034 (code-review follow-up, 2026-07-29): destructive — the delete
+   * path was found entirely exempt from optimistic locking (a silent gap,
+   * not a documented bypass). CAS via the same helper as every other
+   * user-input write: `affected === 0` -> stale/not-found, decided by a
+   * version-less re-read (see #updateVersioned for the identical pattern).
+   * Sets `deletedAt` directly rather than calling `Repository#softDelete`
+   * (which builds its own UPDATE and cannot carry the version predicate).
+   */
+  async softDeleteVersioned(
+    id: string,
+    tenantId: string,
+    expectedVersion: number,
+  ): Promise<void> {
+    const affected = await applyVersionedUpdate(
+      this.planRepo,
+      { id, tenantId },
+      expectedVersion,
+      { deletedAt: new Date() } as any,
+    );
+    if (affected === 0) {
+      const current = await this.planRepo.findOne({ where: { id, tenantId } });
+      if (!current) {
+        throw new NotFoundException(`Plan with ID ${id} not found`);
+      }
+      throw staleVersionConflict({
+        entity: 'PLAN',
+        entityId: id,
+        expectedVersion,
+        currentVersion: current.version,
+        current: {
+          planName: current.planName,
+          updatedBy: current.updatedBy,
+          updatedAt: current.updatedAt,
+        },
+      });
+    }
   }
 
   async generatePlanCode(tenantId: string): Promise<string> {
@@ -199,17 +294,35 @@ export class PlanRepository {
     return this.planFuRepo.save(planFu);
   }
 
-  async findPlanFu(planId: string, fuId: string): Promise<PlanFu | null> {
+  /**
+   * T-034 §1.5: tenantId predicate added (was `{ planId, fuId }` only —
+   * relied entirely on the caller having already tenant-scoped `planId` via
+   * `findById`; not a real defense layer on its own).
+   */
+  async findPlanFu(
+    planId: string,
+    fuId: string,
+    tenantId: string,
+  ): Promise<PlanFu | null> {
     return this.planFuRepo.findOne({
-      where: { planId, fuId },
+      where: { planId, fuId, tenantId },
       relations: ['fu', 'planSkus', 'planSkus.sku'],
     });
   }
 
-  async updatePlanFu(planFuId: string, data: Partial<PlanFu>): Promise<PlanFu> {
-    await this.planFuRepo.update({ id: planFuId }, data);
+  /**
+   * T-034: deliberate CAS bypass (see #updateUnversioned on the plan
+   * header). Used by `recalculatePlanWithKpiEngine` — FU-level totals are a
+   * derived aggregate of its SKUs, never a user's direct edit.
+   */
+  async updatePlanFuUnversioned(
+    planFuId: string,
+    tenantId: string,
+    data: Partial<PlanFu>,
+  ): Promise<PlanFu> {
+    await this.planFuRepo.update({ id: planFuId, tenantId }, data);
     const updated = await this.planFuRepo.findOne({
-      where: { id: planFuId },
+      where: { id: planFuId, tenantId },
       relations: ['fu', 'planSkus', 'planSkus.sku'],
     });
     if (!updated) {
@@ -218,8 +331,49 @@ export class PlanRepository {
     return updated;
   }
 
-  async removeFu(planFuId: string): Promise<void> {
-    await this.planFuRepo.delete({ id: planFuId });
+  /**
+   * T-034: CAS write for the grid-cell tactic edit (PlanService#updateFuTactic).
+   */
+  async updatePlanFuVersioned(
+    planFuId: string,
+    tenantId: string,
+    expectedVersion: number,
+    data: Partial<PlanFu>,
+  ): Promise<PlanFu> {
+    const affected = await applyVersionedUpdate(
+      this.planFuRepo,
+      { id: planFuId, tenantId },
+      expectedVersion,
+      data as any,
+    );
+    if (affected === 0) {
+      const current = await this.planFuRepo.findOne({
+        where: { id: planFuId, tenantId },
+      });
+      if (!current) {
+        throw new NotFoundException(`FU ${planFuId} not found in this plan`);
+      }
+      throw staleVersionConflict({
+        entity: 'PLAN_FU',
+        entityId: planFuId,
+        expectedVersion,
+        currentVersion: current.version,
+        current: { tactics: current.tactics, updatedBy: current.updatedBy },
+      });
+    }
+    const updated = await this.planFuRepo.findOne({
+      where: { id: planFuId, tenantId },
+      relations: ['fu', 'planSkus', 'planSkus.sku'],
+    });
+    if (!updated) {
+      throw new Error('PlanFU not found after update');
+    }
+    return updated;
+  }
+
+  /** T-034 §1.5: tenantId predicate added (see #findPlanFu). */
+  async removeFu(planFuId: string, tenantId: string): Promise<void> {
+    await this.planFuRepo.delete({ id: planFuId, tenantId });
   }
 
   // PlanSKU methods
@@ -244,20 +398,31 @@ export class PlanRepository {
     return this.planSkuRepo.save(planSku);
   }
 
-  async findPlanSku(planFuId: string, skuId: string): Promise<PlanSku | null> {
+  /** T-034 §1.5: tenantId predicate added (see #findPlanFu). */
+  async findPlanSku(
+    planFuId: string,
+    skuId: string,
+    tenantId: string,
+  ): Promise<PlanSku | null> {
     return this.planSkuRepo.findOne({
-      where: { planFuId, skuId },
+      where: { planFuId, skuId, tenantId },
       relations: ['sku', 'planFu'],
     });
   }
 
-  async updatePlanSku(
+  /**
+   * T-034: deliberate CAS bypass (see #updatePlanFuUnversioned). Used by
+   * `recalculatePlanWithKpiEngine` — plannedGp/gpRoi/ragStatus/calculatedKpis
+   * etc. are derived outputs, never a user's direct edit.
+   */
+  async updatePlanSkuUnversioned(
     planSkuId: string,
+    tenantId: string,
     data: Partial<PlanSku>,
   ): Promise<PlanSku> {
-    await this.planSkuRepo.update({ id: planSkuId }, data);
+    await this.planSkuRepo.update({ id: planSkuId, tenantId }, data);
     const updated = await this.planSkuRepo.findOne({
-      where: { id: planSkuId },
+      where: { id: planSkuId, tenantId },
       relations: ['sku', 'planFu'],
     });
     if (!updated) {
@@ -266,7 +431,54 @@ export class PlanRepository {
     return updated;
   }
 
-  async removeSku(planSkuId: string): Promise<void> {
-    await this.planSkuRepo.delete({ id: planSkuId });
+  /**
+   * T-034: CAS write for the grid-cell volume edit
+   * (PlanService#updateSkuVolume). Single atomic UPDATE — no extra query
+   * turn on this hot path (BRD <500ms).
+   */
+  async updatePlanSkuVersioned(
+    planSkuId: string,
+    tenantId: string,
+    expectedVersion: number,
+    data: Partial<PlanSku>,
+  ): Promise<PlanSku> {
+    const affected = await applyVersionedUpdate(
+      this.planSkuRepo,
+      { id: planSkuId, tenantId },
+      expectedVersion,
+      data as any,
+    );
+    if (affected === 0) {
+      const current = await this.planSkuRepo.findOne({
+        where: { id: planSkuId, tenantId },
+      });
+      if (!current) {
+        throw new NotFoundException(`SKU ${planSkuId} not found in this plan`);
+      }
+      throw staleVersionConflict({
+        entity: 'PLAN_SKU',
+        entityId: planSkuId,
+        expectedVersion,
+        currentVersion: current.version,
+        current: {
+          baseVolume: current.baseVolume,
+          plannedVolume: current.plannedVolume,
+          updatedBy: current.updatedBy,
+        },
+      });
+    }
+    const updated = await this.planSkuRepo.findOne({
+      where: { id: planSkuId, tenantId },
+      relations: ['sku', 'planFu'],
+    });
+    if (!updated) {
+      throw new Error('PlanSKU not found after update');
+    }
+    return updated;
+  }
+
+  /** T-034 §1.5: tenantId predicate added (see #findPlanFu). */
+  async removeSku(planSkuId: string, tenantId: string): Promise<void> {
+    await this.planSkuRepo.delete({ id: planSkuId, tenantId });
   }
 }

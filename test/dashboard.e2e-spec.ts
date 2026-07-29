@@ -179,7 +179,10 @@ describe('Dashboard (E2E)', () => {
         expect(typeof bu).toBe('object');
         for (const section of ['onInvoice', 'offInvoice', 'total']) {
           expect(bu[section]).toBeDefined();
-          expect(typeof bu[section].utilizationPercent === 'number' || bu[section].utilizationPercent === null).toBe(true);
+          expect(
+            typeof bu[section].utilizationPercent === 'number' ||
+              bu[section].utilizationPercent === null,
+          ).toBe(true);
           expect(['GREEN', 'AMBER', 'RED']).toContain(bu[section].status);
         }
       }

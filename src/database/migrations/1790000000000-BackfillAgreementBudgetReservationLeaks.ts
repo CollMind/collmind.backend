@@ -32,9 +32,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *   SELECT a.status, SUM(net) FROM ( ... aynı net hesabı ... ) GROUP BY status;
  *   → CLOSED/CANCELLED/REJECTED için SUM(net) = 0 olmalı.
  */
-export class BackfillAgreementBudgetReservationLeaks1790000000000
-  implements MigrationInterface
-{
+export class BackfillAgreementBudgetReservationLeaks1790000000000 implements MigrationInterface {
   name = 'BackfillAgreementBudgetReservationLeaks1790000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

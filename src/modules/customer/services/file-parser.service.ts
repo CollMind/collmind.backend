@@ -11,9 +11,7 @@ import {
 
 @Injectable()
 export class FileParserService {
-  async parseExcel(
-    file: Express.Multer.File,
-  ): Promise<
+  async parseExcel(file: Express.Multer.File): Promise<
     Array<{
       dto: CreateCustomerDto;
       originalRowNumber: number;
@@ -70,9 +68,7 @@ export class FileParserService {
     }
   }
 
-  async parseCSV(
-    file: Express.Multer.File,
-  ): Promise<
+  async parseCSV(file: Express.Multer.File): Promise<
     Array<{
       dto: CreateCustomerDto;
       originalRowNumber: number;
@@ -152,9 +148,7 @@ export class FileParserService {
     }
   }
 
-  private mapToCustomerDtos(
-    data: any[],
-  ): Array<{
+  private mapToCustomerDtos(data: any[]): Array<{
     dto: CreateCustomerDto;
     originalRowNumber: number;
     originalRowData?: Record<string, any>;

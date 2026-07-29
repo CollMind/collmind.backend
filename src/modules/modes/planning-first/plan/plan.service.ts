@@ -12,9 +12,12 @@ import {
   CreatePlanDto,
   UpdatePlanDto,
   AddFuDto,
+  RemoveFuDto,
+  DeletePlanDto,
   UpdateFuTacticDto,
   UpdateSkuVolumeDto,
 } from './dto';
+import { missingVersionConflict } from '../../../shared/persistence/versioned-update.helper';
 import {
   Plan,
   PlanStatus,
@@ -347,9 +350,20 @@ export class PlanService {
       throw new BadRequestException('Only DRAFT plans can be edited');
     }
 
+    // T-034: optimistic locking, strict mode — version is required; a
+    // request that omits it is rejected with 409 MISSING_VERSION (not a
+    // ValidationPipe 400 — see UpdatePlanDto#version).
+    if (dto.version === undefined || dto.version === null) {
+      throw missingVersionConflict({ entity: 'PLAN', entityId: id });
+    }
+
+    // T-034: strip `version` (CAS metadata, not a Plan column) before
+    // spreading the rest of the DTO into the update payload.
     const {
       startDate: dtoStartDate,
       endDate: dtoEndDate,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      version: _version,
       ...dtoWithoutDates
     } = dto;
     const updateData: Partial<Plan> = { ...dtoWithoutDates, updatedBy: userId };
@@ -363,7 +377,7 @@ export class PlanService {
       updateData.endDate = new Date(dtoEndDate);
     }
 
-    return this.planRepo.update(id, tenantId, updateData);
+    return this.planRepo.updateVersioned(id, tenantId, dto.version, updateData);
   }
 
   async addFu(
@@ -379,6 +393,16 @@ export class PlanService {
       throw new BadRequestException('Only DRAFT plans can be modified');
     }
 
+    // T-034: adding an FU is a structural plan change — CAS-bump
+    // plans.version BEFORE any insert happens (see docs/analysis/0005 §3).
+    // Strict mode: missing planVersion -> 409 MISSING_VERSION.
+    if (dto.planVersion === undefined || dto.planVersion === null) {
+      throw missingVersionConflict({ entity: 'PLAN', entityId: planId });
+    }
+    await this.planRepo.updateVersioned(planId, tenantId, dto.planVersion, {
+      updatedBy: userId,
+    });
+
     // Verify FU exists and is plannable
     const fu = await this.fuRepo.findOne({ where: { id: dto.fuId, tenantId } });
     if (!fu) {
@@ -393,7 +417,7 @@ export class PlanService {
     }
 
     // Check if FU already added
-    const existing = await this.planRepo.findPlanFu(planId, dto.fuId);
+    const existing = await this.planRepo.findPlanFu(planId, dto.fuId, tenantId);
     if (existing) {
       throw new ConflictException('FU already added to this plan');
     }
@@ -420,7 +444,11 @@ export class PlanService {
     // Recalculate plan totals using KPI engine
     await this.recalculatePlanWithKpiEngine(planId, tenantId);
 
-    return this.planRepo.findPlanFu(planId, dto.fuId) as Promise<PlanFu>;
+    return this.planRepo.findPlanFu(
+      planId,
+      dto.fuId,
+      tenantId,
+    ) as Promise<PlanFu>;
   }
 
   async updateFuTactic(
@@ -436,20 +464,30 @@ export class PlanService {
       throw new BadRequestException('Only DRAFT plans can be modified');
     }
 
-    const planFu = await this.planRepo.findPlanFu(planId, fuId);
+    const planFu = await this.planRepo.findPlanFu(planId, fuId, tenantId);
     if (!planFu) {
       throw new NotFoundException('FU not found in this plan');
     }
 
-    // Update tactics
-    await this.planRepo.updatePlanFu(planFu.id, {
-      tactics: dto.tactics || planFu.tactics,
-    });
+    // T-034: optimistic locking, strict mode — plan_fus.version required.
+    if (dto.version === undefined || dto.version === null) {
+      throw missingVersionConflict({ entity: 'PLAN_FU', entityId: planFu.id });
+    }
+
+    // Update tactics (CAS against plan_fus.version)
+    await this.planRepo.updatePlanFuVersioned(
+      planFu.id,
+      tenantId,
+      dto.version,
+      {
+        tactics: dto.tactics || planFu.tactics,
+      },
+    );
 
     // Recalculate using KPI engine
     await this.recalculatePlanWithKpiEngine(planId, tenantId);
 
-    return this.planRepo.findPlanFu(planId, fuId) as Promise<PlanFu>;
+    return this.planRepo.findPlanFu(planId, fuId, tenantId) as Promise<PlanFu>;
   }
 
   async updateSkuVolume(
@@ -466,14 +504,24 @@ export class PlanService {
       throw new BadRequestException('Only DRAFT plans can be modified');
     }
 
-    const planFu = await this.planRepo.findPlanFu(planId, fuId);
+    const planFu = await this.planRepo.findPlanFu(planId, fuId, tenantId);
     if (!planFu) {
       throw new NotFoundException('FU not found in this plan');
     }
 
-    const planSku = await this.planRepo.findPlanSku(planFu.id, skuId);
+    const planSku = await this.planRepo.findPlanSku(planFu.id, skuId, tenantId);
     if (!planSku) {
       throw new NotFoundException('SKU not found in this plan');
+    }
+
+    // T-034: optimistic locking, strict mode — plan_skus.version required.
+    // Grid hot path (BRD <500ms) — this check + the CAS write below add no
+    // extra round trip (single atomic UPDATE, see applyVersionedUpdate).
+    if (dto.version === undefined || dto.version === null) {
+      throw missingVersionConflict({
+        entity: 'PLAN_SKU',
+        entityId: planSku.id,
+      });
     }
 
     // Update volumes
@@ -484,22 +532,32 @@ export class PlanService {
           ? dto.plannedVolume - planSku.baseVolume
           : planSku.incrementalVolume;
 
-    await this.planRepo.updatePlanSku(planSku.id, {
-      baseVolume: dto.baseVolume ?? planSku.baseVolume,
-      plannedVolume: dto.plannedVolume ?? planSku.plannedVolume,
-      incrementalVolume,
-    });
+    await this.planRepo.updatePlanSkuVersioned(
+      planSku.id,
+      tenantId,
+      dto.version,
+      {
+        baseVolume: dto.baseVolume ?? planSku.baseVolume,
+        plannedVolume: dto.plannedVolume ?? planSku.plannedVolume,
+        incrementalVolume,
+      },
+    );
 
     // Recalculate using KPI engine
     await this.recalculatePlanWithKpiEngine(planId, tenantId);
 
-    return this.planRepo.findPlanSku(planFu.id, skuId) as Promise<PlanSku>;
+    return this.planRepo.findPlanSku(
+      planFu.id,
+      skuId,
+      tenantId,
+    ) as Promise<PlanSku>;
   }
 
   async removeFu(
     planId: string,
     fuId: string,
     tenantId: string,
+    dto?: RemoveFuDto,
     actor?: PlanActor,
   ): Promise<void> {
     const plan = await this.findById(planId, tenantId, actor);
@@ -508,12 +566,21 @@ export class PlanService {
       throw new BadRequestException('Only DRAFT plans can be modified');
     }
 
-    const planFu = await this.planRepo.findPlanFu(planId, fuId);
+    const planFu = await this.planRepo.findPlanFu(planId, fuId, tenantId);
     if (!planFu) {
       throw new NotFoundException('FU not found in this plan');
     }
 
-    await this.planRepo.removeFu(planFu.id);
+    // T-034: removing an FU is a structural plan change — CAS-bump
+    // plans.version BEFORE the delete happens (see docs/analysis/0005 §3,
+    // same pattern as addFu). Strict mode: missing planVersion -> 409
+    // MISSING_VERSION.
+    if (!dto || dto.planVersion === undefined || dto.planVersion === null) {
+      throw missingVersionConflict({ entity: 'PLAN', entityId: planId });
+    }
+    await this.planRepo.updateVersioned(planId, tenantId, dto.planVersion, {});
+
+    await this.planRepo.removeFu(planFu.id, tenantId);
     await this.recalculatePlanWithKpiEngine(planId, tenantId);
   }
 
@@ -1079,7 +1146,10 @@ export class PlanService {
           error instanceof Error ? error.message : 'Unknown error'
         }`,
       );
-      await this.planRepo.update(id, tenantId, {
+      // T-034: deliberate CAS bypass — compensation write reverting a state
+      // transition (§1.6 #12 in the design doc: CAS here would fail every
+      // time since the forward write already advanced the row).
+      await this.planRepo.updateUnversioned(id, tenantId, {
         status: PlanStatus.REJECTED,
         rejectedAt: plan.rejectedAt ?? null,
         rejectedById: plan.rejectedById ?? null,
@@ -1097,11 +1167,25 @@ export class PlanService {
     return updated;
   }
 
-  async delete(id: string, tenantId: string, actor?: PlanActor): Promise<void> {
+  async delete(
+    id: string,
+    tenantId: string,
+    dto?: DeletePlanDto,
+    actor?: PlanActor,
+  ): Promise<void> {
     const plan = await this.findById(id, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT plans can be deleted');
+    }
+
+    // T-034 (code-review follow-up): delete is the most destructive
+    // mutation path — a stale-view delete silently discards everything a
+    // concurrent editor just added (FUs/SKUs, tactics, volumes). This was
+    // found entirely unguarded and is closed the same way as every other
+    // user-input write: strict-mode missing version -> 409 MISSING_VERSION.
+    if (!dto || dto.version === undefined || dto.version === null) {
+      throw missingVersionConflict({ entity: 'PLAN', entityId: id });
     }
 
     if (plan.totalSpend > 0) {
@@ -1113,7 +1197,7 @@ export class PlanService {
       );
     }
 
-    await this.planRepo.softDelete(id, tenantId);
+    await this.planRepo.softDeleteVersioned(id, tenantId, dto.version);
   }
 
   /**
@@ -1280,7 +1364,10 @@ export class PlanService {
           };
         }
 
-        await this.planRepo.updatePlanSku(planSku.id, {
+        // T-034: deliberate CAS bypass — derived KPI output, not a user
+        // edit; a CAS here would fail every time against the version the
+        // grid-cell write (updateSkuVolume) just bumped moments earlier.
+        await this.planRepo.updatePlanSkuUnversioned(planSku.id, tenantId, {
           incrementalVolume,
           // T-027: write the (possibly null) values explicitly so a recalc
           // that newly discovers missing master data (e.g. COGS removed)
@@ -1319,6 +1406,7 @@ export class PlanService {
         const updated = await this.planRepo.findPlanSku(
           planFu.id,
           planSku.skuId,
+          tenantId,
         );
         if (updated) {
           fuTotalPlannedVolume += Number(updated.plannedVolume) || 0;
@@ -1342,7 +1430,9 @@ export class PlanService {
         };
       }
 
-      await this.planRepo.updatePlanFu(planFu.id, {
+      // T-034: deliberate CAS bypass — derived FU-level aggregate, not a
+      // user edit (same rationale as updatePlanSkuUnversioned above).
+      await this.planRepo.updatePlanFuUnversioned(planFu.id, tenantId, {
         totalPlannedVolume: fuTotalPlannedVolume,
         totalSpend: fuTotalPlannedSpend,
         totalGp: fuTotalGp,
@@ -1387,7 +1477,11 @@ export class PlanService {
     const overallRoi = planKpiResults['GP_ROI_PCT']?.value ?? null;
     const planRagStatus = planKpiResults['GP_ROI_PCT']?.ragStatus ?? null;
 
-    await this.planRepo.update(planId, tenantId, {
+    // T-034: deliberate CAS bypass — derived plan-level aggregate, not a
+    // user edit (same rationale as updatePlanSkuUnversioned above); also
+    // must not bump plans.version (that would falsely invalidate an
+    // in-flight grid edit's CAS token on an unrelated recalc).
+    await this.planRepo.updateUnversioned(planId, tenantId, {
       totalPlannedVolume: planTotalPlannedVolume,
       totalSpend: planTotalSpend,
       totalGp: planTotalGp,

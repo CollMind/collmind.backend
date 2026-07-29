@@ -116,7 +116,7 @@ describe('Reversal (E2E)', () => {
   });
 
   describe('BRD invaryantı: APPROVED agreement net rezervasyon > 0', () => {
-    it('bu spec\'in kendi APPROVED agreement\'ı bütçeden gerçekten düşüyor (diriltme hack\'i regresyon guard\'ı)', async () => {
+    it("bu spec'in kendi APPROVED agreement'ı bütçeden gerçekten düşüyor (diriltme hack'i regresyon guard'ı)", async () => {
       // T-037: eski "diriltme" hack'i APPROVED durumunu SQL ile geri
       // yazıyor ama rezervasyonu geri kurmuyordu (net rezervasyon = 0,
       // BRD "Approved bütçeden düşer" ihlali). Bu test doğrudan bu sınıf

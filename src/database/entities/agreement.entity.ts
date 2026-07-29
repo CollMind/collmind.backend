@@ -246,6 +246,16 @@ export class Agreement extends BaseEntity {
   @Column({ name: 'kpi_results', type: 'jsonb', nullable: true })
   kpiResults?: Record<string, any>;
 
+  // T-034: manual optimistic-locking version (NOT @VersionColumn — every
+  // mutation here goes through repo.update()/queryRunner.manager.update(),
+  // which @VersionColumn never checks/bumps; see
+  // docs/analysis/0005-optimistic-locking-design.md K1). Bumped only by the
+  // CAS-guarded DRAFT-edit write (AgreementRepository#updateVersioned);
+  // derived (kpiResults recalc) and state-transition writes go through
+  // #updateUnversioned/#updateStatus and leave this untouched.
+  @Column({ type: 'integer', default: 1 })
+  version!: number;
+
   // Relations
   @ManyToOne(() => Cpl)
   @JoinColumn({ name: 'cpl_id' })

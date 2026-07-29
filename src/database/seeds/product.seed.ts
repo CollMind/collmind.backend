@@ -258,7 +258,9 @@ export async function seedProducts(
   for (const product of DATA.products) {
     const fu = fuByName.get(product.fu);
     if (!fu) {
-      throw new Error(`[PRODUCT SEED] FU bulunamadı: ${product.fu} (SKU ${product.code})`);
+      throw new Error(
+        `[PRODUCT SEED] FU bulunamadı: ${product.fu} (SKU ${product.code})`,
+      );
     }
     // SKU.guId ZORUNLU: FU'nun bağlı olduğu GU (Sheet2-otoriter zincir) kullanılır.
     const guId = fu.guId;
@@ -270,7 +272,9 @@ export async function seedProducts(
       source: 'Wella Product.xlsx',
     };
 
-    let sku = await skuRepo.findOne({ where: { code: product.code, tenantId } });
+    let sku = await skuRepo.findOne({
+      where: { code: product.code, tenantId },
+    });
     if (!sku) {
       try {
         sku = skuRepo.create({
@@ -289,7 +293,9 @@ export async function seedProducts(
         sku = await skuRepo.save(sku);
       } catch (error) {
         if (isDuplicateError(error)) {
-          sku = await skuRepo.findOne({ where: { code: product.code, tenantId } });
+          sku = await skuRepo.findOne({
+            where: { code: product.code, tenantId },
+          });
           if (!sku) throw error;
         } else {
           throw error;

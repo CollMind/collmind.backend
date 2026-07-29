@@ -258,7 +258,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const res = await request(app.getHttpServer())
         .post(`/plans/${planId}/fus`)
         .set(planner.authHeader())
-        .send({ fuId: FU_TUP_BOYA });
+        .send({ fuId: FU_TUP_BOYA, planVersion: 1 });
 
       record({
         step: 'A2',
@@ -292,7 +292,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const res = await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/skus/${planSkuId}/volume`)
         .set(planner.authHeader())
-        .send({ baseVolume: 800, plannedVolume: 1000 });
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 });
 
       record({
         step: 'A3',
@@ -315,7 +315,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const res = await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
         .set(planner.authHeader())
-        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 } });
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 }, version: 1 });
 
       record({
         step: 'A4',
@@ -434,7 +434,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const fuRes = await request(app.getHttpServer())
         .post(`/plans/${cogsFixturePlanId}/fus`)
         .set(planner.authHeader())
-        .send({ fuId: FU_WELLA_HC_500ML })
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
         .expect(201);
       const cogsFixturePlanFuId = fuRes.body.id;
 
@@ -454,13 +454,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           `/plans/${cogsFixturePlanId}/fus/${FU_WELLA_HC_500ML}/skus/${cogsFixtureSkuId}/volume`,
         )
         .set(planner.authHeader())
-        .send({ baseVolume: 800, plannedVolume: 1000 })
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
         .expect(200);
 
       await request(app.getHttpServer())
         .patch(`/plans/${cogsFixturePlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
         .set(planner.authHeader())
-        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 } })
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 }, version: 1 })
         .expect(200);
 
       const recalcRes = await request(app.getHttpServer())
@@ -494,7 +494,8 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // Temizlik: bu yardımcı plan DRAFT durumunda, silinebilir.
       await request(app.getHttpServer())
         .delete(`/plans/${cogsFixturePlanId}`)
-        .set(planner.authHeader());
+        .set(planner.authHeader())
+        .send({ version: recalcRes.body.version });
     });
 
     it('A6. PLANNER → GET /plans/:id/budget-check', async () => {
@@ -858,7 +859,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       await request(app.getHttpServer())
         .post(`/plans/${t029PlanId}/fus`)
         .set(planner.authHeader())
-        .send({ fuId: FU_WELLA_HC_500ML })
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
         .expect(201);
 
       const planRes = await request(app.getHttpServer())
@@ -873,13 +874,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           `/plans/${t029PlanId}/fus/${FU_WELLA_HC_500ML}/skus/${skuId}/volume`,
         )
         .set(planner.authHeader())
-        .send({ baseVolume: 800, plannedVolume: 1000 })
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
         .expect(200);
 
       await request(app.getHttpServer())
         .patch(`/plans/${t029PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
         .set(planner.authHeader())
-        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 } })
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 }, version: 1 })
         .expect(200);
 
       const recalcRes = await request(app.getHttpServer())
@@ -1314,7 +1315,8 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         const admin = await loginAs(app, 'ADMIN');
         await request(app.getHttpServer())
           .delete(`/plans/${res.body.id}`)
-          .set(admin.authHeader());
+          .set(admin.authHeader())
+          .send({ version: res.body.version });
       }
     });
 
@@ -1390,7 +1392,8 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           if (res.status === 200 && res.body?.status === 'DRAFT') {
             await request(app.getHttpServer())
               .delete(`/plans/${id}`)
-              .set(admin.authHeader());
+              .set(admin.authHeader())
+              .send({ version: res.body.version });
           }
         } catch {
           // best-effort cleanup
@@ -1430,7 +1433,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       await request(app.getHttpServer())
         .post(`/plans/${id}/fus`)
         .set(actor.authHeader())
-        .send({ fuId: FU_WELLA_HC_500ML })
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
         .expect(201);
 
       const planRes = await request(app.getHttpServer())
@@ -1443,13 +1446,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       await request(app.getHttpServer())
         .patch(`/plans/${id}/fus/${FU_WELLA_HC_500ML}/skus/${skuId}/volume`)
         .set(actor.authHeader())
-        .send({ baseVolume: 800, plannedVolume: 1000 })
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
         .expect(200);
 
       await request(app.getHttpServer())
         .patch(`/plans/${id}/fus/${FU_WELLA_HC_500ML}/tactics`)
         .set(actor.authHeader())
-        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 } })
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 }, version: 1 })
         .expect(200);
 
       await request(app.getHttpServer())
@@ -2058,7 +2061,8 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           if (res.status === 200 && res.body?.status === 'DRAFT') {
             await request(app.getHttpServer())
               .delete(`/agreements/${id}`)
-              .set(admin.authHeader());
+              .set(admin.authHeader())
+              .send({ version: res.body.version });
           }
         } catch {
           // best-effort cleanup
@@ -2110,7 +2114,8 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           if (res.status === 200 && res.body?.status === 'DRAFT') {
             await request(app.getHttpServer())
               .delete(`/plans/${id}`)
-              .set(admin.authHeader());
+              .set(admin.authHeader())
+              .send({ version: res.body.version });
           }
         } catch {
           // best-effort cleanup

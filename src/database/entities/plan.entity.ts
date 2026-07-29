@@ -179,6 +179,16 @@ export class Plan extends BaseEntity {
   @Column({ name: 'rag_status', type: 'varchar', length: 10, nullable: true })
   ragStatus?: string | null; // 'RED' | 'AMBER' | 'GREEN' | null
 
+  // T-034: manual optimistic-locking version (NOT @VersionColumn — every
+  // mutation here goes through repo.update()/queryRunner.manager.update(),
+  // which @VersionColumn never checks/bumps; see
+  // docs/analysis/0005-optimistic-locking-design.md K1). Bumped only by
+  // CAS-guarded user-input writes (PlanRepository#updateVersioned); derived/
+  // recalc/compensation writes go through #updateUnversioned and leave this
+  // untouched.
+  @Column({ type: 'integer', default: 1 })
+  version!: number;
+
   // Relations
   @ManyToOne(() => Cpl)
   @JoinColumn({ name: 'cpl_id' })
@@ -287,6 +297,12 @@ export class PlanFu extends BaseEntity {
       calculatedAt?: string;
     }
   >;
+
+  // T-034: optimistic-locking version (row-level; bumped only by CAS-guarded
+  // grid-cell writes — updateFuTactic. Recalc/structural writes are
+  // unversioned, see plan.entity.ts Plan#version comment).
+  @Column({ type: 'integer', default: 1 })
+  version!: number;
 
   // Relations
   @ManyToOne(() => Plan, (plan) => plan.planFus, { onDelete: 'CASCADE' })
@@ -456,6 +472,12 @@ export class PlanSku extends BaseEntity {
     default: 0,
   })
   promoOffInvoiceSpend!: number;
+
+  // T-034: optimistic-locking version (row-level; bumped only by CAS-guarded
+  // grid-cell writes — updateSkuVolume. Recalc writes are unversioned, see
+  // plan.entity.ts Plan#version comment).
+  @Column({ type: 'integer', default: 1 })
+  version!: number;
 
   // Relations
   @ManyToOne(() => PlanFu, (planFu) => planFu.planSkus, { onDelete: 'CASCADE' })

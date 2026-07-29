@@ -29,6 +29,7 @@ import { CategoryService } from '../../../master-data/category/category.service'
 import { FuService } from '../../../master-data/forecasting-unit/fu.service';
 import { UserRole } from '../../../../database/entities/user.entity';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
+import { missingVersionConflict } from '../../../shared/persistence/versioned-update.helper';
 
 /**
  * T-028c: caller identity for scope-aware create/read (mirrors
@@ -259,7 +260,9 @@ export class AgreementService {
         const kpiResults = await this.calculateKpis(agreement!, tenantId);
         if (kpiResults) {
           agreement!.kpiResults = kpiResults;
-          await this.agreementRepo.update(agreement!.id, tenantId, {
+          // T-034: deliberate CAS bypass — kpiResults is a derived output
+          // computed right after create(), not a user edit.
+          await this.agreementRepo.updateUnversioned(agreement!.id, tenantId, {
             kpiResults,
           });
         }
@@ -420,6 +423,13 @@ export class AgreementService {
       throw new BadRequestException('Only DRAFT agreements can be edited');
     }
 
+    // T-034: optimistic locking, strict mode — version is required; a
+    // request that omits it is rejected with 409 MISSING_VERSION (not a
+    // ValidationPipe 400 — see UpdateAgreementDto#version).
+    if (dto.version === undefined || dto.version === null) {
+      throw missingVersionConflict({ entity: 'AGREEMENT', entityId: id });
+    }
+
     // If dates are being updated, validate STA/LTA rules
     if (dto.startDate || dto.endDate) {
       const startDate = new Date(dto.startDate || agreement.startDate);
@@ -439,10 +449,13 @@ export class AgreementService {
     }
 
     // Update period month if start date changed
-    // Exclude date fields from spread to convert them separately
+    // Exclude date fields from spread to convert them separately.
+    // T-034: also strip `version` (CAS metadata, not an Agreement column).
     const {
       startDate: dtoStartDate,
       endDate: dtoEndDate,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      version: _version,
       ...dtoWithoutDates
     } = dto;
     const updateData: Partial<Agreement> = {
@@ -473,9 +486,10 @@ export class AgreementService {
       kpiAffectingFields.includes(key),
     );
 
-    const updatedAgreement = await this.agreementRepo.update(
+    const updatedAgreement = await this.agreementRepo.updateVersioned(
       id,
       tenantId,
+      dto.version,
       updateData,
     );
 
@@ -488,8 +502,14 @@ export class AgreementService {
     // side effect to compensate, so a logging failure here must not fail
     // the edit that has already been persisted — same trade-off already
     // accepted for the "KPI recalculation failed" catch further down.
+    // T-034: `version` is optimistic-locking metadata, not a business field
+    // — exclude it from the audit before/after diff (it is not a "changed
+    // field" in the BRD sense, and diffing it would misleadingly log every
+    // edit as also having "changed" version).
     const changedKeys = Object.keys(dto).filter(
-      (key) => (dto as Record<string, unknown>)[key] !== undefined,
+      (key) =>
+        key !== 'version' &&
+        (dto as Record<string, unknown>)[key] !== undefined,
     );
     if (changedKeys.length > 0) {
       const beforeValues: Record<string, unknown> = {};
@@ -527,7 +547,12 @@ export class AgreementService {
         const fullAgreement = await this.findById(id, tenantId);
         const kpiResults = await this.calculateKpis(fullAgreement, tenantId);
         if (kpiResults) {
-          await this.agreementRepo.update(id, tenantId, { kpiResults });
+          // T-034: deliberate CAS bypass — derived KPI output, not a user
+          // edit; would fail CAS every time against the version the
+          // #updateVersioned call above just bumped.
+          await this.agreementRepo.updateUnversioned(id, tenantId, {
+            kpiResults,
+          });
           // Return the agreement with updated KPIs
           return { ...fullAgreement, kpiResults } as Agreement;
         }
@@ -991,6 +1016,7 @@ export class AgreementService {
     id: string,
     tenantId: string,
     userId: string,
+    version?: number,
     actor?: AgreementActor,
   ): Promise<void> {
     const agreement = await this.findById(id, tenantId, actor);
@@ -1000,7 +1026,14 @@ export class AgreementService {
       throw new BadRequestException('Only DRAFT agreements can be deleted');
     }
 
-    await this.agreementRepo.softDelete(id, tenantId);
+    // T-034 (code-review follow-up): delete was found entirely unguarded —
+    // same fix as PlanService#delete. Strict-mode missing version -> 409
+    // MISSING_VERSION.
+    if (version === undefined || version === null) {
+      throw missingVersionConflict({ entity: 'AGREEMENT', entityId: id });
+    }
+
+    await this.agreementRepo.softDeleteVersioned(id, tenantId, version);
   }
 
   /**

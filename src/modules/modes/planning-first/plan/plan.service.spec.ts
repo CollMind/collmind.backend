@@ -69,17 +69,20 @@ describe('PlanService', () => {
             create: jest.fn(),
             findById: jest.fn(),
             findAll: jest.fn(),
-            update: jest.fn(),
+            updateUnversioned: jest.fn(),
+            updateVersioned: jest.fn(),
             updateStatus: jest.fn(),
             softDelete: jest.fn(),
             generatePlanCode: jest.fn(),
             addFu: jest.fn(),
             findPlanFu: jest.fn(),
-            updatePlanFu: jest.fn(),
+            updatePlanFuUnversioned: jest.fn(),
+            updatePlanFuVersioned: jest.fn(),
             removeFu: jest.fn(),
             addSku: jest.fn(),
             findPlanSku: jest.fn(),
-            updatePlanSku: jest.fn(),
+            updatePlanSkuUnversioned: jest.fn(),
+            updatePlanSkuVersioned: jest.fn(),
           },
         },
         {
@@ -561,7 +564,7 @@ describe('PlanService', () => {
         ...rejectedPlan,
         status: PlanStatus.DRAFT,
       } as Plan);
-      planRepo.update.mockResolvedValueOnce({
+      planRepo.updateUnversioned.mockResolvedValueOnce({
         ...rejectedPlan,
         status: PlanStatus.REJECTED,
       } as Plan);
@@ -575,10 +578,12 @@ describe('PlanService', () => {
       ).rejects.toThrow('Failed to record approval history');
 
       // Compensation reverts status back to REJECTED with the original
-      // rejection fields restored (not via updateStatus — a direct #update
-      // call, since #updateStatus's `status` param is DRAFT-transition-
-      // specific elsewhere in this file).
-      expect(planRepo.update).toHaveBeenCalledWith(
+      // rejection fields restored (not via updateStatus — a direct
+      // #updateUnversioned call (T-034: deliberate CAS bypass — a
+      // compensation write reverting a state transition), since
+      // #updateStatus's `status` param is DRAFT-transition-specific
+      // elsewhere in this file).
+      expect(planRepo.updateUnversioned).toHaveBeenCalledWith(
         mockPlanId,
         mockTenantId,
         expect.objectContaining({
@@ -723,9 +728,9 @@ describe('PlanService', () => {
         plannedVolume: 4200,
         plannedGp: 8330.4,
       } as any);
-      planRepo.updatePlanSku.mockResolvedValue(undefined as any);
-      planRepo.updatePlanFu.mockResolvedValue(undefined as any);
-      planRepo.update.mockResolvedValue({} as any);
+      planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updateUnversioned.mockResolvedValue({} as any);
 
       await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
 
@@ -822,9 +827,9 @@ describe('PlanService', () => {
         plannedVolume: 1000,
         plannedGp: null,
       } as any);
-      planRepo.updatePlanSku.mockResolvedValue(undefined as any);
-      planRepo.updatePlanFu.mockResolvedValue(undefined as any);
-      planRepo.update.mockResolvedValue({} as any);
+      planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updateUnversioned.mockResolvedValue({} as any);
 
       await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
 
@@ -839,7 +844,7 @@ describe('PlanService', () => {
       // Persisted SKU result must reflect null GP/ROI/RAG — never a
       // fabricated 100%/GREEN — while PLANNED_TO (independent of COGS)
       // remains a real number.
-      const updateCall = planRepo.updatePlanSku.mock.calls[0][1];
+      const updateCall = planRepo.updatePlanSkuUnversioned.mock.calls[0][2];
       expect(updateCall.plannedGp).toBeNull();
       expect(updateCall.gpRoi).toBeNull();
       expect(updateCall.ragStatus).toBeNull();
@@ -886,9 +891,9 @@ describe('PlanService', () => {
         plannedVolume: 1000,
         plannedGp: null,
       } as any);
-      planRepo.updatePlanSku.mockResolvedValue(undefined as any);
-      planRepo.updatePlanFu.mockResolvedValue(undefined as any);
-      planRepo.update.mockResolvedValue({} as any);
+      planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updateUnversioned.mockResolvedValue({} as any);
 
       await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
 
@@ -948,13 +953,13 @@ describe('PlanService', () => {
         plannedVolume: 4200,
         plannedGp: null,
       } as any);
-      planRepo.updatePlanSku.mockResolvedValue(undefined as any);
-      planRepo.updatePlanFu.mockResolvedValue(undefined as any);
-      planRepo.update.mockResolvedValue({} as any);
+      planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updateUnversioned.mockResolvedValue({} as any);
 
       await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
 
-      const updateCall = planRepo.updatePlanSku.mock.calls[0][1];
+      const updateCall = planRepo.updatePlanSkuUnversioned.mock.calls[0][2];
       // Set D: SPEND=0 → ROI null (not a fallback number).
       // T-027: null is now persisted EXPLICITLY (not `undefined`, which
       // TypeORM's `.update()` would skip and leave a stale prior value in

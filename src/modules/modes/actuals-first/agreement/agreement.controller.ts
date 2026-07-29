@@ -18,7 +18,11 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { AgreementService } from './agreement.service';
-import { CreateAgreementDto, UpdateAgreementDto } from './dto';
+import {
+  CreateAgreementDto,
+  UpdateAgreementDto,
+  DeleteAgreementDto,
+} from './dto';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
 import { Roles } from '../../../../common/decorators/roles.decorator';
@@ -269,12 +273,17 @@ export class AgreementController {
     status: 400,
     description: 'Only DRAFT agreements can be deleted',
   })
+  @ApiResponse({
+    status: 409,
+    description: 'STALE_VERSION / MISSING_VERSION (optimistic locking, T-034)',
+  })
   delete(
     @Param('id') id: string,
+    @Body() dto: DeleteAgreementDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.agreementService.delete(id, tenantId, user.id, {
+    return this.agreementService.delete(id, tenantId, user.id, dto.version, {
       userId: user.id,
       role: user.role,
     });

@@ -101,8 +101,8 @@ export async function loadE2EFixture(
   if (!approvedAgreement || approvedAgreement.length === 0) {
     throw new Error(
       'E2E fixture eksik: APPROVED agreement bulunamadı. `npm run seed` çalıştırın; ' +
-        'eğer seed çalıştıysa, bir spec paylaşılan STA-2026-0002 agreement\'ını ' +
-        'mutate ediyor olabilir — izole fixture\'a (createAndApproveAgreement) taşıyın.',
+        "eğer seed çalıştıysa, bir spec paylaşılan STA-2026-0002 agreement'ını " +
+        "mutate ediyor olabilir — izole fixture'a (createAndApproveAgreement) taşıyın.",
     );
   }
   const approvedAgreementId: string = approvedAgreement[0].id;

@@ -65,9 +65,7 @@ const KNOWN_MECHANICS: Array<{
   },
 ];
 
-export class BackfillMechanicClassification1784000000000
-  implements MigrationInterface
-{
+export class BackfillMechanicClassification1784000000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // ── 1. Her bilinen mechanic için NULL alanları güncelle ─────────────────
     for (const m of KNOWN_MECHANICS) {

@@ -294,7 +294,7 @@ describe('Settlement (E2E)', () => {
       expect(bodyStr).toContain('ALREADY_SETTLED');
     });
 
-    it('CATEGORY_MANAGER kendi APPROVED agreement\'ını close edebilir', async () => {
+    it("CATEGORY_MANAGER kendi APPROVED agreement'ını close edebilir", async () => {
       const { agreementId } = await newApprovedAgreement();
       const cm = await loginAs(app, 'CATEGORY_MANAGER');
 

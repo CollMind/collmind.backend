@@ -111,8 +111,7 @@ const MECHANICS: MechanicDef[] = [
     maxValue: 100,
     gridColumnOrder: 10,
     groupHeader: 'On-Invoice Discounts',
-    calculationFormula:
-      '(PLANNED_GSV - PLANNED_LTA_ON) * entered_value / 100',
+    calculationFormula: '(PLANNED_GSV - PLANNED_LTA_ON) * entered_value / 100',
   },
   {
     code: 'MEC-DISCOUNT',
@@ -131,8 +130,7 @@ const MECHANICS: MechanicDef[] = [
     maxValue: 100,
     gridColumnOrder: 11,
     groupHeader: 'On-Invoice Discounts',
-    calculationFormula:
-      '(PLANNED_GSV - PLANNED_LTA_ON) * entered_value / 100',
+    calculationFormula: '(PLANNED_GSV - PLANNED_LTA_ON) * entered_value / 100',
   },
   // ── OFF-INVOICE: PERCENT (OFF_INVOICE_DISCOUNT) ───────────────────────────
   {
