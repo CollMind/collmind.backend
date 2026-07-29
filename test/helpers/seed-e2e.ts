@@ -132,6 +132,24 @@ export async function loadE2EFixture(
  * E2E reversal testleri için agreement transaction'larını temizler.
  * `--runInBand` çalışımlarında test state birikimini önler.
  * Yalnızca test fixture transaction'larını siler (E2E-INV-* pattern).
+ *
+ * T-036 FIX (kök neden): önceki sorgu `ledger_entries.source_id`'nin
+ * `agreement_transactions.id`'ye eşit olduğunu varsayıyordu — YANLIŞ.
+ * `ledger-entry.entity.ts:32` ve `ledger.service.ts#createFromAgreementTransaction`
+ * gösteriyor ki `source_id` = **agreement_id** (transaction id DEĞİL); asıl
+ * transaction id `idempotency_key` içinde 4. segment olarak taşınır
+ * (`LEDGER|AGREEMENT|{agreementId}|{transactionId}`). Bu yüzden eski
+ * `source_id IN (SELECT id FROM agreement_transactions ...)` koşulu HİÇBİR
+ * ZAMAN eşleşmiyordu ve DEBIT ledger satırları asla silinmiyordu — kısmi
+ * tüketimli (reversal'sız) testlerde (örn. BR-E2E-02, role-journey C1-C5)
+ * `consumed_amount` kalıcı olarak şişiyordu (bkz. T-036 task raporu, canlı
+ * kanıt: temiz seed sonrası tek koşum → NKA-Q2 consumed=17000 kalıcı arttı).
+ *
+ * Doğru eşleştirme: idempotency_key'i TAM olarak yeniden inşa edip eşitlik
+ * ile bul (üretim koduyla aynı format, ledger.service.ts:69/165/178) — bu,
+ * orijinal DEBIT satırlarını kesin olarak bulur. REVERSAL CREDIT satırları
+ * ise `reverses_entry_id` FK'sı (ledger.service.ts#createReversalEntry) ile
+ * bulunur — string parse yerine güvenilir bir ilişki.
  */
 export async function cleanupTestTransactions(
   app: INestApplication,
@@ -139,19 +157,90 @@ export async function cleanupTestTransactions(
 ): Promise<void> {
   const dataSource = app.get<DataSource>(getDataSourceToken());
   await dataSource.query(
-    `DELETE FROM main.ledger_entries
-     WHERE agreement_id = $1
-     AND idempotency_key LIKE 'LEDGER|AGREEMENT|%'
-     AND source_id IN (
+    `WITH target_tx AS (
        SELECT id FROM main.agreement_transactions
        WHERE agreement_id = $1 AND invoice_no LIKE 'E2E-INV-%'
-     )`,
+     ),
+     orig_entries AS (
+       SELECT le.id FROM main.ledger_entries le
+       JOIN target_tx t
+         ON le.idempotency_key = 'LEDGER|AGREEMENT|' || $1::text || '|' || t.id::text
+       WHERE le.agreement_id = $1
+     )
+     DELETE FROM main.ledger_entries
+     WHERE id IN (SELECT id FROM orig_entries)
+        OR reverses_entry_id IN (SELECT id FROM orig_entries)`,
     [agreementId],
   );
   await dataSource.query(
     `DELETE FROM main.agreement_transactions
      WHERE agreement_id = $1 AND invoice_no LIKE 'E2E-INV-%'`,
     [agreementId],
+  );
+}
+
+/**
+ * E2E'nin ürettiği agreement'ları ve bunların bütçe/ledger/audit izlerini
+ * TAMAMEN temizler (agreement'ın kendisi dahil).
+ *
+ * NEDEN GEREKLİ (T-036): `cleanupTestPlans`'ın agreement karşılığı. Bazı
+ * e2e testleri (rol/senaryo kanıtı için) bir agreement'ı APPROVED'da
+ * bırakır ve hiçbir zaman close/cancel etmez (örn.
+ * role-journey.e2e-spec.ts C7-C9: reversal testi için ayrılan agreement —
+ * amacı yalnızca off-invoice transaction + reversal akışını kanıtlamak,
+ * agreement'ın kendi yaşam döngüsünü değil). Bu durumda RESERVE tx'i
+ * kalıcı olarak `v_budget_summary.reserved_amount`'ı düşürür — envelope
+ * her koşumda biraz daha tükenir (canlı kanıt: temiz seed sonrası tek
+ * koşum → NKA-Q2 reserved_amount +20000 kalıcı arttı, hiç RELEASE yok).
+ *
+ * Kompanzasyon RELEASE satırı YAZILMAZ (ledger append-only, gerçek bir
+ * bütçe hatasını sahte "iş" kaydıyla gizlememek için) — bunun yerine
+ * `cleanupTestPlans` deseniyle birebir aynı şekilde testin ürettiği
+ * SATIRLAR TAMAMEN SİLİNİR (agreement + tüm alt kayıtları). Yalnızca
+ * `namePrefix` ile başlayan (varsayılan 'E2E-') agreement isimlerini
+ * hedefler — seed verisi (`STA-2026-000x`) bu prefiksle eşleşmediğinden
+ * dokunulmaz.
+ */
+export async function cleanupTestAgreements(
+  app: INestApplication,
+  tenantId: string,
+  namePrefix: string = 'E2E-',
+): Promise<void> {
+  const dataSource = app.get<DataSource>(getDataSourceToken());
+
+  const agreements = await dataSource.query(
+    `SELECT id FROM main.agreements
+      WHERE tenant_id = $1 AND agreement_name LIKE $2`,
+    [tenantId, `${namePrefix}%`],
+  );
+  const agreementIds: string[] = agreements.map((a: { id: string }) => a.id);
+  if (agreementIds.length === 0) {
+    return;
+  }
+
+  // FK/bağımlılık sırası: ledger → budget_transactions → agreement_transactions
+  // (FK main.agreements'a) → admin_audit_logs → agreements.
+  await dataSource.query(
+    `DELETE FROM main.ledger_entries WHERE agreement_id = ANY($1::uuid[])`,
+    [agreementIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.budget_transactions
+      WHERE tenant_id = $1 AND source_type = 'AGREEMENT' AND source_id = ANY($2::uuid[])`,
+    [tenantId, agreementIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.agreement_transactions WHERE agreement_id = ANY($1::uuid[])`,
+    [agreementIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.admin_audit_logs
+      WHERE entity_type = 'AGREEMENT' AND entity_id = ANY($1::uuid[])`,
+    [agreementIds],
+  );
+  await dataSource.query(
+    `DELETE FROM main.agreements WHERE id = ANY($1::uuid[])`,
+    [agreementIds],
   );
 }
 

@@ -40,6 +40,20 @@ describe('Reversal (E2E)', () => {
   });
 
   afterAll(async () => {
+    // T-036: bu spec kendi transaction'larını (`REV-*` invoiceNo, E2E-INV-
+    // prefiksiyle createOffInvoiceTransaction üzerinden) paylaşılan seed
+    // agreement'ına (fixture.approvedAgreementId) yazıyor. Her DEBIT aynı
+    // testte reverse edildiğinden (CREDIT ile netleniyor) envelope'u kalıcı
+    // tüketmiyor, ama satırlar cleanupTestTransactions'ın T-036 fix'inden
+    // ÖNCE hiç silinmiyordu (kök neden: source_id/transactionId eşleşme
+    // hatası) — DB'de kalıcı satır birikimine yol açıyordu. Artık afterAll'da
+    // da temizleniyor (beforeAll'daki "önceki koşumdan kalanları temizle"
+    // çağrısına ek olarak, bu koşumun kendi satırlarını da bırakmasın).
+    try {
+      await cleanupTestTransactions(app, fixture.approvedAgreementId);
+    } catch (e) {
+      console.warn('Cleanup (reversal tx) başarısız:', e);
+    }
     await closeTestApp();
   });
 

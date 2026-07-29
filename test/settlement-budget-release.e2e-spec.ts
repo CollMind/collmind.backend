@@ -38,6 +38,7 @@ import {
   createAndSubmitAgreement,
   createOffInvoiceTransaction,
   cleanupTestTransactions,
+  cleanupTestAgreements,
   E2EFixture,
 } from './helpers/seed-e2e';
 import { BudgetReservationService } from '../src/modules/shared/budget/budget-reservation.service';
@@ -52,11 +53,38 @@ describe('Settlement — Budget Reservation Release (T-030, E2E)', () => {
   let TACTIC_PROMO: string;
   let MECHANIC_DISCOUNT: string;
 
+  // T-036: erken-yakalama invaryantı — bu suite'in tüm fixture'ları
+  // NKA-Q2'de (bkz. dosya başı yorumu). Her test kendi agreement'ını
+  // close/cancel/reject ile netliyor OLMASI GEREKİYOR; afterAll'daki
+  // cleanupTestAgreements + bu assertion, bir testin ortada kalan
+  // (netlenmemiş) bir agreement bırakması durumunda suite'i BURADA
+  // patlatır — sessizce sonraki koşuma/spec'e sızmasını önler.
+  async function getEnvelopeSummaryByCode(code: string) {
+    const rows = await dataSource.query(
+      `SELECT vs.reserved_amount, vs.consumed_amount
+       FROM main.v_budget_summary vs
+       JOIN main.budget_envelopes be ON be.id = vs.envelope_id
+       WHERE be.code = $1`,
+      [code],
+    );
+    if (!rows?.[0]) {
+      throw new Error(
+        `getEnvelopeSummaryByCode: envelope code=${code} bulunamadı`,
+      );
+    }
+    return {
+      reserved: Number(rows[0].reserved_amount),
+      consumed: Number(rows[0].consumed_amount),
+    };
+  }
+  let baselineNkaQ2: { reserved: number; consumed: number };
+
   beforeAll(async () => {
     app = await createTestApp();
     clearTokenCache();
     fixture = await loadE2EFixture(app);
     dataSource = app.get<DataSource>(getDataSourceToken());
+    baselineNkaQ2 = await getEnvelopeSummaryByCode('ENV-2026-NKA-Q2');
 
     [CHANNEL_NKA, FU_WELLA_HC_500ML, TACTIC_PROMO, MECHANIC_DISCOUNT] =
       await Promise.all([
@@ -73,6 +101,21 @@ describe('Settlement — Budget Reservation Release (T-030, E2E)', () => {
   });
 
   afterAll(async () => {
+    // Safety net: her test kendi agreement'ını close/cancel/reject ile
+    // netlemiş olmalı (reserved→0), ama bir test ortada başarısız olursa
+    // (veya gelecekte bir regresyon reserved'ı 0'lamazsa) bu fixture'ları
+    // tamamen sil — cleanupTestPlans deseniyle aynı (kompanzasyon satırı
+    // YOK, satırlar tamamen siliniyor).
+    try {
+      await cleanupTestAgreements(app, fixture.tenantId, 'E2E-BR');
+    } catch (e) {
+      console.warn('Cleanup (agreement) başarısız:', e);
+    }
+
+    const afterNkaQ2 = await getEnvelopeSummaryByCode('ENV-2026-NKA-Q2');
+    expect(afterNkaQ2.reserved).toBeCloseTo(baselineNkaQ2.reserved, 2);
+    expect(afterNkaQ2.consumed).toBeCloseTo(baselineNkaQ2.consumed, 2);
+
     await closeTestApp();
   });
 

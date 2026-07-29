@@ -32,6 +32,7 @@ import {
   cleanupTestTransactions,
   cleanupSalesActuals,
   cleanupTestPlans,
+  cleanupTestAgreements,
 } from './helpers/seed-e2e';
 
 // ── Seed sabitleri — beforeAll'da KODA göre çözülür (hardcoded UUID YASAK:
@@ -101,12 +102,36 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
   let agreementReversalId: string; // reversal için
   let reversalTransactionId: string;
 
+  // T-036: erken-yakalama invaryantı — bu suite'in agreement fixture'ları
+  // NKA-Q2 envelope'unu kullanıyor (bkz. C1/C7 startDate 2026-02-*).
+  // beforeAll'da snapshot alınır, afterAll'da (temizlik SONRASI) delta=0
+  // doğrulanır — sızıntı varsa "Insufficient budget" ile başka bir teste
+  // (veya başka bir spec dosyasına) sıçramadan BURADA net şekilde patlar.
+  async function getEnvelopeSummary(code: string) {
+    const rows = await dataSource.query(
+      `SELECT vs.reserved_amount, vs.consumed_amount
+       FROM main.v_budget_summary vs
+       JOIN main.budget_envelopes be ON be.id = vs.envelope_id
+       WHERE be.code = $1`,
+      [code],
+    );
+    if (!rows?.[0]) {
+      throw new Error(`getEnvelopeSummary: envelope code=${code} bulunamadı`);
+    }
+    return {
+      reserved: Number(rows[0].reserved_amount),
+      consumed: Number(rows[0].consumed_amount),
+    };
+  }
+  let baselineNkaQ2: { reserved: number; consumed: number };
+
   beforeAll(async () => {
     app = await createTestApp();
     clearTokenCache();
     fixture = await loadE2EFixture(app);
     dataSource = app.get<DataSource>(getDataSourceToken());
     await cleanupSalesActuals(app, fixture.tenantId);
+    baselineNkaQ2 = await getEnvelopeSummary('ENV-2026-NKA-Q2');
 
     // Master-data id'lerini KODA göre çöz (reseed-sonrası id değişimine dayanıklı)
     const t = fixture.tenantId;
@@ -161,6 +186,25 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     } catch (e) {
       console.warn('Cleanup (plan) başarısız:', e);
     }
+
+    // T-036: bu spec'in ürettiği TÜM agreement'ları (DRAFT/PENDING/APPROVED/
+    // CLOSED/CANCELLED/REJECTED — hepsi 'E2E-' önekli) ve bütçe/ledger/audit
+    // izlerini temizle. Özellikle C7-C9 (agreementReversalId) hiçbir zaman
+    // close/cancel edilmiyor — bu çağrı olmadan RESERVE'i kalıcı olarak
+    // NKA-Q2'yi tüketirdi (bkz. cleanupTestAgreements JSDoc'u).
+    try {
+      await cleanupTestAgreements(app, fixture.tenantId, 'E2E-');
+    } catch (e) {
+      console.warn('Cleanup (agreement) başarısız:', e);
+    }
+
+    // ── T-036 invaryantı: temizlik sonrası NKA-Q2 tam olarak koşum-öncesi
+    // değerine dönmeli. Dönmüyorsa bu suite (veya kardeş suite'ler) bir
+    // yerde bütçe rezervasyonu/ledger tüketimi bırakıyor demektir — sızıntı
+    // burada, "Insufficient budget" ile başka bir teste sıçramadan yakalanır.
+    const afterNkaQ2 = await getEnvelopeSummary('ENV-2026-NKA-Q2');
+    expect(afterNkaQ2.reserved).toBeCloseTo(baselineNkaQ2.reserved, 2);
+    expect(afterNkaQ2.consumed).toBeCloseTo(baselineNkaQ2.consumed, 2);
 
     // ── Sonuç tablosunu bas ──
     // eslint-disable-next-line no-console
