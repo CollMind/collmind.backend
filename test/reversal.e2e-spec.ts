@@ -10,51 +10,136 @@
  *   - Reversal sonrası ledger net tüketim azalır (GET /ledger/agreement/:id/consumed)
  *   - Audit log immutable (reversal sonrası admin-audit-log'da kayıt var)
  *
- * Fixture stratejisi:
- *   - loadE2EFixture ile seed'deki APPROVED agreement'ı bul
+ * Fixture stratejisi (T-037):
+ *   - Bu spec artık seed'deki paylaşılan APPROVED agreement'ını
+ *     (STA-2026-0002, `fixture.approvedAgreementId`) KULLANMAZ. Jest spec
+ *     dosyalarını varsayılan olarak paralel worker'larda çalıştırır;
+ *     `settlement.e2e-spec.ts` aynı agreement'ı close ediyordu ve bu spec
+ *     ona off-invoice transaction yazıp reverse ediyordu → race → flaky
+ *     400/409 (bkz. T-037 task raporu). Ayrıca bu paylaşımı telafi etmek
+ *     için `seed-e2e.ts`'de var olan "diriltme" hack'i (agreement'ı SQL ile
+ *     geri APPROVED yapıp bütçe rezervasyonunu geri kurmadan) BRD-ihlali
+ *     bir durum (APPROVED ama net rezervasyonu 0 olan agreement) bırakıyordu.
+ *   - Çözüm: `createAndApproveAgreement` ile kendi izole APPROVED
+ *     agreement'ını yarat (aynı desen: `settlement-budget-release.e2e-spec.ts`).
+ *     Suite sonunda agreement `cleanupTestAgreements` ile tamamen silinir
+ *     (rezervasyon dahil, satırlar bazında doğrulanır).
  *   - Her reversal testi için createOffInvoiceTransaction ile yeni transaction yarat
  *   - "tekrar reverse" testi: aynı transactionId ile ikinci kez dene
  */
 
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache } from './helpers/auth';
 import {
   loadE2EFixture,
+  resolveIdByCode,
+  createAndApproveAgreement,
   createOffInvoiceTransaction,
-  cleanupTestTransactions,
+  cleanupTestAgreements,
   E2EFixture,
 } from './helpers/seed-e2e';
 
 describe('Reversal (E2E)', () => {
   let app: INestApplication;
   let fixture: E2EFixture;
+  let dataSource: DataSource;
+  let agreementId: string;
 
   beforeAll(async () => {
     app = await createTestApp();
     clearTokenCache();
     fixture = await loadE2EFixture(app);
-    // Önceki koşumlardan kalan E2E test transaction'larını temizle (cap overflow önlemi)
-    await cleanupTestTransactions(app, fixture.approvedAgreementId);
+    dataSource = app.get<DataSource>(getDataSourceToken());
+
+    const [channelId, fuId, tacticId, mechanicId] = await Promise.all([
+      // T-037: NKA channel/NKA-Q2 envelope bilinçli olarak KAÇINILIYOR —
+      // settlement-budget-release.e2e-spec.ts ve role-journey.e2e-spec.ts
+      // aynı envelope'u (ENV-2026-NKA-Q2) delta-bazlı before/after
+      // invaryantlarla yoğun kullanıyor; bu spec paralel worker'da aynı
+      // envelope'a eşzamanlı yazınca o testlerin before/after okumaları
+      // arasına girip false-negative üretebiliyor (canlı kanıt: bu fix
+      // öncesi bir koşumda BR-E2E-02 bu şekilde flake etti). E_COMMERCE
+      // kanalı/ENV-2026-ECOM-Q1 hiçbir spec tarafından kullanılmıyor —
+      // tam izolasyon.
+      resolveIdByCode(app, fixture.tenantId, 'channels', 'E_COMMERCE'),
+      resolveIdByCode(
+        app,
+        fixture.tenantId,
+        'forecasting_units',
+        'FU-WELLA-HC-500ML',
+      ),
+      resolveIdByCode(app, fixture.tenantId, 'tactics', 'TAC-PROMO'),
+      resolveIdByCode(app, fixture.tenantId, 'mechanics', 'MEC-DISCOUNT'),
+    ]);
+
+    const created = await createAndApproveAgreement(app, {
+      tenantId: fixture.tenantId,
+      cplId: fixture.cplId,
+      channelId,
+      fuId,
+      tacticId,
+      mechanicId,
+      capTotalAmount: 50000,
+      namePrefix: 'E2E-REV',
+    });
+    agreementId = created.agreementId;
   });
 
   afterAll(async () => {
-    // T-036: bu spec kendi transaction'larını (`REV-*` invoiceNo, E2E-INV-
-    // prefiksiyle createOffInvoiceTransaction üzerinden) paylaşılan seed
-    // agreement'ına (fixture.approvedAgreementId) yazıyor. Her DEBIT aynı
-    // testte reverse edildiğinden (CREDIT ile netleniyor) envelope'u kalıcı
-    // tüketmiyor, ama satırlar cleanupTestTransactions'ın T-036 fix'inden
-    // ÖNCE hiç silinmiyordu (kök neden: source_id/transactionId eşleşme
-    // hatası) — DB'de kalıcı satır birikimine yol açıyordu. Artık afterAll'da
-    // da temizleniyor (beforeAll'daki "önceki koşumdan kalanları temizle"
-    // çağrısına ek olarak, bu koşumun kendi satırlarını da bırakmasın).
+    // T-037: agreement bu spec'e izole olduğundan (paylaşılan seed agreement
+    // DEĞİL), tam silme ile temizlik yeterli — rezervasyon da satırlarla
+    // birlikte kalkar. NOT: burada envelope'un mutlak reserved/consumed
+    // değerini suite-öncesi baseline'a karşı KARŞILAŞTIRMIYORUZ — bu
+    // envelope (ENV-2026-NKA-Q2) başka spec dosyalarında da (paralel
+    // worker'larda) eşzamanlı kullanılıyor, mutlak-değer karşılaştırması
+    // gerçek paralellikte kaçınılmaz false-negative üretir. Bunun yerine
+    // yalnızca bu agreement'a ait satırların (budget_transactions) hiç
+    // kalmadığını doğrulayan izole bir invaryant kullanılıyor (aşağıda).
     try {
-      await cleanupTestTransactions(app, fixture.approvedAgreementId);
+      await cleanupTestAgreements(app, fixture.tenantId, 'E2E-REV');
     } catch (e) {
-      console.warn('Cleanup (reversal tx) başarısız:', e);
+      console.warn('Cleanup (reversal agreement) başarısız:', e);
     }
+
+    const leftoverTx = await dataSource.query(
+      `SELECT id FROM main.budget_transactions
+       WHERE tenant_id = $1 AND source_type = 'AGREEMENT' AND source_id = $2`,
+      [fixture.tenantId, agreementId],
+    );
+    expect(leftoverTx).toHaveLength(0);
+
     await closeTestApp();
+  });
+
+  describe('BRD invaryantı: APPROVED agreement net rezervasyon > 0', () => {
+    it('bu spec\'in kendi APPROVED agreement\'ı bütçeden gerçekten düşüyor (diriltme hack\'i regresyon guard\'ı)', async () => {
+      // T-037: eski "diriltme" hack'i APPROVED durumunu SQL ile geri
+      // yazıyor ama rezervasyonu geri kurmuyordu (net rezervasyon = 0,
+      // BRD "Approved bütçeden düşer" ihlali). Bu test doğrudan bu sınıf
+      // hatayı yakalar — envelope-genelinde DEĞİL, yalnızca bu agreement'a
+      // ait RESERVE/RELEASE satırları üzerinden (diğer paralel spec'lerin
+      // aynı envelope'daki eşzamanlı aktivitesinden etkilenmez):
+      // agreement hâlâ APPROVED iken net rezervasyonu capTotalAmount'a
+      // (50000) eşit olmalı, 0 DEĞİL.
+      const rows = await dataSource.query(
+        `SELECT COALESCE(SUM(
+           CASE WHEN tx_type = 'RESERVE' THEN amount
+                WHEN tx_type = 'RELEASE' THEN -amount
+                ELSE 0 END
+         ), 0) AS net_reserved
+         FROM main.budget_transactions
+         WHERE tenant_id = $1 AND source_type = 'AGREEMENT' AND source_id = $2
+           AND tx_status = 'POSTED'`,
+        [fixture.tenantId, agreementId],
+      );
+      const netReserved = Number(rows[0].net_reserved);
+      expect(netReserved).toBeCloseTo(50000, 2);
+      expect(netReserved).toBeGreaterThan(0);
+    });
   });
 
   describe('RBAC: Yalnızca ADMIN/CATEGORY_MANAGER erişebilir', () => {
@@ -106,7 +191,7 @@ describe('Reversal (E2E)', () => {
       // Bu test için özgün bir transaction oluştur
       const transactionId = await createOffInvoiceTransaction(
         app,
-        fixture.approvedAgreementId,
+        agreementId,
         `REV-SUCCESS-${Date.now()}`,
       );
 
@@ -132,7 +217,7 @@ describe('Reversal (E2E)', () => {
 
       const transactionId = await createOffInvoiceTransaction(
         app,
-        fixture.approvedAgreementId,
+        agreementId,
         `REV-CM-${Date.now()}`,
       );
 
@@ -153,7 +238,7 @@ describe('Reversal (E2E)', () => {
       // Reversal için yeni bir transaction yarat
       const transactionId = await createOffInvoiceTransaction(
         app,
-        fixture.approvedAgreementId,
+        agreementId,
         `REV-DOUBLE-${Date.now()}`,
       );
 
@@ -181,7 +266,6 @@ describe('Reversal (E2E)', () => {
   describe('Ledger net tüketim kontrolü', () => {
     it('Reversal sonrası consumed amount azalır', async () => {
       const admin = await loginAs(app, 'ADMIN');
-      const agreementId = fixture.approvedAgreementId;
 
       // Transaction oluştur
       const transactionId = await createOffInvoiceTransaction(

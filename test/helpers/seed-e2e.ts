@@ -72,34 +72,38 @@ export async function loadE2EFixture(
   const cplId: string = cpl[0].id;
 
   // APPROVED agreement (seed'den: STA-2026-0002)
-  // Seed sonrası test çalışması APPROVED'ı CLOSED yapabilir.
-  // Bu durumda reset: agreement status'u geri APPROVED yap (e2e idempotency için).
-  let approvedAgreement = await dataSource.query(
+  //
+  // T-037 FIX (kök neden): önceden burada, seed'in APPROVED agreement'ı
+  // (STA-2026-0002) başka bir spec tarafından CLOSED edilmişse, durumu
+  // doğrudan SQL ile `SET status = 'APPROVED', closed_at = NULL` yaparak
+  // "diriltiyorduk". Bu, agreement'ı APPROVED'a geri döndürüyordu ama
+  // close'un release ettiği bütçe rezervasyonunu GERİ KURMUYORDU — sonuç:
+  // durumu APPROVED olan ama net rezervasyonu 0 olan bir agreement (BRD
+  // "Approved bütçeden düşer" ihlali, yalnızca test fixture'ının ürettiği
+  // bir durum, bkz. T-037 task raporu).
+  //
+  // Doğru çözüm: bu paylaşılan seed agreement'ını hiçbir spec artık MUTATE
+  // ETMİYOR (kapatmıyor/tüketmiyor) — `settlement.e2e-spec.ts` ve
+  // `reversal.e2e-spec.ts` artık `createAndApproveAgreement` ile kendi
+  // izole agreement'larını yaratıyor (bkz. `settlement-budget-release.e2e-spec.ts`
+  // deseni). Bu sayede STA-2026-0002 tüm koşumlar boyunca APPROVED ve tam
+  // rezerve kalır; "diriltme" hack'ine hiç gerek kalmaz. Eğer bu hata
+  // fırlatılırsa (APPROVED agreement bulunamadı), kök neden ya seed hiç
+  // çalışmamıştır ya da bir spec bu paylaşılan agreement'ı hâlâ mutate
+  // ediyordur — SQL ile durumu geri yazmak yerine ilgili spec'i izole
+  // fixture'a taşı.
+  const approvedAgreement = await dataSource.query(
     `SELECT id, agreement_code FROM main.agreements
      WHERE tenant_id = $1 AND status = 'APPROVED'
      ORDER BY created_at ASC LIMIT 1`,
     [tenantId],
   );
   if (!approvedAgreement || approvedAgreement.length === 0) {
-    // CLOSED olan STA-2026-0002'yi APPROVED'a geri döndür (fixture reset)
-    await dataSource.query(
-      `UPDATE main.agreements
-       SET status = 'APPROVED', closed_at = NULL, closed_by = NULL
-       WHERE tenant_id = $1 AND agreement_code = 'STA-2026-0002'`,
-      [tenantId],
+    throw new Error(
+      'E2E fixture eksik: APPROVED agreement bulunamadı. `npm run seed` çalıştırın; ' +
+        'eğer seed çalıştıysa, bir spec paylaşılan STA-2026-0002 agreement\'ını ' +
+        'mutate ediyor olabilir — izole fixture\'a (createAndApproveAgreement) taşıyın.',
     );
-    approvedAgreement = await dataSource.query(
-      `SELECT id, agreement_code FROM main.agreements
-       WHERE tenant_id = $1 AND status = 'APPROVED'
-       ORDER BY created_at ASC LIMIT 1`,
-      [tenantId],
-    );
-    if (!approvedAgreement || approvedAgreement.length === 0) {
-      throw new Error(
-        'E2E fixture eksik: APPROVED agreement bulunamadı ve reset başarısız. ' +
-          "`npm run seed` çalıştırın veya STA-2026-0002 agreement'ını kontrol edin.",
-      );
-    }
   }
   const approvedAgreementId: string = approvedAgreement[0].id;
   const approvedAgreementCode: string = approvedAgreement[0].agreement_code;

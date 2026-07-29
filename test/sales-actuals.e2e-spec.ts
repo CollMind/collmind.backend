@@ -25,6 +25,7 @@ import {
   E2EFixture,
   cleanupSalesActuals,
 } from './helpers/seed-e2e';
+import { BudgetRepository } from '../src/modules/shared/budget/budget.repository';
 
 function csv(lines: string[]): Buffer {
   return Buffer.from(lines.join('\n'), 'utf-8');
@@ -242,14 +243,43 @@ describe('Sales Actuals (E2E)', () => {
   // ── SA-E2E-06: LEDGER SINIRI — en kritik test ──────────────────────────
 
   describe('SA-E2E-06: actuals ledger/budget’a yazmaz', () => {
-    it('upload öncesi/sonrası v_budget_summary birebir aynı', async () => {
+    /**
+     * T-037/T-038 FIX (kök neden — coordinator review):
+     *
+     * Önceki implementasyon `main.v_budget_summary`'nin TÜM tenant'taki
+     * TÜM zarflarının snapshot'ını upload öncesi/sonrası birebir eşitlik
+     * ile karşılaştırıyordu. Bu, jest'in spec dosyalarını varsayılan olarak
+     * paralel worker'larda çalıştırması nedeniyle YAPISAL OLARAK kırılgandı:
+     * bu test çalışırken başka HERHANGİ bir spec (role-journey,
+     * settlement-budget-release, reversal, settlement, ...) aynı tenant'ta
+     * MEŞRU bir RESERVE/RELEASE/COMMIT yazarsa (ki bu doğru/beklenen ürün
+     * davranışıdır), before/after snapshot'ları farklılaşır ve test
+     * false-negative ile flake eder — sorun ürün kodunda değil, testin
+     * "sahip olmadığı" (bu isteğin yazmadığı) tenant-geneli duruma
+     * bakmasındaydı (canlı kanıt: bağımsız 7 paralel koşumda 3/3 tutarlı
+     * SA-E2E-06 hatası, coordinator review).
+     *
+     * Doğru/izole invaryant: "bu HTTP isteği, `main.budget_transactions`
+     * tablosuna hiç satır yazmadı" — tenant/envelope durumuna bakmak yerine,
+     * `main.budget_transactions`'a yazan TEK giriş noktasını
+     * (`BudgetRepository#createTransaction`, bkz. budget.repository.ts —
+     * tüm RESERVE/COMMIT/RELEASE/ALLOCATE/TRANSFER/ADJUST çağrıları bu
+     * metottan geçer) BU testin kendi app instance'ında (`app.get(...)`)
+     * spy'lıyoruz. Bu, yalnızca BU isteğin bu metodu çağırıp çağırmadığını
+     * gözlemler — başka bir spec dosyasının KENDİ app instance'ında
+     * (ayrı `createTestApp()` çağrısı) yaptığı çağrılardan etkilenmez,
+     * çünkü NestJS provider'ları process-wide değil, app-instance-wide
+     * singleton'dır. Tam izolasyon, sıfır tenant-geneli/envelope-geneli
+     * karşılaştırma.
+     */
+    it('upload budget_transactions tablosuna hiç satır yazmaz (spy-bazlı, izole)', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const { cplCode } = await getCplCode();
 
-      const before = await dataSource.query(
-        `SELECT envelope_id, reserved_amount, consumed_amount, available_amount, utilization_pct
-         FROM main.v_budget_summary WHERE tenant_id = $1 ORDER BY envelope_id`,
-        [fixture.tenantId],
+      const budgetRepository = app.get(BudgetRepository);
+      const createTransactionSpy = jest.spyOn(
+        budgetRepository,
+        'createTransaction',
       );
 
       const content = csv([
@@ -257,19 +287,17 @@ describe('Sales Actuals (E2E)', () => {
         `${cplCode},Şekillendirici,NKA,999999,900000,50000`,
       ]);
 
-      await request(app.getHttpServer())
-        .post('/actuals-first/sales-actuals/upload?fiscalPeriod=2027-06')
-        .set(admin.authHeader())
-        .attach('file', content, 'actuals_2027-06.csv')
-        .expect(201);
+      try {
+        await request(app.getHttpServer())
+          .post('/actuals-first/sales-actuals/upload?fiscalPeriod=2027-06')
+          .set(admin.authHeader())
+          .attach('file', content, 'actuals_2027-06.csv')
+          .expect(201);
 
-      const after = await dataSource.query(
-        `SELECT envelope_id, reserved_amount, consumed_amount, available_amount, utilization_pct
-         FROM main.v_budget_summary WHERE tenant_id = $1 ORDER BY envelope_id`,
-        [fixture.tenantId],
-      );
-
-      expect(after).toEqual(before);
+        expect(createTransactionSpy).not.toHaveBeenCalled();
+      } finally {
+        createTransactionSpy.mockRestore();
+      }
     });
   });
 

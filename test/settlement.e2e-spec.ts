@@ -13,13 +13,20 @@
  *   - Close işlemi budget/ledger'a YAZMAZ (pure state transition)
  *   - GET /summary tüm authenticated kullanıcılara açık (read-only)
  *
- * Fixture stratejisi:
- *   - Her "başarılı close" testi için ayrı APPROVED agreement kullanmak
- *     gerekir; çünkü CLOSED state geri alınamaz.
- *   - loadE2EFixture'dan APPROVED agreement alınır; ilk close sonrası o
- *     agreement kullanılmaz. Sonraki close testleri için seed'den başka
- *     bir APPROVED agreement yoksa testi BİLGİLENDİR (skip ile değil,
- *     pending description ile).
+ * Fixture stratejisi (T-037):
+ *   - "Başarılı close" testleri artık paylaşılan seed agreement'ını
+ *     (STA-2026-0002, `fixture.approvedAgreementId`) KULLANMAZ — jest
+ *     spec dosyalarını varsayılan olarak paralel worker'larda çalıştırdığı
+ *     için bu paylaşılan/mutable agreement `reversal.e2e-spec.ts` ile race
+ *     yaratıyordu, ve suite'i kapatınca `seed-e2e.ts`'deki "diriltme" hack'i
+ *     (agreement'ı SQL ile geri APPROVED yapıp bütçe rezervasyonunu geri
+ *     kurmadan) BRD-ihlali bir durum bırakıyordu (bkz. T-037 task raporu).
+ *   - Bunun yerine her "başarılı close" testi `createAndApproveAgreement`
+ *     ile kendi izole APPROVED agreement'ını yaratır (aynı desen:
+ *     `settlement-budget-release.e2e-spec.ts`). Seed'in APPROVED
+ *     agreement'ı (`fixture.approvedAgreementId`) artık hiçbir spec
+ *     tarafından mutate edilmiyor — DRAFT/UUID/RBAC testleri için hâlâ
+ *     referans olarak kullanılıyor (yalnızca okuma).
  *
  * NOT: Settlement close endpoint POST dönüyor ancak swagger 201 olarak
  * belgelenmiş. Gerçek dönüş kodu controller'da belirtilmemiş (default POST = 201).
@@ -31,21 +38,73 @@ import { getDataSourceToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache } from './helpers/auth';
-import { loadE2EFixture, E2EFixture } from './helpers/seed-e2e';
+import {
+  loadE2EFixture,
+  resolveIdByCode,
+  createAndApproveAgreement,
+  cleanupTestAgreements,
+  E2EFixture,
+} from './helpers/seed-e2e';
 
 describe('Settlement (E2E)', () => {
   let app: INestApplication;
   let fixture: E2EFixture;
+  let dataSource: DataSource;
+
+  let CHANNEL_NKA: string;
+  let FU_WELLA_HC_500ML: string;
+  let TACTIC_PROMO: string;
+  let MECHANIC_DISCOUNT: string;
 
   beforeAll(async () => {
     app = await createTestApp();
     clearTokenCache();
     fixture = await loadE2EFixture(app);
+    dataSource = app.get<DataSource>(getDataSourceToken());
+
+    [CHANNEL_NKA, FU_WELLA_HC_500ML, TACTIC_PROMO, MECHANIC_DISCOUNT] =
+      await Promise.all([
+        // T-037: NKA/ENV-2026-NKA-Q2 bilinçli olarak KAÇINILIYOR —
+        // settlement-budget-release.e2e-spec.ts ve role-journey.e2e-spec.ts
+        // aynı envelope'u delta-bazlı before/after invaryantlarla yoğun
+        // kullanıyor; bu spec'in paralel worker'da aynı envelope'a eşzamanlı
+        // yazması o testlerin okumaları arasına girip false-negative
+        // üretebiliyor (canlı kanıt: bu fix öncesi bir koşumda BR-E2E-02 bu
+        // şekilde flake etti). E_COMMERCE/ENV-2026-ECOM-Q1 hiçbir spec
+        // tarafından kullanılmıyor — tam izolasyon.
+        resolveIdByCode(app, fixture.tenantId, 'channels', 'E_COMMERCE'),
+        resolveIdByCode(
+          app,
+          fixture.tenantId,
+          'forecasting_units',
+          'FU-WELLA-HC-500ML',
+        ),
+        resolveIdByCode(app, fixture.tenantId, 'tactics', 'TAC-PROMO'),
+        resolveIdByCode(app, fixture.tenantId, 'mechanics', 'MEC-DISCOUNT'),
+      ]);
   });
 
   afterAll(async () => {
+    try {
+      await cleanupTestAgreements(app, fixture.tenantId, 'E2E-SETTLE');
+    } catch (e) {
+      console.warn('Cleanup (settlement agreement) başarısız:', e);
+    }
     await closeTestApp();
   });
+
+  async function newApprovedAgreement(capTotalAmount = 4000) {
+    return createAndApproveAgreement(app, {
+      tenantId: fixture.tenantId,
+      cplId: fixture.cplId,
+      channelId: CHANNEL_NKA,
+      fuId: FU_WELLA_HC_500ML,
+      tacticId: TACTIC_PROMO,
+      mechanicId: MECHANIC_DISCOUNT,
+      capTotalAmount,
+      namePrefix: 'E2E-SETTLE',
+    });
+  }
 
   // ── GET /summary (read-only) ──────────────────────────────────────────────
 
@@ -166,43 +225,67 @@ describe('Settlement (E2E)', () => {
 
   describe('POST /close/:agreementId — Başarılı close', () => {
     /**
-     * APPROVED agreement'ı CLOSED'a taşır.
-     * Bu test seed'deki tek APPROVED agreement'ı CLOSED yapar.
-     * Testin idempotent olmaması nedeniyle suit içinde en son çalışmalı.
-     * "ALREADY_SETTLED" testi bu testin ardından çalışır.
+     * T-037: her test artık kendi izole APPROVED agreement'ını yaratır
+     * (`newApprovedAgreement`) — paylaşılan seed agreement'ı
+     * (`fixture.approvedAgreementId`) hiçbir zaman mutate edilmez. Bu,
+     * `reversal.e2e-spec.ts` ile paralel koşumdaki race'i ve "diriltme"
+     * hack'ine olan bağımlılığı ortadan kaldırır.
      */
-    let closedAgreementId: string;
-
     it('ADMIN APPROVED agreement close eder → 201 + status=CLOSED', async () => {
+      const { agreementId, capTotalAmount } = await newApprovedAgreement();
+
+      // T-037 BRD invaryantı: close öncesi bu agreement bütçeden düşmüş
+      // olmalı (net rezervasyon = cap, "diriltme" hack'inin ürettiği
+      // 0-rezervasyonlu APPROVED durumu regresyonuna karşı guard).
+      const netReserved = async () => {
+        const rows = await dataSource.query(
+          `SELECT COALESCE(SUM(
+             CASE WHEN tx_type = 'RESERVE' THEN amount
+                  WHEN tx_type = 'RELEASE' THEN -amount
+                  ELSE 0 END
+           ), 0) AS net_reserved
+           FROM main.budget_transactions
+           WHERE tenant_id = $1 AND source_type = 'AGREEMENT' AND source_id = $2
+             AND tx_status = 'POSTED'`,
+          [fixture.tenantId, agreementId],
+        );
+        return Number(rows[0].net_reserved);
+      };
+      expect(await netReserved()).toBeCloseTo(capTotalAmount, 2);
+
       const admin = await loginAs(app, 'ADMIN');
 
       const res = await request(app.getHttpServer())
-        .post(`/actuals-first/settlements/close/${fixture.approvedAgreementId}`)
+        .post(`/actuals-first/settlements/close/${agreementId}`)
         .set(admin.authHeader())
         .send({ justification: 'E2E test - başarılı settlement close' })
         .expect(201);
 
       expect(res.body).toMatchObject({
-        agreementId: fixture.approvedAgreementId,
+        agreementId,
         status: 'CLOSED',
       });
       expect(res.body).toHaveProperty('closedAt');
-      closedAgreementId = res.body.agreementId;
+
+      // Close sonrası net rezervasyon 0'a döner (RELEASE tam cap kadar) —
+      // hem BRD (approve→bütçeden düş, close→release) hem de "diriltme"
+      // hack'inin tersi bir regresyonu (close etkisiz kalıp rezerv kalıcı
+      // asılı kalması) yakalar.
+      expect(await netReserved()).toBeCloseTo(0, 2);
     });
 
     it('Zaten CLOSED agreement tekrar close edilmeye çalışılır → 409 ALREADY_SETTLED', async () => {
-      if (!closedAgreementId) {
-        // Önceki test atlandıysa veya başarısız olduysa bu testi atla
-        console.warn(
-          'closedAgreementId mevcut değil, ALREADY_SETTLED testi atlanıyor.',
-        );
-        return;
-      }
-
+      const { agreementId } = await newApprovedAgreement();
       const admin = await loginAs(app, 'ADMIN');
 
+      await request(app.getHttpServer())
+        .post(`/actuals-first/settlements/close/${agreementId}`)
+        .set(admin.authHeader())
+        .send({ justification: 'İlk close' })
+        .expect(201);
+
       const res = await request(app.getHttpServer())
-        .post(`/actuals-first/settlements/close/${closedAgreementId}`)
+        .post(`/actuals-first/settlements/close/${agreementId}`)
         .set(admin.authHeader())
         .send({ justification: 'Tekrar close denemesi' })
         .expect(409);
@@ -211,30 +294,12 @@ describe('Settlement (E2E)', () => {
       expect(bodyStr).toContain('ALREADY_SETTLED');
     });
 
-    it('CATEGORY_MANAGER farklı bir APPROVED agreement var ise close edebilir', async () => {
-      // Mevcut approved agreement ya zaten CLOSED edildi (önceki test) ya da
-      // bu testte ayrı bir tane gerekmektedir.
-      // DB'den fresh bir tane çek; yoksa testi bilgi mesajı ile geç.
-      const dataSource = app.get<DataSource>(getDataSourceToken());
-      const freshApproved = await dataSource.query(
-        `SELECT id FROM main.agreements
-         WHERE tenant_id = $1 AND status = 'APPROVED'
-         ORDER BY created_at ASC LIMIT 1`,
-        [fixture.tenantId],
-      );
-
-      if (!freshApproved || freshApproved.length === 0) {
-        console.log(
-          'CATEGORY_MANAGER close testi: mevcut APPROVED agreement yok, atlanıyor.',
-        );
-        return;
-      }
-
+    it('CATEGORY_MANAGER kendi APPROVED agreement\'ını close edebilir', async () => {
+      const { agreementId } = await newApprovedAgreement();
       const cm = await loginAs(app, 'CATEGORY_MANAGER');
-      const targetId = freshApproved[0].id;
 
       const res = await request(app.getHttpServer())
-        .post(`/actuals-first/settlements/close/${targetId}`)
+        .post(`/actuals-first/settlements/close/${agreementId}`)
         .set(cm.authHeader())
         .send({ justification: 'Category manager E2E close test' })
         .expect(201);
