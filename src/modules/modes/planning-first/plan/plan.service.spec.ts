@@ -102,6 +102,9 @@ describe('PlanService', () => {
             addSku: jest.fn(),
             findPlanSku: jest.fn(),
             updatePlanSkuUnversioned: jest.fn(),
+            // T-045: recalc now flushes SKU writes in one batched UPDATE
+            // per FU instead of one updatePlanSkuUnversioned call per SKU.
+            batchUpdatePlanSkusUnversioned: jest.fn(),
             updatePlanSkuVersioned: jest.fn(),
             // T-034b
             findByIdForUpdate: jest.fn(),
@@ -155,6 +158,9 @@ describe('PlanService', () => {
             calculateAllSpendsForSKU: jest.fn(),
             calculateAllSpendsForFU: jest.fn(),
             calculateCompleteSKUFinancialMetrics: jest.fn(),
+            // T-045: recalc hot path fetches active mechanics once and
+            // reuses across all SKUs instead of re-querying per SKU.
+            getActiveMechanics: jest.fn().mockResolvedValue([]),
           },
         },
         {
@@ -966,6 +972,9 @@ describe('PlanService', () => {
         plannedGp: 8330.4,
       } as any);
       planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.batchUpdatePlanSkusUnversioned.mockResolvedValue(
+        undefined as any,
+      );
       planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
       planRepo.updateUnversioned.mockResolvedValue({} as any);
 
@@ -1066,6 +1075,9 @@ describe('PlanService', () => {
         plannedGp: null,
       } as any);
       planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.batchUpdatePlanSkusUnversioned.mockResolvedValue(
+        undefined as any,
+      );
       planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
       planRepo.updateUnversioned.mockResolvedValue({} as any);
 
@@ -1082,7 +1094,10 @@ describe('PlanService', () => {
       // Persisted SKU result must reflect null GP/ROI/RAG — never a
       // fabricated 100%/GREEN — while PLANNED_TO (independent of COGS)
       // remains a real number.
-      const updateCall = planRepo.updatePlanSkuUnversioned.mock.calls[0][2];
+      // T-045: SKU writes are now flushed via one batched call per FU.
+      const batchUpdates =
+        planRepo.batchUpdatePlanSkusUnversioned.mock.calls[0][0];
+      const updateCall = batchUpdates[0].data;
       expect(updateCall.plannedGp).toBeNull();
       expect(updateCall.gpRoi).toBeNull();
       expect(updateCall.ragStatus).toBeNull();
@@ -1131,6 +1146,9 @@ describe('PlanService', () => {
         plannedGp: null,
       } as any);
       planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.batchUpdatePlanSkusUnversioned.mockResolvedValue(
+        undefined as any,
+      );
       planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
       planRepo.updateUnversioned.mockResolvedValue({} as any);
 
@@ -1194,12 +1212,17 @@ describe('PlanService', () => {
         plannedGp: null,
       } as any);
       planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.batchUpdatePlanSkusUnversioned.mockResolvedValue(
+        undefined as any,
+      );
       planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
       planRepo.updateUnversioned.mockResolvedValue({} as any);
 
       await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
 
-      const updateCall = planRepo.updatePlanSkuUnversioned.mock.calls[0][2];
+      // T-045: SKU writes are now flushed via one batched call per FU.
+      const updateCall =
+        planRepo.batchUpdatePlanSkusUnversioned.mock.calls[0][0][0].data;
       // Set D: SPEND=0 → ROI null (not a fallback number).
       // T-027: null is now persisted EXPLICITLY (not `undefined`, which
       // TypeORM's `.update()` would skip and leave a stale prior value in

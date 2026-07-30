@@ -1427,6 +1427,15 @@ export class PlanService {
   ): Promise<void> {
     const allFuResults: Array<Record<string, CalculationResult>> = [];
 
+    // T-045: active mechanics are tenant-scoped and SKU-independent — fetch
+    // once for this recalc call and reuse across every SKU below instead of
+    // re-querying per SKU (52x -> 1x for a 52-SKU plan). Scoped to this
+    // single method invocation only (local variable, not stored on `this`)
+    // so it can never leak across tenants/requests or serve stale data from
+    // a previous recalc — see spend-calculation.service.ts doc comment.
+    const cachedActiveMechanics =
+      await this.spendCalc.getActiveMechanics(tenantId);
+
     for (const planFu of plan.planFus) {
       const skuResults: Array<Record<string, CalculationResult>> = [];
 
@@ -1454,6 +1463,12 @@ export class PlanService {
 
       // Track FU-level totals (summed from per-SKU SpendCalc results)
       let fuTotalPlannedSpend = 0;
+
+      // T-045: accumulate this FU's SKU writes and flush as a single
+      // multi-row UPDATE after the loop, instead of one UPDATE per SKU.
+      const skuUpdatesForBatch: Parameters<
+        PlanRepository['batchUpdatePlanSkusUnversioned']
+      >[0] = [];
 
       for (const planSku of planFu.planSkus || []) {
         const sku = planSku.sku;
@@ -1495,6 +1510,7 @@ export class PlanService {
             tenantId,
             skuCtx,
             calcCtx,
+            cachedActiveMechanics,
           );
         } catch (spendErr) {
           this.logger.error(
@@ -1580,18 +1596,18 @@ export class PlanService {
         // T-034: deliberate CAS bypass — derived KPI output, not a user
         // edit; a CAS here would fail every time against the version the
         // grid-cell write (updateSkuVolume) just bumped moments earlier.
-        // T-034c: routed through `manager` — must land inside this recalc's
-        // own lock-holding transaction (see method doc comment).
-        await this.planRepo.updatePlanSkuUnversioned(
-          planSku.id,
-          tenantId,
-          {
+        // T-034c/T-045: queued here, flushed in one batched UPDATE below —
+        // must land inside this recalc's own lock-holding transaction (see
+        // method doc comment), same as the individual write used to.
+        skuUpdatesForBatch.push({
+          planSkuId: planSku.id,
+          data: {
             incrementalVolume,
             // T-027: write the (possibly null) values explicitly so a recalc
             // that newly discovers missing master data (e.g. COGS removed)
             // actually clears a previously-computed number rather than
-            // silently leaving stale data behind (TypeORM `.update()` skips
-            // `undefined` fields but persists explicit `null`).
+            // silently leaving stale data behind (explicit `null` in the
+            // batched UPDATE, same as TypeORM `.update()`'s prior behaviour).
             plannedTurnover,
             tacticSpend: totalPlannedSpend,
             plannedGp,
@@ -1599,9 +1615,18 @@ export class PlanService {
             ragStatus,
             calculatedKpis,
           },
-          manager,
-        );
+        });
       }
+
+      // T-045: single multi-row UPDATE for every SKU in this FU instead of
+      // one UPDATE per SKU (52 -> 1 for a 52-SKU FU). Must run before Step 5
+      // below, which re-reads these rows through the same `manager` and
+      // needs the write already applied.
+      await this.planRepo.batchUpdatePlanSkusUnversioned(
+        skuUpdatesForBatch,
+        tenantId,
+        manager,
+      );
 
       // ── Step 5: FU-level KPI aggregation ─────────────────────────────
       let fuKpiResults: Record<string, CalculationResult>;

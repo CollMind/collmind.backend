@@ -280,12 +280,33 @@ export class SpendCalculationService {
   }
 
   /**
+   * Active mechanics for a tenant. Extracted so callers that loop over many
+   * SKUs in a single request (e.g. plan recalc) can fetch this once and pass
+   * it in via `calculateAllSpendsForSKU`'s `cachedActiveMechanics` param
+   * instead of re-querying per SKU (T-045: this result is SKU-independent —
+   * repeating it 52x per recalc was pure waste).
+   */
+  async getActiveMechanics(tenantId: string): Promise<Mechanic[]> {
+    return this.mechanicRepository.find({
+      where: { tenantId, isActive: true },
+    });
+  }
+
+  /**
    * Calculate all spends for a single SKU
+   *
+   * @param cachedActiveMechanics Optional pre-fetched result of
+   *   `getActiveMechanics(tenantId)`. Callers iterating many SKUs within a
+   *   single request should fetch once and pass it here (T-045). Must come
+   *   from the same tenant/request — never share this across requests or
+   *   tenants (the mechanics list can change at any time via Admin config
+   *   and must reflect the tenant scope of the current call).
    */
   async calculateAllSpendsForSKU(
     tenantId: string,
     skuContext: SKUContext,
     context: CalculationContext,
+    cachedActiveMechanics?: Mechanic[],
   ): Promise<SpendBreakdown> {
     const startTime = Date.now();
 
@@ -319,10 +340,11 @@ export class SpendCalculationService {
     const promoOnInvoice: PromoOnInvoiceSpend = {};
     const promoOffInvoice: PromoOffInvoiceSpend = {};
 
-    // Get all active mechanics for this FU
-    const mechanics = await this.mechanicRepository.find({
-      where: { tenantId, isActive: true },
-    });
+    // Get all active mechanics for this FU. T-045: reuse the caller's
+    // pre-fetched list when provided (see `cachedActiveMechanics` doc above)
+    // instead of re-querying — this result does not vary per SKU.
+    const mechanics =
+      cachedActiveMechanics ?? (await this.getActiveMechanics(tenantId));
 
     let totalPromoOnInv = 0;
     let totalPromoOffInv = 0;
@@ -513,8 +535,10 @@ export class SpendCalculationService {
       mechanicValues,
     };
 
-    // Calculate for each SKU
+    // Calculate for each SKU. T-045: fetch the active-mechanics list once
+    // for this call and reuse it across all SKUs below (SKU-independent).
     const skuBreakdowns: SpendBreakdown[] = [];
+    const activeMechanics = await this.getActiveMechanics(tenantId);
 
     for (const planSku of planFu.planSkus || []) {
       const skuContext: SKUContext = {
@@ -532,6 +556,7 @@ export class SpendCalculationService {
         tenantId,
         skuContext,
         context,
+        activeMechanics,
       );
       skuBreakdowns.push(breakdown);
     }

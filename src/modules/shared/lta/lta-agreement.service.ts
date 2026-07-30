@@ -311,6 +311,20 @@ export class LTAAgreementService {
       cplId,
       date,
     );
+    return this.findRateInAgreement(agreement, channel, category);
+  }
+
+  /**
+   * Matches a rate within an already-fetched agreement. Extracted so callers
+   * that already hold the agreement (e.g. `getLTAForPlanContext`) don't have
+   * to re-fetch it from the DB just to find the applicable rate
+   * (T-045: eliminates a duplicate `findActiveForCPL` round-trip per call).
+   */
+  private findRateInAgreement(
+    agreement: LTAAgreement | null,
+    channel: string,
+    category: string,
+  ): LTARate | null {
     if (!agreement || !agreement.rates || agreement.rates.length === 0) {
       return null;
     }
@@ -392,13 +406,9 @@ export class LTAAgreementService {
     const channel = planContext.channelCode || planContext.channelId || '';
     const category = planContext.categoryCode || planContext.categoryId || '';
 
-    const rate = await this.getRatesForContext(
-      tenantId,
-      planContext.cplId,
-      channel,
-      category,
-      date,
-    );
+    // T-045: reuse the agreement already fetched above instead of calling
+    // getRatesForContext (which would re-fetch the identical agreement).
+    const rate = this.findRateInAgreement(agreement, channel, category);
     if (!rate) {
       return null;
     }

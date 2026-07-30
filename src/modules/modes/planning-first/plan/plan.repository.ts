@@ -549,23 +549,106 @@ export class PlanRepository {
    *
    * T-034c: optional trailing `manager` — same reason as
    * #updateUnversioned's.
+   *
+   * T-045: no longer reads the row back after the UPDATE. Grep-verified
+   * (2026-07-30) that the sole caller (`PlanService#recalculatePlanWithKpiEngineLocked`)
+   * never used the previous return value — the read-back was a pure-waste
+   * extra SELECT per SKU (52/recalc). If a future caller needs the updated
+   * row, re-fetch explicitly via `findPlanSku` rather than reintroducing an
+   * implicit read-back here.
    */
   async updatePlanSkuUnversioned(
     planSkuId: string,
     tenantId: string,
     data: Partial<PlanSku>,
     manager?: EntityManager,
-  ): Promise<PlanSku> {
+  ): Promise<void> {
     const repo = manager ? manager.getRepository(PlanSku) : this.planSkuRepo;
     await repo.update({ id: planSkuId, tenantId }, data);
-    const updated = await repo.findOne({
-      where: { id: planSkuId, tenantId },
-      relations: ['sku', 'planFu'],
-    });
-    if (!updated) {
-      throw new Error('PlanSKU not found after update');
+  }
+
+  /**
+   * T-045: batched equivalent of calling `updatePlanSkuUnversioned` once per
+   * SKU in a loop — same CAS-bypass semantics (derived recalc output, `version`
+   * column untouched, no lost-update risk introduced), but a single
+   * multi-row `UPDATE ... FROM (VALUES ...)` round-trip instead of N.
+   *
+   * Always scoped to `tenantId` (multi-tenant isolation) and MUST be routed
+   * through the caller's lock-holding transaction `manager` — same
+   * requirement as `updatePlanSkuUnversioned` (T-034c).
+   *
+   * No-op on an empty array (recalc of a plan with an empty FU is possible
+   * upstream, though callers currently only reach this with >=1 row).
+   */
+  async batchUpdatePlanSkusUnversioned(
+    updates: Array<{
+      planSkuId: string;
+      data: Pick<
+        PlanSku,
+        | 'incrementalVolume'
+        | 'plannedTurnover'
+        | 'tacticSpend'
+        | 'plannedGp'
+        | 'gpRoi'
+        | 'ragStatus'
+        | 'calculatedKpis'
+      >;
+    }>,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (updates.length === 0) {
+      return;
     }
-    return updated;
+
+    const rowsSql: string[] = [];
+    const params: unknown[] = [];
+    let i = 1;
+
+    for (const { planSkuId, data } of updates) {
+      rowsSql.push(
+        `($${i++}::uuid, $${i++}::decimal, $${i++}::decimal, $${i++}::decimal, $${i++}::decimal, $${i++}::decimal, $${i++}::varchar, $${i++}::jsonb)`,
+      );
+      params.push(
+        planSkuId,
+        data.incrementalVolume ?? null,
+        data.plannedTurnover ?? null,
+        data.tacticSpend ?? null,
+        data.plannedGp ?? null,
+        data.gpRoi ?? null,
+        data.ragStatus ?? null,
+        data.calculatedKpis ? JSON.stringify(data.calculatedKpis) : null,
+      );
+    }
+
+    const tenantParamIndex = i;
+    params.push(tenantId);
+
+    // Schema-qualify the table the same way TypeORM does internally
+    // (`DB_SCHEMA` env, defaults to "main") — raw `manager.query()` calls,
+    // unlike repo methods, are NOT auto-scoped to the configured schema.
+    const tableName = manager.getRepository(PlanSku).metadata.tablePath;
+
+    await manager.query(
+      `
+      UPDATE ${tableName} AS ps
+      SET
+        incremental_volume = v.incremental_volume,
+        planned_turnover = v.planned_turnover,
+        tactic_spend = v.tactic_spend,
+        planned_gp = v.planned_gp,
+        gp_roi = v.gp_roi,
+        rag_status = v.rag_status,
+        calculated_kpis = v.calculated_kpis,
+        updated_at = NOW()
+      FROM (VALUES ${rowsSql.join(', ')}) AS v(
+        id, incremental_volume, planned_turnover, tactic_spend,
+        planned_gp, gp_roi, rag_status, calculated_kpis
+      )
+      WHERE ps.id = v.id AND ps.tenant_id = $${tenantParamIndex}::uuid
+      `,
+      params,
+    );
   }
 
   /**
