@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { EntityManager, Repository, IsNull } from 'typeorm';
 import {
   ApprovalRequest,
   ApprovalRequestStatus,
@@ -14,16 +14,31 @@ export class ApprovalRepository {
     private readonly repo: Repository<ApprovalRequest>,
   ) {}
 
-  async create(data: Partial<ApprovalRequest>): Promise<ApprovalRequest> {
-    const request = this.repo.create(data);
-    return this.repo.save(request);
+  /**
+   * T-034b: optional trailing `manager` — when a caller (PlanService/
+   * ApprovalWorkflowService/AgreementService state transitions) is running
+   * inside its own QueryRunner transaction, the approval-request write must
+   * land on that SAME manager so it commits/rolls back atomically with the
+   * status transition + budget side effect. Omitted -> unchanged pre-
+   * existing behaviour (injected repo, default connection, own implicit
+   * commit).
+   */
+  async create(
+    data: Partial<ApprovalRequest>,
+    manager?: EntityManager,
+  ): Promise<ApprovalRequest> {
+    const repo = manager ? manager.getRepository(ApprovalRequest) : this.repo;
+    const request = repo.create(data);
+    return repo.save(request);
   }
 
   async findById(
     id: string,
     tenantId: string,
+    manager?: EntityManager,
   ): Promise<ApprovalRequest | null> {
-    return this.repo.findOne({
+    const repo = manager ? manager.getRepository(ApprovalRequest) : this.repo;
+    return repo.findOne({
       where: { id, tenantId, deletedAt: IsNull() },
     });
   }
@@ -123,9 +138,11 @@ export class ApprovalRepository {
     id: string,
     tenantId: string,
     data: Partial<ApprovalRequest>,
+    manager?: EntityManager,
   ): Promise<ApprovalRequest> {
-    await this.repo.update({ id, tenantId }, data);
-    const updated = await this.findById(id, tenantId);
+    const repo = manager ? manager.getRepository(ApprovalRequest) : this.repo;
+    await repo.update({ id, tenantId }, data);
+    const updated = await this.findById(id, tenantId, manager);
     if (!updated) {
       throw new Error('Approval request not found after update');
     }
@@ -137,8 +154,9 @@ export class ApprovalRepository {
     tenantId: string,
     status: ApprovalRequestStatus,
     additionalData?: Partial<ApprovalRequest>,
+    manager?: EntityManager,
   ): Promise<ApprovalRequest> {
     const updateData = { status, ...additionalData };
-    return this.update(id, tenantId, updateData);
+    return this.update(id, tenantId, updateData, manager);
   }
 }

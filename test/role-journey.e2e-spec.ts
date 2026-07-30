@@ -564,10 +564,21 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     it('A8. PLANNER → POST /plans/:id/submit-for-approval', async () => {
       const planner = await loginAs(app, 'PLANNER');
 
+      // T-034b (code-review fix): submit-for-approval now validates
+      // plans.version too (K5 exception, same as PlanService#submit) —
+      // fetch the current version rather than assuming it.
+      const currentPlan = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(planner.authHeader())
+        .expect(200);
+
       const res = await request(app.getHttpServer())
         .post(`/plans/${planId}/submit-for-approval`)
         .set(planner.authHeader())
-        .send({ submissionNotes: 'E2E role-journey submission' });
+        .send({
+          submissionNotes: 'E2E role-journey submission',
+          version: currentPlan.body.version,
+        });
 
       record({
         step: 'A8',
@@ -659,14 +670,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const planner = await loginAs(app, 'PLANNER');
       const cm = await loginAs(app, 'CATEGORY_MANAGER');
 
-      const { planId: a10PlanId } = await createT029TestPlan(
-        planner,
-        'E2E-ROLE-JOURNEY-A10-CM-APPROVE',
-      );
+      const { planId: a10PlanId, version: a10Version } =
+        await createT029TestPlan(planner, 'E2E-ROLE-JOURNEY-A10-CM-APPROVE');
 
       await request(app.getHttpServer())
         .post(`/plans/${a10PlanId}/submit`)
         .set(planner.authHeader())
+        .send({ version: a10Version })
         .expect(200);
 
       const res = await request(app.getHttpServer())
@@ -840,7 +850,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     async function createT029TestPlan(
       planner: Awaited<ReturnType<typeof loginAs>>,
       namePrefix: string,
-    ): Promise<{ planId: string }> {
+    ): Promise<{ planId: string; version: number }> {
       const createRes = await request(app.getHttpServer())
         .post('/plans')
         .set(planner.authHeader())
@@ -890,22 +900,25 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .expect(200);
       expect(Number(recalcRes.body.totalSpend)).toBeGreaterThan(0);
 
-      return { planId: t029PlanId };
+      // T-034b: submit() also validates plans.version (K5 exception) — the
+      // caller needs the CURRENT version (bumped once by addFu above;
+      // recalculate/volume/tactic writes are unversioned/row-scoped, see
+      // docs/analysis/0005 §3), not a hardcoded 1.
+      return { planId: t029PlanId, version: recalcRes.body.version };
     }
 
     it('A14. T-029: PLANNER /plans/:id/submit → RESERVE + SUBMITTED history; MANAGER /plans/:id/approve → RESERVE→COMMIT + APPROVED history (SQL kanıtı)', async () => {
       const planner = await loginAs(app, 'PLANNER');
       const manager = await loginAs(app, 'MANAGER');
 
-      const { planId: t029PlanId } = await createT029TestPlan(
-        planner,
-        'E2E-ROLE-JOURNEY-T029-RESERVE',
-      );
+      const { planId: t029PlanId, version: t029Version } =
+        await createT029TestPlan(planner, 'E2E-ROLE-JOURNEY-T029-RESERVE');
 
       // ── SUBMIT (PlanService.submit — frontend'in fiilen çağırdığı endpoint) ──
       const submitRes = await request(app.getHttpServer())
         .post(`/plans/${t029PlanId}/submit`)
         .set(planner.authHeader())
+        .send({ version: t029Version })
         .expect(200);
       expect(submitRes.body.status).toBe('PENDING_APPROVAL');
 
@@ -1028,14 +1041,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const planner = await loginAs(app, 'PLANNER');
       const manager = await loginAs(app, 'MANAGER');
 
-      const { planId: rejectPlanId } = await createT029TestPlan(
-        planner,
-        'E2E-ROLE-JOURNEY-T029-REJECT',
-      );
+      const { planId: rejectPlanId, version: rejectPlanVersion } =
+        await createT029TestPlan(planner, 'E2E-ROLE-JOURNEY-T029-REJECT');
 
       await request(app.getHttpServer())
         .post(`/plans/${rejectPlanId}/submit`)
         .set(planner.authHeader())
+        .send({ version: rejectPlanVersion })
         .expect(200);
 
       const budgetTxAfterSubmit = await dataSource.query(
@@ -1107,15 +1119,14 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const manager = await loginAs(app, 'MANAGER');
       const otherPlanner = await loginAs(app, 'PLANNER2');
 
-      const { planId: fullLoopPlanId } = await createT029TestPlan(
-        planner,
-        'E2E-ROLE-JOURNEY-T033-FULLLOOP',
-      );
+      const { planId: fullLoopPlanId, version: fullLoopVersion } =
+        await createT029TestPlan(planner, 'E2E-ROLE-JOURNEY-T033-FULLLOOP');
 
       // ── 1) SUBMIT ──────────────────────────────────────────────────────
       await request(app.getHttpServer())
         .post(`/plans/${fullLoopPlanId}/submit`)
         .set(planner.authHeader())
+        .send({ version: fullLoopVersion })
         .expect(200);
 
       // ── 2) REJECT (MANAGER == CATEGORY_MANAGER fixture role) ───────────
@@ -1126,11 +1137,38 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .expect(200);
       expect(rejectRes.body.status).toBe('REJECTED');
 
-      // ── Negative: wrong-status guard — a non-REJECTED plan must 409. The
-      // module-level golden-path `planId` fixture is already APPROVED by
-      // A12 (runs earlier in this same describe block) — reuse it here.
+      // ── Negative: wrong-status guard — a non-REJECTED plan must 409.
+      // Code-review fix: this used to reuse the module-level golden-path
+      // `planId` fixture (populated by A1, APPROVED by A12) — that made
+      // A16 depend on earlier tests in this same describe block having
+      // already run. Running A16 in isolation (`-t "A16"`) left `planId`
+      // `undefined`, which built `/plans/undefined/return-to-draft` and hit
+      // an unrelated, pre-existing, codebase-wide gap (no `ParseUUIDPipe`
+      // on any `:id` route param, confirmed across plan.controller.ts /
+      // agreement.controller.ts) — a malformed UUID reaches
+      // `PlanRepository#findById`'s query builder as-is and Postgres
+      // throws `invalid input syntax for type uuid`, uncaught -> 500. Not a
+      // T-034b regression (the crash happens in the pre-transaction
+      // `findById` call, unchanged by this task) and not worth a broad
+      // `ParseUUIDPipe` rollout across every controller as a side quest
+      // here — fixed at the actual fault: A16 no longer depends on any
+      // other test's state. DRAFT is sufficient to prove "non-REJECTED".
+      const scratchDraftRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-A16-SCRATCH-DRAFT-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const scratchDraftPlanId = scratchDraftRes.body.id;
+
       const notRejectedRes = await request(app.getHttpServer())
-        .post(`/plans/${planId}/return-to-draft`)
+        .post(`/plans/${scratchDraftPlanId}/return-to-draft`)
         .set(planner.authHeader());
       record({
         step: 'A16a',
@@ -1189,6 +1227,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const resubmitRes = await request(app.getHttpServer())
         .post(`/plans/${fullLoopPlanId}/submit`)
         .set(planner.authHeader())
+        .send({ version: returnRes.body.version })
         .expect(200);
       expect(resubmitRes.body.status).toBe('PENDING_APPROVAL');
 
@@ -1455,15 +1494,18 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 }, version: 1 })
         .expect(200);
 
-      await request(app.getHttpServer())
+      const recalcRes = await request(app.getHttpServer())
         .post(`/plans/${id}/recalculate`)
         .set(actor.authHeader())
         .send({})
         .expect(200);
 
+      // T-034b: submit() also validates plans.version (K5 exception) — see
+      // createT029TestPlan's identical comment above.
       await request(app.getHttpServer())
         .post(`/plans/${id}/submit`)
         .set(actor.authHeader())
+        .send({ version: recalcRes.body.version })
         .expect(200);
 
       return id;

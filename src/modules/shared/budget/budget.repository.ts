@@ -23,11 +23,20 @@ export class BudgetRepository {
   ) {}
 
   // Budget Envelope methods
+  // T-034b: optional trailing `manager` — mirrors #createTransaction below,
+  // used by PlanService#approve's autoCreateBudget path when it runs inside
+  // a QueryRunner transaction (envelope creation must commit/rollback with
+  // the same-transaction approve status write, not land on the default
+  // connection ahead of it).
   async createEnvelope(
     envelope: Partial<BudgetEnvelope>,
+    manager?: EntityManager,
   ): Promise<BudgetEnvelope> {
-    const newEnvelope = this.envelopeRepository.create(envelope);
-    return this.envelopeRepository.save(newEnvelope);
+    const repo = manager
+      ? manager.getRepository(BudgetEnvelope)
+      : this.envelopeRepository;
+    const newEnvelope = repo.create(envelope);
+    return repo.save(newEnvelope);
   }
 
   async findEnvelopeById(

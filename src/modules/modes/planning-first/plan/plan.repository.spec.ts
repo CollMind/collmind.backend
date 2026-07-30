@@ -290,4 +290,71 @@ describe('PlanRepository — T-034 optimistic locking (CAS)', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  /**
+   * T-034b — state transitions (submit/approve/reject/returnToDraft) use
+   * `FOR UPDATE` + status-CAS, not version-CAS (docs/analysis/0005 §4). See
+   * plan.service.spec.ts for the higher-level proof that PlanService's
+   * transactional methods actually call these with the transaction's
+   * `manager`, not the injected repos.
+   */
+  describe('T-034b — findByIdForUpdate / updateStatusCas', () => {
+    it('findByIdForUpdate locks via the given manager (pessimistic_write), no relations', async () => {
+      const managerMock = {
+        findOne: jest.fn().mockResolvedValue({ id: 'plan-1' }),
+      };
+
+      const result = await repo.findByIdForUpdate(
+        'plan-1',
+        'tenant-1',
+        managerMock as any,
+      );
+
+      expect(managerMock.findOne).toHaveBeenCalledWith(
+        Plan,
+        expect.objectContaining({
+          where: { id: 'plan-1', tenantId: 'tenant-1' },
+          lock: { mode: 'pessimistic_write' },
+        }),
+      );
+      expect(result).toEqual({ id: 'plan-1' });
+    });
+
+    it('updateStatusCas writes WHERE status = expectedStatus and returns affected count', async () => {
+      const managerMock = {
+        update: jest.fn().mockResolvedValue({ affected: 1 }),
+      };
+
+      const affected = await repo.updateStatusCas(
+        managerMock as any,
+        'plan-1',
+        'tenant-1',
+        'DRAFT' as any,
+        { status: 'PENDING_APPROVAL' } as any,
+      );
+
+      expect(affected).toBe(1);
+      expect(managerMock.update).toHaveBeenCalledWith(
+        Plan,
+        { id: 'plan-1', tenantId: 'tenant-1', status: 'DRAFT' },
+        { status: 'PENDING_APPROVAL' },
+      );
+    });
+
+    it('updateStatusCas returns 0 when the row is not in the expected status (mutation-proof anchor)', async () => {
+      const managerMock = {
+        update: jest.fn().mockResolvedValue({ affected: 0 }),
+      };
+
+      const affected = await repo.updateStatusCas(
+        managerMock as any,
+        'plan-1',
+        'tenant-1',
+        'DRAFT' as any,
+        { status: 'PENDING_APPROVAL' } as any,
+      );
+
+      expect(affected).toBe(0);
+    });
+  });
 });

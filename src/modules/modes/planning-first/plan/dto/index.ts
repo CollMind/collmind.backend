@@ -3,6 +3,7 @@ export * from './update-plan.dto';
 export * from './add-fu.dto';
 export * from './remove-fu.dto';
 export * from './delete-plan.dto';
+export * from './submit-plan.dto';
 export * from './update-fu-tactic.dto';
 export * from './update-sku-volume.dto';
 export * from './submit-for-approval.dto';

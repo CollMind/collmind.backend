@@ -5,6 +5,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { PlanService } from './plan.service';
 import { PlanRepository } from './plan.repository';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
@@ -39,6 +40,25 @@ describe('PlanService', () => {
     create: jest.Mock;
     save: jest.Mock;
   };
+  // T-034b: submit/approve/reject/returnToDraft now run inside a real
+  // QueryRunner transaction (docs/analysis/0005 §4) — this mock stands in
+  // for `this.dataSource.createQueryRunner()`. `queryRunnerManager` is the
+  // object passed as the `manager` argument to every downstream call made
+  // inside the transaction (PlanRepository#findByIdForUpdate/updateStatusCas,
+  // BudgetService/ApprovalService methods, PlanApprovalHistory writes) —
+  // asserting `toHaveBeenCalledWith(..., queryRunnerManager)` on those is how
+  // these tests prove the call happened INSIDE the transaction, not on some
+  // other (default) connection.
+  let queryRunnerManager: { count: jest.Mock; getRepository: jest.Mock };
+  let queryRunner: {
+    connect: jest.Mock;
+    startTransaction: jest.Mock;
+    commitTransaction: jest.Mock;
+    rollbackTransaction: jest.Mock;
+    release: jest.Mock;
+    manager: typeof queryRunnerManager;
+  };
+  let dataSource: { createQueryRunner: jest.Mock };
 
   const mockTenantId = 'tenant-1';
   const mockUserId = 'user-1';
@@ -83,6 +103,15 @@ describe('PlanService', () => {
             findPlanSku: jest.fn(),
             updatePlanSkuUnversioned: jest.fn(),
             updatePlanSkuVersioned: jest.fn(),
+            // T-034b
+            findByIdForUpdate: jest.fn(),
+            updateStatusCas: jest.fn(),
+          },
+        },
+        {
+          provide: DataSource,
+          useValue: {
+            createQueryRunner: jest.fn(),
           },
         },
         {
@@ -167,6 +196,24 @@ describe('PlanService', () => {
     approvalHistoryRepo.save.mockImplementation((data: any) =>
       Promise.resolve(data),
     );
+
+    // T-034b: queryRunner mock — see field comment above. `manager` is a
+    // stable object reference for the lifetime of a single `it()`, reset
+    // every test so assertions/mocks never leak across tests.
+    queryRunnerManager = {
+      count: jest.fn(),
+      getRepository: jest.fn().mockReturnValue(approvalHistoryRepo),
+    };
+    queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      startTransaction: jest.fn().mockResolvedValue(undefined),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      rollbackTransaction: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      manager: queryRunnerManager,
+    };
+    dataSource = module.get(DataSource);
+    dataSource.createQueryRunner.mockReturnValue(queryRunner);
   });
 
   afterEach(() => {
@@ -174,6 +221,9 @@ describe('PlanService', () => {
   });
 
   describe('submit', () => {
+    // T-034b: submit() now ALSO validates plans.version (K5's documented
+    // exception, see SubmitPlanDto) — every success-path test below passes
+    // `expectedVersion` matching `findByIdForUpdate`'s mocked `version`.
     it('should successfully submit plan for approval', async () => {
       const planWithFus = {
         ...mockPlan,
@@ -184,28 +234,45 @@ describe('PlanService', () => {
           } as PlanFu,
         ],
       } as Plan;
+      const lockedPlan = { ...planWithFus, version: 1 } as Plan;
 
       const mockApprovalRequest = {
         id: 'approval-request-1',
         requestType: ApprovalRequestType.PLAN,
       };
 
-      planRepo.findById.mockResolvedValue(planWithFus as Plan);
+      planRepo.findById
+        .mockResolvedValueOnce(planWithFus as Plan) // pre-tx read (scope + channel code)
+        .mockResolvedValueOnce({
+          ...planWithFus,
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: mockApprovalRequest.id,
+        } as Plan); // post-commit re-read (return value)
+      planRepo.findByIdForUpdate.mockResolvedValue(lockedPlan);
+      queryRunnerManager.count.mockResolvedValue(1); // >=1 planFu
       approvalService.createRequest.mockResolvedValue(
         mockApprovalRequest as any,
       );
-      planRepo.updateStatus.mockResolvedValue({
-        ...planWithFus,
-        status: PlanStatus.PENDING_APPROVAL,
-        approvalRequestId: mockApprovalRequest.id,
-      } as Plan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       // No envelope yet for this channel/period → reservation is skipped
       // (best-effort; submission itself must not be blocked).
       budgetService.findEnvelopeByDimensions.mockResolvedValue(null);
 
-      const result = await service.submit(mockPlanId, mockTenantId, mockUserId);
+      const result = await service.submit(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        undefined,
+        1,
+      );
 
       expect(result.status).toBe(PlanStatus.PENDING_APPROVAL);
+      // T-034b: FOR UPDATE lock must be taken before any decision.
+      expect(planRepo.findByIdForUpdate).toHaveBeenCalledWith(
+        mockPlanId,
+        mockTenantId,
+        queryRunnerManager,
+      );
       expect(approvalService.createRequest).toHaveBeenCalledWith(
         expect.objectContaining({
           requestType: ApprovalRequestType.PLAN,
@@ -214,12 +281,17 @@ describe('PlanService', () => {
         }),
         mockTenantId,
         mockUserId,
+        queryRunnerManager,
       );
-      expect(planRepo.updateStatus).toHaveBeenCalledWith(
+      // T-034b: status-CAS write — WHERE status = DRAFT (the precondition
+      // just checked on the locked row).
+      expect(planRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
         mockPlanId,
         mockTenantId,
-        PlanStatus.PENDING_APPROVAL,
+        PlanStatus.DRAFT,
         expect.objectContaining({
+          status: PlanStatus.PENDING_APPROVAL,
           approvalRequestId: mockApprovalRequest.id,
         }),
       );
@@ -233,6 +305,10 @@ describe('PlanService', () => {
         }),
       );
       expect(approvalHistoryRepo.save).toHaveBeenCalled();
+      // T-034b: real transaction — commit, not a manual compensation path.
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).not.toHaveBeenCalled();
+      expect(queryRunner.release).toHaveBeenCalled();
     });
 
     it('T-029: reserves budget (RESERVE) when an envelope already exists for the channel/period', async () => {
@@ -241,21 +317,26 @@ describe('PlanService', () => {
         totalSpend: 100000,
         planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
       } as Plan;
+      const lockedPlan = { ...planWithFus, version: 1 } as Plan;
 
-      planRepo.findById.mockResolvedValue(planWithFus as Plan);
+      planRepo.findById
+        .mockResolvedValueOnce(planWithFus as Plan)
+        .mockResolvedValueOnce({
+          ...planWithFus,
+          status: PlanStatus.PENDING_APPROVAL,
+        } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(lockedPlan);
+      queryRunnerManager.count.mockResolvedValue(1);
       approvalService.createRequest.mockResolvedValue({
         id: 'approval-request-1',
       } as any);
-      planRepo.updateStatus.mockResolvedValue({
-        ...planWithFus,
-        status: PlanStatus.PENDING_APPROVAL,
-      } as Plan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       budgetService.findEnvelopeByDimensions.mockResolvedValue({
         id: 'envelope-1',
       } as any);
       budgetService.reserveForPlan.mockResolvedValue({} as any);
 
-      await service.submit(mockPlanId, mockTenantId, mockUserId);
+      await service.submit(mockPlanId, mockTenantId, mockUserId, undefined, 1);
 
       expect(budgetService.reserveForPlan).toHaveBeenCalledWith(
         mockPlanId,
@@ -265,6 +346,7 @@ describe('PlanService', () => {
         'TRY',
         mockTenantId,
         mockUserId,
+        queryRunnerManager,
       );
     });
 
@@ -273,18 +355,61 @@ describe('PlanService', () => {
         ...mockPlan,
         status: PlanStatus.PENDING_APPROVAL,
       } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.PENDING_APPROVAL,
+        version: 1,
+      } as Plan);
 
       await expect(
-        service.submit(mockPlanId, mockTenantId, mockUserId),
+        service.submit(mockPlanId, mockTenantId, mockUserId, undefined, 1),
       ).rejects.toThrow(BadRequestException);
+      // T-034b: real transaction — a failed precondition rolls back (no-op
+      // rollback since nothing was written), not a partial write.
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
     });
 
     it('should fail if plan has no FUs', async () => {
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+        version: 1,
+      } as Plan);
+      queryRunnerManager.count.mockResolvedValue(0);
+
+      await expect(
+        service.submit(mockPlanId, mockTenantId, mockUserId, undefined, 1),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects with 409 MISSING_VERSION when version is omitted (K5 exception)', async () => {
+      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+        version: 1,
+      } as Plan);
 
       await expect(
         service.submit(mockPlanId, mockTenantId, mockUserId),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
+    });
+
+    it('rejects with 409 STALE_VERSION when the client version does not match', async () => {
+      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+        version: 5,
+      } as Plan);
+
+      await expect(
+        service.submit(mockPlanId, mockTenantId, mockUserId, undefined, 1),
+      ).rejects.toThrow(ConflictException);
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
     });
   });
 
@@ -346,18 +471,21 @@ describe('PlanService', () => {
         allocatedAmount: 200000,
       };
 
-      planRepo.findById.mockResolvedValue(pendingPlan as Plan);
+      planRepo.findById
+        .mockResolvedValueOnce(pendingPlan as Plan) // pre-tx read (channel code)
+        .mockResolvedValueOnce({
+          ...pendingPlan,
+          status: PlanStatus.APPROVED,
+          approvedAt: new Date(),
+          approvedById: mockUserId,
+        } as Plan); // post-commit re-read
+      planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
       budgetService.findEnvelopeByDimensions.mockResolvedValue(
         mockEnvelope as any,
       );
       budgetService.commitReservedForPlan.mockResolvedValue({} as any);
       approvalService.approve.mockResolvedValue({} as any);
-      planRepo.updateStatus.mockResolvedValue({
-        ...pendingPlan,
-        status: PlanStatus.APPROVED,
-        approvedAt: new Date(),
-        approvedById: mockUserId,
-      } as Plan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
 
       const result = await service.approve(
         mockPlanId,
@@ -367,6 +495,12 @@ describe('PlanService', () => {
       );
 
       expect(result.status).toBe(PlanStatus.APPROVED);
+      // T-034b: FOR UPDATE lock must be taken before any decision/side effect.
+      expect(planRepo.findByIdForUpdate).toHaveBeenCalledWith(
+        mockPlanId,
+        mockTenantId,
+        queryRunnerManager,
+      );
       expect(budgetService.commitReservedForPlan).toHaveBeenCalledWith(
         mockPlanId,
         pendingPlan.totalSpend,
@@ -375,8 +509,23 @@ describe('PlanService', () => {
         'TRY',
         mockTenantId,
         mockUserId,
+        queryRunnerManager,
       );
-      expect(approvalService.approve).toHaveBeenCalled();
+      expect(approvalService.approve).toHaveBeenCalledWith(
+        pendingPlan.approvalRequestId,
+        mockTenantId,
+        mockUserId,
+        { comments: 'Comments' },
+        queryRunnerManager,
+      );
+      // T-034b: status-CAS write — WHERE status = PENDING_APPROVAL.
+      expect(planRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
+        mockPlanId,
+        mockTenantId,
+        PlanStatus.PENDING_APPROVAL,
+        expect.objectContaining({ status: PlanStatus.APPROVED }),
+      );
       // T-029: audit — approve must write an APPROVED PlanApprovalHistory row.
       expect(approvalHistoryRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -388,6 +537,8 @@ describe('PlanService', () => {
         }),
       );
       expect(approvalHistoryRepo.save).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).not.toHaveBeenCalled();
     });
 
     it('should fail if plan is not in PENDING_APPROVAL status', async () => {
@@ -395,10 +546,46 @@ describe('PlanService', () => {
         ...mockPlan,
         status: PlanStatus.DRAFT,
       } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+      } as Plan);
 
       await expect(
         service.approve(mockPlanId, mockTenantId, mockUserId),
       ).rejects.toThrow(BadRequestException);
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+    });
+
+    it('rolls back (no COMMIT/APPROVED persisted) when the history write fails — T-034b real atomicity', async () => {
+      const pendingPlan = {
+        ...mockPlan,
+        status: PlanStatus.PENDING_APPROVAL,
+        approvalRequestId: 'approval-request-1',
+        totalSpend: 100000,
+      } as Plan;
+
+      planRepo.findById.mockResolvedValue(pendingPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue({
+        id: 'envelope-1',
+      } as any);
+      budgetService.commitReservedForPlan.mockResolvedValue({} as any);
+      approvalService.approve.mockResolvedValue({} as any);
+      planRepo.updateStatusCas.mockResolvedValue(1);
+      approvalHistoryRepo.save.mockRejectedValueOnce(new Error('DB down'));
+
+      await expect(
+        service.approve(mockPlanId, mockTenantId, mockUserId, 'Comments'),
+      ).rejects.toThrow('DB down');
+
+      // T-034b: real transaction — one rollback undoes budget COMMIT +
+      // approval-request decision + status write together. No manual
+      // "release COMMIT, revert to PENDING_APPROVAL" compensation call.
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+      expect(budgetService.releaseForPlan).not.toHaveBeenCalled();
     });
   });
 
@@ -410,15 +597,18 @@ describe('PlanService', () => {
         approvalRequestId: 'approval-request-1',
       } as Plan;
 
-      planRepo.findById.mockResolvedValue(pendingPlan as Plan);
+      planRepo.findById
+        .mockResolvedValueOnce(pendingPlan as Plan)
+        .mockResolvedValueOnce({
+          ...pendingPlan,
+          status: PlanStatus.REJECTED,
+          rejectedAt: new Date(),
+          rejectedById: mockUserId,
+          rejectionReason: 'Budget insufficient',
+        } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
       approvalService.reject.mockResolvedValue({} as any);
-      planRepo.updateStatus.mockResolvedValue({
-        ...pendingPlan,
-        status: PlanStatus.REJECTED,
-        rejectedAt: new Date(),
-        rejectedById: mockUserId,
-        rejectionReason: 'Budget insufficient',
-      } as Plan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       budgetService.releaseForPlan.mockResolvedValue(undefined);
 
       const result = await service.reject(
@@ -429,7 +619,20 @@ describe('PlanService', () => {
       );
 
       expect(result.status).toBe(PlanStatus.REJECTED);
-      expect(approvalService.reject).toHaveBeenCalled();
+      expect(approvalService.reject).toHaveBeenCalledWith(
+        pendingPlan.approvalRequestId,
+        mockTenantId,
+        mockUserId,
+        { reason: 'Budget insufficient' },
+        queryRunnerManager,
+      );
+      expect(planRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
+        mockPlanId,
+        mockTenantId,
+        PlanStatus.PENDING_APPROVAL,
+        expect.objectContaining({ status: PlanStatus.REJECTED }),
+      );
       // T-029: audit — reject must write a REJECTED PlanApprovalHistory row.
       expect(approvalHistoryRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -441,12 +644,39 @@ describe('PlanService', () => {
         }),
       );
       expect(approvalHistoryRepo.save).toHaveBeenCalled();
-      // T-029: BRD Rejected → RELEASE outstanding budget encumbrance.
+      // T-029: BRD Rejected → RELEASE outstanding budget encumbrance — now
+      // inside the same transaction (T-034b "asıl ödül").
       expect(budgetService.releaseForPlan).toHaveBeenCalledWith(
         mockPlanId,
         mockTenantId,
         mockUserId,
+        'REJECT',
+        queryRunnerManager,
       );
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
+    });
+
+    it('rolls back (plan stays PENDING_APPROVAL) when the budget release fails — T-034b real atomicity', async () => {
+      const pendingPlan = {
+        ...mockPlan,
+        status: PlanStatus.PENDING_APPROVAL,
+        approvalRequestId: 'approval-request-1',
+      } as Plan;
+
+      planRepo.findById.mockResolvedValue(pendingPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+      approvalService.reject.mockResolvedValue({} as any);
+      planRepo.updateStatusCas.mockResolvedValue(1);
+      budgetService.releaseForPlan.mockRejectedValueOnce(
+        new Error('release failed'),
+      );
+
+      await expect(
+        service.reject(mockPlanId, mockTenantId, mockUserId, 'reason'),
+      ).rejects.toThrow('release failed');
+
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -464,17 +694,20 @@ describe('PlanService', () => {
     } as unknown as Plan;
 
     it('successfully returns a REJECTED plan to DRAFT', async () => {
-      planRepo.findById.mockResolvedValue(rejectedPlan);
-      planRepo.updateStatus.mockResolvedValue({
-        ...rejectedPlan,
-        status: PlanStatus.DRAFT,
-        rejectedAt: undefined,
-        rejectedById: undefined,
-        rejectionReason: undefined,
-        submittedAt: undefined,
-        submittedById: undefined,
-        approvalRequestId: undefined,
-      } as Plan);
+      planRepo.findById
+        .mockResolvedValueOnce(rejectedPlan)
+        .mockResolvedValueOnce({
+          ...rejectedPlan,
+          status: PlanStatus.DRAFT,
+          rejectedAt: undefined,
+          rejectedById: undefined,
+          rejectionReason: undefined,
+          submittedAt: undefined,
+          submittedById: undefined,
+          approvalRequestId: undefined,
+        } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(rejectedPlan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
 
       const result = await service.returnToDraft(
         mockPlanId,
@@ -484,11 +717,18 @@ describe('PlanService', () => {
       );
 
       expect(result.status).toBe(PlanStatus.DRAFT);
-      expect(planRepo.updateStatus).toHaveBeenCalledWith(
+      expect(planRepo.findByIdForUpdate).toHaveBeenCalledWith(
         mockPlanId,
         mockTenantId,
-        PlanStatus.DRAFT,
+        queryRunnerManager,
+      );
+      expect(planRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
+        mockPlanId,
+        mockTenantId,
+        PlanStatus.REJECTED,
         expect.objectContaining({
+          status: PlanStatus.DRAFT,
           rejectedAt: null,
           rejectedById: null,
           rejectionReason: null,
@@ -513,6 +753,7 @@ describe('PlanService', () => {
       expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
       expect(budgetService.releaseForPlan).not.toHaveBeenCalled();
       expect(budgetService.commitReservedForPlan).not.toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
     });
 
     it('rejects with 409 NOT_REJECTED if plan is not REJECTED', async () => {
@@ -527,6 +768,9 @@ describe('PlanService', () => {
           role: UserRole.PLANNER,
         }),
       ).rejects.toThrow(ConflictException);
+      // T-034b: this precondition is checked BEFORE the transaction opens
+      // (pre-lock, cheap fail-fast) — no queryRunner interaction expected.
+      expect(planRepo.findByIdForUpdate).not.toHaveBeenCalled();
     });
 
     it('rejects a non-owner PLANNER with 404 OUT_OF_SCOPE', async () => {
@@ -538,15 +782,18 @@ describe('PlanService', () => {
           role: UserRole.PLANNER,
         }),
       ).rejects.toThrow(NotFoundException);
-      expect(planRepo.updateStatus).not.toHaveBeenCalled();
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
     });
 
     it('allows ADMIN regardless of plan ownership', async () => {
-      planRepo.findById.mockResolvedValue(rejectedPlan);
-      planRepo.updateStatus.mockResolvedValue({
-        ...rejectedPlan,
-        status: PlanStatus.DRAFT,
-      } as Plan);
+      planRepo.findById
+        .mockResolvedValueOnce(rejectedPlan)
+        .mockResolvedValueOnce({
+          ...rejectedPlan,
+          status: PlanStatus.DRAFT,
+        } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(rejectedPlan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
 
       const result = await service.returnToDraft(
         mockPlanId,
@@ -558,16 +805,10 @@ describe('PlanService', () => {
       expect(result.status).toBe(PlanStatus.DRAFT);
     });
 
-    it('compensates (reverts to REJECTED) if history write fails', async () => {
+    it('rolls back (plan stays REJECTED) if the history write fails — T-034b real atomicity', async () => {
       planRepo.findById.mockResolvedValue(rejectedPlan);
-      planRepo.updateStatus.mockResolvedValueOnce({
-        ...rejectedPlan,
-        status: PlanStatus.DRAFT,
-      } as Plan);
-      planRepo.updateUnversioned.mockResolvedValueOnce({
-        ...rejectedPlan,
-        status: PlanStatus.REJECTED,
-      } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(rejectedPlan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       approvalHistoryRepo.save.mockRejectedValueOnce(new Error('DB down'));
 
       await expect(
@@ -575,22 +816,15 @@ describe('PlanService', () => {
           userId: mockUserId,
           role: UserRole.PLANNER,
         }),
-      ).rejects.toThrow('Failed to record approval history');
+      ).rejects.toThrow('DB down');
 
-      // Compensation reverts status back to REJECTED with the original
-      // rejection fields restored (not via updateStatus — a direct
-      // #updateUnversioned call (T-034: deliberate CAS bypass — a
-      // compensation write reverting a state transition), since
-      // #updateStatus's `status` param is DRAFT-transition-specific
-      // elsewhere in this file).
-      expect(planRepo.updateUnversioned).toHaveBeenCalledWith(
-        mockPlanId,
-        mockTenantId,
-        expect.objectContaining({
-          status: PlanStatus.REJECTED,
-          rejectionReason: rejectedPlan.rejectionReason,
-        }),
-      );
+      // T-034b: real transaction — one rollback undoes the status write.
+      // The old compensation path (a direct #updateUnversioned call
+      // reverting status back to REJECTED) no longer exists; rollback does
+      // the same job atomically.
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+      expect(planRepo.updateUnversioned).not.toHaveBeenCalled();
     });
   });
 

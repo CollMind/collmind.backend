@@ -823,4 +823,213 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       expect(stillThere.status).toBe(200);
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // T-034b — state transitions: transaction + FOR UPDATE + status-CAS
+  // (docs/analysis/0005 §4). submit/approve/reject/returnToDraft are NOT
+  // version-CAS'd (K5) — the barrier is the transition's own precondition
+  // (status), enforced under a row lock. submit() is the sole documented
+  // exception and DOES also validate plans.version.
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('T-034b — state transitions (transaction + FOR UPDATE + status-CAS)', () => {
+    /** DRAFT plan + FU_WELLA_HC_500ML (COGS-populated fixture) -> totalSpend > 0, ready to submit. */
+    async function createReadyToSubmitPlan(
+      namePrefix: string,
+    ): Promise<{ planId: string; version: number }> {
+      const planner = await loginAs(app, 'PLANNER');
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-OPTLOCK-${namePrefix}-${Date.now()}`,
+          cplId: fixture.cplId,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const planId = createRes.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
+        .expect(201);
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const planFu = planRes.body.planFus[0];
+      const skuId = planFu.planSkus[0].skuId;
+
+      await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_WELLA_HC_500ML}/skus/${skuId}/volume`)
+        .set(planner.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 }, version: 1 })
+        .expect(200);
+
+      const recalcRes = await request(app.getHttpServer())
+        .post(`/plans/${planId}/recalculate`)
+        .set(planner.authHeader())
+        .send({})
+        .expect(200);
+      expect(Number(recalcRes.body.totalSpend)).toBeGreaterThan(0);
+
+      return { planId, version: recalcRes.body.version };
+    }
+
+    describe('submit() — the K5 exception: version IS validated', () => {
+      it('stale plans.version -> 409 STALE_VERSION (deterministic, no timing); correct version -> 200', async () => {
+        const planner = await loginAs(app, 'PLANNER');
+        const { planId, version } =
+          await createReadyToSubmitPlan('T034B-SUBMIT-STALE');
+
+        // Bump plans.version without changing status (plan-header edit).
+        // NOTE: must keep the `E2E-` prefix — cleanupTestPlans (seed-e2e.ts)
+        // matches on `plan_name LIKE 'E2E-%'` (or plan_code, unaffected by
+        // rename); renaming away from it would leak this plan's RESERVE
+        // budget_transaction forever (same leak class as T-028d/T-036 —
+        // code-review caught this: reserved 75000->175000 over repeated
+        // runs before this fix).
+        await request(app.getHttpServer())
+          .patch(`/plans/${planId}`)
+          .set(planner.authHeader())
+          .send({ planName: 'E2E-OPTLOCK-renamed-before-submit', version })
+          .expect(200);
+
+        // Replaying the OLD version -> 409 STALE_VERSION, plan stays DRAFT.
+        const staleSubmit = await request(app.getHttpServer())
+          .post(`/plans/${planId}/submit`)
+          .set(planner.authHeader())
+          .send({ version });
+        expect(staleSubmit.status).toBe(409);
+        expect(staleSubmit.body.code).toBe('STALE_VERSION');
+
+        const afterStale = await request(app.getHttpServer())
+          .get(`/plans/${planId}`)
+          .set(planner.authHeader())
+          .expect(200);
+        expect(afterStale.body.status).toBe('DRAFT');
+
+        // Correct (current) version -> 200 PENDING_APPROVAL.
+        const okSubmit = await request(app.getHttpServer())
+          .post(`/plans/${planId}/submit`)
+          .set(planner.authHeader())
+          .send({ version: afterStale.body.version })
+          .expect(200);
+        expect(okSubmit.body.status).toBe('PENDING_APPROVAL');
+      });
+
+      it('missing `version` -> 409 MISSING_VERSION, plan stays DRAFT', async () => {
+        const planner = await loginAs(app, 'PLANNER');
+        const { planId } = await createReadyToSubmitPlan(
+          'T034B-SUBMIT-MISSING-VERSION',
+        );
+
+        const res = await request(app.getHttpServer())
+          .post(`/plans/${planId}/submit`)
+          .set(planner.authHeader())
+          .send({});
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('MISSING_VERSION');
+
+        const after = await request(app.getHttpServer())
+          .get(`/plans/${planId}`)
+          .set(planner.authHeader())
+          .expect(200);
+        expect(after.body.status).toBe('DRAFT');
+      });
+    });
+
+    describe('approve() — stale-status replay (deterministic, no timing)', () => {
+      it('sequential double-approve: first 200 APPROVED, second 400 (status already APPROVED) — no double COMMIT', async () => {
+        const planner = await loginAs(app, 'PLANNER');
+        const manager = await loginAs(app, 'MANAGER');
+        const { planId, version } = await createReadyToSubmitPlan(
+          'T034B-APPROVE-STALE',
+        );
+
+        await request(app.getHttpServer())
+          .post(`/plans/${planId}/submit`)
+          .set(planner.authHeader())
+          .send({ version })
+          .expect(200);
+
+        const first = await request(app.getHttpServer())
+          .post(`/plans/${planId}/approve`)
+          .set(manager.authHeader())
+          .send({ comments: 'first' });
+        expect(first.status).toBe(200);
+        expect(first.body.status).toBe('APPROVED');
+
+        const second = await request(app.getHttpServer())
+          .post(`/plans/${planId}/approve`)
+          .set(manager.authHeader())
+          .send({ comments: 'second' });
+        expect(second.status).toBe(400);
+
+        const commitTx = await dataSource.query(
+          `SELECT tx_type FROM main.budget_transactions
+           WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'COMMIT'`,
+          [planId],
+        );
+        expect(commitTx.length).toBe(1); // exactly one COMMIT — no double-spend
+      });
+    });
+
+    describe('real concurrent race — order-independent invariant (Layer 4, mirrors the SKU-volume race above)', () => {
+      it('two simultaneous approve() calls on the same PENDING plan: exactly one 200 and one 400/409, exactly one COMMIT ever posted', async () => {
+        const planner = await loginAs(app, 'PLANNER');
+        const manager = await loginAs(app, 'MANAGER');
+
+        for (let i = 0; i < 3; i++) {
+          const { planId, version } = await createReadyToSubmitPlan(
+            `T034B-APPROVE-RACE-${i}`,
+          );
+
+          await request(app.getHttpServer())
+            .post(`/plans/${planId}/submit`)
+            .set(planner.authHeader())
+            .send({ version })
+            .expect(200);
+
+          const send = () =>
+            request(app.getHttpServer())
+              .post(`/plans/${planId}/approve`)
+              .set(manager.authHeader())
+              .send({ comments: 'race' });
+
+          const [a, b] = await Promise.all([send(), send()]);
+
+          // Order-independent: NEVER assert which one wins. A 400 (status
+          // guard, the loser blocked on the FOR UPDATE lock and then read
+          // an already-APPROVED row) is the expected loser outcome here —
+          // not 409, since approve() has no version-CAS (K5); the
+          // status-CAS predicate is the barrier.
+          const statuses = [a.status, b.status].sort();
+          expect(statuses).toEqual([200, 400]);
+
+          const commitTx = await dataSource.query(
+            `SELECT tx_type FROM main.budget_transactions
+             WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'COMMIT'`,
+            [planId],
+          );
+          // Mutation-proof anchor: if the FOR UPDATE lock or the
+          // status-CAS predicate were ever removed, this would
+          // intermittently observe 2 COMMIT rows (double-spend) instead of
+          // exactly 1 — the exact bug class T-034b closes.
+          expect(commitTx.length).toBe(1);
+        }
+      });
+    });
+  });
 });

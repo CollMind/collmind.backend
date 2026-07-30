@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DataSource } from 'typeorm';
 import { AgreementRepository } from './agreement.repository';
 import { CreateAgreementDto, UpdateAgreementDto } from './dto';
 import {
@@ -60,6 +61,11 @@ export class AgreementService {
     private readonly forecastingUnitService: FuService,
     private readonly accessScope: AccessScopeService,
     private readonly adminAuditService: AdminAuditService,
+    // T-034b: agreement's canonical state-transition path (submit/approve/
+    // reject) — same real-transaction + FOR UPDATE + status-CAS treatment
+    // as plan.service.ts/approval-workflow.service.ts (docs/analysis/0005
+    // §4).
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(
@@ -564,6 +570,13 @@ export class AgreementService {
     return updatedAgreement;
   }
 
+  /**
+   * T-034b (docs/analysis/0005 §4): real transaction + `FOR UPDATE` +
+   * status-CAS, replacing the old compensate-on-failure pattern (T-032).
+   * No budget moves at submit() time (agreement reserves budget in
+   * approve(), unlike Plan) — the atomicity here closes the
+   * status/approval-request/audit race instead.
+   */
   async submit(
     id: string,
     tenantId: string,
@@ -571,47 +584,65 @@ export class AgreementService {
     userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
-    const agreement = await this.findById(id, tenantId, actor);
+    // Pre-transaction: 404/OUT_OF_SCOPE.
+    await this.findById(id, tenantId, actor);
 
-    if (agreement.status !== AgreementStatus.DRAFT) {
-      throw new BadRequestException('Only DRAFT agreements can be submitted');
-    }
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    let auditLog: Awaited<
+      ReturnType<AdminAuditService['logAdminAction']>
+    > | null = null;
 
-    // Create approval request
-    const approvalRequest = await this.approvalService.createRequest(
-      {
-        requestType: ApprovalRequestType.AGREEMENT,
-        entityType: 'AGREEMENT',
-        entityId: agreement.id,
-      },
-      tenantId,
-      userId,
-    );
-
-    // Update agreement with approval request ID and status
-    const updated = await this.agreementRepo.updateStatus(
-      id,
-      tenantId,
-      AgreementStatus.PENDING,
-      {
-        approvalRequestId: approvalRequest.id,
-        updatedBy: userId,
-      },
-    );
-
-    // T-032 (BRD "audit immutable ... onay/red dahil her işlem loglanır"):
-    // this endpoint (POST /agreements/:id/submit) previously wrote ZERO rows
-    // to admin_audit_logs for AGREEMENT SUBMIT/APPROVE/REJECT/CANCEL — only
-    // settlement-close (CLOSE) and reversal (REVERSE) did. Compensate-on-
-    // failure pattern (T-026/T-029, plan.service.ts#submit): agreementRepo/
-    // approvalService/adminAuditService do not share a single QueryRunner,
-    // so this is not a real DB transaction — on audit-write failure we
-    // revert status back to DRAFT rather than leave the agreement PENDING
-    // with no audit trail. No budget has moved at submit() time (agreement
-    // reserves budget in approve(), unlike Plan), so no budget compensation
-    // is needed here.
     try {
-      await this.adminAuditService.logAdminAction(
+      const agreement = await this.agreementRepo.findByIdForUpdate(
+        id,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!agreement) {
+        throw new NotFoundException(`Agreement with ID ${id} not found`);
+      }
+      if (agreement.status !== AgreementStatus.DRAFT) {
+        throw new BadRequestException('Only DRAFT agreements can be submitted');
+      }
+
+      const approvalRequest = await this.approvalService.createRequest(
+        {
+          requestType: ApprovalRequestType.AGREEMENT,
+          entityType: 'AGREEMENT',
+          entityId: agreement.id,
+        },
+        tenantId,
+        userId,
+        queryRunner.manager,
+      );
+
+      const affected = await this.agreementRepo.updateStatusCas(
+        queryRunner.manager,
+        id,
+        tenantId,
+        AgreementStatus.DRAFT,
+        {
+          status: AgreementStatus.PENDING,
+          approvalRequestId: approvalRequest.id,
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Agreement status changed concurrently; retry.',
+        });
+      }
+
+      // T-032 (BRD "audit immutable ... onay/red dahil her işlem loglanır"):
+      // now inside the same transaction (T-014's manager overload) — a
+      // failed audit write rolls back the status + approval-request
+      // together, no manual revert-to-DRAFT needed.
+      auditLog = await this.adminAuditService.logAdminAction(
         tenantId,
         userId,
         userEmail ?? 'unknown',
@@ -625,27 +656,41 @@ export class AgreementService {
           newStatus: AgreementStatus.PENDING,
           approvalRequestId: approvalRequest.id,
         },
+        undefined,
+        { manager: queryRunner.manager },
       );
-    } catch (error) {
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+
+    // T-014: high-risk alarm (SUBMIT is not flagged high-risk today, so this
+    // is a no-op — kept for consistency with approve()/reject() below and in
+    // case that classification ever changes) fires only AFTER a successful
+    // commit, in its own try/catch (never masks a committed submit as a 500).
+    try {
+      await this.adminAuditService.flushPendingAlert(auditLog);
+    } catch (alertErr) {
       this.logger.error(
-        `Audit log failed after submit for agreement ${id}; compensating (revert to DRAFT): ${
-          error instanceof Error ? error.message : 'Unknown error'
+        `HIGH-RISK ALERT FAILED — AGREEMENT ${id} submitted successfully; alert not delivered: ${
+          alertErr instanceof Error ? alertErr.message : 'Unknown error'
         }`,
-      );
-      await this.agreementRepo.updateStatus(
-        id,
-        tenantId,
-        AgreementStatus.DRAFT,
-        { updatedBy: userId },
-      );
-      throw new InternalServerErrorException(
-        'Failed to record audit log for agreement submission; submission has been rolled back to DRAFT.',
       );
     }
 
-    return updated;
+    return (await this.agreementRepo.findById(id, tenantId)) as Agreement;
   }
 
+  /**
+   * T-034b: real transaction + `FOR UPDATE` + status-CAS, replacing the old
+   * compensate-on-failure pattern (release RESERVE + revert to PENDING).
+   * Mirrors plan.service.ts#approve — budget RESERVE, approval-request
+   * decision, status write, and audit log are now one atomic unit.
+   */
   async approve(
     id: string,
     tenantId: string,
@@ -654,40 +699,53 @@ export class AgreementService {
     userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
-    const agreement = await this.findById(id, tenantId);
+    // Pre-transaction: 404 + channel relation (needed for the envelope
+    // lookup; channel does not participate in the money/status race this
+    // task closes — same rationale as plan.service.ts#approve's channelCode
+    // capture) + CM scope check (categoryId derivation needs full relations,
+    // see #assertCmDecisionScope/#resolveEffectiveCategoryId).
+    const initial = await this.findById(id, tenantId);
+    await this.assertCmDecisionScope(initial, tenantId, actor);
 
-    if (agreement.status !== AgreementStatus.PENDING) {
-      throw new BadRequestException('Only PENDING agreements can be approved');
-    }
-
-    // T-028e: CM kategori-scoped onay (BRD "Category Manager ATANMIŞ
-    // kategoriyi onaylar"). Kesişim yoksa 403.
-    await this.assertCmDecisionScope(agreement, tenantId, actor);
-
-    // Validate that approval request exists for PENDING agreements
-    // PENDING agreements should always have approvalRequestId from submit() flow
-    if (!agreement.approvalRequestId) {
-      throw new BadRequestException(
-        'Approval request not found. PENDING agreements must have an associated approval request.',
-      );
-    }
-
-    // Create budget reservation FIRST (before updating approval request)
-    // This ensures that if budget reservation fails, approval request remains pending
-    // Load channel relation if not already loaded
-    let agreementWithChannel: Agreement = agreement;
-    if (!agreement.channel) {
-      const loadedAgreement = await this.agreementRepo.findById(
-        agreement.id,
-        tenantId,
-      );
-      if (!loadedAgreement || !loadedAgreement.channel) {
+    let agreementWithChannel: Agreement = initial;
+    if (!initial.channel) {
+      const loaded = await this.agreementRepo.findById(id, tenantId);
+      if (!loaded || !loaded.channel) {
         throw new BadRequestException('Agreement channel not found');
       }
-      agreementWithChannel = loadedAgreement;
+      agreementWithChannel = loaded;
     }
 
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    let auditLog: Awaited<
+      ReturnType<AdminAuditService['logAdminAction']>
+    > | null = null;
+
     try {
+      const agreement = await this.agreementRepo.findByIdForUpdate(
+        id,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!agreement) {
+        throw new NotFoundException(`Agreement with ID ${id} not found`);
+      }
+      if (agreement.status !== AgreementStatus.PENDING) {
+        throw new BadRequestException(
+          'Only PENDING agreements can be approved',
+        );
+      }
+      if (!agreement.approvalRequestId) {
+        throw new BadRequestException(
+          'Approval request not found. PENDING agreements must have an associated approval request.',
+        );
+      }
+
+      // Budget RESERVE, approval-request decision, status write — all
+      // inside the same transaction now (T-034b "asıl ödül": a failure
+      // anywhere rolls back everything, no manual compensation needed).
       await this.budgetService.reserveForAgreement(
         agreementWithChannel.id,
         agreementWithChannel.capTotalAmount,
@@ -696,53 +754,40 @@ export class AgreementService {
         agreementWithChannel.currency,
         tenantId,
         userId,
+        queryRunner.manager,
       );
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(
-        `Budget reservation failed: ${errorMessage}`,
+
+      await this.approvalService.approve(
+        agreement.approvalRequestId,
+        tenantId,
+        userId,
+        { comments },
+        queryRunner.manager,
       );
-    }
 
-    // Update approval request AFTER successful budget reservation
-    // This ensures approval request is only marked approved if budget reservation succeeded
-    if (!agreement.approvalRequestId) {
-      throw new BadRequestException(
-        'Agreement does not have an approval request',
+      const affected = await this.agreementRepo.updateStatusCas(
+        queryRunner.manager,
+        id,
+        tenantId,
+        AgreementStatus.PENDING,
+        {
+          status: AgreementStatus.APPROVED,
+          approvedAt: new Date(),
+          approvedById: userId,
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
       );
-    }
-    await this.approvalService.approve(
-      agreement.approvalRequestId,
-      tenantId,
-      userId,
-      { comments },
-    );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Agreement status changed concurrently; retry.',
+        });
+      }
 
-    // Update agreement status
-    const updated = await this.agreementRepo.updateStatus(
-      id,
-      tenantId,
-      AgreementStatus.APPROVED,
-      {
-        approvedAt: new Date(),
-        approvedById: userId,
-        updatedBy: userId,
-      },
-    );
-
-    // T-032: audit immutable — approve must be recorded (BRD: "onay/red
-    // dahil her işlem loglanır"). Compensate-on-failure pattern (T-026/
-    // T-029, mirrors plan.service.ts#approve): agreementRepo/budgetService/
-    // approvalService/adminAuditService do not share a single QueryRunner,
-    // so this is not a real DB transaction — on audit-write failure we
-    // release the RESERVE just created above and revert status back to
-    // PENDING. approvalService.approve() itself is NOT compensated (its own
-    // audit trail already correctly records the approval decision) — only
-    // the agreement-status/budget side effects introduced by this call are
-    // unwound, same limited-compensation trade-off T-026/T-029 documented.
-    try {
-      await this.adminAuditService.logAdminAction(
+      // T-032: audit immutable — approve must be recorded.
+      auditLog = await this.adminAuditService.logAdminAction(
         tenantId,
         userId,
         userEmail ?? 'unknown',
@@ -758,43 +803,42 @@ export class AgreementService {
           comments,
         },
         comments,
+        { manager: queryRunner.manager },
       );
-    } catch (error) {
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+
+    // T-014: APPROVE is high-risk (admin-audit.service.ts#isHighRiskAction)
+    // — alarm fires only AFTER a successful commit, in its own try/catch.
+    try {
+      await this.adminAuditService.flushPendingAlert(auditLog);
+    } catch (alertErr) {
       this.logger.error(
-        `Audit log failed after approve for agreement ${id}; compensating (release RESERVE, revert to PENDING): ${
-          error instanceof Error ? error.message : 'Unknown error'
+        `HIGH-RISK ALERT FAILED — AGREEMENT ${id} approved successfully; alert not delivered: ${
+          alertErr instanceof Error ? alertErr.message : 'Unknown error'
         }`,
-      );
-      try {
-        await this.budgetReservationService.releaseAgreementReservation(
-          id,
-          tenantId,
-          userId,
-          'APPROVE_COMPENSATION',
-        );
-      } catch (releaseError) {
-        this.logger.error(
-          `Compensation failed: could not release budget for agreement ${id} after audit-log failure: ${
-            releaseError instanceof Error
-              ? releaseError.message
-              : 'Unknown error'
-          }`,
-        );
-      }
-      await this.agreementRepo.updateStatus(
-        id,
-        tenantId,
-        AgreementStatus.PENDING,
-        { updatedBy: userId },
-      );
-      throw new InternalServerErrorException(
-        'Failed to record audit log for agreement approval; approval has been rolled back to PENDING.',
       );
     }
 
-    return updated;
+    return (await this.agreementRepo.findById(id, tenantId)) as Agreement;
   }
 
+  /**
+   * T-034b: real transaction + `FOR UPDATE` + status-CAS. Unlike
+   * plan.service.ts#reject, the defensive budget release here stays
+   * best-effort (logged, not thrown/rolled-back): PENDING agreements
+   * normally have NO outstanding reservation at all (RESERVE only happens
+   * in approve(), unlike Plan's submit()) — so this call is expected to be
+   * a no-op today, and rolling back an already-correct REJECTED decision
+   * over a defensive no-op's failure would be strictly worse. Status write
+   * + approval-request decision + audit ARE atomic (T-034b "asıl ödül").
+   */
   async reject(
     id: string,
     tenantId: string,
@@ -803,53 +847,68 @@ export class AgreementService {
     userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
-    const agreement = await this.findById(id, tenantId);
+    const initial = await this.findById(id, tenantId);
+    await this.assertCmDecisionScope(initial, tenantId, actor);
 
-    if (agreement.status !== AgreementStatus.PENDING) {
-      throw new BadRequestException('Only PENDING agreements can be rejected');
-    }
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    let auditLog: Awaited<
+      ReturnType<AdminAuditService['logAdminAction']>
+    > | null = null;
 
-    // T-028e: CM kategori-scoped red — kesişim yoksa 403.
-    await this.assertCmDecisionScope(agreement, tenantId, actor);
-
-    // Validate that approval request exists for PENDING agreements
-    // PENDING agreements should always have approvalRequestId from submit() flow
-    if (!agreement.approvalRequestId) {
-      throw new BadRequestException(
-        'Approval request not found. PENDING agreements must have an associated approval request.',
-      );
-    }
-
-    // Update approval request
-    await this.approvalService.reject(
-      agreement.approvalRequestId,
-      tenantId,
-      userId,
-      { reason },
-    );
-
-    const updated = await this.agreementRepo.updateStatus(
-      id,
-      tenantId,
-      AgreementStatus.REJECTED,
-      {
-        rejectedAt: new Date(),
-        rejectedById: userId,
-        rejectionReason: reason,
-        updatedBy: userId,
-      },
-    );
-
-    // T-032: audit immutable — reject must be recorded (BRD: "onay/red
-    // dahil her işlem loglanır"; this endpoint previously wrote ZERO rows to
-    // admin_audit_logs). Compensate-on-failure pattern (T-026/T-029, mirrors
-    // plan.service.ts#reject): written BEFORE the defensive budget-release
-    // block below, so on audit-write failure no budget has moved yet and we
-    // can safely revert status back to PENDING (real transactionality would
-    // be preferable — same open point already tracked for T-026's submit
-    // path).
     try {
-      await this.adminAuditService.logAdminAction(
+      const agreement = await this.agreementRepo.findByIdForUpdate(
+        id,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!agreement) {
+        throw new NotFoundException(`Agreement with ID ${id} not found`);
+      }
+      if (agreement.status !== AgreementStatus.PENDING) {
+        throw new BadRequestException(
+          'Only PENDING agreements can be rejected',
+        );
+      }
+      if (!agreement.approvalRequestId) {
+        throw new BadRequestException(
+          'Approval request not found. PENDING agreements must have an associated approval request.',
+        );
+      }
+
+      await this.approvalService.reject(
+        agreement.approvalRequestId,
+        tenantId,
+        userId,
+        { reason },
+        queryRunner.manager,
+      );
+
+      const affected = await this.agreementRepo.updateStatusCas(
+        queryRunner.manager,
+        id,
+        tenantId,
+        AgreementStatus.PENDING,
+        {
+          status: AgreementStatus.REJECTED,
+          rejectedAt: new Date(),
+          rejectedById: userId,
+          rejectionReason: reason,
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Agreement status changed concurrently; retry.',
+        });
+      }
+
+      // T-032: audit immutable — reject must be recorded.
+      auditLog = await this.adminAuditService.logAdminAction(
         tenantId,
         userId,
         userEmail ?? 'unknown',
@@ -861,37 +920,33 @@ export class AgreementService {
         { previousStatus: AgreementStatus.PENDING },
         { newStatus: AgreementStatus.REJECTED, rejectionReason: reason },
         reason,
+        { manager: queryRunner.manager },
       );
-    } catch (error) {
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+
+    // T-014: REJECT is not flagged high-risk today — no-op, kept for
+    // consistency; fires only after a successful commit either way.
+    try {
+      await this.adminAuditService.flushPendingAlert(auditLog);
+    } catch (alertErr) {
       this.logger.error(
-        `Audit log failed after reject for agreement ${id}; compensating (revert to PENDING, budget untouched): ${
-          error instanceof Error ? error.message : 'Unknown error'
+        `HIGH-RISK ALERT FAILED — AGREEMENT ${id} rejected successfully; alert not delivered: ${
+          alertErr instanceof Error ? alertErr.message : 'Unknown error'
         }`,
-      );
-      await this.agreementRepo.updateStatus(
-        id,
-        tenantId,
-        AgreementStatus.PENDING,
-        { updatedBy: userId },
-      );
-      throw new InternalServerErrorException(
-        'Failed to record audit log for agreement rejection; rejection has been rolled back to PENDING.',
       );
     }
 
     // T-030 (F3, defensive): PENDING agreements normally have no budget
-    // reservation yet (RESERVE only happens on approve()), so this is
-    // expected to be a no-op today. Kept defensive in case reservation
-    // timing changes upstream — reject() must never leave a stray RESERVE.
-    //
-    // Code-review fix (2026-07-27, #2): status was already written to
-    // REJECTED above, so a release failure here must NOT throw (unlike
-    // cancel(), where release happens before the status write and a
-    // BadRequestException correctly blocks the transition). Throwing after
-    // the status write would surface a 500 for an already-committed,
-    // now-audited (T-032) rejection, and a retry would then hit "Only
-    // PENDING agreements can be rejected" — confusing. Log and continue,
-    // same defensive no-op-on-failure pattern as PlanService#reject (T-029).
+    // reservation yet (RESERVE only happens on approve()) — best-effort,
+    // outside the transaction (see method header comment for why this one
+    // stays a logged no-op rather than participating in the rollback).
     try {
       await this.budgetReservationService.releaseAgreementReservation(
         id,
@@ -907,7 +962,7 @@ export class AgreementService {
       );
     }
 
-    return updated;
+    return (await this.agreementRepo.findById(id, tenantId)) as Agreement;
   }
 
   async cancel(

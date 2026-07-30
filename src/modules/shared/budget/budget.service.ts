@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import { EntityManager } from 'typeorm';
 import { BudgetRepository } from './budget.repository';
 import { BudgetThresholdService } from './budget-threshold.service';
 import {
@@ -34,6 +35,7 @@ export class BudgetService {
   async createEnvelope(
     tenantId: string,
     createDto: CreateBudgetEnvelopeDto,
+    manager?: EntityManager,
   ): Promise<BudgetEnvelope> {
     // Auto-generate code and name if not provided
     const channel = createDto.channel || 'UNKNOWN';
@@ -57,18 +59,21 @@ export class BudgetService {
       );
     }
 
-    const envelope = await this.budgetRepository.createEnvelope({
-      ...createDto,
-      code,
-      name,
-      period,
-      channel,
-      category,
-      tenantId,
-      availableAmount: createDto.allocatedAmount,
-      consumedAmount: 0,
-      status: createDto.status || BudgetEnvelopeStatus.DRAFT,
-    });
+    const envelope = await this.budgetRepository.createEnvelope(
+      {
+        ...createDto,
+        code,
+        name,
+        period,
+        channel,
+        category,
+        tenantId,
+        availableAmount: createDto.allocatedAmount,
+        consumedAmount: 0,
+        status: createDto.status || BudgetEnvelopeStatus.DRAFT,
+      },
+      manager,
+    );
 
     return envelope;
   }
@@ -245,6 +250,7 @@ export class BudgetService {
     currency: string,
     tenantId: string,
     userId: string,
+    manager?: EntityManager,
   ): Promise<BudgetTransaction> {
     // Check for existing RESERVE transaction for this agreement (true idempotency)
     // Idempotency key should be based on agreementId only, not envelope ID
@@ -254,6 +260,7 @@ export class BudgetService {
         tenantId,
         BudgetTransactionSourceType.AGREEMENT,
         agreementId,
+        manager,
       );
 
     const existingReserve = existingReserveTransactions.find(
@@ -304,25 +311,29 @@ export class BudgetService {
       await this.budgetRepository.findTransactionByIdempotencyKey(
         tenantId,
         idempotencyKey,
+        manager,
       );
     if (existingByIdempotency) {
       return existingByIdempotency;
     }
 
     // Create RESERVE transaction
-    const transaction = await this.budgetRepository.createTransaction({
-      tenantId,
-      envelopeId: envelope.id,
-      txType: BudgetTransactionType.RESERVE,
-      txStatus: BudgetTransactionStatus.POSTED,
-      sourceType: BudgetTransactionSourceType.AGREEMENT,
-      sourceId: agreementId,
-      amount,
-      currency: currency || 'TRY', // Use agreement currency, default to TRY if not provided
-      idempotencyKey,
-      description: `Budget reservation for agreement ${agreementId}`,
-      createdBy: userId,
-    });
+    const transaction = await this.budgetRepository.createTransaction(
+      {
+        tenantId,
+        envelopeId: envelope.id,
+        txType: BudgetTransactionType.RESERVE,
+        txStatus: BudgetTransactionStatus.POSTED,
+        sourceType: BudgetTransactionSourceType.AGREEMENT,
+        sourceId: agreementId,
+        amount,
+        currency: currency || 'TRY', // Use agreement currency, default to TRY if not provided
+        idempotencyKey,
+        description: `Budget reservation for agreement ${agreementId}`,
+        createdBy: userId,
+      },
+      manager,
+    );
 
     return transaction;
   }
@@ -346,8 +357,12 @@ export class BudgetService {
     currency: string,
     tenantId: string,
     userId: string,
+    manager?: EntityManager,
   ): Promise<BudgetTransaction> {
-    // Find matching envelope by dimensions
+    // Find matching envelope by dimensions. T-034b: NOT manager-scoped —
+    // envelope existence/dimension lookup is a plain read; only the WRITES
+    // below (transactions) must land on the caller's transaction for
+    // atomicity with the plan status write (see plan.service.ts#submit).
     const envelope = await this.budgetRepository.findEnvelopeByDimensions(
       tenantId,
       channel,
@@ -365,6 +380,7 @@ export class BudgetService {
         tenantId,
         BudgetTransactionSourceType.PLAN,
         planId,
+        manager,
       );
     // Scoped to THIS envelope — a plan can (in principle) span more than one
     // envelope over its lifetime (T-019 kısıtı, same caveat as
@@ -435,19 +451,22 @@ export class BudgetService {
         ? `RESERVE|PLAN|${planId}|${envelope.id}`
         : `RESERVE|PLAN|${planId}|${envelope.id}|GEN${envelopeReserves.length + 1}`;
 
-    const transaction = await this.budgetRepository.createTransaction({
-      tenantId,
-      envelopeId: envelope.id,
-      txType: BudgetTransactionType.RESERVE,
-      txStatus: BudgetTransactionStatus.POSTED,
-      sourceType: BudgetTransactionSourceType.PLAN,
-      sourceId: planId,
-      amount,
-      currency: currency || 'TRY',
-      idempotencyKey,
-      description: `Budget reservation for plan ${planId} (submitted for approval)`,
-      createdBy: userId,
-    });
+    const transaction = await this.budgetRepository.createTransaction(
+      {
+        tenantId,
+        envelopeId: envelope.id,
+        txType: BudgetTransactionType.RESERVE,
+        txStatus: BudgetTransactionStatus.POSTED,
+        sourceType: BudgetTransactionSourceType.PLAN,
+        sourceId: planId,
+        amount,
+        currency: currency || 'TRY',
+        idempotencyKey,
+        description: `Budget reservation for plan ${planId} (submitted for approval)`,
+        createdBy: userId,
+      },
+      manager,
+    );
 
     return transaction;
   }
@@ -479,12 +498,14 @@ export class BudgetService {
     currency: string,
     tenantId: string,
     userId: string,
+    manager?: EntityManager,
   ): Promise<BudgetTransaction> {
     const existingTransactions =
       await this.budgetRepository.findTransactionsBySource(
         tenantId,
         BudgetTransactionSourceType.PLAN,
         planId,
+        manager,
       );
 
     const existingCommit = existingTransactions.find(
@@ -512,37 +533,44 @@ export class BudgetService {
         await this.budgetRepository.findTransactionByIdempotencyKey(
           tenantId,
           releaseKey,
+          manager,
         );
       if (!existingConvertRelease) {
-        await this.budgetRepository.createTransaction({
+        await this.budgetRepository.createTransaction(
+          {
+            tenantId,
+            envelopeId,
+            txType: BudgetTransactionType.RELEASE,
+            txStatus: BudgetTransactionStatus.POSTED,
+            sourceType: BudgetTransactionSourceType.PLAN,
+            sourceId: planId,
+            amount: commitAmount,
+            currency: outstandingReserve.currency,
+            idempotencyKey: releaseKey,
+            description: `Release RESERVE (converted to COMMIT on approval) for plan ${planId}`,
+            createdBy: userId,
+          },
+          manager,
+        );
+      }
+
+      const commitKey = `COMMIT|PLAN|${planId}|${envelopeId}`;
+      return this.budgetRepository.createTransaction(
+        {
           tenantId,
           envelopeId,
-          txType: BudgetTransactionType.RELEASE,
+          txType: BudgetTransactionType.COMMIT,
           txStatus: BudgetTransactionStatus.POSTED,
           sourceType: BudgetTransactionSourceType.PLAN,
           sourceId: planId,
           amount: commitAmount,
           currency: outstandingReserve.currency,
-          idempotencyKey: releaseKey,
-          description: `Release RESERVE (converted to COMMIT on approval) for plan ${planId}`,
+          idempotencyKey: commitKey,
+          description: `Budget commit for plan ${planId} (converted from RESERVE on approval)`,
           createdBy: userId,
-        });
-      }
-
-      const commitKey = `COMMIT|PLAN|${planId}|${envelopeId}`;
-      return this.budgetRepository.createTransaction({
-        tenantId,
-        envelopeId,
-        txType: BudgetTransactionType.COMMIT,
-        txStatus: BudgetTransactionStatus.POSTED,
-        sourceType: BudgetTransactionSourceType.PLAN,
-        sourceId: planId,
-        amount: commitAmount,
-        currency: outstandingReserve.currency,
-        idempotencyKey: commitKey,
-        description: `Budget commit for plan ${planId} (converted from RESERVE on approval)`,
-        createdBy: userId,
-      });
+        },
+        manager,
+      );
     }
 
     // Fallback: no prior RESERVE — commit directly (legacy / plan approved
@@ -574,19 +602,22 @@ export class BudgetService {
     }
 
     const commitKey = `COMMIT|PLAN|${planId}|${envelope.id}`;
-    return this.budgetRepository.createTransaction({
-      tenantId,
-      envelopeId: envelope.id,
-      txType: BudgetTransactionType.COMMIT,
-      txStatus: BudgetTransactionStatus.POSTED,
-      sourceType: BudgetTransactionSourceType.PLAN,
-      sourceId: planId,
-      amount,
-      currency: currency || 'TRY',
-      idempotencyKey: commitKey,
-      description: `Budget commit for plan ${planId}`,
-      createdBy: userId,
-    });
+    return this.budgetRepository.createTransaction(
+      {
+        tenantId,
+        envelopeId: envelope.id,
+        txType: BudgetTransactionType.COMMIT,
+        txStatus: BudgetTransactionStatus.POSTED,
+        sourceType: BudgetTransactionSourceType.PLAN,
+        sourceId: planId,
+        amount,
+        currency: currency || 'TRY',
+        idempotencyKey: commitKey,
+        description: `Budget commit for plan ${planId}`,
+        createdBy: userId,
+      },
+      manager,
+    );
   }
 
   /**
@@ -712,12 +743,14 @@ export class BudgetService {
     tenantId: string,
     userId?: string,
     reason: PlanReservationReleaseReason = 'REJECT',
+    manager?: EntityManager,
   ): Promise<void> {
     await this.budgetReservationService.releasePlanReservation(
       planId,
       tenantId,
       userId,
       reason,
+      manager,
     );
   }
 

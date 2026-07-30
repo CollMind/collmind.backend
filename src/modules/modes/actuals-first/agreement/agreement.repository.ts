@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import {
   Agreement,
   AgreementStatus,
@@ -190,6 +190,42 @@ export class AgreementRepository {
   ): Promise<Agreement> {
     const updateData = { status, ...additionalFields };
     return this.updateUnversioned(id, tenantId, updateData);
+  }
+
+  /**
+   * T-034b (docs/analysis/0005 §4): row lock for state transitions
+   * (submit/approve/reject) — see PlanRepository#findByIdForUpdate for the
+   * full rationale (identical pattern, mirrored here for Agreement's
+   * canonical state-transition path, agreement.service.ts).
+   */
+  async findByIdForUpdate(
+    id: string,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<Agreement | null> {
+    return manager.findOne(Agreement, {
+      where: { id, tenantId },
+      lock: { mode: 'pessimistic_write' },
+    });
+  }
+
+  /**
+   * T-034b: status-CAS write — see PlanRepository#updateStatusCas for the
+   * full rationale (identical pattern).
+   */
+  async updateStatusCas(
+    manager: EntityManager,
+    id: string,
+    tenantId: string,
+    expectedStatus: AgreementStatus,
+    data: Partial<Agreement>,
+  ): Promise<number> {
+    const result = await manager.update(
+      Agreement,
+      { id, tenantId, status: expectedStatus } as any,
+      data as any,
+    );
+    return result.affected ?? 0;
   }
 
   async softDelete(id: string, tenantId: string): Promise<void> {

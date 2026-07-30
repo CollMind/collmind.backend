@@ -146,4 +146,69 @@ describe('AgreementRepository — T-034 optimistic locking (CAS)', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  /**
+   * T-034b — state transitions (submit/approve/reject) use `FOR UPDATE` +
+   * status-CAS, not version-CAS. See plan.repository.spec.ts's identical
+   * block for the full rationale.
+   */
+  describe('T-034b — findByIdForUpdate / updateStatusCas', () => {
+    it('findByIdForUpdate locks via the given manager (pessimistic_write), no relations', async () => {
+      const managerMock = {
+        findOne: jest.fn().mockResolvedValue({ id: 'agr-1' }),
+      };
+
+      const result = await repo.findByIdForUpdate(
+        'agr-1',
+        'tenant-1',
+        managerMock as any,
+      );
+
+      expect(managerMock.findOne).toHaveBeenCalledWith(
+        Agreement,
+        expect.objectContaining({
+          where: { id: 'agr-1', tenantId: 'tenant-1' },
+          lock: { mode: 'pessimistic_write' },
+        }),
+      );
+      expect(result).toEqual({ id: 'agr-1' });
+    });
+
+    it('updateStatusCas writes WHERE status = expectedStatus and returns affected count', async () => {
+      const managerMock = {
+        update: jest.fn().mockResolvedValue({ affected: 1 }),
+      };
+
+      const affected = await repo.updateStatusCas(
+        managerMock as any,
+        'agr-1',
+        'tenant-1',
+        'PENDING' as any,
+        { status: 'APPROVED' } as any,
+      );
+
+      expect(affected).toBe(1);
+      expect(managerMock.update).toHaveBeenCalledWith(
+        Agreement,
+        { id: 'agr-1', tenantId: 'tenant-1', status: 'PENDING' },
+        { status: 'APPROVED' },
+      );
+    });
+
+    it('updateStatusCas returns 0 when the row is not in the expected status (mutation-proof anchor)', async () => {
+      const managerMock = {
+        update: jest.fn().mockResolvedValue({ affected: 0 }),
+      };
+
+      const affected = await repo.updateStatusCas(
+        managerMock as any,
+        'agr-1',
+        'tenant-1',
+        'PENDING' as any,
+        { status: 'APPROVED' } as any,
+      );
+
+      expect(affected).toBe(0);
+    });
+  });
 });

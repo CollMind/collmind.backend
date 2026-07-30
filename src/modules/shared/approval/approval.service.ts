@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { EntityManager } from 'typeorm';
 import { ApprovalRepository } from './approval.repository';
 import {
   CreateApprovalRequestDto,
@@ -28,8 +29,14 @@ export class ApprovalService {
     dto: CreateApprovalRequestDto,
     tenantId: string,
     requesterId: string,
+    manager?: EntityManager,
   ): Promise<ApprovalRequest> {
     // Check if approval request already exists for this entity
+    // T-034b: NOT manager-scoped (findByEntityId has no manager overload) —
+    // an intentional plain read on the default connection, same rationale
+    // as BudgetService's envelope-dimension lookups (see plan.service.ts
+    // comments): this is a duplicate-request guard, not part of the
+    // money/status atomicity this task closes.
     const existing = await this.approvalRepo.findByEntityId(
       dto.entityType,
       dto.entityId,
@@ -67,18 +74,21 @@ export class ApprovalService {
         }))
       : [defaultLevel];
 
-    const request = await this.approvalRepo.create({
-      tenantId,
-      requestType: dto.requestType,
-      entityType: dto.entityType,
-      entityId: dto.entityId,
-      requestedById: requesterId,
-      requestedAt: new Date(),
-      approvalLevels,
-      currentLevel: 1,
-      status: ApprovalRequestStatus.PENDING,
-      createdBy: requesterId,
-    });
+    const request = await this.approvalRepo.create(
+      {
+        tenantId,
+        requestType: dto.requestType,
+        entityType: dto.entityType,
+        entityId: dto.entityId,
+        requestedById: requesterId,
+        requestedAt: new Date(),
+        approvalLevels,
+        currentLevel: 1,
+        status: ApprovalRequestStatus.PENDING,
+        createdBy: requesterId,
+      },
+      manager,
+    );
 
     return request;
   }
@@ -92,8 +102,9 @@ export class ApprovalService {
     tenantId: string,
     approverId: string,
     dto?: ApproveRequestDto,
+    manager?: EntityManager,
   ): Promise<ApprovalRequest> {
-    const request = await this.findById(id, tenantId);
+    const request = await this.findById(id, tenantId, manager);
 
     if (request.status !== ApprovalRequestStatus.PENDING) {
       throw new BadRequestException('Only PENDING requests can be approved');
@@ -132,13 +143,19 @@ export class ApprovalService {
       ? ApprovalRequestStatus.APPROVED
       : ApprovalRequestStatus.PENDING;
 
-    return this.approvalRepo.updateStatus(id, tenantId, newStatus, {
-      approvalLevels: levels,
-      currentLevel: hasMoreLevels ? nextLevel : request.currentLevel,
-      approvedAt: allApproved ? new Date() : undefined,
-      approvedById: allApproved ? approverId : undefined,
-      updatedBy: approverId,
-    });
+    return this.approvalRepo.updateStatus(
+      id,
+      tenantId,
+      newStatus,
+      {
+        approvalLevels: levels,
+        currentLevel: hasMoreLevels ? nextLevel : request.currentLevel,
+        approvedAt: allApproved ? new Date() : undefined,
+        approvedById: allApproved ? approverId : undefined,
+        updatedBy: approverId,
+      },
+      manager,
+    );
   }
 
   /**
@@ -150,8 +167,9 @@ export class ApprovalService {
     tenantId: string,
     rejectorId: string,
     dto: RejectRequestDto,
+    manager?: EntityManager,
   ): Promise<ApprovalRequest> {
-    const request = await this.findById(id, tenantId);
+    const request = await this.findById(id, tenantId, manager);
 
     if (request.status !== ApprovalRequestStatus.PENDING) {
       throw new BadRequestException('Only PENDING requests can be rejected');
@@ -187,6 +205,7 @@ export class ApprovalService {
         rejectionReason: dto.reason,
         updatedBy: rejectorId,
       },
+      manager,
     );
   }
 
@@ -221,8 +240,12 @@ export class ApprovalService {
     );
   }
 
-  async findById(id: string, tenantId: string): Promise<ApprovalRequest> {
-    const request = await this.approvalRepo.findById(id, tenantId);
+  async findById(
+    id: string,
+    tenantId: string,
+    manager?: EntityManager,
+  ): Promise<ApprovalRequest> {
+    const request = await this.approvalRepo.findById(id, tenantId, manager);
     if (!request) {
       throw new NotFoundException('Approval request not found');
     }

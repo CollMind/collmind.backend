@@ -27,6 +27,7 @@ import {
   DeletePlanDto,
   UpdateFuTacticDto,
   UpdateSkuVolumeDto,
+  SubmitPlanDto,
   SubmitForApprovalDto,
   ReviewPlanDto,
   ApprovalFilters,
@@ -311,13 +312,17 @@ export class PlanController {
   })
   submit(
     @Param('id') id: string,
+    @Body() dto: SubmitPlanDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.planService.submit(id, tenantId, user.id, {
-      userId: user.id,
-      role: user.role,
-    });
+    return this.planService.submit(
+      id,
+      tenantId,
+      user.id,
+      { userId: user.id, role: user.role },
+      dto?.version,
+    );
   }
 
   @Post(':id/submit-for-approval')

@@ -1,13 +1,14 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   InternalServerErrorException,
   Logger,
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Plan, PlanStatus } from '../../../../database/entities/plan.entity';
 import { UserRole } from '../../../../database/entities/user.entity';
 import {
@@ -32,6 +33,10 @@ import { ApprovalFilters, PendingPlan } from './dto/approval-queue.dto';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
 import { PlanActor } from './plan.service';
+import {
+  missingVersionConflict,
+  staleVersionConflict,
+} from '../../../shared/persistence/versioned-update.helper';
 
 @Injectable()
 export class ApprovalWorkflowService {
@@ -45,6 +50,12 @@ export class ApprovalWorkflowService {
     @InjectRepository(PlanApprovalHistory)
     private readonly approvalHistoryRepo: Repository<PlanApprovalHistory>,
     private readonly accessScope: AccessScopeService,
+    // T-034b: this is the SECOND canonical plan-state-transition path (see
+    // plan.service.ts submit/approve/reject/returnToDraft — "İki kanonik
+    // yol" in the task description). Same real-transaction + FOR UPDATE +
+    // status-CAS treatment (docs/analysis/0005 §4), same DataSource
+    // mechanism.
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -161,36 +172,64 @@ export class ApprovalWorkflowService {
       } as SubmissionResult;
     }
 
-    // Create approval request
-    const approvalRequest = await this.approvalService.createRequest(
-      {
-        requestType: ApprovalRequestType.PLAN,
-        entityType: 'PLAN',
-        entityId: plan.id,
-      },
-      tenantId,
-      userId,
-    );
+    // T-034b (docs/analysis/0005 §4): real transaction + `FOR UPDATE` +
+    // status-CAS, replacing the old compensate-on-failure pattern. The
+    // validation/spend-calc work above is read-only and pre-transaction
+    // (heavy KPI/SpendCalc calls do not belong inside a locked write
+    // transaction — see T-034c's advisory-lock scope note in the design
+    // doc for the same "don't widen the lock window" concern); only the
+    // state transition + its budget/audit side effects need to be atomic.
+    let approvalRequestId = '';
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    // Update plan status
-    await this.planRepo.updateStatus(
-      planId,
-      tenantId,
-      PlanStatus.PENDING_APPROVAL,
-      {
-        approvalRequestId: approvalRequest.id,
-        submissionNotes: dto.submissionNotes,
-        submittedAt: new Date(),
-        submittedById: userId,
-        onInvoiceSpend: spendBreakdown.onInvoice,
-        offInvoiceSpend: spendBreakdown.offInvoice,
-        updatedBy: userId,
-      },
-    );
-
-    // Reserve budget (soft reservation - will be committed on approval)
     try {
-      // Reserve On-Invoice budget
+      const locked = await this.planRepo.findByIdForUpdate(
+        planId,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!locked) {
+        throw new NotFoundException(`Plan with ID ${planId} not found`);
+      }
+      if (locked.status !== PlanStatus.DRAFT) {
+        throw new BadRequestException('Only DRAFT plans can be submitted');
+      }
+
+      // T-034b (code-review fix): K5 exception — submitForApproval() is the
+      // SAME transition as PlanService#submit and must validate
+      // plans.version identically (see SubmitForApprovalDto#version).
+      if (dto.version === undefined || dto.version === null) {
+        throw missingVersionConflict({ entity: 'PLAN', entityId: planId });
+      }
+      if (locked.version !== dto.version) {
+        throw staleVersionConflict({
+          entity: 'PLAN',
+          entityId: planId,
+          expectedVersion: dto.version,
+          currentVersion: locked.version,
+          current: {
+            totalSpend: Number(locked.totalSpend),
+            updatedBy: locked.updatedBy,
+            updatedAt: locked.updatedAt,
+          },
+        });
+      }
+
+      const approvalRequest = await this.approvalService.createRequest(
+        {
+          requestType: ApprovalRequestType.PLAN,
+          entityType: 'PLAN',
+          entityId: plan.id,
+        },
+        tenantId,
+        userId,
+        queryRunner.manager,
+      );
+      approvalRequestId = approvalRequest.id;
+
+      // Reserve budget (soft reservation - will be committed on approval).
       if (spendBreakdown.onInvoice > 0) {
         await this.reserveBudgetForPlan(
           planId,
@@ -201,10 +240,9 @@ export class ApprovalWorkflowService {
           tenantId,
           userId,
           'ON_INVOICE',
+          queryRunner.manager,
         );
       }
-
-      // Reserve Off-Invoice budget
       if (spendBreakdown.offInvoice > 0) {
         await this.reserveBudgetForPlan(
           planId,
@@ -215,66 +253,53 @@ export class ApprovalWorkflowService {
           tenantId,
           userId,
           'OFF_INVOICE',
+          queryRunner.manager,
         );
       }
-    } catch (error) {
-      // If budget reservation fails, rollback plan status
-      await this.planRepo.updateStatus(planId, tenantId, PlanStatus.DRAFT, {
-        updatedBy: userId,
-      });
-      throw new BadRequestException(
-        `Budget reservation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-    }
 
-    // Create history entry.
-    // NOTE: PlanRepository/BudgetService/approvalHistoryRepo do not currently share a
-    // single QueryRunner/EntityManager, so this cannot be wrapped in a real DB
-    // transaction without a broader refactor (tracked as an open point). To avoid
-    // leaving the plan in a PENDING_APPROVAL "limbo" state (status updated + budget
-    // reserved, but no audit trail and the client receiving a 500), we treat history
-    // write failure as fatal and compensate: release the reserved budget and revert
-    // the plan back to DRAFT before propagating the error to the client.
-    try {
+      const affected = await this.planRepo.updateStatusCas(
+        queryRunner.manager,
+        planId,
+        tenantId,
+        PlanStatus.DRAFT,
+        {
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: approvalRequest.id,
+          submissionNotes: dto.submissionNotes,
+          submittedAt: new Date(),
+          submittedById: userId,
+          onInvoiceSpend: spendBreakdown.onInvoice,
+          offInvoiceSpend: spendBreakdown.offInvoice,
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Plan status changed concurrently; retry.',
+        });
+      }
+
       await this.createHistoryEntry(
         planId,
         tenantId,
         userId,
         ApprovalHistoryAction.SUBMITTED,
         dto.submissionNotes,
+        undefined,
+        undefined,
+        undefined,
+        queryRunner.manager,
       );
-    } catch (error) {
-      this.logger.error(
-        `createHistoryEntry failed after status update + budget reservation for plan ${planId}; compensating (release budget, revert to DRAFT): ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`,
-      );
-      try {
-        await this.releaseBudgetForPlan(
-          planId,
-          tenantId,
-          userId,
-          'SUBMIT_COMPENSATION',
-        );
-      } catch (releaseError) {
-        this.logger.error(
-          `Compensation failed: could not release budget for plan ${planId} after history write failure: ${
-            releaseError instanceof Error
-              ? releaseError.message
-              : 'Unknown error'
-          }`,
-        );
-      }
-      // Consistent with the existing budget-reservation-failure rollback above:
-      // revert status to DRAFT. approvalRequestId/submittedAt/submittedById are left
-      // as-is (same as the existing rollback branch) — they get overwritten on the
-      // next successful submitForApproval call.
-      await this.planRepo.updateStatus(planId, tenantId, PlanStatus.DRAFT, {
-        updatedBy: userId,
-      });
-      throw new InternalServerErrorException(
-        'Failed to record approval history for plan submission; submission has been rolled back to DRAFT.',
-      );
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
 
     return {
@@ -285,7 +310,7 @@ export class ApprovalWorkflowService {
         ...budgetCheck,
         warnings: warnings.length > 0 ? warnings : undefined,
       },
-      approvalRequestId: approvalRequest.id,
+      approvalRequestId,
     };
   }
 
@@ -346,74 +371,137 @@ export class ApprovalWorkflowService {
       });
     }
 
-    const channelCode = plan.channel?.code || '';
-
-    switch (dto.decision) {
-      case ReviewDecision.APPROVE:
-        return await this.approvePlan(plan, tenantId, reviewerId, dto.comments);
-
-      case ReviewDecision.REJECT:
-        if (!dto.rejectionReason) {
-          throw new BadRequestException('Rejection reason is required');
-        }
-        return await this.rejectPlan(
-          plan,
-          tenantId,
-          reviewerId,
-          dto.rejectionReason,
-          dto.comments,
-        );
-
-      case ReviewDecision.REQUEST_CHANGES:
-        if (!dto.comments) {
-          throw new BadRequestException(
-            'Comments are required when requesting changes',
-          );
-        }
-        return await this.requestChanges(
-          plan,
-          tenantId,
-          reviewerId,
-          dto.comments,
-          dto.specificChanges,
-        );
-
-      case ReviewDecision.ESCALATE:
-        if (!dto.escalationReason) {
-          throw new BadRequestException('Escalation reason is required');
-        }
-        await this.escalateToFinance(
-          plan.id,
-          tenantId,
-          reviewerId,
-          dto.escalationReason,
-          dto.comments,
-        );
-        return {
-          success: true,
-          planId: plan.id,
-          newStatus: PlanStatus.PENDING_FINANCE_REVIEW,
-          message: 'Plan escalated to Finance Manager',
-        };
-
-      default:
-        throw new BadRequestException(`Invalid decision: ${dto.decision}`);
+    // T-034b (docs/analysis/0005 §4): real transaction + `FOR UPDATE` +
+    // status-CAS for the three decisions that write plan state
+    // (APPROVE/REJECT/REQUEST_CHANGES) — ESCALATE is dispatched to the
+    // separate `escalateToFinance` public method, which opens its own
+    // lock/transaction (same pattern, different entrypoint). The two
+    // "decision requires field X" validations stay pre-lock (cheap
+    // fail-fast, no side effects to roll back).
+    if (dto.decision === ReviewDecision.ESCALATE) {
+      if (!dto.escalationReason) {
+        throw new BadRequestException('Escalation reason is required');
+      }
+      await this.escalateToFinance(
+        plan.id,
+        tenantId,
+        reviewerId,
+        dto.escalationReason,
+        dto.comments,
+      );
+      return {
+        success: true,
+        planId: plan.id,
+        newStatus: PlanStatus.PENDING_FINANCE_REVIEW,
+        message: 'Plan escalated to Finance Manager',
+      };
     }
+    if (dto.decision === ReviewDecision.REJECT && !dto.rejectionReason) {
+      throw new BadRequestException('Rejection reason is required');
+    }
+    if (dto.decision === ReviewDecision.REQUEST_CHANGES && !dto.comments) {
+      throw new BadRequestException(
+        'Comments are required when requesting changes',
+      );
+    }
+    if (
+      dto.decision !== ReviewDecision.APPROVE &&
+      dto.decision !== ReviewDecision.REJECT &&
+      dto.decision !== ReviewDecision.REQUEST_CHANGES
+    ) {
+      throw new BadRequestException(`Invalid decision: ${dto.decision}`);
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let result: ReviewResult;
+    try {
+      // T-034b step 1: lock the row before deciding/writing anything.
+      const locked = await this.planRepo.findByIdForUpdate(
+        planId,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!locked) {
+        throw new NotFoundException(`Plan with ID ${planId} not found`);
+      }
+      if (
+        locked.status !== PlanStatus.PENDING_APPROVAL &&
+        locked.status !== PlanStatus.PENDING_FINANCE_REVIEW
+      ) {
+        throw new BadRequestException(
+          `Plan is not in a reviewable state. Current status: ${locked.status}`,
+        );
+      }
+
+      switch (dto.decision) {
+        case ReviewDecision.APPROVE:
+          result = await this.approvePlan(
+            locked,
+            tenantId,
+            reviewerId,
+            dto.comments,
+            queryRunner.manager,
+          );
+          break;
+        case ReviewDecision.REJECT:
+          result = await this.rejectPlan(
+            locked,
+            tenantId,
+            reviewerId,
+            dto.rejectionReason as string,
+            dto.comments,
+            queryRunner.manager,
+          );
+          break;
+        case ReviewDecision.REQUEST_CHANGES:
+          result = await this.requestChanges(
+            locked,
+            tenantId,
+            reviewerId,
+            dto.comments as string,
+            dto.specificChanges,
+            queryRunner.manager,
+          );
+          break;
+        default:
+          // Unreachable — validated above — but keeps TS control-flow happy.
+          throw new BadRequestException(`Invalid decision: ${dto.decision}`);
+      }
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+
+    return result;
   }
 
   /**
-   * Approve plan
+   * Approve plan. `plan` MUST be the `FOR UPDATE`-locked row from
+   * `reviewPlan`; `manager` is that same lock's transaction manager — every
+   * side effect below (budget COMMIT, approval-request decision, status
+   * write, history) lands on it, so any failure rolls back the whole
+   * decision atomically (T-034b — replaces the old unconditional-throw
+   * "Budget commit failed" wrapping, which is no longer needed: an error
+   * here now simply propagates and rolls back, same as everywhere else).
    */
   private async approvePlan(
     plan: Plan,
     tenantId: string,
     approverId: string,
-    comments?: string,
+    comments: string | undefined,
+    manager: EntityManager,
   ): Promise<ReviewResult> {
     const channelCode = plan.channel?.code || '';
 
     // Commit budget (reserved → utilized)
-    try {
+    {
       // Commit On-Invoice budget
       if (plan.onInvoiceSpend > 0) {
         await this.commitBudgetForPlan(
@@ -425,6 +513,7 @@ export class ApprovalWorkflowService {
           tenantId,
           approverId,
           'ON_INVOICE',
+          manager,
         );
       }
 
@@ -439,12 +528,9 @@ export class ApprovalWorkflowService {
           tenantId,
           approverId,
           'OFF_INVOICE',
+          manager,
         );
       }
-    } catch (error) {
-      throw new BadRequestException(
-        `Budget commit failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
     }
 
     // Update approval request
@@ -454,15 +540,33 @@ export class ApprovalWorkflowService {
         tenantId,
         approverId,
         { comments },
+        manager,
       );
     }
 
-    // Update plan status
-    await this.planRepo.updateStatus(plan.id, tenantId, PlanStatus.APPROVED, {
-      approvedAt: new Date(),
-      approvedById: approverId,
-      updatedBy: approverId,
-    });
+    // T-034b: status-CAS write — `plan.status` is the FOR-UPDATE-locked
+    // status read by `reviewPlan` (PENDING_APPROVAL or
+    // PENDING_FINANCE_REVIEW — both are valid predecessors of APPROVED).
+    const affected = await this.planRepo.updateStatusCas(
+      manager,
+      plan.id,
+      tenantId,
+      plan.status,
+      {
+        status: PlanStatus.APPROVED,
+        approvedAt: new Date(),
+        approvedById: approverId,
+        updatedBy: approverId,
+        version: () => '"version" + 1',
+      } as any,
+    );
+    if (affected === 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'INVALID_STATE_TRANSITION',
+        message: 'Plan status changed concurrently; retry.',
+      });
+    }
 
     // Create history entry
     await this.createHistoryEntry(
@@ -471,6 +575,10 @@ export class ApprovalWorkflowService {
       approverId,
       ApprovalHistoryAction.APPROVED,
       comments,
+      undefined,
+      undefined,
+      undefined,
+      manager,
     );
 
     return {
@@ -482,17 +590,28 @@ export class ApprovalWorkflowService {
   }
 
   /**
-   * Reject plan
+   * Reject plan. `plan`/`manager` — see `approvePlan`'s header comment.
    */
   private async rejectPlan(
     plan: Plan,
     tenantId: string,
     rejectorId: string,
     reason: string,
-    comments?: string,
+    comments: string | undefined,
+    manager: EntityManager,
   ): Promise<ReviewResult> {
-    // Release reserved budget
-    await this.releaseBudgetForPlan(plan.id, tenantId, rejectorId, 'REJECT');
+    // Release reserved budget — now inside the same transaction as the
+    // status/history writes below (T-034b "asıl ödül": a release failure
+    // rolls back the whole rejection instead of leaving a silent
+    // REJECTED-but-still-reserved inconsistency, same rationale as
+    // plan.service.ts#reject).
+    await this.releaseBudgetForPlan(
+      plan.id,
+      tenantId,
+      rejectorId,
+      'REJECT',
+      manager,
+    );
 
     // Update approval request
     if (plan.approvalRequestId) {
@@ -501,16 +620,32 @@ export class ApprovalWorkflowService {
         tenantId,
         rejectorId,
         { reason },
+        manager,
       );
     }
 
-    // Update plan status
-    await this.planRepo.updateStatus(plan.id, tenantId, PlanStatus.REJECTED, {
-      rejectedAt: new Date(),
-      rejectedById: rejectorId,
-      rejectionReason: reason,
-      updatedBy: rejectorId,
-    });
+    // T-034b: status-CAS write.
+    const affected = await this.planRepo.updateStatusCas(
+      manager,
+      plan.id,
+      tenantId,
+      plan.status,
+      {
+        status: PlanStatus.REJECTED,
+        rejectedAt: new Date(),
+        rejectedById: rejectorId,
+        rejectionReason: reason,
+        updatedBy: rejectorId,
+        version: () => '"version" + 1',
+      } as any,
+    );
+    if (affected === 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'INVALID_STATE_TRANSITION',
+        message: 'Plan status changed concurrently; retry.',
+      });
+    }
 
     // Create history entry
     await this.createHistoryEntry(
@@ -520,6 +655,9 @@ export class ApprovalWorkflowService {
       ApprovalHistoryAction.REJECTED,
       comments,
       reason,
+      undefined,
+      undefined,
+      manager,
     );
 
     return {
@@ -531,14 +669,16 @@ export class ApprovalWorkflowService {
   }
 
   /**
-   * Request changes (return to draft)
+   * Request changes (return to draft). `plan`/`manager` — see
+   * `approvePlan`'s header comment.
    */
   private async requestChanges(
     plan: Plan,
     tenantId: string,
     reviewerId: string,
     comments: string,
-    specificChanges?: string[],
+    specificChanges: string[] | undefined,
+    manager: EntityManager,
   ): Promise<ReviewResult> {
     // Release reserved budget
     await this.releaseBudgetForPlan(
@@ -546,13 +686,29 @@ export class ApprovalWorkflowService {
       tenantId,
       reviewerId,
       'REQUEST_CHANGES',
+      manager,
     );
 
-    // Update plan status to DRAFT
-    await this.planRepo.updateStatus(plan.id, tenantId, PlanStatus.DRAFT, {
-      comments: comments,
-      updatedBy: reviewerId,
-    });
+    // T-034b: status-CAS write.
+    const affected = await this.planRepo.updateStatusCas(
+      manager,
+      plan.id,
+      tenantId,
+      plan.status,
+      {
+        status: PlanStatus.DRAFT,
+        comments: comments,
+        updatedBy: reviewerId,
+        version: () => '"version" + 1',
+      } as any,
+    );
+    if (affected === 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'INVALID_STATE_TRANSITION',
+        message: 'Plan status changed concurrently; retry.',
+      });
+    }
 
     // Create history entry
     await this.createHistoryEntry(
@@ -563,6 +719,8 @@ export class ApprovalWorkflowService {
       comments,
       undefined,
       specificChanges,
+      undefined,
+      manager,
     );
 
     return {
@@ -574,7 +732,11 @@ export class ApprovalWorkflowService {
   }
 
   /**
-   * Escalate to Finance Manager
+   * Escalate to Finance Manager. T-034b: real transaction + `FOR UPDATE` +
+   * status-CAS — same treatment as approve/reject/requestChanges, even
+   * though this transition does not move money: it still races with
+   * approve/reject (two reviewers deciding on the same plan concurrently),
+   * and the status write + history entry must stay atomic.
    */
   async escalateToFinance(
     planId: string,
@@ -584,19 +746,12 @@ export class ApprovalWorkflowService {
     comments?: string,
     actor?: PlanActor,
   ): Promise<void> {
-    const plan = await this.planRepo.findById(planId, tenantId);
-    if (!plan) {
+    // Pre-transaction: 404 + CM scope check (categoryId is immutable once a
+    // plan exists — safe to check pre-lock).
+    const initial = await this.planRepo.findById(planId, tenantId);
+    if (!initial) {
       throw new NotFoundException(`Plan with ID ${planId} not found`);
     }
-
-    if (plan.status !== PlanStatus.PENDING_APPROVAL) {
-      throw new BadRequestException(
-        'Only PENDING_APPROVAL plans can be escalated',
-      );
-    }
-
-    // T-028b: CM kategori-scoped escalate — kesişim yoksa 403 (aynı aile:
-    // approve/reject/review). ADMIN her zaman UNRESTRICTED, dokunulmaz.
     if (actor?.role === UserRole.CATEGORY_MANAGER) {
       const scope = await this.accessScope.resolveScope(
         tenantId,
@@ -604,36 +759,72 @@ export class ApprovalWorkflowService {
         actor.role,
       );
       this.accessScope.assertEntityInScope(scope, {
-        categoryId: plan.categoryId,
+        categoryId: initial.categoryId,
       });
     }
 
-    // Update plan status
-    await this.planRepo.updateStatus(
-      plan.id,
-      tenantId,
-      PlanStatus.PENDING_FINANCE_REVIEW,
-      {
-        pendingFinanceReview: true,
-        escalationReason: reason,
-        escalatedAt: new Date(),
-        escalatedById: escalatedById,
-        comments: comments,
-        updatedBy: escalatedById,
-      },
-    );
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    // Create history entry
-    await this.createHistoryEntry(
-      plan.id,
-      tenantId,
-      escalatedById,
-      ApprovalHistoryAction.ESCALATED,
-      comments,
-      undefined,
-      undefined,
-      reason,
-    );
+    try {
+      const plan = await this.planRepo.findByIdForUpdate(
+        planId,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!plan) {
+        throw new NotFoundException(`Plan with ID ${planId} not found`);
+      }
+      if (plan.status !== PlanStatus.PENDING_APPROVAL) {
+        throw new BadRequestException(
+          'Only PENDING_APPROVAL plans can be escalated',
+        );
+      }
+
+      const affected = await this.planRepo.updateStatusCas(
+        queryRunner.manager,
+        plan.id,
+        tenantId,
+        PlanStatus.PENDING_APPROVAL,
+        {
+          status: PlanStatus.PENDING_FINANCE_REVIEW,
+          pendingFinanceReview: true,
+          escalationReason: reason,
+          escalatedAt: new Date(),
+          escalatedById: escalatedById,
+          comments: comments,
+          updatedBy: escalatedById,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Plan status changed concurrently; retry.',
+        });
+      }
+
+      await this.createHistoryEntry(
+        plan.id,
+        tenantId,
+        escalatedById,
+        ApprovalHistoryAction.ESCALATED,
+        comments,
+        undefined,
+        undefined,
+        reason,
+        queryRunner.manager,
+      );
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   /**
@@ -882,6 +1073,7 @@ export class ApprovalWorkflowService {
     tenantId: string,
     userId: string,
     spendType: 'ON_INVOICE' | 'OFF_INVOICE',
+    manager?: EntityManager,
   ): Promise<void> {
     // Use existing reserveForPlan but with metadata to track On/Off Invoice
     await this.budgetService.reserveForPlan(
@@ -892,6 +1084,7 @@ export class ApprovalWorkflowService {
       currency,
       tenantId,
       userId,
+      manager,
     );
   }
 
@@ -904,6 +1097,7 @@ export class ApprovalWorkflowService {
     tenantId: string,
     userId: string,
     spendType: 'ON_INVOICE' | 'OFF_INVOICE',
+    manager?: EntityManager,
   ): Promise<void> {
     // T-029: Convert the outstanding RESERVE (created at submitForApproval)
     // into a COMMIT — actual budget consumption on approval (BRD: Approved →
@@ -916,6 +1110,7 @@ export class ApprovalWorkflowService {
       currency,
       tenantId,
       userId,
+      manager,
     );
   }
 
@@ -924,8 +1119,15 @@ export class ApprovalWorkflowService {
     tenantId: string,
     userId: string,
     reason: PlanReservationReleaseReason = 'REJECT',
+    manager?: EntityManager,
   ): Promise<void> {
-    await this.budgetService.releaseForPlan(planId, tenantId, userId, reason);
+    await this.budgetService.releaseForPlan(
+      planId,
+      tenantId,
+      userId,
+      reason,
+      manager,
+    );
   }
 
   private async createHistoryEntry(
@@ -937,8 +1139,13 @@ export class ApprovalWorkflowService {
     rejectionReason?: string,
     specificChanges?: string[],
     escalationReason?: string,
+    manager?: EntityManager,
   ): Promise<PlanApprovalHistory> {
-    const history = this.approvalHistoryRepo.create({
+    // T-034b: see plan.service.ts#createHistoryEntry — same rationale.
+    const repo = manager
+      ? manager.getRepository(PlanApprovalHistory)
+      : this.approvalHistoryRepo;
+    const history = repo.create({
       planId,
       tenantId,
       actionedById: userId,
@@ -949,6 +1156,6 @@ export class ApprovalWorkflowService {
       escalationReason,
     });
 
-    return this.approvalHistoryRepo.save(history);
+    return repo.save(history);
   }
 }

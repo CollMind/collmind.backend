@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import {
   Plan,
   PlanStatus,
@@ -33,8 +33,20 @@ export class PlanRepository {
     return this.planRepo.save(plan);
   }
 
-  async findById(id: string, tenantId: string): Promise<Plan | null> {
-    return this.planRepo.findOne({
+  /**
+   * T-034b: optional trailing `manager` — when supplied, the read runs
+   * through the caller's open QueryRunner transaction (same snapshot as any
+   * writes already made on that manager, e.g. after `findByIdForUpdate`
+   * locked the row). Omitted -> unchanged pre-existing behaviour (injected
+   * repo, default connection).
+   */
+  async findById(
+    id: string,
+    tenantId: string,
+    manager?: EntityManager,
+  ): Promise<Plan | null> {
+    const repo = manager ? manager.getRepository(Plan) : this.planRepo;
+    return repo.findOne({
       where: { id, tenantId },
       relations: [
         'cpl',
@@ -52,6 +64,67 @@ export class PlanRepository {
         // 'escalatedBy', // TODO: Uncomment after migration AddApprovalWorkflowFieldsToPlans is run
       ],
     });
+  }
+
+  /**
+   * T-034b (docs/analysis/0005 §4): row lock for state transitions
+   * (submit/approve/reject/returnToDraft) — must be taken BEFORE any
+   * decision is made or budget side effect runs, not just CAS'd after the
+   * fact (budget commit/reserve historically ran before the status write —
+   * a version-CAS on the final write alone would not stop two concurrent
+   * approves from both moving money). No relations: Postgres rejects
+   * `FOR UPDATE` combined with the nullable side of a LEFT JOIN (this
+   * entity's `findById` uses several), so this is a minimal, join-free
+   * projection — same pattern as
+   * `settlement-close.service.ts#closeAgreement` step 1. Callers that need
+   * joined data (channel code, planFus) read it separately through the same
+   * `manager` (same transaction snapshot, safe) or capture it from an
+   * earlier unlocked read for fields that cannot change concurrently in a
+   * way that matters here (see PlanService#submit/#approve for the exact
+   * split).
+   */
+  async findByIdForUpdate(
+    id: string,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<Plan | null> {
+    return manager.findOne(Plan, {
+      where: { id, tenantId },
+      lock: { mode: 'pessimistic_write' },
+    });
+  }
+
+  /**
+   * T-034b: status-CAS write, the second defense layer after the
+   * `findByIdForUpdate` lock+precondition-check above (the lock already
+   * serializes concurrent transitions — this predicate additionally guards
+   * against a caller bug that decided without holding the lock).
+   * `WHERE id AND tenantId AND status = :expectedStatus` — `affected === 0`
+   * means the precondition no longer held at write time; the caller decides
+   * what to surface (mirrors `applyVersionedUpdate`'s 0-affected contract,
+   * but keyed on `status`, not `version` — state transitions are
+   * pessimistic per K5, not CAS'd by version. `submit()` is the sole
+   * documented exception and validates `version` itself, separately, before
+   * calling this). `data.version` may include the raw-SQL bump expression
+   * `() => '"version" + 1'` (same idiom `applyVersionedUpdate` uses) so a
+   * completed transition always produces a fresh version for the next
+   * reader — safe here because PENDING_APPROVAL/REJECTED plans are
+   * BRD-immutable to grid edits, so there is no in-flight grid CAS token
+   * this could invalidate.
+   */
+  async updateStatusCas(
+    manager: EntityManager,
+    id: string,
+    tenantId: string,
+    expectedStatus: PlanStatus,
+    data: Partial<Plan>,
+  ): Promise<number> {
+    const result = await manager.update(
+      Plan,
+      { id, tenantId, status: expectedStatus } as any,
+      data as any,
+    );
+    return result.affected ?? 0;
   }
 
   async findByCode(code: string, tenantId: string): Promise<Plan | null> {

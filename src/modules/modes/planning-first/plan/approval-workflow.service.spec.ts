@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import {
   BadRequestException,
   NotFoundException,
@@ -29,6 +29,17 @@ describe('ApprovalWorkflowService', () => {
   let budgetService: jest.Mocked<BudgetService>;
   let spendCalc: jest.Mocked<SpendCalculationService>;
   let approvalHistoryRepo: jest.Mocked<Repository<PlanApprovalHistory>>;
+  // T-034b — see plan.service.spec.ts's identical field comment.
+  let queryRunnerManager: { count: jest.Mock; getRepository: jest.Mock };
+  let queryRunner: {
+    connect: jest.Mock;
+    startTransaction: jest.Mock;
+    commitTransaction: jest.Mock;
+    rollbackTransaction: jest.Mock;
+    release: jest.Mock;
+    manager: typeof queryRunnerManager;
+  };
+  let dataSource: { createQueryRunner: jest.Mock };
 
   const mockTenantId = 'tenant-1';
   const mockUserId = 'user-1';
@@ -76,6 +87,15 @@ describe('ApprovalWorkflowService', () => {
             findById: jest.fn(),
             updateStatus: jest.fn(),
             findAll: jest.fn(),
+            // T-034b
+            findByIdForUpdate: jest.fn(),
+            updateStatusCas: jest.fn(),
+          },
+        },
+        {
+          provide: DataSource,
+          useValue: {
+            createQueryRunner: jest.fn(),
           },
         },
         {
@@ -130,6 +150,22 @@ describe('ApprovalWorkflowService', () => {
     budgetService = module.get(BudgetService);
     spendCalc = module.get(SpendCalculationService);
     approvalHistoryRepo = module.get(getRepositoryToken(PlanApprovalHistory));
+
+    // T-034b — see plan.service.spec.ts's identical setup.
+    queryRunnerManager = {
+      count: jest.fn(),
+      getRepository: jest.fn().mockReturnValue(approvalHistoryRepo),
+    };
+    queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      startTransaction: jest.fn().mockResolvedValue(undefined),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      rollbackTransaction: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      manager: queryRunnerManager,
+    };
+    dataSource = module.get(DataSource);
+    dataSource.createQueryRunner.mockReturnValue(queryRunner);
   });
 
   afterEach(() => {
@@ -137,8 +173,11 @@ describe('ApprovalWorkflowService', () => {
   });
 
   describe('submitForApproval', () => {
+    // T-034b (code-review fix): K5 exception — submitForApproval() also
+    // validates plans.version now (mirrors PlanService#submit).
     const submitDto: SubmitForApprovalDto = {
       submissionNotes: 'Test submission notes',
+      version: 1,
     };
 
     it('should successfully submit plan for approval', async () => {
@@ -193,6 +232,11 @@ describe('ApprovalWorkflowService', () => {
       };
 
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+        version: 1,
+      } as Plan);
       spendCalc.calculateAllSpendsForFU.mockResolvedValue(
         mockFuSpendBreakdown as any,
       );
@@ -203,11 +247,7 @@ describe('ApprovalWorkflowService', () => {
       approvalService.createRequest.mockResolvedValue(
         mockApprovalRequest as any,
       );
-      planRepo.updateStatus.mockResolvedValue({
-        ...mockPlan,
-        status: PlanStatus.PENDING_APPROVAL,
-        approvalRequestId: mockApprovalRequestId,
-      } as Plan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       budgetService.reserveForPlan.mockResolvedValue({} as any);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
@@ -221,11 +261,19 @@ describe('ApprovalWorkflowService', () => {
 
       expect(result.success).toBe(true);
       expect(result.status).toBe(PlanStatus.PENDING_APPROVAL);
-      expect(planRepo.updateStatus).toHaveBeenCalledWith(
+      // T-034b: FOR UPDATE lock taken before the transition.
+      expect(planRepo.findByIdForUpdate).toHaveBeenCalledWith(
         mockPlanId,
         mockTenantId,
-        PlanStatus.PENDING_APPROVAL,
+        queryRunnerManager,
+      );
+      expect(planRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
+        mockPlanId,
+        mockTenantId,
+        PlanStatus.DRAFT,
         expect.objectContaining({
+          status: PlanStatus.PENDING_APPROVAL,
           submissionNotes: submitDto.submissionNotes,
           submittedById: mockUserId,
           // T-017: on/off breakdown now comes from SpendCalc
@@ -235,6 +283,7 @@ describe('ApprovalWorkflowService', () => {
       );
       expect(approvalService.createRequest).toHaveBeenCalled();
       expect(budgetService.reserveForPlan).toHaveBeenCalledTimes(2); // On and Off Invoice
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
     });
 
     it('should fail if plan is not in DRAFT status', async () => {
@@ -251,6 +300,115 @@ describe('ApprovalWorkflowService', () => {
           submitDto,
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // T-034b (code-review fix): K5 exception must hold on BOTH canonical
+    // submit paths, not just PlanService#submit.
+    it('rejects with 409 MISSING_VERSION when version is omitted', async () => {
+      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+        version: 1,
+      } as Plan);
+      spendCalc.calculateAllSpendsForFU.mockResolvedValue({
+        fuId: 'plan-fu-1',
+        skuBreakdowns: [],
+        aggregatedBase: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedPlanned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 0,
+          totalPromoOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedIncremental: { onInvoice: 0, offInvoice: 0, total: 0 },
+      } as any);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue({
+        id: 'envelope-1',
+      } as any);
+      budgetService.getBudgetStatus.mockResolvedValue({
+        totalAllocation: 200000,
+        available: 150000,
+        reserved: 0,
+        consumed: 0,
+        planned: 0,
+        status: 'GREEN' as any,
+      });
+
+      await expect(
+        service.submitForApproval(mockPlanId, mockTenantId, mockUserId, {
+          submissionNotes: 'no version',
+        }),
+      ).rejects.toThrow('version');
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
+      expect(approvalService.createRequest).not.toHaveBeenCalled();
+      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+    });
+
+    it('rejects with 409 STALE_VERSION when the client version does not match the locked row', async () => {
+      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+        version: 5,
+      } as Plan);
+      spendCalc.calculateAllSpendsForFU.mockResolvedValue({
+        fuId: 'plan-fu-1',
+        skuBreakdowns: [],
+        aggregatedBase: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedPlanned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 0,
+          totalPromoOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedIncremental: { onInvoice: 0, offInvoice: 0, total: 0 },
+      } as any);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue({
+        id: 'envelope-1',
+      } as any);
+      budgetService.getBudgetStatus.mockResolvedValue({
+        totalAllocation: 200000,
+        available: 150000,
+        reserved: 0,
+        consumed: 0,
+        planned: 0,
+        status: 'GREEN' as any,
+      });
+
+      await expect(
+        service.submitForApproval(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          submitDto, // version: 1, but the locked row is at version 5
+        ),
+      ).rejects.toThrow('modified by another user');
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
+      expect(approvalService.createRequest).not.toHaveBeenCalled();
+      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
     });
 
     it('should fail if plan has no FUs', async () => {
@@ -352,6 +510,11 @@ describe('ApprovalWorkflowService', () => {
         ],
       } as Plan);
 
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+        version: 1,
+      } as Plan);
       spendCalc.calculateAllSpendsForFU.mockResolvedValue(
         mockFuSpendBreakdown as any,
       );
@@ -362,10 +525,7 @@ describe('ApprovalWorkflowService', () => {
       approvalService.createRequest.mockResolvedValue(
         mockApprovalRequest as any,
       );
-      planRepo.updateStatus.mockResolvedValue({
-        ...mockPlan,
-        status: PlanStatus.PENDING_APPROVAL,
-      } as Plan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       budgetService.reserveForPlan.mockResolvedValue({} as any);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
@@ -531,10 +691,12 @@ describe('ApprovalWorkflowService', () => {
       approvalService.createRequest.mockResolvedValue(
         mockApprovalRequest as any,
       );
-      planRepo.updateStatus.mockResolvedValue({
+      planRepo.findByIdForUpdate.mockResolvedValue({
         ...mockPlan,
-        status: PlanStatus.PENDING_APPROVAL,
+        status: PlanStatus.DRAFT,
+        version: 1,
       } as Plan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       budgetService.reserveForPlan.mockResolvedValue({} as any);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
@@ -570,12 +732,8 @@ describe('ApprovalWorkflowService', () => {
       } as Plan;
 
       planRepo.findById.mockResolvedValue(approvedPlan);
-      planRepo.updateStatus.mockResolvedValue({
-        ...approvedPlan,
-        status: PlanStatus.APPROVED,
-        approvedAt: new Date(),
-        approvedById: 'reviewer-1',
-      } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(approvedPlan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       approvalService.approve.mockResolvedValue({} as any);
       // T-029: commitBudgetForPlan now delegates to commitReservedForPlan
       // (RESERVE→COMMIT conversion), not the raw reserveForPlan.
@@ -592,16 +750,25 @@ describe('ApprovalWorkflowService', () => {
 
       expect(result.success).toBe(true);
       expect(result.newStatus).toBe(PlanStatus.APPROVED);
-      expect(planRepo.updateStatus).toHaveBeenCalledWith(
+      // T-034b: FOR UPDATE lock + status-CAS.
+      expect(planRepo.findByIdForUpdate).toHaveBeenCalledWith(
         mockPlanId,
         mockTenantId,
-        PlanStatus.APPROVED,
+        queryRunnerManager,
+      );
+      expect(planRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
+        mockPlanId,
+        mockTenantId,
+        PlanStatus.PENDING_APPROVAL,
         expect.objectContaining({
+          status: PlanStatus.APPROVED,
           approvedAt: expect.any(Date),
           approvedById: 'reviewer-1',
         }),
       );
       expect(approvalService.approve).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
     });
 
     it('should successfully reject plan', async () => {
@@ -618,10 +785,8 @@ describe('ApprovalWorkflowService', () => {
       } as Plan;
 
       planRepo.findById.mockResolvedValue(pendingPlan);
-      planRepo.updateStatus.mockResolvedValue({
-        ...pendingPlan,
-        status: PlanStatus.REJECTED,
-      } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       approvalService.reject.mockResolvedValue({} as any);
       budgetService.releaseForPlan.mockResolvedValue(undefined);
       approvalHistoryRepo.create.mockReturnValue({} as any);
@@ -641,6 +806,7 @@ describe('ApprovalWorkflowService', () => {
         mockTenantId,
         'reviewer-1',
         'REJECT',
+        queryRunnerManager,
       );
       expect(approvalService.reject).toHaveBeenCalled();
     });
@@ -677,10 +843,8 @@ describe('ApprovalWorkflowService', () => {
       } as Plan;
 
       planRepo.findById.mockResolvedValue(pendingPlan);
-      planRepo.updateStatus.mockResolvedValue({
-        ...pendingPlan,
-        status: PlanStatus.DRAFT,
-      } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       budgetService.releaseForPlan.mockResolvedValue(undefined);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
@@ -733,11 +897,8 @@ describe('ApprovalWorkflowService', () => {
       } as Plan;
 
       planRepo.findById.mockResolvedValue(pendingPlan);
-      planRepo.updateStatus.mockResolvedValue({
-        ...pendingPlan,
-        status: PlanStatus.PENDING_FINANCE_REVIEW,
-        pendingFinanceReview: true,
-      } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
@@ -804,14 +965,8 @@ describe('ApprovalWorkflowService', () => {
       } as Plan;
 
       planRepo.findById.mockResolvedValue(pendingPlan);
-      planRepo.updateStatus.mockResolvedValue({
-        ...pendingPlan,
-        status: PlanStatus.PENDING_FINANCE_REVIEW,
-        pendingFinanceReview: true,
-        escalationReason: 'High spend',
-        escalatedAt: new Date(),
-        escalatedById: mockUserId,
-      } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+      planRepo.updateStatusCas.mockResolvedValue(1);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
@@ -823,11 +978,18 @@ describe('ApprovalWorkflowService', () => {
         'Comments',
       );
 
-      expect(planRepo.updateStatus).toHaveBeenCalledWith(
+      expect(planRepo.findByIdForUpdate).toHaveBeenCalledWith(
         mockPlanId,
         mockTenantId,
-        PlanStatus.PENDING_FINANCE_REVIEW,
+        queryRunnerManager,
+      );
+      expect(planRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
+        mockPlanId,
+        mockTenantId,
+        PlanStatus.PENDING_APPROVAL,
         expect.objectContaining({
+          status: PlanStatus.PENDING_FINANCE_REVIEW,
           pendingFinanceReview: true,
           escalationReason: 'High spend',
         }),
@@ -838,6 +1000,11 @@ describe('ApprovalWorkflowService', () => {
       planRepo.findById.mockResolvedValue({
         ...mockPlan,
         status: PlanStatus.DRAFT,
+      } as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...mockPlan,
+        status: PlanStatus.DRAFT,
+        version: 1,
       } as Plan);
 
       await expect(

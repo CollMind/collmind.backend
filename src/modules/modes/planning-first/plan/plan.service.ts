@@ -1,7 +1,6 @@
 import {
   Injectable,
   BadRequestException,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
   ForbiddenException,
@@ -17,7 +16,10 @@ import {
   UpdateFuTacticDto,
   UpdateSkuVolumeDto,
 } from './dto';
-import { missingVersionConflict } from '../../../shared/persistence/versioned-update.helper';
+import {
+  missingVersionConflict,
+  staleVersionConflict,
+} from '../../../shared/persistence/versioned-update.helper';
 import {
   Plan,
   PlanStatus,
@@ -39,7 +41,7 @@ import {
 } from '../../../shared/spend-calculation/dto/calculation-context.dto';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ForecastingUnit } from '../../../../database/entities/forecasting-unit.entity';
 import { Sku } from '../../../../database/entities/sku.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
@@ -93,6 +95,12 @@ export class PlanService {
     @InjectRepository(PlanApprovalHistory)
     private readonly approvalHistoryRepo: Repository<PlanApprovalHistory>,
     private readonly accessScope: AccessScopeService,
+    // T-034b: state transitions (submit/approve/reject/returnToDraft) run
+    // inside a real QueryRunner transaction — see docs/analysis/0005 §4 —
+    // rather than the compensate-on-failure pattern the four methods used
+    // before (T-026/T-029). DataSource is the standard NestJS/TypeORM way
+    // to open one (same mechanism as SettlementCloseService).
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -168,8 +176,18 @@ export class PlanService {
     action: ApprovalHistoryAction,
     comments?: string,
     rejectionReason?: string,
+    manager?: EntityManager,
   ): Promise<PlanApprovalHistory> {
-    const history = this.approvalHistoryRepo.create({
+    // T-034b: when called from within a state-transition's QueryRunner
+    // transaction, the history row must land on that SAME manager so it
+    // commits/rolls back atomically with the status write + budget side
+    // effect (real transactionality replaces the old compensate-on-failure
+    // pattern this method used to require — see submit/approve/reject/
+    // returnToDraft below).
+    const repo = manager
+      ? manager.getRepository(PlanApprovalHistory)
+      : this.approvalHistoryRepo;
+    const history = repo.create({
       planId,
       tenantId,
       actionedById: userId,
@@ -177,7 +195,7 @@ export class PlanService {
       comments,
       rejectionReason,
     });
-    return this.approvalHistoryRepo.save(history);
+    return repo.save(history);
   }
 
   async create(
@@ -584,67 +602,111 @@ export class PlanService {
     await this.recalculatePlanWithKpiEngine(planId, tenantId);
   }
 
+  /**
+   * T-034b (docs/analysis/0005 §4): real transaction + `FOR UPDATE` +
+   * status-CAS, replacing the old compensate-on-failure pattern (T-026/
+   * T-029). Prior code committed budget side effects (reserveForPlan) BEFORE
+   * the status write and separately ran history-write compensation
+   * try/catches after — the version-CAS added in T-034 does not close this,
+   * because two concurrent submits could both pass the initial
+   * `status === DRAFT` check and both reserve budget before either wrote
+   * status. A single QueryRunner transaction now makes the lock, the
+   * precondition check, the budget RESERVE, and the status/history writes
+   * atomic: any failure anywhere rolls back the whole thing, so no manual
+   * compensation code is needed anymore.
+   *
+   * `expectedVersion` is the ONE state-transition version check (K5's
+   * documented exception, see SubmitPlanDto) — reserveForPlan() below
+   * commits `plan.totalSpend`, a value the submitter may not have actually
+   * seen if someone else edited a SKU volume moments before submit.
+   */
   async submit(
     id: string,
     tenantId: string,
     userId: string,
     actor?: PlanActor,
+    expectedVersion?: number,
   ): Promise<Plan> {
-    const plan = await this.findById(id, tenantId, actor);
+    // Cheap pre-transaction read: 404/OUT_OF_SCOPE (PlanActor scope) and the
+    // channel code (channel does not participate in the money/status race
+    // this task closes — it is effectively immutable once a plan exists in
+    // practice, and even if it changed concurrently the worst case is an
+    // envelope lookup against a momentarily-stale channel, not a lost
+    // update or a double-spend).
+    const initial = await this.findById(id, tenantId, actor);
+    const channelCode = initial.channel?.code || '';
 
-    if (plan.status !== PlanStatus.DRAFT) {
-      throw new BadRequestException('Only DRAFT plans can be submitted');
-    }
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!plan.planFus || plan.planFus.length === 0) {
-      throw new BadRequestException(
-        'Plan must have at least one FU before submission',
-      );
-    }
-
-    // Create approval request
-    const approvalRequest = await this.approvalService.createRequest(
-      {
-        requestType: ApprovalRequestType.PLAN,
-        entityType: 'PLAN',
-        entityId: plan.id,
-      },
-      tenantId,
-      userId,
-    );
-
-    const updated = await this.planRepo.updateStatus(
-      id,
-      tenantId,
-      PlanStatus.PENDING_APPROVAL,
-      {
-        approvalRequestId: approvalRequest.id,
-        // F7 fix: submittedById must be recorded here too — approve()/reject()
-        // self-approval guard (docs/analysis/0004 §1/§9 N12) relies on it and
-        // this legacy /submit path previously left it unset, silently
-        // disabling the guard for any plan submitted this way.
-        submittedById: userId,
-        submittedAt: new Date(),
-        updatedBy: userId,
-      },
-    );
-
-    // T-029 (SORUN 2): BRD plan state machine — Pending Approval → RESERVE.
-    // Best-effort: only reserves if a budget envelope already exists for this
-    // channel/period (auto-create-on-approve, via approve()'s autoCreateBudget
-    // flag, remains supported for plans submitted before any envelope exists —
-    // matches pre-existing checkBudget()/approve() permissiveness, this does
-    // not newly block submission when there is simply no envelope yet).
-    const channelCode = plan.channel?.code || '';
-    let reserved = false;
-    if (Number(plan.totalSpend) > 0) {
-      const envelope = await this.budgetService.findEnvelopeByDimensions(
+    try {
+      // T-034b step 1: lock the row before deciding anything.
+      const plan = await this.planRepo.findByIdForUpdate(
+        id,
         tenantId,
-        channelCode,
-        plan.periodMonth,
+        queryRunner.manager,
       );
-      if (envelope) {
-        try {
+      if (!plan) {
+        throw new NotFoundException(`Plan with ID ${id} not found`);
+      }
+
+      // T-034b step 2: precondition.
+      if (plan.status !== PlanStatus.DRAFT) {
+        throw new BadRequestException('Only DRAFT plans can be submitted');
+      }
+
+      // K5 exception: submit() also validates plans.version.
+      if (expectedVersion === undefined || expectedVersion === null) {
+        throw missingVersionConflict({ entity: 'PLAN', entityId: id });
+      }
+      if (plan.version !== expectedVersion) {
+        throw staleVersionConflict({
+          entity: 'PLAN',
+          entityId: id,
+          expectedVersion,
+          currentVersion: plan.version,
+          current: {
+            totalSpend: Number(plan.totalSpend),
+            updatedBy: plan.updatedBy,
+            updatedAt: plan.updatedAt,
+          },
+        });
+      }
+
+      const fuCount = await queryRunner.manager.count(PlanFu, {
+        where: { planId: id, tenantId },
+      });
+      if (fuCount === 0) {
+        throw new BadRequestException(
+          'Plan must have at least one FU before submission',
+        );
+      }
+
+      // T-034b step 3: side effects, inside the same transaction.
+      const approvalRequest = await this.approvalService.createRequest(
+        {
+          requestType: ApprovalRequestType.PLAN,
+          entityType: 'PLAN',
+          entityId: plan.id,
+        },
+        tenantId,
+        userId,
+        queryRunner.manager,
+      );
+
+      // T-029 (SORUN 2): BRD plan state machine — Pending Approval → RESERVE.
+      // Best-effort: only reserves if a budget envelope already exists for
+      // this channel/period (auto-create-on-approve, via approve()'s
+      // autoCreateBudget flag, remains supported for plans submitted before
+      // any envelope exists).
+      if (Number(plan.totalSpend) > 0) {
+        const envelope = await this.budgetService.findEnvelopeByDimensions(
+          tenantId,
+          channelCode,
+          plan.periodMonth,
+        );
+        if (envelope) {
           await this.budgetService.reserveForPlan(
             id,
             plan.totalSpend,
@@ -653,70 +715,58 @@ export class PlanService {
             'TRY',
             tenantId,
             userId,
-          );
-          reserved = true;
-        } catch (error) {
-          // Compensate: revert to DRAFT so the plan is not left PENDING with
-          // no reservation and no audit trail.
-          await this.planRepo.updateStatus(id, tenantId, PlanStatus.DRAFT, {
-            updatedBy: userId,
-          });
-          const message =
-            error instanceof Error ? error.message : 'Unknown error';
-          throw new BadRequestException(
-            `Budget reservation failed: ${message}`,
+            queryRunner.manager,
           );
         }
       }
-    }
 
-    // T-029 (SORUN 1): audit immutable — submit must be recorded in
-    // PlanApprovalHistory. Same compensate-on-failure pattern as T-026
-    // (ApprovalWorkflowService#submitForApproval): PlanRepository/BudgetService/
-    // approvalHistoryRepo do not share a single QueryRunner, so this is not a
-    // real DB transaction — on history-write failure we release any
-    // reservation just made and revert status to DRAFT rather than leave the
-    // plan PENDING_APPROVAL with no audit trail.
-    try {
+      // T-034b step 4: status-CAS write (second defense layer after the
+      // FOR UPDATE lock above).
+      const affected = await this.planRepo.updateStatusCas(
+        queryRunner.manager,
+        id,
+        tenantId,
+        PlanStatus.DRAFT,
+        {
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: approvalRequest.id,
+          // F7 fix: submittedById must be recorded here too — approve()/
+          // reject()'s self-approval guard (docs/analysis/0004 §1/§9 N12)
+          // relies on it.
+          submittedById: userId,
+          submittedAt: new Date(),
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Plan status changed concurrently; retry.',
+        });
+      }
+
+      // T-029 (SORUN 1): audit immutable — submit must be recorded.
       await this.createHistoryEntry(
         id,
         tenantId,
         userId,
         ApprovalHistoryAction.SUBMITTED,
+        undefined,
+        undefined,
+        queryRunner.manager,
       );
-    } catch (error) {
-      this.logger.error(
-        `createHistoryEntry failed after submit for plan ${id}; compensating (release budget if reserved, revert to DRAFT): ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`,
-      );
-      if (reserved) {
-        try {
-          await this.budgetService.releaseForPlan(
-            id,
-            tenantId,
-            userId,
-            'SUBMIT_COMPENSATION',
-          );
-        } catch (releaseError) {
-          this.logger.error(
-            `Compensation failed: could not release budget for plan ${id} after history write failure: ${
-              releaseError instanceof Error
-                ? releaseError.message
-                : 'Unknown error'
-            }`,
-          );
-        }
-      }
-      await this.planRepo.updateStatus(id, tenantId, PlanStatus.DRAFT, {
-        updatedBy: userId,
-      });
-      throw new InternalServerErrorException(
-        'Failed to record approval history for plan submission; submission has been rolled back to DRAFT.',
-      );
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
 
-    return updated;
+    return (await this.planRepo.findById(id, tenantId)) as Plan;
   }
 
   /**
@@ -788,6 +838,20 @@ export class PlanService {
     };
   }
 
+  /**
+   * T-034b: real transaction + `FOR UPDATE` + status-CAS (docs/analysis/0005
+   * §4). Prior code ran `commitReservedForPlan` (budget COMMIT) BEFORE the
+   * status write — two concurrent approve() calls could both pass the
+   * initial `status === PENDING_APPROVAL` check and both commit budget
+   * before either wrote status=APPROVED (the exact gap this task closes,
+   * see T-034b task description). No version check here (K5: PENDING plans
+   * are BRD-immutable, so a version-CAS would only produce false-positive
+   * 409s) — the FOR UPDATE lock + status-CAS write are the only barrier
+   * needed. Real transactionality also replaces the old compensate-on-
+   * failure pattern (release COMMIT + revert to PENDING_APPROVAL) — any
+   * failure now rolls back budget + approval-request + status + history
+   * together.
+   */
   async approve(
     id: string,
     tenantId: string,
@@ -797,71 +861,87 @@ export class PlanService {
     budgetAmount?: number,
     actor?: PlanActor,
   ): Promise<Plan> {
-    const plan = await this.findById(id, tenantId);
-
-    if (plan.status !== PlanStatus.PENDING_APPROVAL) {
-      throw new BadRequestException(
-        'Only PENDING_APPROVAL plans can be approved',
-      );
-    }
-
-    if (!plan.approvalRequestId) {
-      throw new BadRequestException('Approval request not found');
-    }
-
-    // F7 (docs/analysis/0004-rbac-brd-alignment.md §1/§9 N12): legacy/kanonik
-    // approve() had no self-approval guard — a Planner+Admin dual account
-    // could bypass "Planner cannot approve their own plan". Mirrors the
-    // check already present in ApprovalWorkflowService#reviewPlan.
-    if (plan.submittedById === userId) {
-      throw new ForbiddenException('You cannot approve your own submission');
-    }
+    // Cheap pre-transaction read: channel code + name for the
+    // autoCreateBudget envelope label (not part of the money/status race —
+    // same rationale as submit()'s channelCode capture above).
+    const initial = await this.findById(id, tenantId);
+    const channelCode = initial.channel?.code || '';
+    const channelName = initial.channel?.name || channelCode;
 
     // T-028b: CM kategori-scoped onay — kesişim yoksa 403 (§3, §9 N4).
-    await this.assertCmDecisionScope(plan, tenantId, actor);
+    // categoryId is immutable once a plan exists — safe to check pre-lock.
+    await this.assertCmDecisionScope(initial, tenantId, actor);
 
-    const channelCode = plan.channel?.code || '';
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    // Check if budget envelope exists
-    const existingEnvelope = await this.budgetService.findEnvelopeByDimensions(
-      tenantId,
-      channelCode,
-      plan.periodMonth,
-    );
-
-    if (!existingEnvelope && autoCreateBudget) {
-      // Auto-create budget envelope
-      const allocatedAmount =
-        budgetAmount || Math.max(Number(plan.totalSpend) * 2, 100000);
-      const periodLabel = plan.periodMonth; // e.g., "2026-01"
-      const fiscalYear = plan.periodMonth.substring(0, 4);
-
-      await this.budgetService.createEnvelope(tenantId, {
-        code: `${channelCode}/${periodLabel}`,
-        name: `${plan.channel?.name || channelCode} - ${periodLabel} Bütçesi`,
-        fiscalYear,
-        period: periodLabel,
-        allocatedAmount,
-        status: BudgetEnvelopeStatus.ACTIVE,
-        currency: 'TRY',
-        metadata: {
-          channel: channelCode,
-          autoCreated: true,
-          createdForPlanId: plan.id,
-        },
-      });
-    } else if (!existingEnvelope && !autoCreateBudget) {
-      throw new BadRequestException(
-        `No active budget envelope found for channel: ${channelCode}, period: ${plan.periodMonth}. Use autoCreateBudget to create one automatically.`,
-      );
-    }
-
-    // T-029 (SORUN 2): BRD plan state machine — Approved → COMMIT. Converts
-    // the RESERVE created at submit() (if any) into a COMMIT; falls back to a
-    // fresh direct COMMIT for plans that reached PENDING_APPROVAL without a
-    // prior reservation (e.g. envelope created only now via autoCreateBudget
-    // above). Idempotent — repeat approve calls do not double-commit.
     try {
+      const plan = await this.planRepo.findByIdForUpdate(
+        id,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!plan) {
+        throw new NotFoundException(`Plan with ID ${id} not found`);
+      }
+
+      if (plan.status !== PlanStatus.PENDING_APPROVAL) {
+        throw new BadRequestException(
+          'Only PENDING_APPROVAL plans can be approved',
+        );
+      }
+
+      if (!plan.approvalRequestId) {
+        throw new BadRequestException('Approval request not found');
+      }
+
+      // F7 (docs/analysis/0004-rbac-brd-alignment.md §1/§9 N12): self-
+      // approval guard.
+      if (plan.submittedById === userId) {
+        throw new ForbiddenException('You cannot approve your own submission');
+      }
+
+      // Check if budget envelope exists (read-only; not manager-scoped —
+      // see BudgetService#reserveForPlan comment on envelope lookups).
+      const existingEnvelope =
+        await this.budgetService.findEnvelopeByDimensions(
+          tenantId,
+          channelCode,
+          plan.periodMonth,
+        );
+
+      if (!existingEnvelope && autoCreateBudget) {
+        const allocatedAmount =
+          budgetAmount || Math.max(Number(plan.totalSpend) * 2, 100000);
+        const periodLabel = plan.periodMonth; // e.g., "2026-01"
+        const fiscalYear = plan.periodMonth.substring(0, 4);
+
+        await this.budgetService.createEnvelope(
+          tenantId,
+          {
+            code: `${channelCode}/${periodLabel}`,
+            name: `${channelName} - ${periodLabel} Bütçesi`,
+            fiscalYear,
+            period: periodLabel,
+            allocatedAmount,
+            status: BudgetEnvelopeStatus.ACTIVE,
+            currency: 'TRY',
+            metadata: {
+              channel: channelCode,
+              autoCreated: true,
+              createdForPlanId: plan.id,
+            },
+          },
+          queryRunner.manager,
+        );
+      } else if (!existingEnvelope && !autoCreateBudget) {
+        throw new BadRequestException(
+          `No active budget envelope found for channel: ${channelCode}, period: ${plan.periodMonth}. Use autoCreateBudget to create one automatically.`,
+        );
+      }
+
+      // T-029 (SORUN 2): BRD plan state machine — Approved → COMMIT.
       await this.budgetService.commitReservedForPlan(
         plan.id,
         plan.totalSpend,
@@ -870,81 +950,59 @@ export class PlanService {
         'TRY',
         tenantId,
         userId,
+        queryRunner.manager,
       );
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Budget commit failed: ${errorMessage}`);
-    }
 
-    // Update approval request
-    await this.approvalService.approve(
-      plan.approvalRequestId,
-      tenantId,
-      userId,
-      { comments },
-    );
+      // Update approval request
+      await this.approvalService.approve(
+        plan.approvalRequestId,
+        tenantId,
+        userId,
+        { comments },
+        queryRunner.manager,
+      );
 
-    const updated = await this.planRepo.updateStatus(
-      id,
-      tenantId,
-      PlanStatus.APPROVED,
-      {
-        approvedAt: new Date(),
-        approvedById: userId,
-        updatedBy: userId,
-      },
-    );
+      const affected = await this.planRepo.updateStatusCas(
+        queryRunner.manager,
+        id,
+        tenantId,
+        PlanStatus.PENDING_APPROVAL,
+        {
+          status: PlanStatus.APPROVED,
+          approvedAt: new Date(),
+          approvedById: userId,
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Plan status changed concurrently; retry.',
+        });
+      }
 
-    // T-029 (SORUN 1): audit immutable — approve must be recorded. On
-    // history-write failure, compensate by releasing the just-created COMMIT
-    // and reverting status back to PENDING_APPROVAL (approvalService.approve
-    // itself is not compensated — its own audit trail already correctly
-    // records the approval action; only the plan-status/budget side effects
-    // introduced by this call are unwound, same limited-compensation
-    // trade-off documented in T-026 for submit).
-    try {
+      // T-029 (SORUN 1): audit immutable — approve must be recorded.
       await this.createHistoryEntry(
         id,
         tenantId,
         userId,
         ApprovalHistoryAction.APPROVED,
         comments,
+        undefined,
+        queryRunner.manager,
       );
-    } catch (error) {
-      this.logger.error(
-        `createHistoryEntry failed after approve for plan ${id}; compensating (release COMMIT, revert to PENDING_APPROVAL): ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`,
-      );
-      try {
-        await this.budgetService.releaseForPlan(
-          id,
-          tenantId,
-          userId,
-          'APPROVE_COMPENSATION',
-        );
-      } catch (releaseError) {
-        this.logger.error(
-          `Compensation failed: could not release budget for plan ${id} after history write failure: ${
-            releaseError instanceof Error
-              ? releaseError.message
-              : 'Unknown error'
-          }`,
-        );
-      }
-      await this.planRepo.updateStatus(
-        id,
-        tenantId,
-        PlanStatus.PENDING_APPROVAL,
-        { updatedBy: userId },
-      );
-      throw new InternalServerErrorException(
-        'Failed to record approval history for plan approval; approval has been rolled back to PENDING_APPROVAL.',
-      );
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
 
-    return updated;
+    return (await this.planRepo.findById(id, tenantId)) as Plan;
   }
 
   async reject(
@@ -954,55 +1012,72 @@ export class PlanService {
     reason: string,
     actor?: PlanActor,
   ): Promise<Plan> {
-    const plan = await this.findById(id, tenantId);
+    const initial = await this.findById(id, tenantId);
 
-    if (plan.status !== PlanStatus.PENDING_APPROVAL) {
-      throw new BadRequestException(
-        'Only PENDING_APPROVAL plans can be rejected',
-      );
-    }
+    // T-028b: CM kategori-scoped red — kesişim yoksa 403. categoryId is
+    // immutable once a plan exists — safe to check pre-lock.
+    await this.assertCmDecisionScope(initial, tenantId, actor);
 
-    if (!plan.approvalRequestId) {
-      throw new BadRequestException('Approval request not found');
-    }
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    // F7: same self-approval guard as approve() — a rejecter reviewing their
-    // own submission is equally a bypass of "Planner cannot review their own
-    // plan" (mirrors ApprovalWorkflowService#reviewPlan).
-    if (plan.submittedById === userId) {
-      throw new ForbiddenException('You cannot review your own submission');
-    }
-
-    // T-028b: CM kategori-scoped red — kesişim yoksa 403.
-    await this.assertCmDecisionScope(plan, tenantId, actor);
-
-    await this.approvalService.reject(
-      plan.approvalRequestId,
-      tenantId,
-      userId,
-      { reason },
-    );
-
-    const updated = await this.planRepo.updateStatus(
-      id,
-      tenantId,
-      PlanStatus.REJECTED,
-      {
-        rejectedAt: new Date(),
-        rejectedById: userId,
-        rejectionReason: reason,
-        updatedBy: userId,
-      },
-    );
-
-    // T-029 (SORUN 1): audit immutable — reject must be recorded. Note the
-    // ordering: budget release (below, after a successful history write) is
-    // deliberately the LAST step. approvalService.reject + status→REJECTED
-    // are recorded first; if the history write then fails we revert status
-    // back to PENDING_APPROVAL (no budget has moved yet, so no release/
-    // re-reserve compensation is needed — a real transaction would be
-    // preferable, tracked as the same open point as T-026's submit path).
     try {
+      const plan = await this.planRepo.findByIdForUpdate(
+        id,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!plan) {
+        throw new NotFoundException(`Plan with ID ${id} not found`);
+      }
+
+      if (plan.status !== PlanStatus.PENDING_APPROVAL) {
+        throw new BadRequestException(
+          'Only PENDING_APPROVAL plans can be rejected',
+        );
+      }
+
+      if (!plan.approvalRequestId) {
+        throw new BadRequestException('Approval request not found');
+      }
+
+      // F7: same self-approval guard as approve().
+      if (plan.submittedById === userId) {
+        throw new ForbiddenException('You cannot review your own submission');
+      }
+
+      await this.approvalService.reject(
+        plan.approvalRequestId,
+        tenantId,
+        userId,
+        { reason },
+        queryRunner.manager,
+      );
+
+      const affected = await this.planRepo.updateStatusCas(
+        queryRunner.manager,
+        id,
+        tenantId,
+        PlanStatus.PENDING_APPROVAL,
+        {
+          status: PlanStatus.REJECTED,
+          rejectedAt: new Date(),
+          rejectedById: userId,
+          rejectionReason: reason,
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Plan status changed concurrently; retry.',
+        });
+      }
+
+      // T-029 (SORUN 1): audit immutable — reject must be recorded.
       await this.createHistoryEntry(
         id,
         tenantId,
@@ -1010,43 +1085,37 @@ export class PlanService {
         ApprovalHistoryAction.REJECTED,
         undefined,
         reason,
+        queryRunner.manager,
       );
-    } catch (error) {
-      this.logger.error(
-        `createHistoryEntry failed after reject for plan ${id}; compensating (revert to PENDING_APPROVAL, budget untouched): ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`,
-      );
-      await this.planRepo.updateStatus(
+
+      // T-029 (SORUN 2): BRD plan state machine — Rejected → RELEASE. Now
+      // INSIDE the same transaction (T-034b: "asıl ödül" — real atomicity
+      // replaces the old best-effort/logged-only release). Previously a
+      // release failure here was swallowed (logged, not thrown) so an
+      // already-committed REJECTED status would never be rolled back for it
+      // — that traded a silent budget/status inconsistency for a
+      // non-reverted user-facing rejection. With a real transaction, a
+      // release failure now rolls back the WHOLE rejection (status +
+      // history + approval-request decision together) instead of leaving
+      // that inconsistency on disk — strictly more correct, no more
+      // "REJECTED but still reserved" states to reconcile manually.
+      await this.budgetService.releaseForPlan(
         id,
         tenantId,
-        PlanStatus.PENDING_APPROVAL,
-        { updatedBy: userId },
+        userId,
+        'REJECT',
+        queryRunner.manager,
       );
-      throw new InternalServerErrorException(
-        'Failed to record approval history for plan rejection; rejection has been rolled back to PENDING_APPROVAL.',
-      );
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
 
-    // T-029 (SORUN 2): BRD plan state machine — Rejected → RELEASE. Releases
-    // any outstanding RESERVE (submit()) and/or COMMIT (defensive — a plan
-    // should not be PENDING_APPROVAL with a COMMIT, but releaseForPlan is a
-    // no-op for whichever type is absent).
-    try {
-      await this.budgetService.releaseForPlan(id, tenantId, userId);
-    } catch (error) {
-      // Budget already correctly reflects a REJECTED plan's intent (nothing
-      // should be encumbered); a release failure here is an ops-visible issue
-      // (logged), not one that should un-reject an already-recorded,
-      // immutably-audited rejection.
-      this.logger.error(
-        `Budget release failed after reject for plan ${id} (status/history already committed as REJECTED): ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`,
-      );
-    }
-
-    return updated;
+    return (await this.planRepo.findById(id, tenantId)) as Plan;
   }
 
   /**
@@ -1068,6 +1137,13 @@ export class PlanService {
    * used elsewhere (no varlık sızdırma — a PLANNER should not learn that a
    * plan they don't own exists via a differentiated 403 vs 404 response).
    */
+  /**
+   * T-034b: real transaction + `FOR UPDATE` + status-CAS. No budget side
+   * effect here (unchanged — reject() already RELEASEd, see below), but the
+   * old compensate-on-failure `updateUnversioned` revert-to-REJECTED branch
+   * is replaced by a real rollback: any failure (including the history
+   * write) now atomically undoes the status write.
+   */
   async returnToDraft(
     id: string,
     tenantId: string,
@@ -1076,9 +1152,9 @@ export class PlanService {
   ): Promise<Plan> {
     // T-028c: scope-aware read — out-of-scope (wrong CPL/Category) PLANNER
     // -> 404 (OUT_OF_SCOPE), same as every other mutation entrypoint.
-    const plan = await this.findById(id, tenantId, actor);
+    const initial = await this.findById(id, tenantId, actor);
 
-    if (plan.status !== PlanStatus.REJECTED) {
+    if (initial.status !== PlanStatus.REJECTED) {
       throw new ConflictException({
         statusCode: 409,
         message: 'Only REJECTED plans can be returned to draft',
@@ -1088,8 +1164,8 @@ export class PlanService {
 
     if (
       actor?.role === UserRole.PLANNER &&
-      actor.userId !== plan.createdBy &&
-      actor.userId !== plan.submittedById
+      actor.userId !== initial.createdBy &&
+      actor.userId !== initial.submittedById
     ) {
       throw new NotFoundException({
         statusCode: 404,
@@ -1098,73 +1174,96 @@ export class PlanService {
       });
     }
 
-    // T-033: Draft->Draft "current state" fields (rejection + the closed
-    // submission/approval-request they belonged to) are cleared — the
-    // REJECTED PlanApprovalHistory row written at reject() time already
-    // immutably preserves the rejection reason/actor/timestamp (BRD "audit
-    // korunur"), so nothing is lost. Leaving them on the live Plan row would
-    // make an eventually-APPROVED plan display stale rejectedAt/
-    // rejectionReason alongside approvedAt, which is misleading current
-    // state. submittedAt/submittedById/approvalRequestId are cleared for
-    // the same reason (the closed approval request is done; submit() sets
-    // fresh values on resubmission, including submittedById — required for
-    // the approve()/reject() self-approval guard, F7/T-028b).
-    // TypeORM's `.update()` (via PlanRepository#update/#updateStatus) skips
-    // `undefined` fields but persists explicit `null` (same as the T-027
-    // pattern used for calculatedKpis/gpRoi), so `null` here reliably clears
-    // the columns in one write.
-    const updated = await this.planRepo.updateStatus(
-      id,
-      tenantId,
-      PlanStatus.DRAFT,
-      {
-        rejectedAt: null,
-        rejectedById: null,
-        rejectionReason: null,
-        submittedAt: null,
-        submittedById: null,
-        approvalRequestId: null,
-        updatedBy: userId,
-      } as unknown as Partial<Plan>,
-    );
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    // T-033 (audit immutable): record the transition. Budget is
-    // deliberately untouched here — reject() already RELEASEd any
-    // outstanding RESERVE/COMMIT (T-029), and a fresh RESERVE is only
-    // created on the next submit(), never here (BRD state machine: only
-    // Pending Approval creates a reservation).
     try {
+      const plan = await this.planRepo.findByIdForUpdate(
+        id,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!plan) {
+        throw new NotFoundException(`Plan with ID ${id} not found`);
+      }
+
+      if (plan.status !== PlanStatus.REJECTED) {
+        throw new ConflictException({
+          statusCode: 409,
+          message: 'Only REJECTED plans can be returned to draft',
+          code: 'NOT_REJECTED',
+        });
+      }
+
+      // Ownership re-check under the lock (defense-in-depth — cheap, mirrors
+      // the pre-transaction check above).
+      if (
+        actor?.role === UserRole.PLANNER &&
+        actor.userId !== plan.createdBy &&
+        actor.userId !== plan.submittedById
+      ) {
+        throw new NotFoundException({
+          statusCode: 404,
+          message: `Plan with ID ${id} not found`,
+          code: 'OUT_OF_SCOPE',
+        });
+      }
+
+      // T-033: Draft->Draft "current state" fields (rejection + the closed
+      // submission/approval-request they belonged to) are cleared — the
+      // REJECTED PlanApprovalHistory row written at reject() time already
+      // immutably preserves the rejection reason/actor/timestamp (BRD
+      // "audit korunur"), so nothing is lost.
+      const affected = await this.planRepo.updateStatusCas(
+        queryRunner.manager,
+        id,
+        tenantId,
+        PlanStatus.REJECTED,
+        {
+          status: PlanStatus.DRAFT,
+          rejectedAt: null,
+          rejectedById: null,
+          rejectionReason: null,
+          submittedAt: null,
+          submittedById: null,
+          approvalRequestId: null,
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Plan status changed concurrently; retry.',
+        });
+      }
+
+      // T-033 (audit immutable): record the transition. Budget is
+      // deliberately untouched here — reject() already RELEASEd any
+      // outstanding RESERVE/COMMIT (T-029), and a fresh RESERVE is only
+      // created on the next submit(), never here (BRD state machine: only
+      // Pending Approval creates a reservation).
       await this.createHistoryEntry(
         id,
         tenantId,
         userId,
         ApprovalHistoryAction.RETURNED_TO_DRAFT,
+        undefined,
+        undefined,
+        queryRunner.manager,
       );
-    } catch (error) {
-      this.logger.error(
-        `createHistoryEntry failed after returnToDraft for plan ${id}; compensating (revert to REJECTED): ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`,
-      );
-      // T-034: deliberate CAS bypass — compensation write reverting a state
-      // transition (§1.6 #12 in the design doc: CAS here would fail every
-      // time since the forward write already advanced the row).
-      await this.planRepo.updateUnversioned(id, tenantId, {
-        status: PlanStatus.REJECTED,
-        rejectedAt: plan.rejectedAt ?? null,
-        rejectedById: plan.rejectedById ?? null,
-        rejectionReason: plan.rejectionReason ?? null,
-        submittedAt: plan.submittedAt ?? null,
-        submittedById: plan.submittedById ?? null,
-        approvalRequestId: plan.approvalRequestId ?? null,
-        updatedBy: userId,
-      } as any);
-      throw new InternalServerErrorException(
-        'Failed to record approval history for plan return-to-draft; the plan has been rolled back to REJECTED.',
-      );
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
 
-    return updated;
+    return (await this.planRepo.findById(id, tenantId)) as Plan;
   }
 
   async delete(
