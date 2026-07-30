@@ -1302,15 +1302,129 @@ export class PlanService {
   /**
    * Full KPI engine recalculation for the entire plan
    * Follows BRD hierarchy: SKU → FU → PLAN
+   *
+   * T-034c (docs/analysis/0005 §3): this is the ONLY path that writes
+   * plans/plan_fus/plan_skus derived aggregates, and it does so with 3
+   * separate persist steps (SKU -> FU -> plan). Two concurrent recalcs of
+   * the SAME plan can interleave those steps and each persist a
+   * partial/mixed aggregate — "lost recalculation", distinct from a lost
+   * update (version-CAS cannot catch it: neither writer's own row is
+   * stale). Fix: the whole method now runs inside one `QueryRunner`
+   * transaction, and the FIRST thing it does after opening that
+   * transaction is take `pg_advisory_xact_lock(planId)` — serializing
+   * concurrent recalcs of the same plan while leaving other plans'
+   * recalcs to run fully in parallel. `pg_advisory_xact_lock` only means
+   * anything INSIDE a transaction (a bare/session call would not release
+   * the way this code assumes), so the lock and the transaction were
+   * introduced together, not the lock alone.
+   *
+   * Lock-ordering / deadlock note: submit()/approve()/reject()/
+   * returnToDraft() (T-034b) take a `FOR UPDATE` row lock on the SAME
+   * `plans` row, but NONE of them call `recalculatePlanWithKpiEngine` from
+   * inside their own transaction — recalc is only ever invoked from
+   * update()/addFu()/updateFuTactic()/updateSkuVolume()/removeFu()
+   * (grid-edit paths) AFTER their own CAS write has already committed, as
+   * a separate top-level call. So this transaction never needs to acquire
+   * a `FOR UPDATE` row lock while holding the advisory lock, and a
+   * state-transition transaction never needs to acquire the advisory lock
+   * while holding its row lock — there is no cycle between the two lock
+   * types. (The two CAN still block each other in the ordinary
+   * non-deadlocking sense: recalc's own final `updateUnversioned` write to
+   * the `plans` row takes an implicit row lock, so it queues behind a
+   * concurrent submit()'s `FOR UPDATE` the same way any two writers to the
+   * same row would — this is expected serialization, not new interleaving
+   * this task introduces.)
+   *
+   * Blocking vs try-lock: `pg_advisory_xact_lock` (blocking), not
+   * `pg_try_advisory_xact_lock`. Recalc is only ever re-entrant for the
+   * SAME plan when the SAME user is rapidly editing the SAME grid (or,
+   * rarely, two users editing the same open plan) — queueing those a few
+   * tens of ms behind each other is the correct UX (the second recalc's
+   * result is what the client should see anyway); a try-lock would instead
+   * have to surface a 409/skip to the caller for a condition that isn't a
+   * real conflict from the user's point of view, and every grid-edit
+   * caller (update/addFu/updateFuTactic/updateSkuVolume/removeFu) would
+   * have to grow bespoke "recalc lock busy" handling. See the task report
+   * for the measured lock-hold time this adds (BRD <500ms budget).
+   *
+   * CAS note: none of the writes below check or bump `version` — see
+   * `updateUnversioned`/`updatePlanFuUnversioned`/`updatePlanSkuUnversioned`
+   * doc comments (T-034 K4). That is unchanged by this task; only the
+   * transaction/lock wrapper around them is new.
    */
   async recalculatePlanWithKpiEngine(
     planId: string,
     tenantId: string,
     actor?: PlanActor,
   ): Promise<void> {
-    const plan = await this.findById(planId, tenantId, actor);
-    if (!plan.planFus || plan.planFus.length === 0) return;
+    // Pre-transaction scope check (mirrors submit()/approve()'s "cheap
+    // pre-transaction read" pattern, T-034b): 404/OUT_OF_SCOPE must be
+    // decided before we ever open the locked transaction below, so an
+    // out-of-scope caller cannot even momentarily contend for the
+    // advisory lock on a plan it cannot see.
+    const scopeCheckedPlan = await this.findById(planId, tenantId, actor);
+    if (!scopeCheckedPlan.planFus || scopeCheckedPlan.planFus.length === 0) {
+      return;
+    }
 
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // T-034c step 1: serialize concurrent recalcs of THIS plan. Must be
+      // acquired before any read below — otherwise two concurrent recalcs
+      // could both pass their own snapshot read before either takes the
+      // lock, defeating the point (see the method doc comment above).
+      await this.planRepo.acquireRecalcLock(planId, queryRunner.manager);
+
+      const plan = await this.planRepo.findById(
+        planId,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!plan) {
+        // Deleted between the pre-transaction scope check above and lock
+        // acquisition — nothing to recalculate.
+        await queryRunner.commitTransaction();
+        return;
+      }
+      if (!plan.planFus || plan.planFus.length === 0) {
+        await queryRunner.commitTransaction();
+        return;
+      }
+
+      await this.recalculatePlanWithKpiEngineLocked(
+        plan,
+        planId,
+        tenantId,
+        queryRunner.manager,
+      );
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * T-034c: the actual SKU -> FU -> plan recalculation body, extracted out
+   * of `recalculatePlanWithKpiEngine` so the transaction/lock wrapper above
+   * stays readable. Every read/write here MUST go through the given
+   * `manager` (the caller's open, lock-holding transaction) — routing any
+   * of it through the injected repos' default connection would silently
+   * step outside the lock and reintroduce the exact interleaving this task
+   * closes.
+   */
+  private async recalculatePlanWithKpiEngineLocked(
+    plan: Plan,
+    planId: string,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<void> {
     const allFuResults: Array<Record<string, CalculationResult>> = [];
 
     for (const planFu of plan.planFus) {
@@ -1466,20 +1580,27 @@ export class PlanService {
         // T-034: deliberate CAS bypass — derived KPI output, not a user
         // edit; a CAS here would fail every time against the version the
         // grid-cell write (updateSkuVolume) just bumped moments earlier.
-        await this.planRepo.updatePlanSkuUnversioned(planSku.id, tenantId, {
-          incrementalVolume,
-          // T-027: write the (possibly null) values explicitly so a recalc
-          // that newly discovers missing master data (e.g. COGS removed)
-          // actually clears a previously-computed number rather than
-          // silently leaving stale data behind (TypeORM `.update()` skips
-          // `undefined` fields but persists explicit `null`).
-          plannedTurnover,
-          tacticSpend: totalPlannedSpend,
-          plannedGp,
-          gpRoi,
-          ragStatus,
-          calculatedKpis,
-        });
+        // T-034c: routed through `manager` — must land inside this recalc's
+        // own lock-holding transaction (see method doc comment).
+        await this.planRepo.updatePlanSkuUnversioned(
+          planSku.id,
+          tenantId,
+          {
+            incrementalVolume,
+            // T-027: write the (possibly null) values explicitly so a recalc
+            // that newly discovers missing master data (e.g. COGS removed)
+            // actually clears a previously-computed number rather than
+            // silently leaving stale data behind (TypeORM `.update()` skips
+            // `undefined` fields but persists explicit `null`).
+            plannedTurnover,
+            tacticSpend: totalPlannedSpend,
+            plannedGp,
+            gpRoi,
+            ragStatus,
+            calculatedKpis,
+          },
+          manager,
+        );
       }
 
       // ── Step 5: FU-level KPI aggregation ─────────────────────────────
@@ -1502,10 +1623,14 @@ export class PlanService {
       let fuTotalGp = 0;
 
       for (const planSku of planFu.planSkus || []) {
+        // T-034c: read through `manager` — this MUST see the
+        // updatePlanSkuUnversioned write from Step 4 above, which is only
+        // visible on this same open transaction until COMMIT.
         const updated = await this.planRepo.findPlanSku(
           planFu.id,
           planSku.skuId,
           tenantId,
+          manager,
         );
         if (updated) {
           fuTotalPlannedVolume += Number(updated.plannedVolume) || 0;
@@ -1531,16 +1656,23 @@ export class PlanService {
 
       // T-034: deliberate CAS bypass — derived FU-level aggregate, not a
       // user edit (same rationale as updatePlanSkuUnversioned above).
-      await this.planRepo.updatePlanFuUnversioned(planFu.id, tenantId, {
-        totalPlannedVolume: fuTotalPlannedVolume,
-        totalSpend: fuTotalPlannedSpend,
-        totalGp: fuTotalGp,
-        // T-027: persist null explicitly (not `undefined`) so a recalc that
-        // newly discovers missing master data clears any stale prior value.
-        gpRoi: fuGpRoi,
-        ragStatus: fuRagStatus,
-        calculatedKpis: fuCalculatedKpis,
-      });
+      // T-034c: routed through `manager` (see method doc comment).
+      await this.planRepo.updatePlanFuUnversioned(
+        planFu.id,
+        tenantId,
+        {
+          totalPlannedVolume: fuTotalPlannedVolume,
+          totalSpend: fuTotalPlannedSpend,
+          totalGp: fuTotalGp,
+          // T-027: persist null explicitly (not `undefined`) so a recalc
+          // that newly discovers missing master data clears any stale
+          // prior value.
+          gpRoi: fuGpRoi,
+          ragStatus: fuRagStatus,
+          calculatedKpis: fuCalculatedKpis,
+        },
+        manager,
+      );
 
       allFuResults.push(fuKpiResults);
     }
@@ -1550,8 +1682,15 @@ export class PlanService {
     let planTotalSpend = 0;
     let planTotalGp = 0;
 
-    // Re-read FUs to get updated aggregations
-    const updatedPlan = await this.findById(planId, tenantId, actor);
+    // Re-read FUs to get updated aggregations. T-034c: `this.findById`
+    // (the service method) resolves actor scope AND uses the injected
+    // repo's default connection — neither is right here: scope was already
+    // checked before the transaction opened, and this read must see the
+    // FU writes just made on `manager` in this same open transaction.
+    const updatedPlan = await this.planRepo.findById(planId, tenantId, manager);
+    if (!updatedPlan) {
+      throw new Error(`Plan ${planId} not found during recalculation`);
+    }
     for (const planFu of updatedPlan.planFus || []) {
       planTotalPlannedVolume += Number(planFu.totalPlannedVolume) || 0;
       planTotalSpend += Number(planFu.totalSpend) || 0;
@@ -1580,15 +1719,23 @@ export class PlanService {
     // user edit (same rationale as updatePlanSkuUnversioned above); also
     // must not bump plans.version (that would falsely invalidate an
     // in-flight grid edit's CAS token on an unrelated recalc).
-    await this.planRepo.updateUnversioned(planId, tenantId, {
-      totalPlannedVolume: planTotalPlannedVolume,
-      totalSpend: planTotalSpend,
-      totalGp: planTotalGp,
-      // T-027: persist null explicitly (not `undefined`) so a recalc that
-      // newly discovers missing master data clears any stale prior value.
-      overallRoi,
-      ragStatus: planRagStatus,
-    });
+    // T-034c: routed through `manager` — this is the write the advisory
+    // lock exists to serialize (see method doc comment).
+    await this.planRepo.updateUnversioned(
+      planId,
+      tenantId,
+      {
+        totalPlannedVolume: planTotalPlannedVolume,
+        totalSpend: planTotalSpend,
+        totalGp: planTotalGp,
+        // T-027: persist null explicitly (not `undefined`) so a recalc
+        // that newly discovers missing master data clears any stale prior
+        // value.
+        overallRoi,
+        ragStatus: planRagStatus,
+      },
+      manager,
+    );
   }
 
   /**

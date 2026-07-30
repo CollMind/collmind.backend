@@ -16,6 +16,16 @@ import {
   staleVersionConflict,
 } from '../../../shared/persistence/versioned-update.helper';
 
+/**
+ * T-034c (docs/analysis/0005 §3, R4): fixed private namespace for the
+ * `pg_advisory_xact_lock(classid, objid)` two-int form used by
+ * `acquireRecalcLock`. `hashtext()` collapses this string to a stable
+ * 32-bit `classid` — any *other* future advisory-lock user picks its own
+ * namespace string and can never collide with plan-recalc's lock space,
+ * no matter what `objid` (planId hash) it happens to compute.
+ */
+export const PLAN_RECALC_LOCK_NAMESPACE = 'collmind:plan-recalc';
+
 @Injectable()
 export class PlanRepository {
   constructor(
@@ -127,6 +137,31 @@ export class PlanRepository {
     return result.affected ?? 0;
   }
 
+  /**
+   * T-034c (docs/analysis/0005 §3): serializes
+   * `PlanService#recalculatePlanWithKpiEngine` per plan — "lost
+   * recalculation" (two concurrent recalcs interleaving their SKU -> FU ->
+   * plan aggregate writes) is NOT a lost-update; version-CAS cannot see it
+   * because neither transaction's own row is stale, only the cross-row
+   * aggregate is. `pg_advisory_xact_lock` is transaction-scoped: it MUST be
+   * acquired on an already-open transaction's `manager` (a bare
+   * `pg_advisory_xact_lock` call outside a transaction is a no-op-ish
+   * session lock that never releases the way this code assumes) and is
+   * released automatically at COMMIT/ROLLBACK — no matching unlock call, no
+   * leak on crash/timeout. See `PLAN_RECALC_LOCK_NAMESPACE` doc comment for
+   * why the two-int form is used instead of a single
+   * `hashtextextended(planId)` key.
+   */
+  async acquireRecalcLock(
+    planId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+      [PLAN_RECALC_LOCK_NAMESPACE, planId],
+    );
+  }
+
   async findByCode(code: string, tenantId: string): Promise<Plan | null> {
     return this.planRepo.findOne({
       where: { planCode: code, tenantId },
@@ -202,14 +237,23 @@ export class PlanRepository {
    * version a preceding forward write already bumped — a CAS there would
    * fail every single time. Grep-able on purpose (T-034 acceptance
    * criteria / code-reviewer checklist item).
+   *
+   * T-034c: optional trailing `manager` — `recalculatePlanWithKpiEngine`'s
+   * final plan-level write must run on the SAME transaction/connection as
+   * its `acquireRecalcLock` call and its FU/SKU writes (otherwise "wrap it
+   * in a transaction" is theater: the write would go out on the pool's
+   * default connection, outside the lock, and could still interleave with
+   * a concurrent recalc). Omitted -> unchanged pre-existing behaviour.
    */
   async updateUnversioned(
     id: string,
     tenantId: string,
     data: Partial<Plan>,
+    manager?: EntityManager,
   ): Promise<Plan> {
-    await this.planRepo.update({ id, tenantId }, data);
-    const updated = await this.findById(id, tenantId);
+    const repo = manager ? manager.getRepository(Plan) : this.planRepo;
+    await repo.update({ id, tenantId }, data);
+    const updated = await this.findById(id, tenantId, manager);
     if (!updated) {
       throw new Error('Plan not found after update');
     }
@@ -387,14 +431,19 @@ export class PlanRepository {
    * T-034: deliberate CAS bypass (see #updateUnversioned on the plan
    * header). Used by `recalculatePlanWithKpiEngine` — FU-level totals are a
    * derived aggregate of its SKUs, never a user's direct edit.
+   *
+   * T-034c: optional trailing `manager` — same reason as
+   * #updateUnversioned's.
    */
   async updatePlanFuUnversioned(
     planFuId: string,
     tenantId: string,
     data: Partial<PlanFu>,
+    manager?: EntityManager,
   ): Promise<PlanFu> {
-    await this.planFuRepo.update({ id: planFuId, tenantId }, data);
-    const updated = await this.planFuRepo.findOne({
+    const repo = manager ? manager.getRepository(PlanFu) : this.planFuRepo;
+    await repo.update({ id: planFuId, tenantId }, data);
+    const updated = await repo.findOne({
       where: { id: planFuId, tenantId },
       relations: ['fu', 'planSkus', 'planSkus.sku'],
     });
@@ -471,13 +520,23 @@ export class PlanRepository {
     return this.planSkuRepo.save(planSku);
   }
 
-  /** T-034 §1.5: tenantId predicate added (see #findPlanFu). */
+  /**
+   * T-034 §1.5: tenantId predicate added (see #findPlanFu).
+   * T-034c: optional trailing `manager` — `recalculatePlanWithKpiEngine`'s
+   * FU-aggregation step re-reads each just-updated planSku to sum
+   * volume/GP; it must read through the recalc's own transaction (same
+   * snapshot as the write just made on it), not the injected repo's
+   * default connection, or it would either block on the still-open write
+   * lock or (worse, on some isolation levels) read a stale pre-update row.
+   */
   async findPlanSku(
     planFuId: string,
     skuId: string,
     tenantId: string,
+    manager?: EntityManager,
   ): Promise<PlanSku | null> {
-    return this.planSkuRepo.findOne({
+    const repo = manager ? manager.getRepository(PlanSku) : this.planSkuRepo;
+    return repo.findOne({
       where: { planFuId, skuId, tenantId },
       relations: ['sku', 'planFu'],
     });
@@ -487,14 +546,19 @@ export class PlanRepository {
    * T-034: deliberate CAS bypass (see #updatePlanFuUnversioned). Used by
    * `recalculatePlanWithKpiEngine` — plannedGp/gpRoi/ragStatus/calculatedKpis
    * etc. are derived outputs, never a user's direct edit.
+   *
+   * T-034c: optional trailing `manager` — same reason as
+   * #updateUnversioned's.
    */
   async updatePlanSkuUnversioned(
     planSkuId: string,
     tenantId: string,
     data: Partial<PlanSku>,
+    manager?: EntityManager,
   ): Promise<PlanSku> {
-    await this.planSkuRepo.update({ id: planSkuId, tenantId }, data);
-    const updated = await this.planSkuRepo.findOne({
+    const repo = manager ? manager.getRepository(PlanSku) : this.planSkuRepo;
+    await repo.update({ id: planSkuId, tenantId }, data);
+    const updated = await repo.findOne({
       where: { id: planSkuId, tenantId },
       relations: ['sku', 'planFu'],
     });

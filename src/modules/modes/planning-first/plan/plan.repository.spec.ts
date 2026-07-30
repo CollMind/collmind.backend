@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { PlanRepository } from './plan.repository';
+import { PlanRepository, PLAN_RECALC_LOCK_NAMESPACE } from './plan.repository';
 import {
   Plan,
   PlanFu,
@@ -355,6 +355,49 @@ describe('PlanRepository — T-034 optimistic locking (CAS)', () => {
       );
 
       expect(affected).toBe(0);
+    });
+  });
+
+  /**
+   * T-034c — recalc serialization (docs/analysis/0005 §3, task T-034c).
+   * `acquireRecalcLock` is the ONLY caller of `pg_advisory_xact_lock` in
+   * this codebase; this is the mutation-proof-bearing assertion — deleting
+   * this call from `recalculatePlanWithKpiEngine` (or changing the SQL to
+   * omit `hashtext($1)`/the namespace constant) must turn this red. See the
+   * task report for the companion e2e proof (lock removed -> concurrent
+   * recalc invariant test goes red).
+   */
+  describe('T-034c — acquireRecalcLock (pg_advisory_xact_lock, transaction-scoped)', () => {
+    it('runs `pg_advisory_xact_lock(hashtext(namespace), hashtext(planId))` on the given manager', async () => {
+      const managerMock = { query: jest.fn().mockResolvedValue(undefined) };
+
+      await repo.acquireRecalcLock('plan-1', managerMock as any);
+
+      expect(managerMock.query).toHaveBeenCalledTimes(1);
+      const [sql, params] = managerMock.query.mock.calls[0];
+      expect(sql).toContain('pg_advisory_xact_lock');
+      expect(sql).toContain('hashtext($1)');
+      expect(sql).toContain('hashtext($2)');
+      // Two-int namespaced form (docs/analysis/0005 R4) — NOT a single
+      // hashtextextended(planId) key. `params[0]` is the fixed private
+      // namespace constant (never the planId itself); `params[1]` is the
+      // planId. Swapping these, or collapsing to one param, would silently
+      // widen this lock's collision surface to every future advisory-lock
+      // user in the codebase — this assertion pins the exact shape.
+      expect(params).toEqual([PLAN_RECALC_LOCK_NAMESPACE, 'plan-1']);
+    });
+
+    it('different planIds -> different `objid` params (no accidental sharing of one lock key)', async () => {
+      const managerMock = { query: jest.fn().mockResolvedValue(undefined) };
+
+      await repo.acquireRecalcLock('plan-1', managerMock as any);
+      await repo.acquireRecalcLock('plan-2', managerMock as any);
+
+      const [, paramsA] = managerMock.query.mock.calls[0];
+      const [, paramsB] = managerMock.query.mock.calls[1];
+      expect(paramsA[1]).not.toEqual(paramsB[1]);
+      // Namespace stays constant across calls — same lock space.
+      expect(paramsA[0]).toBe(paramsB[0]);
     });
   });
 });

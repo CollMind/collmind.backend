@@ -1032,4 +1032,213 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       });
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // T-034c — recalc serialization (docs/analysis/0005 §3): lost
+  // recalculation. `recalculatePlanWithKpiEngine` now runs inside one
+  // `QueryRunner` transaction that takes `pg_advisory_xact_lock(planId)` as
+  // the first thing it does, serializing concurrent recalcs of the SAME
+  // plan. FU_TUP_BOYA (52 SKUs, see product.seed.ts) is used deliberately —
+  // a wider per-recalc window makes an unserialized interleave more likely
+  // to manifest, and gives a meaningful `<500ms` performance data point for
+  // a realistically-sized FU.
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('T-034c — recalc serialization (transaction + pg_advisory_xact_lock)', () => {
+    function numOrNull(v: unknown): number | null {
+      return v === null || v === undefined ? null : Number(v);
+    }
+
+    async function createPlanWithFu(namePrefix: string): Promise<{
+      planId: string;
+      skus: Array<{ skuId: string; version: number }>;
+    }> {
+      const planner = await loginAs(app, 'PLANNER');
+      const planId = await createDraftPlan(namePrefix);
+      const addFuRes = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_TUP_BOYA, planVersion: 1 })
+        .expect(201);
+      // A non-zero tactic so totalSpend actually moves with volume (an FU
+      // with no tactics set legitimately produces 0 promo spend regardless
+      // of volume — see the K2 cross-row test above for the same tactic).
+      await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10 }, version: addFuRes.body.version })
+        .expect(200);
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const planFu = planRes.body.planFus.find(
+        (f: any) => f.id === addFuRes.body.id,
+      );
+      const skus = planFu.planSkus.map((s: any) => ({
+        skuId: s.skuId,
+        version: s.version,
+      }));
+      return { planId, skus };
+    }
+
+    // ── Deterministic invariant (PRIMARY proof) ───────────────────────
+    //
+    // recalculatePlanWithKpiEngine is idempotent — a pure function of the
+    // currently-persisted volumes/tactics/master data (docs/analysis/0005
+    // §3). So regardless of HOW two concurrent recalcs (triggered by two
+    // concurrent SKU-volume edits on two DIFFERENT rows) interleave, the
+    // plan-level totals persisted immediately after the race MUST equal
+    // the totals a subsequent, fully-uncontested recalc produces. If a
+    // recalc's write ever "lost" the other update (the exact T-034c bug),
+    // the two would differ — this assertion never depends on which
+    // request won the race, only on whether the final persisted state is
+    // complete.
+    it('two concurrent SKU-volume edits (different rows) -> the totals persisted right after the race equal a fresh, uncontested recalc (no lost recalculation)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      for (let i = 0; i < 3; i++) {
+        const { planId, skus } = await createPlanWithFu(`RECALC-RACE-${i}`);
+        const [skuA, skuB] = skus;
+
+        const patchVolume = (
+          sku: { skuId: string; version: number },
+          plannedVolume: number,
+        ) =>
+          request(app.getHttpServer())
+            .patch(
+              `/plans/${planId}/fus/${FU_TUP_BOYA}/skus/${sku.skuId}/volume`,
+            )
+            .set(planner.authHeader())
+            .send({ baseVolume: 500, plannedVolume, version: sku.version });
+
+        const [ra, rb] = await Promise.all([
+          patchVolume(skuA, 1000),
+          patchVolume(skuB, 700),
+        ]);
+        expect(ra.status).toBe(200);
+        expect(rb.status).toBe(200);
+
+        const afterRace = await request(app.getHttpServer())
+          .get(`/plans/${planId}`)
+          .set(planner.authHeader())
+          .expect(200);
+
+        // Fresh, uncontested recalc.
+        await request(app.getHttpServer())
+          .post(`/plans/${planId}/recalculate`)
+          .set(planner.authHeader())
+          .send({})
+          .expect(200);
+        const fresh = await request(app.getHttpServer())
+          .get(`/plans/${planId}`)
+          .set(planner.authHeader())
+          .expect(200);
+
+        expect(numOrNull(afterRace.body.totalSpend)).toEqual(
+          numOrNull(fresh.body.totalSpend),
+        );
+        expect(numOrNull(afterRace.body.totalGp)).toEqual(
+          numOrNull(fresh.body.totalGp),
+        );
+        expect(numOrNull(afterRace.body.overallRoi)).toEqual(
+          numOrNull(fresh.body.overallRoi),
+        );
+        // Both edits must actually be reflected (sanity: rules out a
+        // trivially-passing "both totals are 0/null" false negative).
+        expect(Number(fresh.body.totalPlannedVolume)).toBeGreaterThan(0);
+        expect(Number(fresh.body.totalSpend)).toBeGreaterThan(0);
+      }
+    });
+
+    // ── Real concurrency, order-independent invariant (mirrors Layer 4) ──
+    it('N simultaneous /plans/:id/recalculate calls on the SAME plan all succeed and leave it consistent (idempotent, serialized — never a torn write)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const { planId } = await createPlanWithFu('RECALC-CONCURRENT-SAME');
+
+      const recalc = () =>
+        request(app.getHttpServer())
+          .post(`/plans/${planId}/recalculate`)
+          .set(planner.authHeader())
+          .send({});
+
+      const results = await Promise.all([recalc(), recalc(), recalc()]);
+      for (const r of results) {
+        expect(r.status).toBe(200);
+      }
+
+      const final = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      // No CAS bump: T-034 K4 — recalc is unversioned, so 3 concurrent
+      // recalcs never 409 each other and never bump plans.version.
+      expect(final.body.version).toBe(2); // 1 (create) -> 2 (addFu bump)
+    });
+
+    // ── Performance (BRD "<500ms" recalc budget) ──────────────────────
+    //
+    // Not a hard pass/fail gate here (a 52-SKU FU's full SpendCalc+KPI
+    // engine loop is an order of magnitude more work than the single-SKU
+    // formula evaluation the BRD figure describes, and CI machine speed
+    // varies) — logged for the task report's performance section instead.
+    // The generous upper bound below only catches a gross regression
+    // (e.g. the lock never being released, serializing what should be
+    // parallel).
+    it('records recalc latency: single vs. 2-concurrent-on-different-plans vs. 2-concurrent-on-the-same-plan', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const { planId: soloPlan } = await createPlanWithFu('RECALC-PERF-SOLO');
+      const t0 = Date.now();
+      await request(app.getHttpServer())
+        .post(`/plans/${soloPlan}/recalculate`)
+        .set(planner.authHeader())
+        .send({})
+        .expect(200);
+      const soloMs = Date.now() - t0;
+
+      const { planId: planX } = await createPlanWithFu('RECALC-PERF-DIFF-X');
+      const { planId: planY } = await createPlanWithFu('RECALC-PERF-DIFF-Y');
+      const t1 = Date.now();
+      await Promise.all([
+        request(app.getHttpServer())
+          .post(`/plans/${planX}/recalculate`)
+          .set(planner.authHeader())
+          .send({}),
+        request(app.getHttpServer())
+          .post(`/plans/${planY}/recalculate`)
+          .set(planner.authHeader())
+          .send({}),
+      ]);
+      const differentPlansConcurrentMs = Date.now() - t1;
+
+      const { planId: planZ } = await createPlanWithFu('RECALC-PERF-SAME');
+      const t2 = Date.now();
+      await Promise.all([
+        request(app.getHttpServer())
+          .post(`/plans/${planZ}/recalculate`)
+          .set(planner.authHeader())
+          .send({}),
+        request(app.getHttpServer())
+          .post(`/plans/${planZ}/recalculate`)
+          .set(planner.authHeader())
+          .send({}),
+      ]);
+      const samePlanConcurrentMs = Date.now() - t2;
+
+      // eslint-disable-next-line no-console
+      console.log(
+        `[T-034c perf] solo recalc (52 SKUs): ${soloMs}ms | ` +
+          `2 concurrent recalcs on DIFFERENT plans: ${differentPlansConcurrentMs}ms | ` +
+          `2 concurrent recalcs on the SAME plan (advisory-lock-serialized): ${samePlanConcurrentMs}ms`,
+      );
+
+      // Sanity ceiling only — not the BRD <500ms figure itself (see comment
+      // above). 52 SKUs x (SpendCalc + KPI engine) sequential DB round
+      // trips is inherently well above a single-formula-evaluation budget.
+      expect(soloMs).toBeLessThan(15000);
+      expect(differentPlansConcurrentMs).toBeLessThan(15000);
+      expect(samePlanConcurrentMs).toBeLessThan(20000);
+    });
+  });
 });

@@ -106,6 +106,8 @@ describe('PlanService', () => {
             // T-034b
             findByIdForUpdate: jest.fn(),
             updateStatusCas: jest.fn(),
+            // T-034c
+            acquireRecalcLock: jest.fn(),
           },
         },
         {
@@ -956,6 +958,7 @@ describe('PlanService', () => {
 
       planRepo.findById
         .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce(planWithFus)
         .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
       planRepo.findPlanSku.mockResolvedValue({
         id: 'ps-1',
@@ -1055,6 +1058,7 @@ describe('PlanService', () => {
 
       planRepo.findById
         .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce(planWithFus)
         .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
       planRepo.findPlanSku.mockResolvedValue({
         id: 'ps-1',
@@ -1119,6 +1123,7 @@ describe('PlanService', () => {
 
       planRepo.findById
         .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce(planWithFus)
         .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
       planRepo.findPlanSku.mockResolvedValue({
         id: 'ps-1',
@@ -1180,6 +1185,7 @@ describe('PlanService', () => {
       kpiEngine.calculatePlan.mockResolvedValue({} as any);
 
       planRepo.findById
+        .mockResolvedValueOnce(planWithFus)
         .mockResolvedValueOnce(planWithFus)
         .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
       planRepo.findPlanSku.mockResolvedValue({
