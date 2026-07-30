@@ -1,10 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
-import {
-  ForbiddenException,
-  InternalServerErrorException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AgreementService } from './agreement.service';
 import { AgreementRepository } from './agreement.repository';
 import { BudgetService } from '../../../shared/budget/budget.service';
@@ -582,16 +578,14 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
       ).not.toHaveBeenCalled();
     });
 
-    it('cancel: writes CANCEL audit row after budget release + status update', async () => {
+    it('cancel: writes CANCEL audit row after budget release + status-CAS update (T-042 real transaction)', async () => {
       const approvedAgreement = {
         ...baseAgreement,
         status: AgreementStatus.APPROVED,
       } as Agreement;
       agreementRepo.findById.mockResolvedValue(approvedAgreement);
-      agreementRepo.updateStatus.mockResolvedValue({
-        ...approvedAgreement,
-        status: AgreementStatus.CANCELLED,
-      } as Agreement);
+      agreementRepo.findByIdForUpdate.mockResolvedValue(approvedAgreement);
+      agreementRepo.updateStatusCas.mockResolvedValue(1);
 
       await service.cancel(
         'agreement-1',
@@ -603,7 +597,23 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
 
       expect(
         budgetReservationService.releaseAgreementReservation,
-      ).toHaveBeenCalledWith('agreement-1', tenantId, userId, 'CANCEL');
+      ).toHaveBeenCalledWith(
+        'agreement-1',
+        tenantId,
+        userId,
+        'CANCEL',
+        queryRunnerManager,
+      );
+      expect(agreementRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
+        'agreement-1',
+        tenantId,
+        AgreementStatus.APPROVED,
+        expect.objectContaining({
+          status: AgreementStatus.CANCELLED,
+          updatedBy: userId,
+        }),
+      );
       expect(adminAuditService.logAdminAction).toHaveBeenCalledWith(
         tenantId,
         userId,
@@ -619,19 +629,40 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
           reason: 'no longer needed',
         },
         'no longer needed',
+        { manager: queryRunnerManager },
+      );
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
+      expect(adminAuditService.flushPendingAlert).toHaveBeenCalled();
+    });
+
+    it('cancel: allows ACTIVE agreements too (single-status CAS uses the status actually read under the row lock)', async () => {
+      const activeAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.ACTIVE,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(activeAgreement);
+      agreementRepo.findByIdForUpdate.mockResolvedValue(activeAgreement);
+      agreementRepo.updateStatusCas.mockResolvedValue(1);
+
+      await service.cancel('agreement-1', tenantId, userId, 'ok', userEmail);
+
+      expect(agreementRepo.updateStatusCas).toHaveBeenCalledWith(
+        queryRunnerManager,
+        'agreement-1',
+        tenantId,
+        AgreementStatus.ACTIVE,
+        expect.objectContaining({ status: AgreementStatus.CANCELLED }),
       );
     });
 
-    it('cancel: audit-write failure does NOT revert already-committed CANCELLED state (budget already released, irreversible) — throws 500', async () => {
+    it('cancel: audit-write failure rolls back the transaction (budget release + status-CAS together, T-042 real atomicity) and re-throws', async () => {
       const approvedAgreement = {
         ...baseAgreement,
         status: AgreementStatus.APPROVED,
       } as Agreement;
       agreementRepo.findById.mockResolvedValue(approvedAgreement);
-      agreementRepo.updateStatus.mockResolvedValue({
-        ...approvedAgreement,
-        status: AgreementStatus.CANCELLED,
-      } as Agreement);
+      agreementRepo.findByIdForUpdate.mockResolvedValue(approvedAgreement);
+      agreementRepo.updateStatusCas.mockResolvedValue(1);
       adminAuditService.logAdminAction.mockRejectedValueOnce(
         new Error('db down'),
       );
@@ -644,16 +675,54 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
           'no longer needed',
           userEmail,
         ),
-      ).rejects.toThrow(InternalServerErrorException);
+      ).rejects.toThrow('db down');
 
-      // Exactly one updateStatus call (to CANCELLED) — no compensating revert call.
-      expect(agreementRepo.updateStatus).toHaveBeenCalledTimes(1);
-      expect(agreementRepo.updateStatus).toHaveBeenCalledWith(
-        'agreement-1',
-        tenantId,
-        AgreementStatus.CANCELLED,
-        expect.objectContaining({ updatedBy: userId }),
-      );
+      // T-042: real transaction — one rollback undoes the budget release +
+      // status-CAS together. No "AUDIT LOG MISSING, manual reconciliation"
+      // compensation path anymore (that reasoning is stale, see method
+      // header comment); this is now identical to submit/approve/reject.
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+      expect(adminAuditService.flushPendingAlert).not.toHaveBeenCalled();
+    });
+
+    it('cancel: only APPROVED or ACTIVE agreements can be cancelled (guard runs on the locked row)', async () => {
+      const draftAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.DRAFT,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(draftAgreement);
+      agreementRepo.findByIdForUpdate.mockResolvedValue(draftAgreement);
+
+      await expect(
+        service.cancel('agreement-1', tenantId, userId, 'no', userEmail),
+      ).rejects.toThrow('Only APPROVED or ACTIVE agreements can be cancelled');
+
+      expect(
+        budgetReservationService.releaseAgreementReservation,
+      ).not.toHaveBeenCalled();
+      expect(agreementRepo.updateStatusCas).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+    });
+
+    it('cancel: concurrent status change under the lock (status-CAS affected=0) surfaces 409, not a silent overwrite', async () => {
+      const approvedAgreement = {
+        ...baseAgreement,
+        status: AgreementStatus.APPROVED,
+      } as Agreement;
+      agreementRepo.findById.mockResolvedValue(approvedAgreement);
+      agreementRepo.findByIdForUpdate.mockResolvedValue(approvedAgreement);
+      agreementRepo.updateStatusCas.mockResolvedValue(0);
+
+      await expect(
+        service.cancel('agreement-1', tenantId, userId, 'no', userEmail),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'INVALID_STATE_TRANSITION',
+        }),
+      });
+
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
     });
 
     it('update: writes UPDATE audit row scoped to changed fields only (DRAFT agreement)', async () => {

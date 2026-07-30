@@ -3,7 +3,6 @@ import {
   BadRequestException,
   NotFoundException,
   ConflictException,
-  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import * as fs from 'fs';
@@ -965,6 +964,41 @@ export class AgreementService {
     return (await this.agreementRepo.findById(id, tenantId)) as Agreement;
   }
 
+  /**
+   * T-042 (code-review follow-up to T-034b, docs/analysis/0005 §4): moved to
+   * the same real-transaction pattern as approve()/reject() above. Previously
+   * this method read the agreement UNLOCKED (`findById`) and wrote the new
+   * status UNCONDITIONALLY (`updateStatus` → `updateUnversioned`, no status
+   * precondition at all) — the one state transition T-034b left behind.
+   * Concrete failure this closes: settlement-close.service.ts locks the same
+   * row with `pessimistic_write` and writes CLOSED; a concurrent cancel()
+   * reading a stale "APPROVED" copy could still land its unconditional
+   * UPDATE AFTER close's commit, silently turning CLOSED back into
+   * CANCELLED — an invalid state-machine transition, not just a lost update.
+   *
+   * Lock ORDER matches settlement-close.service.ts: agreement row
+   * (`findByIdForUpdate`, pessimistic_write) is locked FIRST, THEN the
+   * budget envelope is touched (`releaseAgreementReservation` with
+   * `queryRunner.manager`) inside the same transaction — same order both
+   * call sites use, so this and closeAgreement() can never deadlock on each
+   * other regardless of which one wins the race; the loser blocks on the
+   * agreement row lock and then re-reads the now-committed status via the
+   * status-CAS guard below (or, defensively, the `expectedStatus` mismatch
+   * itself), not on a lock cycle.
+   *
+   * Former T-032 note (now stale, kept here crossed out for the historical
+   * record — do NOT resurrect this trade-off): "cancel doesn't revert state
+   * on audit-write failure because budget release already committed and its
+   * idempotency key is one-shot, so there is no safe re-reserve path; log
+   * ERROR + 500 instead". That reasoning assumed audit was written OUTSIDE
+   * any transaction the budget release participated in. It no longer
+   * applies: audit now uses the T-014 `{ manager }` overload inside THIS
+   * queryRunner's transaction, so a failed audit write rolls back the budget
+   * release AND the status-CAS together — there is nothing left to
+   * "reconcile manually". A commit failure now behaves like every other
+   * transition here (submit/approve/reject): full rollback, no compensation
+   * code needed.
+   */
   async cancel(
     id: string,
     tenantId: string,
@@ -973,74 +1007,88 @@ export class AgreementService {
     userEmail?: string,
     actor?: AgreementActor,
   ): Promise<Agreement> {
-    const agreement = await this.findById(id, tenantId, actor);
-    const previousStatus = agreement.status;
+    // Pre-transaction: scope check only (out-of-scope PLANNER -> 404, same
+    // pattern as approve()/reject()'s `initial` read above).
+    await this.findById(id, tenantId, actor);
 
-    if (
-      ![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(
-        agreement.status,
-      )
-    ) {
-      throw new BadRequestException(
-        'Only APPROVED or ACTIVE agreements can be cancelled',
-      );
-    }
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    let auditLog: Awaited<
+      ReturnType<AdminAuditService['logAdminAction']>
+    > | null = null;
+    let previousStatus: AgreementStatus;
 
-    // T-030: release the FULL net outstanding reservation (RESERVE+COMMIT−RELEASE)
-    // for every envelope this agreement touched, not `capTotalAmount` (drift risk
-    // if cap was edited post-approval) and not just the single first RESERVE tx
-    // found (multi-envelope agreements, T-019). Idempotency key is identical to
-    // the one this call used to write directly, so no double-release / conflict.
     try {
+      const agreement = await this.agreementRepo.findByIdForUpdate(
+        id,
+        tenantId,
+        queryRunner.manager,
+      );
+      if (!agreement) {
+        throw new NotFoundException(`Agreement with ID ${id} not found`);
+      }
+      if (
+        ![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(
+          agreement.status,
+        )
+      ) {
+        throw new BadRequestException(
+          'Only APPROVED or ACTIVE agreements can be cancelled',
+        );
+      }
+      previousStatus = agreement.status;
+
+      // T-030: release the FULL net outstanding reservation
+      // (RESERVE+COMMIT−RELEASE) for every envelope this agreement touched,
+      // not `capTotalAmount` (drift risk if cap was edited post-approval)
+      // and not just the single first RESERVE tx found (multi-envelope
+      // agreements, T-019). Same idempotency key as before; now runs inside
+      // this transaction (`queryRunner.manager`) so the "net outstanding"
+      // read sees this transaction's own not-yet-committed writes (there are
+      // none earlier in this method) and — same as approve()/reject() —
+      // rollback undoes the release together with the status write, so the
+      // idempotency key is never left "used up" against a status change that
+      // didn't actually happen.
       await this.budgetReservationService.releaseAgreementReservation(
         agreement.id,
         tenantId,
         userId,
         'CANCEL',
+        queryRunner.manager,
       );
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Budget release failed: ${errorMessage}`);
-    }
 
-    // Update agreement status
-    const updated = await this.agreementRepo.updateStatus(
-      id,
-      tenantId,
-      AgreementStatus.CANCELLED,
-      {
-        updatedBy: userId,
-      },
-    );
+      // Row is already locked (`findByIdForUpdate` above) — `expectedStatus`
+      // here is the value just read under that lock, not a stale copy, so a
+      // single-status CAS predicate is safe even though two source statuses
+      // (APPROVED/ACTIVE) are allowed by the guard above. The CAS remains a
+      // second line of defense (belt-and-suspenders with the row lock), same
+      // as approve()/reject().
+      const affected = await this.agreementRepo.updateStatusCas(
+        queryRunner.manager,
+        id,
+        tenantId,
+        previousStatus,
+        {
+          status: AgreementStatus.CANCELLED,
+          updatedBy: userId,
+          version: () => '"version" + 1',
+        } as any,
+      );
+      if (affected === 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_STATE_TRANSITION',
+          message: 'Agreement status changed concurrently; retry.',
+        });
+      }
 
-    // T-032: audit immutable — cancel must be recorded (BRD: "her işlem
-    // loglanır"; this endpoint previously wrote ZERO rows to
-    // admin_audit_logs). isHighRisk (admin-audit.service.ts): CANCEL is a
-    // terminal, irreversible state transition that releases budget, same
-    // class as CLOSE.
-    //
-    // NO state-revert compensation on audit-write failure here — unlike
-    // submit/approve/reject above. By this point the budget RELEASE (a
-    // separate side effect, above) has ALREADY been committed, and
-    // BudgetReservationService's release idempotency key is
-    // `RELEASE|AGREEMENT|<id>|<envelope>` (reason-agnostic — see
-    // budget-reservation.service.ts), i.e. a one-shot, non-reversible
-    // operation with no "re-reserve" counterpart. Reverting status back to
-    // APPROVED/ACTIVE here would make things WORSE, not better: the
-    // agreement would claim to still hold a reservation that budget-side has
-    // already released, a strictly more misleading inconsistency than
-    // "CANCELLED with a missing audit row". So on failure we do the other
-    // half of the T-026/T-029 compensation contract ("ya da en azından
-    // tutarsızlık loglanır" — or at least log the inconsistency): log loudly
-    // for ops/manual reconciliation and surface a 500 to the caller, while
-    // leaving the already-correct CANCELLED state untouched. Same
-    // audit-outside-the-state-transition trade-off already accepted (and
-    // documented at the top of this file's sibling,
-    // settlement-close.service.ts) for CLOSE, tracked under the same T-014
-    // "real transactional audit" umbrella.
-    try {
-      await this.adminAuditService.logAdminAction(
+      // T-032: audit immutable — cancel must be recorded (BRD: "her işlem
+      // loglanır"). T-014: same transaction as the status write + budget
+      // release above (`{ manager: queryRunner.manager }`) — see method
+      // header for why the old "audit outside the transaction" compensation
+      // note no longer applies.
+      auditLog = await this.adminAuditService.logAdminAction(
         tenantId,
         userId,
         userEmail ?? 'unknown',
@@ -1052,19 +1100,33 @@ export class AgreementService {
         { previousStatus },
         { newStatus: AgreementStatus.CANCELLED, reason },
         reason,
+        { manager: queryRunner.manager },
       );
-    } catch (error) {
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+
+    // T-014: CANCEL is a terminal, irreversible state transition that
+    // releases budget — same isHighRisk class as CLOSE
+    // (admin-audit.service.ts). Alarm fires only AFTER a successful commit,
+    // in its OWN try/catch (T-014 lesson): an alert-delivery failure must
+    // never turn an already-committed cancel into a 500.
+    try {
+      await this.adminAuditService.flushPendingAlert(auditLog);
+    } catch (alertErr) {
       this.logger.error(
-        `AUDIT LOG MISSING for agreement ${id} cancel — state (CANCELLED) and budget release are ALREADY COMMITTED and are NOT being reverted (see T-032 comment above for why). Manual reconciliation may be required: ${
-          error instanceof Error ? error.message : 'Unknown error'
+        `HIGH-RISK ALERT FAILED — AGREEMENT ${id} cancelled successfully; alert not delivered: ${
+          alertErr instanceof Error ? alertErr.message : 'Unknown error'
         }`,
-      );
-      throw new InternalServerErrorException(
-        'Agreement was cancelled and budget released successfully, but failed to record the audit log. This has been logged for manual review.',
       );
     }
 
-    return updated;
+    return (await this.agreementRepo.findById(id, tenantId)) as Agreement;
   }
 
   async delete(

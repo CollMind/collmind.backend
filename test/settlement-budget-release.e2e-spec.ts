@@ -327,6 +327,88 @@ describe('Settlement — Budget Reservation Release (T-030, E2E)', () => {
   });
 
   // -------------------------------------------------------------------------
+  // BR-E2E-04b (T-042): concurrent cancel + close race — deterministic,
+  // order-independent invariant. Before T-042, cancel() read `status`
+  // UNLOCKED and wrote it back with an unconditional UPDATE
+  // (`updateStatus`/`updateUnversioned`, no precondition at all); a
+  // concurrent close() (which DOES lock the row with `pessimistic_write`,
+  // see settlement-close.service.ts) could commit CLOSED first, and then
+  // cancel()'s unconditional write would land AFTER it and silently turn
+  // CLOSED back into CANCELLED — an invalid state-machine transition, not
+  // merely a lost update. This test proves that can no longer happen: it
+  // asserts the ORDER-INDEPENDENT invariant (never which of the two wins,
+  // mirrors optimistic-locking.e2e-spec.ts's approve-race test) and, as the
+  // load-bearing assertion, that the agreement's *final* status is NEVER
+  // CANCELLED-after-CLOSED.
+  // -------------------------------------------------------------------------
+
+  describe('BR-E2E-04b: concurrent cancel + close — CLOSED never reverts to CANCELLED', () => {
+    it('one of {cancel, close} succeeds (200/201), the other gets 400/409 — final status is exactly one of CLOSED/CANCELLED, exactly one RELEASE row', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+
+      for (let i = 0; i < 3; i++) {
+        const { agreementId, envelopeId } = await newApprovedAgreement(
+          6000,
+          `E2E-BR04B-${i}`,
+        );
+
+        const sendCancel = () =>
+          request(app.getHttpServer())
+            .post(`/agreements/${agreementId}/cancel`)
+            .set(admin.authHeader())
+            .send({ reason: 'BR-E2E-04b race' });
+        const sendClose = () =>
+          request(app.getHttpServer())
+            .post(`/actuals-first/settlements/close/${agreementId}`)
+            .set(admin.authHeader())
+            .send({ justification: 'BR-E2E-04b race' });
+
+        const [cancelRes, closeRes] = await Promise.all([
+          sendCancel(),
+          sendClose(),
+        ]);
+
+        // Order-independent: never assert which request wins — only that
+        // exactly one succeeds and the other is rejected (400 from cancel's
+        // own status guard, or 409 ALREADY_SETTLED/NOT_SETTLEABLE_STATE
+        // from close, or 409 INVALID_STATE_TRANSITION from cancel's
+        // status-CAS if it loses the row-lock wait).
+        // Numeric sort (default Array#sort is lexicographic — [201,400]
+        // would otherwise NOT sort the way the numbers suggest).
+        const statuses = [cancelRes.status, closeRes.status].sort(
+          (a, b) => a - b,
+        );
+        const winners = statuses.filter((s) => s === 200 || s === 201);
+        const losers = statuses.filter((s) => s !== 200 && s !== 201);
+        expect(winners).toHaveLength(1); // exactly one of the two succeeds
+        expect(losers).toHaveLength(1); // the other is rejected
+        expect(losers[0]).toBeGreaterThanOrEqual(400);
+        expect(losers[0]).toBeLessThan(500); // 400 or 409 — never a 5xx crash
+
+        // Load-bearing assertion: the row's FINAL status is exactly one of
+        // CLOSED/CANCELLED — never a state that proves the invalid
+        // CLOSED->CANCELLED (or CANCELLED->CLOSED) transition happened.
+        const finalRow = await dataSource.query(
+          `SELECT status FROM main.agreements WHERE id = $1 AND tenant_id = $2`,
+          [agreementId, fixture.tenantId],
+        );
+        expect(['CLOSED', 'CANCELLED']).toContain(finalRow[0].status);
+
+        // Exactly one net RELEASE — whichever transition won released the
+        // reservation exactly once; the loser must not have written a
+        // second one (that would mean it raced past the row lock).
+        const releases = await dataSource.query(
+          `SELECT id FROM main.budget_transactions
+           WHERE tenant_id = $1 AND source_type = 'AGREEMENT' AND source_id = $2
+             AND envelope_id = $3 AND tx_type = 'RELEASE'`,
+          [fixture.tenantId, agreementId, envelopeId],
+        );
+        expect(releases).toHaveLength(1);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // BR-E2E-05: reject (approve öncesi) → no-op, budget'a hiç yazılmaz
   // -------------------------------------------------------------------------
 
