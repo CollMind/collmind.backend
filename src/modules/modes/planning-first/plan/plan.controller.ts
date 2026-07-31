@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -34,6 +35,7 @@ import {
 } from './dto';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { RecalcMetricsInterceptor } from '../../../../common/interceptors/recalc-metrics.interceptor';
 import { Roles } from '../../../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
@@ -225,6 +227,7 @@ export class PlanController {
 
   @Post(':id/fus')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @UseInterceptors(RecalcMetricsInterceptor)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Add FU to plan' })
   @ApiResponse({ status: 201, description: 'FU added successfully' })
@@ -242,6 +245,7 @@ export class PlanController {
 
   @Patch(':id/fus/:fuId/tactics')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @UseInterceptors(RecalcMetricsInterceptor)
   @ApiOperation({ summary: 'Update FU tactic values' })
   @ApiResponse({ status: 200, description: 'FU tactics updated successfully' })
   updateFuTactic(
@@ -259,6 +263,7 @@ export class PlanController {
 
   @Delete(':id/fus/:fuId')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @UseInterceptors(RecalcMetricsInterceptor)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove FU from plan' })
   @ApiResponse({ status: 204, description: 'FU removed successfully' })
@@ -281,6 +286,7 @@ export class PlanController {
 
   @Patch(':id/fus/:fuId/skus/:skuId/volume')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @UseInterceptors(RecalcMetricsInterceptor)
   @ApiOperation({ summary: 'Update SKU volume' })
   @ApiResponse({ status: 200, description: 'SKU volume updated successfully' })
   updateSkuVolume(
@@ -520,6 +526,7 @@ export class PlanController {
 
   @Post(':id/calculate-kpis')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @UseInterceptors(RecalcMetricsInterceptor)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Calculate KPIs for a plan using KPI engine' })
   @ApiResponse({ status: 200, description: 'KPI calculation results' })
@@ -536,6 +543,7 @@ export class PlanController {
 
   @Post(':id/recalculate')
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @UseInterceptors(RecalcMetricsInterceptor)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger full recalculation for a plan' })
   @ApiResponse({ status: 200, description: 'Recalculation complete' })

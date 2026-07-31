@@ -6,7 +6,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { PlanService } from './plan.service';
+import { RecalcTelemetryContext } from '../../../../common/services/recalc-telemetry.service';
 import { PlanRepository } from './plan.repository';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
@@ -194,6 +196,17 @@ describe('PlanService', () => {
             applyToQueryBuilder: jest.fn(),
           },
         },
+        // T-046b: recalc telemetry — ConfigService drives the WARN
+        // threshold (default 500ms if unset, mirrored here), and
+        // RecalcTelemetryContext.record() is a safe no-op outside a real
+        // HTTP request (no ALS store in these unit tests).
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn().mockReturnValue(500),
+          },
+        },
+        RecalcTelemetryContext,
       ],
     }).compile();
 

@@ -51,6 +51,8 @@ import {
 } from '../../../../database/entities/plan-approval-history.entity';
 import { UserRole } from '../../../../database/entities/user.entity';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
+import { ConfigService } from '@nestjs/config';
+import { RecalcTelemetryContext } from '../../../../common/services/recalc-telemetry.service';
 
 /**
  * T-028b: caller identity for scope-aware reads/decisions. Optional on
@@ -62,6 +64,20 @@ export interface PlanActor {
   userId: string;
   role: UserRole;
 }
+
+/**
+ * T-046b (docs/analysis/0007 §4-T1) — which caller triggered a recalc, for
+ * the structured telemetry log. Purely descriptive (never branches
+ * behavior) — new callers may pass any string, but these cover today's
+ * call sites.
+ */
+export type RecalcTrigger =
+  | 'updateSkuVolume'
+  | 'updateFuTactic'
+  | 'addFu'
+  | 'removeFu'
+  | 'calculateKpis'
+  | 'manual';
 
 /**
  * T-027: Convert a raw (possibly string-typed decimal column, null, or
@@ -101,6 +117,17 @@ export class PlanService {
     // before (T-026/T-029). DataSource is the standard NestJS/TypeORM way
     // to open one (same mechanism as SettlementCloseService).
     private readonly dataSource: DataSource,
+    // T-046b (docs/analysis/0007 §4-T1): recalc's WARN threshold comes from
+    // config, never hardcoded (BRD dynamic-config principle — RolesGuard/
+    // budget-threshold/KPI config all follow the same rule; a perf
+    // threshold is no different). `AccessScopeService` already establishes
+    // the `ConfigService` injection pattern in this codebase
+    // (SCOPE_ENFORCEMENT_ENABLED).
+    private readonly configService: ConfigService,
+    // T-046b (docs/analysis/0007 §4-T2): carries recalc timing/size out to
+    // RecalcMetricsInterceptor for the `X-Recalc-Ms` response header — see
+    // that service's doc comment for why this is safe as a singleton.
+    private readonly recalcTelemetry: RecalcTelemetryContext,
   ) {}
 
   /**
@@ -460,7 +487,13 @@ export class PlanService {
     }
 
     // Recalculate plan totals using KPI engine
-    await this.recalculatePlanWithKpiEngine(planId, tenantId);
+    await this.recalculatePlanWithKpiEngine(
+      planId,
+      tenantId,
+      undefined,
+      undefined,
+      'addFu',
+    );
 
     return this.planRepo.findPlanFu(
       planId,
@@ -506,7 +539,13 @@ export class PlanService {
     // plan's FU count, so `plan` (loaded above, already scope-checked) is
     // still an accurate "does this plan have FUs" guard — pass it through
     // to skip recalc's own duplicate pre-transaction `findById`.
-    await this.recalculatePlanWithKpiEngine(planId, tenantId, actor, plan);
+    await this.recalculatePlanWithKpiEngine(
+      planId,
+      tenantId,
+      actor,
+      plan,
+      'updateFuTactic',
+    );
 
     return this.planRepo.findPlanFu(planId, fuId, tenantId) as Promise<PlanFu>;
   }
@@ -571,7 +610,13 @@ export class PlanService {
     // duplication measured in docs/analysis/0007 §2.3 item C #1/#2, on
     // this exact endpoint — `PATCH .../volume` is the harness's measured
     // request).
-    await this.recalculatePlanWithKpiEngine(planId, tenantId, actor, plan);
+    await this.recalculatePlanWithKpiEngine(
+      planId,
+      tenantId,
+      actor,
+      plan,
+      'updateSkuVolume',
+    );
 
     return this.planRepo.findPlanSku(
       planFu.id,
@@ -608,7 +653,13 @@ export class PlanService {
     await this.planRepo.updateVersioned(planId, tenantId, dto.planVersion, {});
 
     await this.planRepo.removeFu(planFu.id, tenantId);
-    await this.recalculatePlanWithKpiEngine(planId, tenantId);
+    await this.recalculatePlanWithKpiEngine(
+      planId,
+      tenantId,
+      undefined,
+      undefined,
+      'removeFu',
+    );
   }
 
   /**
@@ -1384,6 +1435,13 @@ export class PlanService {
      * transaction below, not a second authorization decision.
      */
     preloadedPlan?: Plan,
+    /**
+     * T-046b (docs/analysis/0007 §4-T1): which caller triggered this
+     * recalc, for the structured telemetry log only — never branches
+     * behavior. Defaults to `'manual'` (the `/plans/:id/recalculate`
+     * endpoint and any other direct caller that doesn't pass one).
+     */
+    trigger: RecalcTrigger = 'manual',
   ): Promise<void> {
     // Pre-transaction scope check (mirrors submit()/approve()'s "cheap
     // pre-transaction read" pattern, T-034b): 404/OUT_OF_SCOPE must be
@@ -1400,12 +1458,25 @@ export class PlanService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
+    // T-046b (docs/analysis/0007 §4-T1): timing starts here (transaction
+    // open, BEFORE lock acquisition) so `durationMs` includes lock-wait,
+    // per the design doc ("durationMs (lock alımı dahil)"), and is measured
+    // in both the success and failure paths (try/catch below, not just
+    // try/finally) — a recalc that throws still tells us how long it ran
+    // before failing.
+    const startedAt = Date.now();
+    let lockWaitMs = 0;
+    let skuCount = 0;
+    let fuCount = 0;
+
     try {
       // T-034c step 1: serialize concurrent recalcs of THIS plan. Must be
       // acquired before any read below — otherwise two concurrent recalcs
       // could both pass their own snapshot read before either takes the
       // lock, defeating the point (see the method doc comment above).
+      const lockStartedAt = Date.now();
       await this.planRepo.acquireRecalcLock(planId, queryRunner.manager);
+      lockWaitMs = Date.now() - lockStartedAt;
 
       const plan = await this.planRepo.findById(
         planId,
@@ -1416,12 +1487,38 @@ export class PlanService {
         // Deleted between the pre-transaction scope check above and lock
         // acquisition — nothing to recalculate.
         await queryRunner.commitTransaction();
+        this.logRecalcTelemetry({
+          planId,
+          tenantId,
+          trigger,
+          durationMs: Date.now() - startedAt,
+          lockWaitMs,
+          skuCount,
+          fuCount,
+          failed: false,
+        });
         return;
       }
       if (!plan.planFus || plan.planFus.length === 0) {
         await queryRunner.commitTransaction();
+        this.logRecalcTelemetry({
+          planId,
+          tenantId,
+          trigger,
+          durationMs: Date.now() - startedAt,
+          lockWaitMs,
+          skuCount,
+          fuCount,
+          failed: false,
+        });
         return;
       }
+
+      fuCount = plan.planFus.length;
+      skuCount = plan.planFus.reduce(
+        (sum, fu) => sum + (fu.planSkus?.length ?? 0),
+        0,
+      );
 
       await this.recalculatePlanWithKpiEngineLocked(
         plan,
@@ -1433,9 +1530,91 @@ export class PlanService {
       await queryRunner.commitTransaction();
     } catch (err) {
       await queryRunner.rollbackTransaction();
+      this.logRecalcTelemetry({
+        planId,
+        tenantId,
+        trigger,
+        durationMs: Date.now() - startedAt,
+        lockWaitMs,
+        skuCount,
+        fuCount,
+        failed: true,
+      });
       throw err;
     } finally {
       await queryRunner.release();
+    }
+
+    const durationMs = Date.now() - startedAt;
+    this.logRecalcTelemetry({
+      planId,
+      tenantId,
+      trigger,
+      durationMs,
+      lockWaitMs,
+      skuCount,
+      fuCount,
+      failed: false,
+    });
+    // T-046b (docs/analysis/0007 §4-T2): hand off to
+    // RecalcMetricsInterceptor for the `X-Recalc-Ms` response header. No-op
+    // if this call isn't running inside a request wrapped by that
+    // interceptor (e.g. a unit test, or a future non-HTTP caller) — see
+    // RecalcTelemetryContext's doc comment.
+    this.recalcTelemetry.record({ durationMs, skuCount });
+  }
+
+  /**
+   * T-046b (docs/analysis/0007 §4-T1): structured (JSON, single line)
+   * recalc telemetry via Nest's `Logger`. Deliberately NO new
+   * infrastructure (no metrics store, no APM) — see the design doc's
+   * explicit "izleme platformu kurmuyoruz" scope note. Threshold comes from
+   * `ConfigService` (`PERF_RECALC_WARN_MS`, default 500ms) — never
+   * hardcoded, matching this codebase's other dynamic-config thresholds
+   * (e.g. `SCOPE_ENFORCEMENT_ENABLED` in AccessScopeService, budget
+   * thresholds). Exceeding it produces ONLY a `warn` log — no timeout, no
+   * cancellation: a slow-but-correct recalc is better than a fast-but-
+   * incomplete one (BRD FR-3.2/FR-3.3 correctness requirement).
+   *
+   * Payload is deliberately identity + counters only (planId, tenantId,
+   * trigger, counts, durations) — never plan/SKU content, prices, or
+   * customer names (the exact leak class flagged for `calculationCache` in
+   * docs/analysis/0007 §2.4).
+   */
+  private logRecalcTelemetry(entry: {
+    planId: string;
+    tenantId: string;
+    trigger: RecalcTrigger;
+    durationMs: number;
+    lockWaitMs: number;
+    skuCount: number;
+    fuCount: number;
+    failed: boolean;
+  }): void {
+    const configuredThreshold = this.configService.get<string | number>(
+      'PERF_RECALC_WARN_MS',
+      500,
+    );
+    const warnThresholdMs = Number(configuredThreshold);
+    const threshold = Number.isFinite(warnThresholdMs) ? warnThresholdMs : 500;
+
+    const payload = {
+      event: 'plan_recalc',
+      planId: entry.planId,
+      tenantId: entry.tenantId,
+      trigger: entry.trigger,
+      durationMs: entry.durationMs,
+      lockWaitMs: entry.lockWaitMs,
+      skuCount: entry.skuCount,
+      fuCount: entry.fuCount,
+      failed: entry.failed,
+      warnThresholdMs: threshold,
+    };
+
+    if (entry.durationMs > threshold) {
+      this.logger.warn(JSON.stringify(payload));
+    } else {
+      this.logger.debug(JSON.stringify(payload));
     }
   }
 
@@ -1829,7 +2008,13 @@ export class PlanService {
     }>;
   }> {
     // Trigger full recalculation (single authoritative path)
-    await this.recalculatePlanWithKpiEngine(planId, tenantId, actor);
+    await this.recalculatePlanWithKpiEngine(
+      planId,
+      tenantId,
+      actor,
+      undefined,
+      'calculateKpis',
+    );
 
     // Read stored KPI results (already computed above, no duplicate recalc)
     const plan = await this.findById(planId, tenantId, actor);

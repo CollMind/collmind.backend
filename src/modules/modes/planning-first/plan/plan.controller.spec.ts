@@ -6,6 +6,8 @@ import { SubmitForApprovalDto } from './dto/submit-for-approval.dto';
 import { ReviewPlanDto, ReviewDecision } from './dto/review-plan.dto';
 import { PlanStatus } from '../../../../database/entities/plan.entity';
 import { UserRole } from '../../../../database/entities/user.entity';
+import { RecalcMetricsInterceptor } from '../../../../common/interceptors/recalc-metrics.interceptor';
+import { RecalcTelemetryContext } from '../../../../common/services/recalc-telemetry.service';
 
 describe('PlanController', () => {
   let controller: PlanController;
@@ -46,6 +48,12 @@ describe('PlanController', () => {
             getPlanApprovalHistory: jest.fn(),
           },
         },
+        // T-046b: several endpoints carry `@UseInterceptors(RecalcMetricsInterceptor)`
+        // — Nest resolves it as a controller-scoped provider even in this
+        // unit-level TestingModule (no HTTP request actually goes through
+        // it here, but DI still needs to construct it).
+        RecalcMetricsInterceptor,
+        RecalcTelemetryContext,
       ],
     }).compile();
 
