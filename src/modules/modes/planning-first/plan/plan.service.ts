@@ -502,8 +502,11 @@ export class PlanService {
       },
     );
 
-    // Recalculate using KPI engine
-    await this.recalculatePlanWithKpiEngine(planId, tenantId);
+    // Recalculate using KPI engine. T-046a: this action doesn't change the
+    // plan's FU count, so `plan` (loaded above, already scope-checked) is
+    // still an accurate "does this plan have FUs" guard — pass it through
+    // to skip recalc's own duplicate pre-transaction `findById`.
+    await this.recalculatePlanWithKpiEngine(planId, tenantId, actor, plan);
 
     return this.planRepo.findPlanFu(planId, fuId, tenantId) as Promise<PlanFu>;
   }
@@ -561,8 +564,14 @@ export class PlanService {
       },
     );
 
-    // Recalculate using KPI engine
-    await this.recalculatePlanWithKpiEngine(planId, tenantId);
+    // Recalculate using KPI engine. T-046a: this action doesn't change the
+    // plan's FU count, so `plan` (loaded above, already scope-checked) is
+    // still an accurate "does this plan have FUs" guard — pass it through
+    // to skip recalc's own duplicate pre-transaction `findById` (the exact
+    // duplication measured in docs/analysis/0007 §2.3 item C #1/#2, on
+    // this exact endpoint — `PATCH .../volume` is the harness's measured
+    // request).
+    await this.recalculatePlanWithKpiEngine(planId, tenantId, actor, plan);
 
     return this.planRepo.findPlanSku(
       planFu.id,
@@ -1356,13 +1365,33 @@ export class PlanService {
     planId: string,
     tenantId: string,
     actor?: PlanActor,
+    /**
+     * T-046a: optional already-loaded, already-scope-checked `Plan` tree
+     * (docs/analysis/0007 §2.3, item C #1/#2 — this pre-transaction check
+     * used to re-run the exact same `findById` query the caller had just
+     * run moments earlier in the same request, measured as part of the
+     * 251ms/5-query `findById` cost on a 500-SKU recalc).
+     *
+     * ONLY pass this when the caller's own `plan.planFus` set is
+     * guaranteed still accurate at the moment recalc runs — i.e. the
+     * caller's own action did not add/remove FUs after loading `plan`
+     * (safe for `updateSkuVolume`/`updateFuTactic`, NOT safe for
+     * `addFu`/`removeFu`, which change the FU count after their own
+     * `findById` and must let this method re-read). When supplied, `actor`
+     * is ignored for this check (the caller already performed the real
+     * scope check when it loaded `preloadedPlan`) — this is purely a
+     * "does this plan still have FUs" guard before opening the locked
+     * transaction below, not a second authorization decision.
+     */
+    preloadedPlan?: Plan,
   ): Promise<void> {
     // Pre-transaction scope check (mirrors submit()/approve()'s "cheap
     // pre-transaction read" pattern, T-034b): 404/OUT_OF_SCOPE must be
     // decided before we ever open the locked transaction below, so an
     // out-of-scope caller cannot even momentarily contend for the
     // advisory lock on a plan it cannot see.
-    const scopeCheckedPlan = await this.findById(planId, tenantId, actor);
+    const scopeCheckedPlan =
+      preloadedPlan ?? (await this.findById(planId, tenantId, actor));
     if (!scopeCheckedPlan.planFus || scopeCheckedPlan.planFus.length === 0) {
       return;
     }
@@ -1436,6 +1465,32 @@ export class PlanService {
     const cachedActiveMechanics =
       await this.spendCalc.getActiveMechanics(tenantId);
 
+    // T-046a: LTA context depends only on (cplId, channelCode, categoryCode,
+    // planId), all read from `plan` itself below — identical for every SKU
+    // in this recalc. Fetch once and reuse via `calculateAllSpendsForSKU`'s
+    // `cachedLtaContext` param instead of re-querying per SKU (or, before
+    // this fix, per SKU x mechanic inside `calculateMechanicSpend` — the
+    // single largest measured cost in docs/analysis/0007 §2: +3000 queries
+    // / 1746ms on a 500-SKU x 3-mechanic plan). Scoped to this single method
+    // invocation only, same discipline as `cachedActiveMechanics` above.
+    const cachedLtaContext = await this.spendCalc.getLtaContextForPlan(
+      tenantId,
+      {
+        cplId: plan.cplId,
+        channelCode: plan.channel?.code,
+        categoryCode: plan.category?.code,
+      },
+      plan.id,
+    );
+
+    // T-046a: plan-level aggregates, accumulated in-loop from the same
+    // per-FU totals computed below instead of re-reading the whole plan
+    // tree afterwards (docs/analysis/0007 §2.3 item C #4 — that re-read
+    // becomes unnecessary once these per-FU totals are already in memory).
+    let planTotalPlannedVolume = 0;
+    let planTotalSpend = 0;
+    let planTotalGp = 0;
+
     for (const planFu of plan.planFus) {
       const skuResults: Array<Record<string, CalculationResult>> = [];
 
@@ -1461,8 +1516,17 @@ export class PlanService {
         mechanicValues,
       };
 
-      // Track FU-level totals (summed from per-SKU SpendCalc results)
+      // Track FU-level totals (summed from per-SKU SpendCalc results).
+      // T-046a: `fuTotalPlannedVolume`/`fuTotalGp` used to be recomputed by
+      // re-reading every just-written plan_sku row back from the DB after
+      // the batch UPDATE below (docs/analysis/0007 §2.3 item B: 1006
+      // queries / 496ms on a 500-SKU plan). Both values are already fully
+      // known in-memory from this same loop (`planVol` is the loaded,
+      // recalc-untouched volume; `plannedGp` is exactly what gets written
+      // to `skuUpdatesForBatch` below) — accumulate them here instead.
       let fuTotalPlannedSpend = 0;
+      let fuTotalPlannedVolume = 0;
+      let fuTotalGp = 0;
 
       // T-045: accumulate this FU's SKU writes and flush as a single
       // multi-row UPDATE after the loop, instead of one UPDATE per SKU.
@@ -1511,6 +1575,7 @@ export class PlanService {
             skuCtx,
             calcCtx,
             cachedActiveMechanics,
+            cachedLtaContext,
           );
         } catch (spendErr) {
           this.logger.error(
@@ -1581,6 +1646,14 @@ export class PlanService {
         // RAG comes exclusively from kpi engine (config-driven thresholds)
         const ragStatus = kpiResults['GP_ROI_PCT']?.ragStatus ?? null;
 
+        // T-046a: accumulate FU-level totals here (in-memory), replacing the
+        // former post-batch re-read loop (see doc comment on
+        // `fuTotalPlannedSpend` above). `planVol` is recalc's own loaded
+        // value (never mutated by recalc itself); `plannedGp` is exactly
+        // what's queued into `skuUpdatesForBatch` just below.
+        fuTotalPlannedVolume += planVol;
+        fuTotalGp += plannedGp ?? 0;
+
         // Convert KPI results to calculated_kpis JSONB format
         const calculatedKpis: Record<string, any> = {};
         for (const [kpiCode, result] of Object.entries(kpiResults)) {
@@ -1643,26 +1716,6 @@ export class PlanService {
         throw kpiErr;
       }
 
-      // Aggregate SKU volumes/GP for FU-level persist
-      let fuTotalPlannedVolume = 0;
-      let fuTotalGp = 0;
-
-      for (const planSku of planFu.planSkus || []) {
-        // T-034c: read through `manager` — this MUST see the
-        // updatePlanSkuUnversioned write from Step 4 above, which is only
-        // visible on this same open transaction until COMMIT.
-        const updated = await this.planRepo.findPlanSku(
-          planFu.id,
-          planSku.skuId,
-          tenantId,
-          manager,
-        );
-        if (updated) {
-          fuTotalPlannedVolume += Number(updated.plannedVolume) || 0;
-          fuTotalGp += Number(updated.plannedGp) || 0;
-        }
-      }
-
       // FU GP ROI and RAG come exclusively from engine (config-driven)
       const fuGpRoi = fuKpiResults['GP_ROI_PCT']?.value ?? null;
       const fuRagStatus = fuKpiResults['GP_ROI_PCT']?.ragStatus ?? null;
@@ -1700,26 +1753,16 @@ export class PlanService {
       );
 
       allFuResults.push(fuKpiResults);
-    }
 
-    // Plan level aggregation
-    let planTotalPlannedVolume = 0;
-    let planTotalSpend = 0;
-    let planTotalGp = 0;
-
-    // Re-read FUs to get updated aggregations. T-034c: `this.findById`
-    // (the service method) resolves actor scope AND uses the injected
-    // repo's default connection — neither is right here: scope was already
-    // checked before the transaction opened, and this read must see the
-    // FU writes just made on `manager` in this same open transaction.
-    const updatedPlan = await this.planRepo.findById(planId, tenantId, manager);
-    if (!updatedPlan) {
-      throw new Error(`Plan ${planId} not found during recalculation`);
-    }
-    for (const planFu of updatedPlan.planFus || []) {
-      planTotalPlannedVolume += Number(planFu.totalPlannedVolume) || 0;
-      planTotalSpend += Number(planFu.totalSpend) || 0;
-      planTotalGp += Number(planFu.totalGp) || 0;
+      // T-046a: plan-level totals accumulated here (in-memory) instead of
+      // re-reading the entire plan tree afterwards (docs/analysis/0007
+      // §2.3 item C #4 — this FU's `fuTotalPlannedVolume`/
+      // `fuTotalPlannedSpend`/`fuTotalGp` are exactly what was just written
+      // via `updatePlanFuUnversioned` above; the previous re-read existed
+      // solely to sum these same numbers back out of the DB).
+      planTotalPlannedVolume += fuTotalPlannedVolume;
+      planTotalSpend += fuTotalPlannedSpend;
+      planTotalGp += fuTotalGp;
     }
 
     // ── Plan-level KPI aggregation ────────────────────────────────────────
@@ -1746,6 +1789,9 @@ export class PlanService {
     // in-flight grid edit's CAS token on an unrelated recalc).
     // T-034c: routed through `manager` — this is the write the advisory
     // lock exists to serialize (see method doc comment).
+    // T-046a: `skipReadback: true` — this is the method's last statement,
+    // the returned `Plan` was always discarded (docs/analysis/0007 §2.3
+    // item C #5, ~50ms/call full-tree readback with no consumer).
     await this.planRepo.updateUnversioned(
       planId,
       tenantId,
@@ -1760,6 +1806,7 @@ export class PlanService {
         ragStatus: planRagStatus,
       },
       manager,
+      true,
     );
   }
 

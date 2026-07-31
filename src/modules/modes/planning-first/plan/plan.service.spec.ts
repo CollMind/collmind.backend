@@ -161,6 +161,10 @@ describe('PlanService', () => {
             // T-045: recalc hot path fetches active mechanics once and
             // reuses across all SKUs instead of re-querying per SKU.
             getActiveMechanics: jest.fn().mockResolvedValue([]),
+            // T-046a: recalc hot path fetches the plan's LTA context once
+            // and reuses across all SKUs instead of re-querying per SKU
+            // (and, before this fix, per SKU x mechanic).
+            getLtaContextForPlan: jest.fn().mockResolvedValue(null),
           },
         },
         {

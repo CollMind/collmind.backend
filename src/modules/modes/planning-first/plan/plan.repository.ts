@@ -244,15 +244,30 @@ export class PlanRepository {
    * in a transaction" is theater: the write would go out on the pool's
    * default connection, outside the lock, and could still interleave with
    * a concurrent recalc). Omitted -> unchanged pre-existing behaviour.
+   *
+   * T-046a: optional `skipReadback` — the mandatory post-UPDATE full-tree
+   * `findById` (9-relation plan, ~50ms measured, docs/analysis/0007 §2.3
+   * item C #5) exists solely to return the fresh `Plan` to callers that
+   * use it. `recalculatePlanWithKpiEngine`'s own final call discards the
+   * return value entirely (it's the last statement of the method) — pass
+   * `true` there to skip the readback. Defaults to `false` (unchanged
+   * behaviour) because `#updateStatus` and any other caller may rely on
+   * the returned `Plan`. When skipped, the resolved value is a
+   * `Pick<Plan, 'id' | 'tenantId'>`-only stub, not a real hydrated `Plan`
+   * — never use the return value when passing `skipReadback: true`.
    */
   async updateUnversioned(
     id: string,
     tenantId: string,
     data: Partial<Plan>,
     manager?: EntityManager,
+    skipReadback = false,
   ): Promise<Plan> {
     const repo = manager ? manager.getRepository(Plan) : this.planRepo;
     await repo.update({ id, tenantId }, data);
+    if (skipReadback) {
+      return { id, tenantId } as Plan;
+    }
     const updated = await this.findById(id, tenantId, manager);
     if (!updated) {
       throw new Error('Plan not found after update');

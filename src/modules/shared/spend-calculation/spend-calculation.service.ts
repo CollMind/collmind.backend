@@ -21,6 +21,7 @@ import {
   DistributionBasis,
 } from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { LTAAgreementService } from '../lta/lta-agreement.service';
+import { LTAContext } from '../lta/dto/lta-context.dto';
 import { PlanContextDto } from '../../master-data/mechanic/dto/plan-context.dto';
 import {
   SpendBreakdown,
@@ -47,7 +48,6 @@ import {
 @Injectable()
 export class SpendCalculationService {
   private readonly logger = new Logger(SpendCalculationService.name);
-  private calculationCache: Map<string, any> = new Map();
 
   constructor(
     @InjectRepository(PlanSku)
@@ -64,7 +64,25 @@ export class SpendCalculationService {
   ) {}
 
   /**
-   * Calculate spend for a specific mechanic
+   * Calculate spend for a specific mechanic.
+   *
+   * T-046a: accepts an optional `precomputed` bundle so callers that already
+   * hold the resolved `Mechanic` row and/or LTA context for this SKU (e.g.
+   * `calculateAllSpendsForSKU`, which resolves both exactly once per SKU
+   * before looping over its mechanics) can pass them through instead of
+   * this method re-querying per call — measured as +3000 queries / 1746ms
+   * on a 500-SKU x 3-mechanic plan (docs/analysis/0007 §2.3). Omitted ->
+   * unchanged pre-existing behaviour (own lookup), which is what the direct
+   * unit tests of this method still exercise.
+   *
+   * Correctness note (docs/analysis/0007 §2.3 warning): `precomputed`, if
+   * given, MUST correspond to this exact `mechanicCode` / this exact
+   * `skuContext`'s (cplId, channelCode, categoryCode) — never a value
+   * hoisted from a different SKU/mechanic without verifying those inputs
+   * are actually invariant across the hoisted scope. Callers in this file
+   * only hoist `ltaContext` across values that are provably identical
+   * (plan-level cplId/channelCode/categoryCode), and only hoist `mechanic`
+   * by iterating the exact same `Mechanic` object the code came from.
    */
   async calculateMechanicSpend(
     tenantId: string,
@@ -72,10 +90,16 @@ export class SpendCalculationService {
     context: CalculationContext,
     skuContext: SKUContext,
     allOnInvoicePromoSpends?: Record<string, number>,
+    precomputed?: {
+      mechanic: Mechanic;
+      ltaContext: LTAContext | null;
+    },
   ): Promise<number> {
-    const mechanic = await this.mechanicRepository.findOne({
-      where: { tenantId, code: mechanicCode, isActive: true },
-    });
+    const mechanic =
+      precomputed?.mechanic ??
+      (await this.mechanicRepository.findOne({
+        where: { tenantId, code: mechanicCode, isActive: true },
+      }));
 
     if (!mechanic) {
       this.logger.warn(`Mechanic ${mechanicCode} not found or inactive`);
@@ -91,15 +115,18 @@ export class SpendCalculationService {
     const plannedGsv = skuContext.plannedVolume * skuContext.listPrice;
 
     // Get LTA values (already calculated)
-    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(
-      tenantId,
-      {
-        cplId: skuContext.cplId,
-        channelCode: skuContext.channelCode,
-        categoryCode: skuContext.categoryCode,
-      },
-      context.planId,
-    );
+    const ltaContext =
+      precomputed !== undefined
+        ? precomputed.ltaContext
+        : await this.ltaAgreementService.getLTAForPlanContext(
+            tenantId,
+            {
+              cplId: skuContext.cplId,
+              channelCode: skuContext.channelCode,
+              categoryCode: skuContext.categoryCode,
+            },
+            context.planId,
+          );
 
     const plannedLtaOnInv =
       (plannedGsv * (ltaContext?.finalOnInvoicePct || 0)) / 100;
@@ -293,6 +320,33 @@ export class SpendCalculationService {
   }
 
   /**
+   * LTA context for a (cplId, channelCode, categoryCode, planId)
+   * combination. Thin pass-through to `LTAAgreementService`, extracted so
+   * callers that resolve this once per plan (the values come from the
+   * *plan* record — `plan.cplId`/`plan.channel.code`/`plan.category.code`
+   * — and are therefore identical for every SKU in a recalc) can fetch once
+   * and pass the result into `calculateAllSpendsForSKU`'s
+   * `cachedLtaContext` param instead of re-querying per SKU (T-046a,
+   * docs/analysis/0007 §2.3: this call alone was 500 queries / 21% of a
+   * 500-SKU recalc's DB time; the calculateMechanicSpend-internal N+1 on
+   * top of it accounted for another 1500 queries / 52%). Same caching
+   * discipline as `getActiveMechanics`: scope the result to a single
+   * call/request, never store it on `this` (tenant leakage / stale-config
+   * risk — see class-level guidance on `getActiveMechanics`).
+   */
+  async getLtaContextForPlan(
+    tenantId: string,
+    planContext: PlanContextDto,
+    planId?: string,
+  ): Promise<LTAContext | null> {
+    return this.ltaAgreementService.getLTAForPlanContext(
+      tenantId,
+      planContext,
+      planId,
+    );
+  }
+
+  /**
    * Calculate all spends for a single SKU
    *
    * @param cachedActiveMechanics Optional pre-fetched result of
@@ -301,12 +355,22 @@ export class SpendCalculationService {
    *   from the same tenant/request — never share this across requests or
    *   tenants (the mechanics list can change at any time via Admin config
    *   and must reflect the tenant scope of the current call).
+   * @param cachedLtaContext Optional pre-resolved result of
+   *   `getLtaContextForPlan`/`ltaAgreementService.getLTAForPlanContext` for
+   *   this exact (cplId, channelCode, categoryCode, planId) combination
+   *   (T-046a). Only pass this when the caller has verified those inputs
+   *   are identical to `skuContext`'s — e.g. `recalculatePlanWithKpiEngineLocked`
+   *   resolves them once from the *plan* record (constant for every SKU in
+   *   that recalc). `null` is a valid resolved value (no LTA agreement
+   *   found) and is honoured — pass `undefined`/omit to force a fresh
+   *   lookup instead.
    */
   async calculateAllSpendsForSKU(
     tenantId: string,
     skuContext: SKUContext,
     context: CalculationContext,
     cachedActiveMechanics?: Mechanic[],
+    cachedLtaContext?: LTAContext | null,
   ): Promise<SpendBreakdown> {
     const startTime = Date.now();
 
@@ -314,16 +378,22 @@ export class SpendCalculationService {
     const baseGsv = skuContext.baseVolume * skuContext.listPrice;
     const plannedGsv = skuContext.plannedVolume * skuContext.listPrice;
 
-    // SEVIYE 2: LTA calculations
-    const ltaContext = await this.ltaAgreementService.getLTAForPlanContext(
-      tenantId,
-      {
-        cplId: skuContext.cplId,
-        channelCode: skuContext.channelCode,
-        categoryCode: skuContext.categoryCode,
-      },
-      context.planId,
-    );
+    // SEVIYE 2: LTA calculations. T-046a: reuse the caller's pre-resolved
+    // context when provided instead of re-querying (docs/analysis/0007 §2.3 —
+    // this call alone was 500 queries / 21% of a 500-SKU recalc even before
+    // counting the calculateMechanicSpend N+1 below).
+    const ltaContext =
+      cachedLtaContext !== undefined
+        ? cachedLtaContext
+        : await this.ltaAgreementService.getLTAForPlanContext(
+            tenantId,
+            {
+              cplId: skuContext.cplId,
+              channelCode: skuContext.channelCode,
+              categoryCode: skuContext.categoryCode,
+            },
+            context.planId,
+          );
 
     const ltaOnInvoicePct = ltaContext?.finalOnInvoicePct || 0;
     const ltaOffInvoicePct = ltaContext?.finalOffInvoicePct || 0;
@@ -370,6 +440,8 @@ export class SpendCalculationService {
           mechanic.code,
           context,
           skuContext,
+          undefined,
+          { mechanic, ltaContext },
         );
         promoOnInvoice[mechanic.code] = spend;
         totalPromoOnInv += spend;
@@ -380,6 +452,8 @@ export class SpendCalculationService {
           mechanic.code,
           context,
           skuContext,
+          undefined,
+          { mechanic, ltaContext },
         );
         promoOnInvoice[mechanic.code] = spend;
         totalPromoOnInv += spend;
@@ -419,6 +493,7 @@ export class SpendCalculationService {
           context,
           skuContext,
           filteredPromoOnInvoice,
+          { mechanic, ltaContext },
         );
         promoOffInvoice[mechanic.code] = spend;
         totalPromoOffInv += spend;
@@ -537,8 +612,16 @@ export class SpendCalculationService {
 
     // Calculate for each SKU. T-045: fetch the active-mechanics list once
     // for this call and reuse it across all SKUs below (SKU-independent).
+    // T-046a: same for LTA context — `planContext`/`planFu.planId` above are
+    // built from `planFu.plan`, constant for every SKU in this FU, so
+    // resolve once and reuse (docs/analysis/0007 §2.3).
     const skuBreakdowns: SpendBreakdown[] = [];
     const activeMechanics = await this.getActiveMechanics(tenantId);
+    const ltaContext = await this.getLtaContextForPlan(
+      tenantId,
+      planContext,
+      planFu.planId,
+    );
 
     for (const planSku of planFu.planSkus || []) {
       const skuContext: SKUContext = {
@@ -557,6 +640,7 @@ export class SpendCalculationService {
         skuContext,
         context,
         activeMechanics,
+        ltaContext,
       );
       skuBreakdowns.push(breakdown);
     }
