@@ -59,7 +59,10 @@ async function bootstrap() {
       // bu satır olmadan `response.headers['x-recalc-ms']` tarayıcıda hep
       // undefined döner — curl/Node CORS uygulamadığı için orada görünür ve
       // eksiklik fark edilmezdi.
-      exposedHeaders: ['X-Recalc-Ms', 'X-Recalc-Sku-Count'],
+      // T-041: `X-Plan-Version` carries removeFu's post-CAS-bump plan
+      // version (204 No Content has no body) — same CORS-exposure need as
+      // the two headers above.
+      exposedHeaders: ['X-Recalc-Ms', 'X-Recalc-Sku-Count', 'X-Plan-Version'],
       credentials: true,
     });
     console.log('✅ CORS configured');

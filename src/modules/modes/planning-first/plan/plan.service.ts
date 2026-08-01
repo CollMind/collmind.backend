@@ -80,6 +80,23 @@ export type RecalcTrigger =
   | 'manual';
 
 /**
+ * T-041: sub-record mutations (addFu/updateFuTactic/updateSkuVolume/removeFu)
+ * bump either `plans.version` (structural changes) or a child row's version
+ * (tactic/volume edits) but historically only ever returned the child
+ * entity — never the CURRENT `plans.version`. The frontend's multi-FU-add
+ * flow compensated by guessing `version + 1` locally
+ * (PlanningGridEnhanced.tsx:914), which breaks the moment another user's
+ * edit lands in between. Every mutation below now additionally reports
+ * `planVersion` — the plan's version AS OF the moment this mutation
+ * returned (post-CAS-bump for addFu/removeFu, unchanged-but-accurate for
+ * updateFuTactic/updateSkuVolume, which never touch `plans.version`) — so
+ * the client can chain the next structural write off a value the server
+ * actually confirmed, not one it predicted.
+ */
+export type PlanFuWithVersion = PlanFu & { planVersion: number };
+export type PlanSkuWithVersion = PlanSku & { planVersion: number };
+
+/**
  * T-027: Convert a raw (possibly string-typed decimal column, null, or
  * undefined) value into a strict number-or-null. Distinguishes "genuinely
  * absent" master/user data (null/undefined/NaN) from a legitimately entered
@@ -431,7 +448,7 @@ export class PlanService {
     tenantId: string,
     userId: string,
     actor?: PlanActor,
-  ): Promise<PlanFu> {
+  ): Promise<PlanFuWithVersion> {
     const plan = await this.findById(planId, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
@@ -444,9 +461,15 @@ export class PlanService {
     if (dto.planVersion === undefined || dto.planVersion === null) {
       throw missingVersionConflict({ entity: 'PLAN', entityId: planId });
     }
-    await this.planRepo.updateVersioned(planId, tenantId, dto.planVersion, {
-      updatedBy: userId,
-    });
+    // T-041: capture the POST-bump plan returned by updateVersioned (not
+    // the pre-bump `plan` loaded above) — this is the value that must go
+    // back to the caller, see PlanFuWithVersion's doc comment.
+    const bumpedPlan = await this.planRepo.updateVersioned(
+      planId,
+      tenantId,
+      dto.planVersion,
+      { updatedBy: userId },
+    );
 
     // Verify FU exists and is plannable
     const fu = await this.fuRepo.findOne({ where: { id: dto.fuId, tenantId } });
@@ -495,11 +518,12 @@ export class PlanService {
       'addFu',
     );
 
-    return this.planRepo.findPlanFu(
+    const savedPlanFu = (await this.planRepo.findPlanFu(
       planId,
       dto.fuId,
       tenantId,
-    ) as Promise<PlanFu>;
+    )) as PlanFu;
+    return { ...savedPlanFu, planVersion: bumpedPlan.version };
   }
 
   async updateFuTactic(
@@ -508,7 +532,7 @@ export class PlanService {
     dto: UpdateFuTacticDto,
     tenantId: string,
     actor?: PlanActor,
-  ): Promise<PlanFu> {
+  ): Promise<PlanFuWithVersion> {
     const plan = await this.findById(planId, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
@@ -547,7 +571,15 @@ export class PlanService {
       'updateFuTactic',
     );
 
-    return this.planRepo.findPlanFu(planId, fuId, tenantId) as Promise<PlanFu>;
+    const savedPlanFu = (await this.planRepo.findPlanFu(
+      planId,
+      fuId,
+      tenantId,
+    )) as PlanFu;
+    // T-041: this mutation only CAS-bumps plan_fus.version, never
+    // plans.version (see PlanFuWithVersion doc comment) — `plan` (loaded,
+    // scope-checked, above) still reflects the current plan version.
+    return { ...savedPlanFu, planVersion: plan.version };
   }
 
   async updateSkuVolume(
@@ -557,7 +589,7 @@ export class PlanService {
     dto: UpdateSkuVolumeDto,
     tenantId: string,
     actor?: PlanActor,
-  ): Promise<PlanSku> {
+  ): Promise<PlanSkuWithVersion> {
     const plan = await this.findById(planId, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
@@ -618,11 +650,14 @@ export class PlanService {
       'updateSkuVolume',
     );
 
-    return this.planRepo.findPlanSku(
+    const savedPlanSku = (await this.planRepo.findPlanSku(
       planFu.id,
       skuId,
       tenantId,
-    ) as Promise<PlanSku>;
+    )) as PlanSku;
+    // T-041: same rationale as updateFuTactic — only plan_skus.version is
+    // CAS-bumped here, `plan.version` (loaded above) is unchanged.
+    return { ...savedPlanSku, planVersion: plan.version };
   }
 
   async removeFu(
@@ -631,7 +666,7 @@ export class PlanService {
     tenantId: string,
     dto?: RemoveFuDto,
     actor?: PlanActor,
-  ): Promise<void> {
+  ): Promise<{ planVersion: number }> {
     const plan = await this.findById(planId, tenantId, actor);
 
     if (plan.status !== PlanStatus.DRAFT) {
@@ -650,7 +685,12 @@ export class PlanService {
     if (!dto || dto.planVersion === undefined || dto.planVersion === null) {
       throw missingVersionConflict({ entity: 'PLAN', entityId: planId });
     }
-    await this.planRepo.updateVersioned(planId, tenantId, dto.planVersion, {});
+    const bumpedPlan = await this.planRepo.updateVersioned(
+      planId,
+      tenantId,
+      dto.planVersion,
+      {},
+    );
 
     await this.planRepo.removeFu(planFu.id, tenantId);
     await this.recalculatePlanWithKpiEngine(
@@ -660,6 +700,12 @@ export class PlanService {
       undefined,
       'removeFu',
     );
+
+    // T-041: 204 No Content has no body by HTTP convention (unlike
+    // addFu/updateFuTactic/updateSkuVolume, which already return a JSON
+    // entity) — the controller surfaces this via the `X-Plan-Version`
+    // response header instead of changing the status code.
+    return { planVersion: bumpedPlan.version };
   }
 
   /**

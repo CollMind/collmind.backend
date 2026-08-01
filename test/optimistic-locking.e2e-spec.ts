@@ -383,6 +383,131 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────
+  // T-041 — addFu/updateFuTactic/updateSkuVolume/removeFu now report the
+  // CURRENT plan version in their response (body `planVersion`, or for
+  // removeFu's 204-No-Content the `X-Plan-Version` header) instead of
+  // forcing the client to predict it locally (the exact `version + 1`
+  // guess PlanningGridEnhanced.tsx:914 made, which this task removes the
+  // need for).
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('T-041 — mutation responses report the current planVersion (no more client-side guessing)', () => {
+    it('two consecutive addFu calls chained purely off the response planVersion — no 409', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planId = await createDraftPlan('T041-CHAIN-ADDFU');
+
+      const fu1 = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_TUP_BOYA, planVersion: 1 })
+        .expect(201);
+      // Post-CAS-bump value (1 -> 2), not the pre-bump `1` the client sent.
+      expect(fu1.body.planVersion).toBe(2);
+
+      // The client never re-GETs the plan or predicts `version + 1` here —
+      // it takes fu1's own response at face value.
+      const fu2 = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: fu1.body.planVersion })
+        .expect(201);
+      expect(fu2.body.planVersion).toBe(3);
+
+      // Confirm against the server's own record, independently of the
+      // chained values above.
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      expect(planRes.body.version).toBe(3);
+    });
+
+    it('addFu response is additive — existing PlanFu fields (id, version, tactics) are still present alongside the new planVersion', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planId = await createDraftPlan('T041-ADDITIVE');
+
+      const fu1 = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_TUP_BOYA, planVersion: 1 })
+        .expect(201);
+
+      expect(fu1.body.id).toBeDefined();
+      expect(fu1.body.fuId).toBe(FU_TUP_BOYA);
+      expect(fu1.body.version).toBe(1); // PlanFu's OWN version — unrelated to planVersion
+      expect(fu1.body.planVersion).toBe(2); // plans.version, additive field
+    });
+
+    it('updateFuTactic and updateSkuVolume also report planVersion (unchanged by these child-row-only mutations)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planId = await createDraftPlan('T041-CHILD-MUTATIONS');
+
+      const addFuRes = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_TUP_BOYA, planVersion: 1 })
+        .expect(201);
+      expect(addFuRes.body.planVersion).toBe(2);
+
+      const tacticRes = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 5 }, version: addFuRes.body.version })
+        .expect(200);
+      // plan_fus.version bumped, plans.version untouched by this mutation.
+      expect(tacticRes.body.planVersion).toBe(2);
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const planFu = planRes.body.planFus.find(
+        (f: any) => f.id === addFuRes.body.id,
+      );
+      const skuId = planFu.planSkus[0].skuId;
+      const skuVersion = planFu.planSkus[0].version;
+
+      const volumeRes = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/skus/${skuId}/volume`)
+        .set(planner.authHeader())
+        .send({ baseVolume: 500, plannedVolume: 600, version: skuVersion })
+        .expect(200);
+      expect(volumeRes.body.planVersion).toBe(2);
+    });
+
+    it('removeFu (204 No Content) surfaces the post-CAS-bump planVersion via the X-Plan-Version response header', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planId = await createDraftPlan('T041-REMOVEFU-HEADER');
+
+      const addFuRes = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_TUP_BOYA, planVersion: 1 })
+        .expect(201);
+      expect(addFuRes.body.planVersion).toBe(2);
+
+      const delRes = await request(app.getHttpServer())
+        .delete(`/plans/${planId}/fus/${FU_TUP_BOYA}`)
+        .set(planner.authHeader())
+        .send({ planVersion: addFuRes.body.planVersion })
+        .expect(204);
+
+      expect(delRes.headers['x-plan-version']).toBe('3');
+
+      // The header value must be usable for the NEXT structural write,
+      // with no local prediction — proves it isn't a stale echo.
+      await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(planner.authHeader())
+        .send({
+          fuId: FU_TUP_BOYA,
+          planVersion: Number(delRes.headers['x-plan-version']),
+        })
+        .expect(201);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
   // Layer 4 — real concurrency race, order-independent invariant
   // ──────────────────────────────────────────────────────────────────────
 
@@ -1239,6 +1364,99 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       expect(soloMs).toBeLessThan(15000);
       expect(differentPlansConcurrentMs).toBeLessThan(15000);
       expect(samePlanConcurrentMs).toBeLessThan(20000);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // T-043 — plan.controller.ts / agreement.controller.ts route params now
+  // go through `ParseUUIDPipe` (same pattern already used by
+  // settlement.controller.ts / reversal.controller.ts, see
+  // reversal.e2e-spec.ts's "Geçersiz UUID formatı" test for the reference
+  // shape). A malformed UUID used to reach Postgres as-is
+  // (`invalid input syntax for type uuid`, uncaught -> 500); a
+  // well-formed-but-nonexistent UUID must keep 404 (scope/not-found is a
+  // service-level decision `ParseUUIDPipe` never touches).
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('T-043 — malformed UUID route params -> 400, not 500 (well-formed-but-missing stays 404)', () => {
+    const NON_EXISTENT_UUID = '00000000-0000-0000-0000-000000000099';
+
+    it('GET /plans/:id — malformed id -> 400', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const res = await request(app.getHttpServer())
+        .get('/plans/not-a-uuid')
+        .set(planner.authHeader());
+      expect(res.status).toBe(400);
+    });
+
+    it('GET /plans/:id — well-formed but nonexistent id -> 404 (behavior preserved)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const res = await request(app.getHttpServer())
+        .get(`/plans/${NON_EXISTENT_UUID}`)
+        .set(planner.authHeader());
+      expect(res.status).toBe(404);
+    });
+
+    it('POST /plans/:id/fus — malformed planId -> 400 (not a body-validation 400, a param-pipe 400 — reached before the handler runs)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const res = await request(app.getHttpServer())
+        .post('/plans/not-a-uuid/fus')
+        .set(planner.authHeader())
+        .send({ fuId: FU_TUP_BOYA, planVersion: 1 });
+      expect(res.status).toBe(400);
+    });
+
+    it('PATCH /plans/:id/fus/:fuId/tactics — malformed fuId -> 400', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planId = await createDraftPlan('T043-BAD-FUID');
+      const res = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/not-a-uuid/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 5 }, version: 1 });
+      expect(res.status).toBe(400);
+    });
+
+    it('PATCH /plans/:id/fus/:fuId/skus/:skuId/volume — malformed skuId -> 400', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planId = await createDraftPlan('T043-BAD-SKUID');
+      const res = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/skus/not-a-uuid/volume`)
+        .set(planner.authHeader())
+        .send({ baseVolume: 500, plannedVolume: 600, version: 1 });
+      expect(res.status).toBe(400);
+    });
+
+    it('DELETE /plans/:id/fus/:fuId — malformed fuId -> 400, the plan is unaffected', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const planId = await createDraftPlan('T043-BAD-DELETE-FUID');
+      const res = await request(app.getHttpServer())
+        .delete(`/plans/${planId}/fus/not-a-uuid`)
+        .set(planner.authHeader())
+        .send({ planVersion: 1 });
+      expect(res.status).toBe(400);
+    });
+
+    it('GET /agreements/:id — malformed id -> 400; well-formed-but-nonexistent -> 404', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const malformed = await request(app.getHttpServer())
+        .get('/agreements/not-a-uuid')
+        .set(planner.authHeader());
+      expect(malformed.status).toBe(400);
+
+      const missing = await request(app.getHttpServer())
+        .get(`/agreements/${NON_EXISTENT_UUID}`)
+        .set(planner.authHeader());
+      expect(missing.status).toBe(404);
+    });
+
+    it('DELETE /agreements/:id — malformed id -> 400, not the 500 Postgres would otherwise throw', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const res = await request(app.getHttpServer())
+        .delete('/agreements/not-a-uuid')
+        .set(planner.authHeader())
+        .send({ version: 1 });
+      expect(res.status).toBe(400);
     });
   });
 });

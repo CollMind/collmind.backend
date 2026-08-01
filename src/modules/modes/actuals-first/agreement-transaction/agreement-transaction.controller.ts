@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
   UseInterceptors,
@@ -73,7 +74,7 @@ export class AgreementTransactionController {
   @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get transactions by agreement ID' })
   findByAgreement(
-    @Param('agreementId') agreementId: string,
+    @Param('agreementId', ParseUUIDPipe) agreementId: string,
     @TenantId() tenantId: string,
   ) {
     return this.txService.findByAgreementId(agreementId, tenantId);
@@ -83,7 +84,7 @@ export class AgreementTransactionController {
   @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get total transaction amount for agreement' })
   async getTotalByAgreement(
-    @Param('agreementId') agreementId: string,
+    @Param('agreementId', ParseUUIDPipe) agreementId: string,
     @TenantId() tenantId: string,
   ) {
     const total = await this.txService.getTotalByAgreement(
@@ -96,7 +97,10 @@ export class AgreementTransactionController {
   @Get('batch/:batchId')
   @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get transactions by batch ID' })
-  findByBatch(@Param('batchId') batchId: string, @TenantId() tenantId: string) {
+  findByBatch(
+    @Param('batchId', ParseUUIDPipe) batchId: string,
+    @TenantId() tenantId: string,
+  ) {
     return this.txService.findByBatchId(batchId, tenantId);
   }
 
@@ -131,7 +135,7 @@ export class AgreementTransactionController {
     summary: 'Get budget impact for agreement and fiscal period',
   })
   async getBudgetImpact(
-    @Param('agreementId') agreementId: string,
+    @Param('agreementId', ParseUUIDPipe) agreementId: string,
     @Query('fiscalPeriod') fiscalPeriod: string,
     @TenantId() tenantId: string,
   ) {
@@ -274,7 +278,10 @@ export class AgreementTransactionController {
   @Get(':id')
   @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Get transaction by ID' })
-  findOne(@Param('id') id: string, @TenantId() tenantId: string) {
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @TenantId() tenantId: string,
+  ) {
     return this.txService.findById(id, tenantId);
   }
 

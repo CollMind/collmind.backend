@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -62,7 +63,10 @@ export class TacticController {
   @Get(':id')
   @ApiOperation({ summary: 'Get tactic by ID' })
   @ApiResponse({ status: 200, description: 'Tactic details', type: Tactic })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.tacticService.findOne(tenantId, id);
   }
 
@@ -76,7 +80,7 @@ export class TacticController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateTacticDto: UpdateTacticDto,
   ) {
     return this.tacticService.update(tenantId, id, updateTacticDto);
@@ -87,7 +91,7 @@ export class TacticController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete tactic' })
   @ApiResponse({ status: 204, description: 'Tactic deleted successfully' })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.tacticService.remove(tenantId, id);
   }
 }

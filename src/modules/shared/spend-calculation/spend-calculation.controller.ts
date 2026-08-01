@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Param,
+  ParseUUIDPipe,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -51,8 +52,8 @@ export class SpendCalculationController {
   })
   distributeMechanicSpend(
     @TenantId() tenantId: string,
-    @Param('planFuId') planFuId: string,
-    @Param('mechanicId') mechanicId: string,
+    @Param('planFuId', ParseUUIDPipe) planFuId: string,
+    @Param('mechanicId', ParseUUIDPipe) mechanicId: string,
   ) {
     return this.distributionService.distributeMechanicSpend(
       tenantId,
@@ -67,7 +68,7 @@ export class SpendCalculationController {
   @ApiResponse({ status: 204, description: 'Distribution recalculated' })
   recalculateOnVolumeChange(
     @TenantId() tenantId: string,
-    @Param('skuId') skuId: string,
+    @Param('skuId', ParseUUIDPipe) skuId: string,
     @Body() body: { newVolume: number },
   ) {
     return this.distributionService.recalculateDistributionOnVolumeChange(
@@ -86,7 +87,7 @@ export class SpendCalculationController {
   })
   getDistributionBreakdown(
     @TenantId() tenantId: string,
-    @Param('planFuId') planFuId: string,
+    @Param('planFuId', ParseUUIDPipe) planFuId: string,
   ) {
     return this.distributionService.getDistributionBreakdown(
       tenantId,
@@ -103,7 +104,7 @@ export class SpendCalculationController {
   })
   validateDistribution(
     @TenantId() tenantId: string,
-    @Param('planFuId') planFuId: string,
+    @Param('planFuId', ParseUUIDPipe) planFuId: string,
   ) {
     return this.distributionService.validateDistribution(tenantId, planFuId);
   }
@@ -117,7 +118,7 @@ export class SpendCalculationController {
   })
   validateInputs(
     @TenantId() tenantId: string,
-    @Param('planFuId') planFuId: string,
+    @Param('planFuId', ParseUUIDPipe) planFuId: string,
   ) {
     return this.validationService.validateInputs(tenantId, planFuId);
   }
@@ -131,7 +132,7 @@ export class SpendCalculationController {
   })
   validateCombinations(
     @TenantId() tenantId: string,
-    @Param('planFuId') planFuId: string,
+    @Param('planFuId', ParseUUIDPipe) planFuId: string,
   ) {
     return this.validationService.validateCombinations(tenantId, planFuId);
   }
@@ -145,7 +146,7 @@ export class SpendCalculationController {
   })
   validateBudget(
     @TenantId() tenantId: string,
-    @Param('planId') planId: string,
+    @Param('planId', ParseUUIDPipe) planId: string,
   ) {
     return this.validationService.validateBudgetImpact(tenantId, planId);
   }
@@ -161,7 +162,7 @@ export class SpendCalculationController {
   })
   validateBeforeSubmission(
     @TenantId() tenantId: string,
-    @Param('planId') planId: string,
+    @Param('planId', ParseUUIDPipe) planId: string,
   ) {
     return this.validationService.validateBeforeSubmission(tenantId, planId);
   }

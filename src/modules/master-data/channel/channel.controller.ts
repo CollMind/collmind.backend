@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -77,7 +78,10 @@ export class ChannelController {
   @Get(':id')
   @ApiOperation({ summary: 'Get channel by ID' })
   @ApiResponse({ status: 200, description: 'Channel details', type: Channel })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.channelService.findOne(tenantId, id);
   }
 
@@ -91,7 +95,7 @@ export class ChannelController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateChannelDto: UpdateChannelDto,
     @CurrentUser() user: any,
     @Request() req: any,
@@ -114,7 +118,7 @@ export class ChannelController {
   @ApiResponse({ status: 204, description: 'Channel deleted successfully' })
   remove(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: any,
     @Request() req: any,
   ) {

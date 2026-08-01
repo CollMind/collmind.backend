@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
   HttpCode,
@@ -88,7 +89,10 @@ export class BudgetAllocationController {
     description: 'Budget allocation details',
     type: BudgetAllocation,
   })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     // TODO: Implement findOne method in service
     return null;
   }
@@ -104,7 +108,7 @@ export class BudgetAllocationController {
   update(
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string },
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateDto: Partial<CreateBudgetAllocationDto>,
   ) {
     return this.budgetAllocationService.updateAllocation(

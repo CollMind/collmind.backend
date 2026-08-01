@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -85,7 +86,10 @@ export class MechanicController {
   @Get(':id')
   @ApiOperation({ summary: 'Get mechanic by ID' })
   @ApiResponse({ status: 200, description: 'Mechanic details', type: Mechanic })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.mechanicService.findOne(tenantId, id);
   }
 
@@ -99,7 +103,7 @@ export class MechanicController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateMechanicDto: UpdateMechanicDto,
     @CurrentUser() user: any,
     @Request() req: any,
@@ -122,7 +126,7 @@ export class MechanicController {
   @ApiResponse({ status: 204, description: 'Mechanic deleted successfully' })
   remove(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: any,
     @Request() req: any,
   ) {
@@ -194,7 +198,7 @@ export class MechanicController {
   })
   cloneMechanic(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() overrides: Partial<CreateMechanicDto>,
     @CurrentUser() user: any,
     @Request() req: any,

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UploadedFile,
@@ -94,7 +95,7 @@ export class SalesActualsController {
   @Roles(...READ_ROLES)
   @ApiOperation({ summary: 'Batch satırlarını getir' })
   async getBatchRows(
-    @Param('batchId') batchId: string,
+    @Param('batchId', ParseUUIDPipe) batchId: string,
     @TenantId() tenantId: string,
   ) {
     return this.service.getBatchRows(tenantId, batchId);
@@ -104,7 +105,7 @@ export class SalesActualsController {
   @Roles(...READ_ROLES)
   @ApiOperation({ summary: 'Batch detayını getir' })
   async getBatch(
-    @Param('batchId') batchId: string,
+    @Param('batchId', ParseUUIDPipe) batchId: string,
     @TenantId() tenantId: string,
   ) {
     return this.service.getBatch(tenantId, batchId);

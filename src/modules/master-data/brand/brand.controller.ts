@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -59,7 +60,10 @@ export class BrandController {
   @Get(':id')
   @ApiOperation({ summary: 'Get brand by ID' })
   @ApiResponse({ status: 200, description: 'Brand details', type: Brand })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.brandService.findOne(tenantId, id);
   }
 
@@ -73,7 +77,7 @@ export class BrandController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateBrandDto: UpdateBrandDto,
   ) {
     return this.brandService.update(tenantId, id, updateBrandDto);
@@ -84,7 +88,7 @@ export class BrandController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete brand' })
   @ApiResponse({ status: 204, description: 'Brand deleted successfully' })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.brandService.remove(tenantId, id);
   }
 }

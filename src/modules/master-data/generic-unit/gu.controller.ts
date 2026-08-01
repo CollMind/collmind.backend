@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -67,7 +68,10 @@ export class GuController {
     description: 'Generic Unit details',
     type: GenericUnit,
   })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.guService.findOne(tenantId, id);
   }
 
@@ -81,7 +85,7 @@ export class GuController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateGuDto: UpdateGuDto,
   ) {
     return this.guService.update(tenantId, id, updateGuDto);
@@ -95,7 +99,7 @@ export class GuController {
     status: 204,
     description: 'Generic Unit deleted successfully',
   })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.guService.remove(tenantId, id);
   }
 }

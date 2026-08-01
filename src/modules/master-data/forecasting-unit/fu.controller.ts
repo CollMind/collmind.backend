@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -74,7 +75,10 @@ export class FuController {
     description: 'Forecasting Unit details',
     type: ForecastingUnit,
   })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.fuService.findOne(tenantId, id);
   }
 
@@ -88,7 +92,7 @@ export class FuController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateFuDto: UpdateFuDto,
   ) {
     return this.fuService.update(tenantId, id, updateFuDto);
@@ -102,7 +106,7 @@ export class FuController {
     status: 204,
     description: 'Forecasting Unit deleted successfully',
   })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.fuService.remove(tenantId, id);
   }
 }

@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -64,7 +65,7 @@ export class KpiController {
   @ApiResponse({ status: 200, description: 'Grid KPIs for plan', type: [Kpi] })
   getGridKpisForPlan(
     @TenantId() tenantId: string,
-    @Param('planId') planId: string,
+    @Param('planId', ParseUUIDPipe) planId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
     return this.kpiService.getGridKpisForPlan(planId, tenantId, {
@@ -90,7 +91,10 @@ export class KpiController {
   @Get(':id')
   @ApiOperation({ summary: 'Get KPI by ID' })
   @ApiResponse({ status: 200, description: 'KPI details', type: Kpi })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.kpiService.findOne(tenantId, id);
   }
 
@@ -104,7 +108,7 @@ export class KpiController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateKpiDto: UpdateKpiDto,
   ) {
     return this.kpiService.update(tenantId, id, updateKpiDto);
@@ -115,7 +119,7 @@ export class KpiController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete KPI definition' })
   @ApiResponse({ status: 204, description: 'KPI deleted successfully' })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.kpiService.remove(tenantId, id);
   }
 

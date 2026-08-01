@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
   UseInterceptors,
@@ -162,7 +163,7 @@ export class OnInvoiceController {
   @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Adım 2: Batch validasyonu yap' })
   async validateBatch(
-    @Param('batchId') batchId: string,
+    @Param('batchId', ParseUUIDPipe) batchId: string,
     @TenantId() tenantId: string,
   ) {
     return this.onInvoiceService.validateBatch(batchId, tenantId);
@@ -175,7 +176,7 @@ export class OnInvoiceController {
   @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
   @ApiOperation({ summary: 'Adım 3: Batch işle ve ledger entry oluştur' })
   async processBatch(
-    @Param('batchId') batchId: string,
+    @Param('batchId', ParseUUIDPipe) batchId: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string },
   ) {
@@ -194,7 +195,7 @@ export class OnInvoiceController {
   )
   @ApiOperation({ summary: 'Batch bilgilerini getir' })
   async getBatch(
-    @Param('batchId') batchId: string,
+    @Param('batchId', ParseUUIDPipe) batchId: string,
     @TenantId() tenantId: string,
   ) {
     return this.onInvoiceService.getBatch(batchId, tenantId);

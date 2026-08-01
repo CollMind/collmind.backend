@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -62,7 +63,10 @@ export class RegionController {
   @Get(':id')
   @ApiOperation({ summary: 'Get region by ID' })
   @ApiResponse({ status: 200, description: 'Region details', type: Region })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.regionService.findOne(tenantId, id);
   }
 
@@ -76,7 +80,7 @@ export class RegionController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateRegionDto: UpdateRegionDto,
   ) {
     return this.regionService.update(tenantId, id, updateRegionDto);
@@ -87,7 +91,7 @@ export class RegionController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete region' })
   @ApiResponse({ status: 204, description: 'Region deleted successfully' })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.regionService.remove(tenantId, id);
   }
 }

@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -78,7 +79,10 @@ export class LTAAgreementController {
     description: 'LTA agreement details',
     type: LTAAgreement,
   })
-  async findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  async findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.ltaAgreementService.findOne(tenantId, id);
   }
 
@@ -92,7 +96,7 @@ export class LTAAgreementController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateDto: UpdateLTAAgreementDto,
   ) {
     return this.ltaAgreementService.updateAgreement(tenantId, id, updateDto);
@@ -106,7 +110,10 @@ export class LTAAgreementController {
     status: 204,
     description: 'LTA agreement activated successfully',
   })
-  activate(@TenantId() tenantId: string, @Param('id') id: string) {
+  activate(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.ltaAgreementService.activateAgreement(tenantId, id);
   }
 
@@ -120,7 +127,7 @@ export class LTAAgreementController {
   })
   terminate(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { reason: string },
   ) {
     return this.ltaAgreementService.terminateAgreement(
@@ -139,7 +146,7 @@ export class LTAAgreementController {
   })
   getActiveForCPL(
     @TenantId() tenantId: string,
-    @Param('cplId') cplId: string,
+    @Param('cplId', ParseUUIDPipe) cplId: string,
     @Query('date') date?: string,
   ) {
     const targetDate = date ? new Date(date) : new Date();

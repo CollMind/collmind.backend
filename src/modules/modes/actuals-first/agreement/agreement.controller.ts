@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
   HttpCode,
@@ -135,7 +136,7 @@ export class AgreementController {
   @ApiResponse({ status: 200, description: 'Agreement details' })
   @ApiResponse({ status: 404, description: 'Agreement not found' })
   findOne(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
@@ -154,7 +155,7 @@ export class AgreementController {
     description: 'Only DRAFT agreements can be edited',
   })
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateAgreementDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; email: string; role: UserRole },
@@ -179,7 +180,7 @@ export class AgreementController {
     description: 'Only DRAFT agreements can be submitted',
   })
   submit(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; email: string; role: UserRole },
   ) {
@@ -199,7 +200,7 @@ export class AgreementController {
     description: 'Only PENDING agreements can be approved',
   })
   approve(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body('comments') comments: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; email: string; role: UserRole },
@@ -224,7 +225,7 @@ export class AgreementController {
     description: 'Only PENDING agreements can be rejected',
   })
   reject(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body('reason') reason: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; email: string; role: UserRole },
@@ -249,7 +250,7 @@ export class AgreementController {
     description: 'Only APPROVED or ACTIVE agreements can be cancelled',
   })
   cancel(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body('reason') reason: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; email: string; role: UserRole },
@@ -278,7 +279,7 @@ export class AgreementController {
     description: 'STALE_VERSION / MISSING_VERSION (optimistic locking, T-034)',
   })
   delete(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: DeleteAgreementDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },

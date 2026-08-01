@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   UseGuards,
   HttpCode,
@@ -65,7 +66,7 @@ export class TenantController {
     type: TenantResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Tenant not found' })
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.tenantService.findOne(id);
   }
 
@@ -77,7 +78,10 @@ export class TenantController {
     description: 'Tenant updated successfully',
     type: TenantResponseDto,
   })
-  update(@Param('id') id: string, @Body() updateTenantDto: UpdateTenantDto) {
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateTenantDto: UpdateTenantDto,
+  ) {
     return this.tenantService.update(id, updateTenantDto);
   }
 
@@ -86,7 +90,7 @@ export class TenantController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete tenant' })
   @ApiResponse({ status: 204, description: 'Tenant deleted successfully' })
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.tenantService.remove(id);
   }
 
@@ -94,7 +98,7 @@ export class TenantController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Activate tenant' })
   @ApiResponse({ status: 200, description: 'Tenant activated' })
-  activate(@Param('id') id: string) {
+  activate(@Param('id', ParseUUIDPipe) id: string) {
     return this.tenantService.activate(id);
   }
 
@@ -102,14 +106,14 @@ export class TenantController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Suspend tenant' })
   @ApiResponse({ status: 200, description: 'Tenant suspended' })
-  suspend(@Param('id') id: string) {
+  suspend(@Param('id', ParseUUIDPipe) id: string) {
     return this.tenantService.suspend(id);
   }
 
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get tenant statistics' })
   @ApiResponse({ status: 200, description: 'Tenant statistics' })
-  getStats(@Param('id') id: string) {
+  getStats(@Param('id', ParseUUIDPipe) id: string) {
     return this.tenantService.getStats(id);
   }
 }

@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   UseGuards,
   Request,
@@ -145,7 +146,10 @@ export class UserController {
     type: UserResponseDto,
   })
   @ApiResponse({ status: 404, description: 'User not found' })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.userService.findOne(tenantId, id);
   }
 
@@ -159,7 +163,7 @@ export class UserController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateUserDto: UpdateUserDto,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
@@ -179,7 +183,7 @@ export class UserController {
   @ApiResponse({ status: 204, description: 'Password changed successfully' })
   changePassword(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() changePasswordDto: ChangePasswordDto,
   ) {
     return this.userService.changePassword(tenantId, id, changePasswordDto);
@@ -189,7 +193,10 @@ export class UserController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Activate user' })
   @ApiResponse({ status: 200, description: 'User activated' })
-  activate(@TenantId() tenantId: string, @Param('id') id: string) {
+  activate(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.userService.activate(tenantId, id);
   }
 
@@ -197,7 +204,10 @@ export class UserController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Deactivate user' })
   @ApiResponse({ status: 200, description: 'User deactivated' })
-  deactivate(@TenantId() tenantId: string, @Param('id') id: string) {
+  deactivate(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.userService.deactivate(tenantId, id);
   }
 
@@ -206,7 +216,7 @@ export class UserController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete user' })
   @ApiResponse({ status: 204, description: 'User deleted successfully' })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.userService.remove(tenantId, id);
   }
 }

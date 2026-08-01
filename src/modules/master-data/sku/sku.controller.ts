@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -68,7 +69,10 @@ export class SkuController {
   @Get(':id')
   @ApiOperation({ summary: 'Get SKU by ID' })
   @ApiResponse({ status: 200, description: 'SKU details', type: Sku })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.skuService.findOne(tenantId, id);
   }
 
@@ -82,7 +86,7 @@ export class SkuController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateSkuDto: UpdateSkuDto,
   ) {
     return this.skuService.update(tenantId, id, updateSkuDto);
@@ -93,7 +97,7 @@ export class SkuController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete SKU' })
   @ApiResponse({ status: 204, description: 'SKU deleted successfully' })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.skuService.remove(tenantId, id);
   }
 }

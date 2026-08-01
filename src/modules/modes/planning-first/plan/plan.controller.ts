@@ -6,12 +6,15 @@ import {
   Delete,
   Body,
   Param,
+  ParseUUIDPipe,
   Query,
+  Res,
   UseGuards,
   UseInterceptors,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -154,7 +157,7 @@ export class PlanController {
   @ApiOperation({ summary: 'Check budget availability for plan approval' })
   @ApiResponse({ status: 200, description: 'Budget check result' })
   budgetCheck(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
@@ -176,7 +179,7 @@ export class PlanController {
   @ApiResponse({ status: 200, description: 'Plan analysis data' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
   getAnalysis(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
@@ -198,7 +201,7 @@ export class PlanController {
   @ApiResponse({ status: 200, description: 'Plan details' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
   findOne(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
@@ -214,7 +217,7 @@ export class PlanController {
   @ApiResponse({ status: 200, description: 'Plan updated successfully' })
   @ApiResponse({ status: 400, description: 'Only DRAFT plans can be edited' })
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdatePlanDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -232,7 +235,7 @@ export class PlanController {
   @ApiOperation({ summary: 'Add FU to plan' })
   @ApiResponse({ status: 201, description: 'FU added successfully' })
   addFu(
-    @Param('id') planId: string,
+    @Param('id', ParseUUIDPipe) planId: string,
     @Body() dto: AddFuDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -249,8 +252,8 @@ export class PlanController {
   @ApiOperation({ summary: 'Update FU tactic values' })
   @ApiResponse({ status: 200, description: 'FU tactics updated successfully' })
   updateFuTactic(
-    @Param('id') planId: string,
-    @Param('fuId') fuId: string,
+    @Param('id', ParseUUIDPipe) planId: string,
+    @Param('fuId', ParseUUIDPipe) fuId: string,
     @Body() dto: UpdateFuTacticDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -271,17 +274,26 @@ export class PlanController {
     status: 409,
     description: 'STALE_VERSION / MISSING_VERSION (optimistic locking, T-034)',
   })
-  removeFu(
-    @Param('id') planId: string,
-    @Param('fuId') fuId: string,
+  async removeFu(
+    @Param('id', ParseUUIDPipe) planId: string,
+    @Param('fuId', ParseUUIDPipe) fuId: string,
     @Body() dto: RemoveFuDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
-  ) {
-    return this.planService.removeFu(planId, fuId, tenantId, dto, {
-      userId: user.id,
-      role: user.role,
-    });
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<void> {
+    // T-041: 204 No Content carries no body — the post-CAS-bump plan
+    // version goes out as a response header instead (see
+    // PlanService#removeFu's doc comment; header exposed to browsers via
+    // `exposedHeaders` in main.ts, same pattern as X-Recalc-Ms/T-046d).
+    const { planVersion } = await this.planService.removeFu(
+      planId,
+      fuId,
+      tenantId,
+      dto,
+      { userId: user.id, role: user.role },
+    );
+    res.setHeader('X-Plan-Version', String(planVersion));
   }
 
   @Patch(':id/fus/:fuId/skus/:skuId/volume')
@@ -290,9 +302,9 @@ export class PlanController {
   @ApiOperation({ summary: 'Update SKU volume' })
   @ApiResponse({ status: 200, description: 'SKU volume updated successfully' })
   updateSkuVolume(
-    @Param('id') planId: string,
-    @Param('fuId') fuId: string,
-    @Param('skuId') skuId: string,
+    @Param('id', ParseUUIDPipe) planId: string,
+    @Param('fuId', ParseUUIDPipe) fuId: string,
+    @Param('skuId', ParseUUIDPipe) skuId: string,
     @Body() dto: UpdateSkuVolumeDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -317,7 +329,7 @@ export class PlanController {
     description: 'Only DRAFT plans can be submitted',
   })
   submit(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: SubmitPlanDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -343,7 +355,7 @@ export class PlanController {
     description: 'Validation failed or insufficient budget',
   })
   submitForApproval(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: SubmitForApprovalDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -369,7 +381,7 @@ export class PlanController {
     description: 'Invalid review decision or missing required fields',
   })
   reviewPlan(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ReviewPlanDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -389,7 +401,7 @@ export class PlanController {
   @ApiOperation({ summary: 'Escalate plan to Finance Manager' })
   @ApiResponse({ status: 200, description: 'Plan escalated successfully' })
   escalateToFinance(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { reason: string; comments?: string },
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -415,7 +427,7 @@ export class PlanController {
   @ApiOperation({ summary: 'Get plan approval history' })
   @ApiResponse({ status: 200, description: 'Approval history entries' })
   getApprovalHistory(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
@@ -435,7 +447,7 @@ export class PlanController {
     description: 'Only PENDING_APPROVAL plans can be approved',
   })
   approve(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body()
     body: {
       comments?: string;
@@ -466,7 +478,7 @@ export class PlanController {
     description: 'Only PENDING_APPROVAL plans can be rejected',
   })
   reject(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { reason: string },
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -492,7 +504,7 @@ export class PlanController {
     description: 'Only REJECTED plans can be returned to draft',
   })
   returnToDraft(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
@@ -513,7 +525,7 @@ export class PlanController {
     description: 'STALE_VERSION / MISSING_VERSION (optimistic locking, T-034)',
   })
   delete(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: DeletePlanDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -531,7 +543,7 @@ export class PlanController {
   @ApiOperation({ summary: 'Calculate KPIs for a plan using KPI engine' })
   @ApiResponse({ status: 200, description: 'KPI calculation results' })
   calculateKpis(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
@@ -548,7 +560,7 @@ export class PlanController {
   @ApiOperation({ summary: 'Trigger full recalculation for a plan' })
   @ApiResponse({ status: 200, description: 'Recalculation complete' })
   async recalculate(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {

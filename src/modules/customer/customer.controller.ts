@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -119,7 +120,7 @@ export class CustomerController {
   })
   findByChannelId(
     @TenantId() tenantId: string,
-    @Param('channelId') channelId: string,
+    @Param('channelId', ParseUUIDPipe) channelId: string,
   ) {
     return this.customerService.findByChannelId(tenantId, channelId);
   }
@@ -154,7 +155,10 @@ export class CustomerController {
     type: CustomerResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Customer not found' })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.customerService.findOne(tenantId, id);
   }
 
@@ -179,7 +183,7 @@ export class CustomerController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateCustomerDto: UpdateCustomerDto,
   ) {
     return this.customerService.update(tenantId, id, updateCustomerDto);
@@ -190,7 +194,7 @@ export class CustomerController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete customer' })
   @ApiResponse({ status: 204, description: 'Customer deleted successfully' })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.customerService.remove(tenantId, id);
   }
 
@@ -198,7 +202,10 @@ export class CustomerController {
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @ApiOperation({ summary: 'Activate customer' })
   @ApiResponse({ status: 200, description: 'Customer activated' })
-  activate(@TenantId() tenantId: string, @Param('id') id: string) {
+  activate(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.customerService.activate(tenantId, id);
   }
 
@@ -206,14 +213,20 @@ export class CustomerController {
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @ApiOperation({ summary: 'Deactivate customer' })
   @ApiResponse({ status: 200, description: 'Customer deactivated' })
-  deactivate(@TenantId() tenantId: string, @Param('id') id: string) {
+  deactivate(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.customerService.deactivate(tenantId, id);
   }
 
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get customer statistics' })
   @ApiResponse({ status: 200, description: 'Customer statistics' })
-  getStats(@TenantId() tenantId: string, @Param('id') id: string) {
+  getStats(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.customerService.getStats(tenantId, id);
   }
 

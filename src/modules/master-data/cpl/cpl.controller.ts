@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseUUIDPipe,
   Delete,
   Query,
   UseGuards,
@@ -60,7 +61,10 @@ export class CplController {
   @Get(':id')
   @ApiOperation({ summary: 'Get CPL by ID' })
   @ApiResponse({ status: 200, description: 'CPL details', type: Cpl })
-  findOne(@TenantId() tenantId: string, @Param('id') id: string) {
+  findOne(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.cplService.findOne(tenantId, id);
   }
 
@@ -74,7 +78,7 @@ export class CplController {
   })
   update(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() updateCplDto: UpdateCplDto,
   ) {
     return this.cplService.update(tenantId, id, updateCplDto);
@@ -85,7 +89,7 @@ export class CplController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete CPL' })
   @ApiResponse({ status: 204, description: 'CPL deleted successfully' })
-  remove(@TenantId() tenantId: string, @Param('id') id: string) {
+  remove(@TenantId() tenantId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.cplService.remove(tenantId, id);
   }
 }

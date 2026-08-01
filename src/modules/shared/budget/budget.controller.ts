@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
   HttpCode,
@@ -56,7 +57,10 @@ export class BudgetController {
   @Get('envelopes/:id')
   @ApiOperation({ summary: 'Get budget envelope by ID' })
   @ApiResponse({ status: 200, description: 'Budget envelope details' })
-  findEnvelopeById(@TenantId() tenantId: string, @Param('id') id: string) {
+  findEnvelopeById(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.budgetService.findEnvelopeById(tenantId, id);
   }
 
@@ -94,7 +98,7 @@ export class BudgetController {
   @ApiResponse({ status: 200, description: 'Reserved amount' })
   async getReservedAmount(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     const amount = await this.budgetService.getReservedAmount(tenantId, id);
     return { envelopeId: id, reservedAmount: amount };
@@ -105,7 +109,7 @@ export class BudgetController {
   @ApiResponse({ status: 200, description: 'List of transactions' })
   getTransactionsByEnvelope(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.budgetService.getTransactionsByEnvelope(tenantId, id);
   }

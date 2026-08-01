@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -82,7 +83,10 @@ export class ApprovalController {
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get approval request by ID' })
-  findOne(@Param('id') id: string, @TenantId() tenantId: string) {
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @TenantId() tenantId: string,
+  ) {
     return this.approvalService.findById(id, tenantId);
   }
 
@@ -90,7 +94,7 @@ export class ApprovalController {
   @Roles(UserRole.CATEGORY_MANAGER)
   @ApiOperation({ summary: 'Approve a request' })
   approve(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ApproveRequestDto,
     @TenantId() tenantId: string,
     @CurrentUser('id') userId: string,
@@ -102,7 +106,7 @@ export class ApprovalController {
   @Roles(UserRole.CATEGORY_MANAGER)
   @ApiOperation({ summary: 'Reject a request' })
   reject(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RejectRequestDto,
     @TenantId() tenantId: string,
     @CurrentUser('id') userId: string,
@@ -114,7 +118,7 @@ export class ApprovalController {
   @Roles(UserRole.ADMIN, UserRole.PLANNER)
   @ApiOperation({ summary: 'Cancel own pending request' })
   cancel(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,
     @CurrentUser('id') userId: string,
   ) {

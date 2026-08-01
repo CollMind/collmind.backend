@@ -1145,14 +1145,17 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // `undefined`, which built `/plans/undefined/return-to-draft` and hit
       // an unrelated, pre-existing, codebase-wide gap (no `ParseUUIDPipe`
       // on any `:id` route param, confirmed across plan.controller.ts /
-      // agreement.controller.ts) — a malformed UUID reaches
-      // `PlanRepository#findById`'s query builder as-is and Postgres
-      // throws `invalid input syntax for type uuid`, uncaught -> 500. Not a
-      // T-034b regression (the crash happens in the pre-transaction
-      // `findById` call, unchanged by this task) and not worth a broad
-      // `ParseUUIDPipe` rollout across every controller as a side quest
-      // here — fixed at the actual fault: A16 no longer depends on any
-      // other test's state. DRAFT is sufficient to prove "non-REJECTED".
+      // agreement.controller.ts) — a malformed UUID reached
+      // `PlanRepository#findById`'s query builder as-is and Postgres threw
+      // `invalid input syntax for type uuid`, uncaught -> 500. Not a
+      // T-034b regression (the crash happened in the pre-transaction
+      // `findById` call, unchanged by that task). T-043 closed the actual
+      // gap (`ParseUUIDPipe` on every UUID route param across the
+      // codebase, `/plans/undefined/...` now -> clean 400, see
+      // `optimistic-locking.e2e-spec.ts`'s "T-043" describe block) — this
+      // test keeps its own fix too (A16 no longer depends on any other
+      // test's state; DRAFT is sufficient to prove "non-REJECTED") since
+      // that was a real, separate flakiness bug independent of the 500.
       const scratchDraftRes = await request(app.getHttpServer())
         .post('/plans')
         .set(planner.authHeader())
