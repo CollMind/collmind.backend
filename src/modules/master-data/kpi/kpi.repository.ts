@@ -1,7 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Kpi } from '../../../database/entities/kpi.entity';
+import {
+  applyVersionedUpdate,
+  staleVersionConflict,
+} from '../../shared/persistence/versioned-update.helper';
 
 @Injectable()
 export class KpiRepository {
@@ -57,5 +61,82 @@ export class KpiRepository {
 
   async softRemove(entity: Kpi): Promise<Kpi> {
     return this.repository.softRemove(entity);
+  }
+
+  /**
+   * T-039: CAS write for the KPI/formula-config edit path
+   * (`KpiService#update` when the caller supplies `version`). `affected===0`
+   * means either not-found or stale; a version-less re-read tells the two
+   * apart (same contract as `PlanRepository#updateVersioned`, T-034).
+   */
+  async updateVersioned(
+    tenantId: string,
+    id: string,
+    expectedVersion: number,
+    data: Partial<Kpi>,
+  ): Promise<Kpi> {
+    const affected = await applyVersionedUpdate(
+      this.repository,
+      { id, tenantId },
+      expectedVersion,
+      data as any,
+    );
+    if (affected === 0) {
+      const current = await this.repository.findOne({
+        where: { id, tenantId },
+      });
+      if (!current) {
+        throw new NotFoundException(`KPI with ID ${id} not found`);
+      }
+      throw staleVersionConflict({
+        entity: 'KPI',
+        entityId: id,
+        expectedVersion,
+        currentVersion: current.version,
+        current: {
+          kpiCode: current.kpiCode,
+          formulaText: current.formulaText,
+          calculationOrder: current.calculationOrder,
+          ragGreenThreshold: current.ragGreenThreshold,
+          ragAmberThreshold: current.ragAmberThreshold,
+          isActive: current.isActive,
+          updatedBy: current.updatedBy,
+          updatedAt: current.updatedAt,
+        },
+      });
+    }
+    const updated = await this.repository.findOne({ where: { id, tenantId } });
+    if (!updated) {
+      throw new Error('KPI not found after update');
+    }
+    return updated;
+  }
+
+  /**
+   * T-039: legacy/backward-compatible write path — no caller supplied
+   * `version` (additive rollout, unlike T-034's strict mode; the KPI admin
+   * screen does not send `version` yet). Updates unconditionally, like
+   * before this task, but still bumps the stored `version` (single atomic
+   * UPDATE, same raw-SQL increment idiom `applyVersionedUpdate` uses) so a
+   * version-aware client reading afterwards sees an accurate value instead
+   * of a frozen 1.
+   */
+  async updateUnversioned(
+    tenantId: string,
+    id: string,
+    data: Partial<Kpi>,
+  ): Promise<Kpi> {
+    await this.repository.update(
+      { id, tenantId } as any,
+      {
+        ...(data as object),
+        version: () => '"version" + 1',
+      } as any,
+    );
+    const updated = await this.repository.findOne({ where: { id, tenantId } });
+    if (!updated) {
+      throw new NotFoundException(`KPI with ID ${id} not found`);
+    }
+    return updated;
   }
 }

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommonModule } from '../../common/common.module';
 import { CustomerModule } from '../customer/customer.module';
 import { PlanModule } from '../modes/planning-first/plan/plan.module';
+import { KpiEngineModule } from '../shared/kpi-engine/kpi-engine.module';
 import {
   Brand,
   Category,
@@ -61,6 +62,7 @@ import { TacticRepository } from './tactic/tactic.repository';
     CommonModule,
     CustomerModule,
     forwardRef(() => PlanModule),
+    KpiEngineModule,
     TypeOrmModule.forFeature([
       Brand,
       Category,

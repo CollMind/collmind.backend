@@ -19,6 +19,7 @@ import {
   PlanService,
   PlanActor,
 } from '../../modes/planning-first/plan/plan.service';
+import { KpiEngineService } from '../../shared/kpi-engine/kpi-engine.service';
 
 @Injectable()
 export class KpiService {
@@ -26,6 +27,7 @@ export class KpiService {
     private readonly kpiRepository: KpiRepository,
     @Inject(forwardRef(() => PlanService))
     private readonly planService: PlanService,
+    private readonly kpiEngineService: KpiEngineService,
   ) {}
 
   async create(tenantId: string, createKpiDto: CreateKpiDto): Promise<Kpi> {
@@ -51,7 +53,14 @@ export class KpiService {
       decimalPlaces: createKpiDto.decimalPlaces ?? 2,
     });
 
-    return this.kpiRepository.save(kpi);
+    const saved = await this.kpiRepository.save(kpi);
+    // T-039: a new KPI can be inactive-toggled/referenced immediately by a
+    // subsequent recalc; also cheap insurance against a stale `false ->
+    // getActiveKpis` cache miss race. Formula-affecting mutations must never
+    // be served from a bayat (stale) engine cache — see kpi-engine.service.ts
+    // getActiveKpis 60s TTL.
+    this.kpiEngineService.clearCache(tenantId);
+    return saved;
   }
 
   async findAll(tenantId: string, activeOnly = false): Promise<Kpi[]> {
@@ -135,13 +144,41 @@ export class KpiService {
       );
     }
 
-    Object.assign(kpi, updateKpiDto);
-    return this.kpiRepository.save(kpi);
+    // T-039: `version` is the optimistic-locking CAS token, not a KPI
+    // column to persist — strip it out of the write payload.
+    const { version: expectedVersion, ...updateFields } = updateKpiDto;
+
+    const updated =
+      expectedVersion !== undefined
+        ? await this.kpiRepository.updateVersioned(
+            tenantId,
+            id,
+            expectedVersion,
+            updateFields as Partial<Kpi>,
+          )
+        : await this.kpiRepository.updateUnversioned(
+            tenantId,
+            id,
+            updateFields as Partial<Kpi>,
+          );
+
+    // T-039: this is THE fix for the dynamic-formula-cache staleness bug —
+    // `KpiEngineService#getActiveKpis` caches the tenant's active KPI list
+    // (formula_text + rag thresholds included) for up to 60s and nothing
+    // invalidated it on write before this change (`clearCache` had zero
+    // non-test callers). Without this, an Admin's formula/threshold edit
+    // could silently keep driving calculations off the OLD formula for up
+    // to 60 seconds after a 200 response — a direct violation of the BRD's
+    // "hesaplamalar dinamiktir" principle.
+    this.kpiEngineService.clearCache(tenantId);
+
+    return updated;
   }
 
   async remove(tenantId: string, id: string): Promise<void> {
     const kpi = await this.findOne(tenantId, id);
     await this.kpiRepository.softRemove(kpi);
+    this.kpiEngineService.clearCache(tenantId);
   }
 
   /**
@@ -686,6 +723,12 @@ export class KpiService {
           upserted.push(saved);
         }
       }
+    }
+
+    if (upserted.length > 0) {
+      // T-039: seedDefaults upserts formula_text on existing KPIs too — same
+      // staleness risk as `update()`.
+      this.kpiEngineService.clearCache(tenantId);
     }
 
     return upserted;

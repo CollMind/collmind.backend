@@ -122,4 +122,26 @@ export class Kpi extends BaseEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
+
+  // T-039: manual optimistic-locking version (same mechanism as T-034 —
+  // `docs/analysis/0005-optimistic-locking-design.md` K1 — NOT
+  // `@VersionColumn`). `KpiService#update` uses `save()` on a fully-loaded
+  // entity today, so `@VersionColumn` would technically increment on write;
+  // however TypeORM's `OptimisticLockVersionMismatchError` conflict check is
+  // only raised by `.setLock('optimistic', expectedVersion)` at SELECT time
+  // (see `node_modules/typeorm/query-builder/SelectQueryBuilder.js`), not by
+  // `save()` itself — so bolting `@VersionColumn` onto the existing
+  // findOne()+Object.assign()+save() path would silently NOT protect against
+  // concurrent writes (version would bump, but two racing updates would both
+  // succeed, last-write-wins) unless the read path were retrofitted with an
+  // explicit optimistic-lock SELECT, which is itself a two-step
+  // check-then-write with a TOCTOU window. The manual `version` + atomic
+  // conditional UPDATE (`applyVersionedUpdate`) checks and writes in a single
+  // SQL statement, closing that window, and keeps one locking mechanism
+  // across the codebase instead of two. Additive rollout (T-039, unlike
+  // T-034's strict mode): `version` is optional on `UpdateKpiDto` — omitted
+  // -> `KpiRepository#updateUnversioned` (bumps, does not check); provided ->
+  // `KpiRepository#updateVersioned` (CAS). See kpi.service.ts#update.
+  @Column({ type: 'integer', default: 1 })
+  version!: number;
 }
