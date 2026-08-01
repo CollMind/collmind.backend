@@ -53,6 +53,13 @@ async function bootstrap() {
       origin: true, // Allow all origins in development
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id'],
+      // T-046d: `exposedHeaders` olmadan tarayıcı bu başlıkları JS'e VERMEZ
+      // (CORS varsayılanı yalnız güvenli-listeli başlıkları açar). T-046b bu
+      // başlıkları frontend'in performans kırılımı yapabilmesi için eklemişti;
+      // bu satır olmadan `response.headers['x-recalc-ms']` tarayıcıda hep
+      // undefined döner — curl/Node CORS uygulamadığı için orada görünür ve
+      // eksiklik fark edilmezdi.
+      exposedHeaders: ['X-Recalc-Ms', 'X-Recalc-Sku-Count'],
       credentials: true,
     });
     console.log('✅ CORS configured');
