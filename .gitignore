@@ -2,6 +2,10 @@
 /dist
 /node_modules
 
+# T-047 e2e row-count invariant — transient snapshot between
+# global-setup.js and global-teardown.js
+/test/.e2e-row-count-snapshot.json
+
 # Logs
 logs
 *.log

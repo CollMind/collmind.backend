@@ -129,32 +129,44 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
         .expect(200);
       expect(getRes.body.version).toBe(1);
 
+      // T-047 FIX: renaming a plan/agreement away from its 'E2E-' prefix
+      // makes it permanently invisible to cleanupTestPlans/
+      // cleanupTestAgreements (they match on `plan_name`/`agreement_name
+      // LIKE 'E2E-%'`) — the exact leak class this task closes (same lesson
+      // as T-034b's "renamed before submit" comment below). The rename
+      // target itself is otherwise arbitrary for this assertion, so it
+      // keeps the 'E2E-OPTLOCK-' prefix.
       const firstWrite = await request(app.getHttpServer())
         .patch(`/plans/${planId}`)
         .set(planner.authHeader())
-        .send({ planName: 'CAS-WINNER', version: 1 })
+        .send({ planName: 'E2E-OPTLOCK-CAS-WINNER', version: 1 })
         .expect(200);
       expect(firstWrite.body.version).toBe(2);
-      expect(firstWrite.body.planName).toBe('CAS-WINNER');
+      expect(firstWrite.body.planName).toBe('E2E-OPTLOCK-CAS-WINNER');
 
       // Replay the SAME (now stale) version=1 — must be rejected, not
       // silently overwrite the winner.
       const staleReplay = await request(app.getHttpServer())
         .patch(`/plans/${planId}`)
         .set(planner.authHeader())
-        .send({ planName: 'CAS-LOSER-SHOULD-NEVER-LAND', version: 1 });
+        .send({
+          planName: 'E2E-OPTLOCK-CAS-LOSER-SHOULD-NEVER-LAND',
+          version: 1,
+        });
 
       expect(staleReplay.status).toBe(409);
       expect(staleReplay.body.code).toBe('STALE_VERSION');
       expect(staleReplay.body.currentVersion).toBe(2);
-      expect(staleReplay.body.current.planName).toBe('CAS-WINNER');
+      expect(staleReplay.body.current.planName).toBe(
+        'E2E-OPTLOCK-CAS-WINNER',
+      );
 
       // No lost update: a fresh GET still shows the winner's value.
       const finalRes = await request(app.getHttpServer())
         .get(`/plans/${planId}`)
         .set(planner.authHeader())
         .expect(200);
-      expect(finalRes.body.planName).toBe('CAS-WINNER');
+      expect(finalRes.body.planName).toBe('E2E-OPTLOCK-CAS-WINNER');
       expect(finalRes.body.version).toBe(2);
     });
 
@@ -271,17 +283,26 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       const agreementId = createRes.body.id;
       expect(createRes.body.version).toBe(1);
 
+      // T-047 FIX: same prefix-preservation rule as the plan rename above —
+      // 'E2E-OPTLOCK-' must survive the rename or cleanupTestAgreements can
+      // never find this row again.
       const win = await request(app.getHttpServer())
         .patch(`/agreements/${agreementId}`)
         .set(planner.authHeader())
-        .send({ agreementName: 'CAS-WINNER-AGREEMENT', version: 1 })
+        .send({
+          agreementName: 'E2E-OPTLOCK-CAS-WINNER-AGREEMENT',
+          version: 1,
+        })
         .expect(200);
       expect(win.body.version).toBe(2);
 
       const staleReplay = await request(app.getHttpServer())
         .patch(`/agreements/${agreementId}`)
         .set(planner.authHeader())
-        .send({ agreementName: 'CAS-LOSER-SHOULD-NEVER-LAND', version: 1 });
+        .send({
+          agreementName: 'E2E-OPTLOCK-CAS-LOSER-SHOULD-NEVER-LAND',
+          version: 1,
+        });
 
       expect(staleReplay.status).toBe(409);
       expect(staleReplay.body.code).toBe('STALE_VERSION');
@@ -291,7 +312,9 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
         .get(`/agreements/${agreementId}`)
         .set(planner.authHeader())
         .expect(200);
-      expect(finalRes.body.agreementName).toBe('CAS-WINNER-AGREEMENT');
+      expect(finalRes.body.agreementName).toBe(
+        'E2E-OPTLOCK-CAS-WINNER-AGREEMENT',
+      );
     });
   });
 
@@ -559,7 +582,7 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       const res = await request(app.getHttpServer())
         .patch(`/plans/${planId}`)
         .set(planner.authHeader())
-        .send({ planName: 'no-version-sent' });
+        .send({ planName: 'E2E-OPTLOCK-no-version-sent' });
 
       expect(res.status).toBe(409);
       expect(res.body.code).toBe('MISSING_VERSION');
@@ -568,7 +591,7 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
         .get(`/plans/${planId}`)
         .set(planner.authHeader())
         .expect(200);
-      expect(getRes.body.planName).not.toBe('no-version-sent');
+      expect(getRes.body.planName).not.toBe('E2E-OPTLOCK-no-version-sent');
     });
 
     it('PATCH .../skus/:skuId/volume without `version` -> 409 MISSING_VERSION', async () => {
@@ -697,10 +720,20 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       // addFu's own CAS-gate already bumped plans.version 1 -> 2. Bump it
       // again out from under the pending delete via an unrelated header
       // edit (2 -> 3), so a client still holding v1 (or even v2) is stale.
+      //
+      // T-047 FIX: this test never deletes `planId` (the delete attempt
+      // below is deliberately stale and rejected), so it stays DRAFT in
+      // the DB forever unless swept by cleanupTestPlans — which requires
+      // the 'E2E-' prefix to survive this rename. This was the exact leak
+      // Team Lead found (88 `bump-version-before-delete` rows, 4 days
+      // accumulated, see T-047 task report).
       await request(app.getHttpServer())
         .patch(`/plans/${planId}`)
         .set(planner.authHeader())
-        .send({ planName: 'bump-version-before-delete', version: 2 })
+        .send({
+          planName: 'E2E-OPTLOCK-bump-version-before-delete',
+          version: 2,
+        })
         .expect(200);
 
       const delRes = await request(app.getHttpServer())
@@ -736,10 +769,17 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       const planId = await createDraftPlan('DELETE-PLAN');
 
       // Bump plans.version out from under the delete (v1 -> v2).
+      //
+      // T-047 FIX: DELETE /plans/:id is a SOFT delete (deleted_at set, row
+      // survives) — a prefix-less rename here would make the soft-deleted
+      // row invisible to cleanupTestPlans forever (same bug class as
+      // 'bump-version-before-delete' above, confirmed live: 94 orphaned
+      // 'bump-before-delete' rows, all with deleted_at set, found during
+      // T-047 triage).
       await request(app.getHttpServer())
         .patch(`/plans/${planId}`)
         .set(planner.authHeader())
-        .send({ planName: 'bump-before-delete', version: 1 })
+        .send({ planName: 'E2E-OPTLOCK-bump-before-delete', version: 1 })
         .expect(200);
 
       // Stale replay: client still holds v1.
@@ -812,10 +852,12 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       const agreementId = createRes.body.id;
       expect(createRes.body.version).toBe(1);
 
+      // T-047 FIX: same rationale as the plan case above — DELETE
+      // /agreements/:id is also a soft delete.
       await request(app.getHttpServer())
         .patch(`/agreements/${agreementId}`)
         .set(planner.authHeader())
-        .send({ agreementName: 'bump-before-delete', version: 1 })
+        .send({ agreementName: 'E2E-OPTLOCK-bump-before-delete', version: 1 })
         .expect(200);
 
       const staleDelete = await request(app.getHttpServer())
