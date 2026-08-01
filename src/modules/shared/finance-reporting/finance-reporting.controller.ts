@@ -20,10 +20,15 @@ import { RiskReport } from './dto/risk-report.dto';
 import { MechanicReport } from './dto/mechanic-effectiveness.dto';
 import { VarianceReport } from './dto/variance-report.dto';
 import { CashFlowReport } from './dto/cash-flow-report.dto';
+import {
+  BudgetVarianceReport,
+  BudgetVarianceQueryDto,
+} from './dto/budget-variance-report.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 
 @ApiTags('Finance Reporting')
@@ -183,6 +188,35 @@ export class FinanceReportingController {
       tenantId,
       filters,
       comparisonType,
+    );
+  }
+
+  @Get('budget-variance')
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE_MANAGER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.READONLY,
+  )
+  @ApiOperation({
+    summary:
+      'Get budget variance report (allocated vs. consumed/GERÇEKLEŞEN, channel/category/period breakdown)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Budget variance report',
+    type: BudgetVarianceReport,
+  })
+  getBudgetVariance(
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string; role: UserRole },
+    @Query() filters: BudgetVarianceQueryDto,
+  ) {
+    return this.financeReportingService.getBudgetVarianceReport(
+      tenantId,
+      user.id,
+      user.role,
+      filters,
     );
   }
 

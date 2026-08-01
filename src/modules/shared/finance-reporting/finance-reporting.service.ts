@@ -6,11 +6,18 @@ import { PlanFu, PlanSku } from '../../../database/entities/plan.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
+import {
+  BudgetEnvelope,
+  BudgetEnvelopeStatus,
+} from '../../../database/entities/budget-envelope.entity';
+import { UserRole } from '../../../database/entities/user.entity';
 import { BudgetAllocationService } from '../budget/budget-allocation.service';
+import { BudgetRepository } from '../budget/budget.repository';
 import {
   BudgetThresholdService,
   BudgetThresholds,
 } from '../budget/budget-threshold.service';
+import { AccessScopeService } from '../access-scope/access-scope.service';
 import {
   ReportFilters,
   PaginationParams,
@@ -38,6 +45,12 @@ import {
 } from './dto/mechanic-effectiveness.dto';
 import { VarianceReport, VarianceItem } from './dto/variance-report.dto';
 import { CashFlowReport, CashFlowProjection } from './dto/cash-flow-report.dto';
+import {
+  BudgetVarianceReport,
+  BudgetVarianceItem,
+  BudgetVarianceGroup,
+  BudgetVarianceQueryDto,
+} from './dto/budget-variance-report.dto';
 
 @Injectable()
 export class FinanceReportingService {
@@ -54,8 +67,12 @@ export class FinanceReportingService {
     private readonly mechanicSpendBreakdownRepository: Repository<MechanicSpendBreakdown>,
     @InjectRepository(BudgetAllocation)
     private readonly budgetAllocationRepository: Repository<BudgetAllocation>,
+    @InjectRepository(BudgetEnvelope)
+    private readonly budgetEnvelopeRepository: Repository<BudgetEnvelope>,
     private readonly budgetAllocationService: BudgetAllocationService,
     private readonly budgetThresholdService: BudgetThresholdService,
+    private readonly budgetRepository: BudgetRepository,
+    private readonly accessScopeService: AccessScopeService,
   ) {}
 
   /**
@@ -883,6 +900,206 @@ export class FinanceReportingService {
         0,
       ),
       totalOutflow: projections.reduce((sum, p) => sum + p.totalOutflow, 0),
+    };
+  }
+
+  /**
+   * T-023 — Bütçe varyansı raporu: allocated (tahsis) vs consumed (GERÇEKLEŞEN)
+   * karşılaştırması, kanal/kategori/dönem kırılımıyla.
+   *
+   * Kapsam (ürün sahibi, 2026-08-01): hacim/KPI varyansı (plan vs gerçek satış)
+   * KAPSAM DIŞI. Yalnızca bütçe zarfı (budget_envelopes) bazında tahsis vs
+   * gerçekleşen.
+   *
+   * Doğruluk ilkeleri:
+   *   - `v_budget_summary` (BudgetSummaryView) tek doğruluk kaynağı — reserved
+   *     (RESERVE+COMMIT-RELEASE) ve consumed (ledger DEBIT-CREDIT) burada
+   *     YENİDEN HESAPLANMAZ, view'dan okunur (no-recompute, T-005 ilkesi).
+   *   - Varyans SADECE consumed'dan hesaplanır (BRD "Actual vs. budget").
+   *     `reserved` ayrı gösterilir, karıştırılmaz.
+   *   - allocated=0 → variancePercent/utilizationPercent/status = null
+   *     (division-by-zero guard; Infinity/NaN/0 DEĞİL).
+   *   - Eşik durumu (`status`) BudgetThresholdService'ten (tenant-scoped,
+   *     config-driven %80/%95/%100+) — hardcode YOK.
+   *   - Scope: AccessScopeService (CM yalnız kendi kategorisini görür;
+   *     ADMIN/FINANCE_MANAGER/READONLY tenant-wide). BudgetEnvelope'ta cplId
+   *     kolonu yok — yalnızca categoryId boyutunda scope uygulanır (CM zaten
+   *     yalnızca kategori boyutunda scope'lu; PLANNER bu rapora erişemez).
+   */
+  async getBudgetVarianceReport(
+    tenantId: string,
+    userId: string,
+    userRole: UserRole,
+    filters: BudgetVarianceQueryDto,
+  ): Promise<BudgetVarianceReport> {
+    const scope = await this.accessScopeService.resolveScope(
+      tenantId,
+      userId,
+      userRole,
+    );
+
+    const qb = this.budgetEnvelopeRepository
+      .createQueryBuilder('envelope')
+      .where('envelope.tenantId = :tenantId', { tenantId })
+      .andWhere('envelope.status = :status', {
+        status: filters.status || BudgetEnvelopeStatus.ACTIVE,
+      });
+
+    // Scope kısıtı — UNRESTRICTED ise no-op; SCOPED (CM) ise categoryId
+    // OR-grubu; scope satırı yoksa fail-closed (1=0).
+    this.accessScopeService.applyToQueryBuilder(qb, 'envelope', scope);
+
+    if (filters.fiscalYear) {
+      qb.andWhere('envelope.fiscalYear = :fiscalYear', {
+        fiscalYear: filters.fiscalYear,
+      });
+    }
+    if (filters.periods && filters.periods.length > 0) {
+      qb.andWhere('envelope.period IN (:...periods)', {
+        periods: filters.periods,
+      });
+    }
+    if (filters.channels && filters.channels.length > 0) {
+      qb.andWhere('envelope.channel IN (:...channels)', {
+        channels: filters.channels,
+      });
+    }
+    if (filters.categories && filters.categories.length > 0) {
+      qb.andWhere('envelope.category IN (:...categories)', {
+        categories: filters.categories,
+      });
+    }
+
+    const envelopes = await qb.getMany();
+
+    if (envelopes.length === 0) {
+      const emptyGroup = this.toVarianceGroup('ALL', []);
+      return { items: [], byChannel: [], byCategory: [], byPeriod: [], total: emptyGroup };
+    }
+
+    const thresholds = await this.budgetThresholdService.getThresholds(tenantId);
+
+    // v_budget_summary tek doğruluk kaynağı — no-recompute (T-005 ilkesi).
+    // Tenant için tüm summary'ler bir kerede çekilir, envelopeId ile eşlenir
+    // (N+1 önlenir); yalnızca scope+filter'dan geçen zarfların satırları
+    // rapora dahil edilir.
+    const allSummaries = await this.budgetRepository.getAllBudgetSummaries(
+      tenantId,
+    );
+    const summaryByEnvelopeId = new Map(
+      allSummaries.map((s) => [s.envelopeId, s]),
+    );
+
+    const items: BudgetVarianceItem[] = [];
+    for (const envelope of envelopes) {
+      const summary = summaryByEnvelopeId.get(envelope.id);
+      if (!summary) {
+        this.logger.warn(
+          `Envelope ${envelope.id} (${envelope.code}) has no v_budget_summary row — skipping from variance report`,
+        );
+        continue;
+      }
+
+      const allocated = Number(summary.allocatedAmount) || 0;
+      const reserved = Number(summary.reservedAmount) || 0;
+      const consumed = Number(summary.consumedAmount) || 0;
+      const available = Number(summary.availableAmount) || 0;
+
+      const variance = consumed - allocated;
+      const variancePercent = allocated > 0 ? (variance / allocated) * 100 : null;
+      const utilizationPercent =
+        allocated > 0 ? ((reserved + consumed) / allocated) * 100 : null;
+      const status =
+        utilizationPercent === null
+          ? null
+          : this.budgetThresholdService.toStatus(utilizationPercent, thresholds);
+
+      items.push({
+        envelopeId: envelope.id,
+        code: envelope.code,
+        name: envelope.name,
+        fiscalYear: envelope.fiscalYear,
+        period: envelope.period,
+        channel: envelope.channel ?? null,
+        category: envelope.category ?? null,
+        allocated,
+        reserved,
+        consumed,
+        available,
+        variance,
+        variancePercent,
+        utilizationPercent,
+        status,
+      });
+    }
+
+    const byChannel = this.groupBy(
+      items,
+      (i) => i.channel ?? 'UNSPECIFIED',
+      thresholds,
+    );
+    const byCategory = this.groupBy(
+      items,
+      (i) => i.category ?? 'UNSPECIFIED',
+      thresholds,
+    );
+    const byPeriod = this.groupBy(
+      items,
+      (i) => `${i.fiscalYear}/${i.period}`,
+      thresholds,
+    );
+    const total = this.toVarianceGroup('ALL', items, thresholds);
+
+    return { items, byChannel, byCategory, byPeriod, total };
+  }
+
+  private groupBy(
+    items: BudgetVarianceItem[],
+    keyFn: (item: BudgetVarianceItem) => string,
+    thresholds: BudgetThresholds,
+  ): BudgetVarianceGroup[] {
+    const map = new Map<string, BudgetVarianceItem[]>();
+    for (const item of items) {
+      const key = keyFn(item);
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key)!.push(item);
+    }
+    return Array.from(map.entries()).map(([key, groupItems]) =>
+      this.toVarianceGroup(key, groupItems, thresholds),
+    );
+  }
+
+  private toVarianceGroup(
+    key: string,
+    items: BudgetVarianceItem[],
+    thresholds?: BudgetThresholds,
+  ): BudgetVarianceGroup {
+    const allocated = items.reduce((sum, i) => sum + i.allocated, 0);
+    const reserved = items.reduce((sum, i) => sum + i.reserved, 0);
+    const consumed = items.reduce((sum, i) => sum + i.consumed, 0);
+    const available = items.reduce((sum, i) => sum + i.available, 0);
+    const variance = consumed - allocated;
+    const variancePercent = allocated > 0 ? (variance / allocated) * 100 : null;
+    const utilizationPercent =
+      allocated > 0 ? ((reserved + consumed) / allocated) * 100 : null;
+    const status =
+      utilizationPercent === null || !thresholds
+        ? null
+        : this.budgetThresholdService.toStatus(utilizationPercent, thresholds);
+
+    return {
+      key,
+      envelopeCount: items.length,
+      allocated,
+      reserved,
+      consumed,
+      available,
+      variance,
+      variancePercent,
+      utilizationPercent,
+      status,
     };
   }
 
