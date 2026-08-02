@@ -19,6 +19,7 @@ import {
 import { BudgetService } from './budget.service';
 import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
 import { ReserveBudgetDto } from './dto/reserve-budget.dto';
+import { SplitBudgetEnvelopeDto } from './dto/split-budget-envelope.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
@@ -102,6 +103,40 @@ export class BudgetController {
   ) {
     const amount = await this.budgetService.getReservedAmount(tenantId, id);
     return { envelopeId: id, reservedAmount: amount };
+  }
+
+  @Post('envelopes/:id/split')
+  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'T-019b (Faz 2): split an UNSPLIT legacy envelope into ON_INVOICE/OFF_INVOICE twins ' +
+      '(Finance ownership, BRD §8). Amounts must sum to the current allocated_amount. ' +
+      'Any OFF_INVOICE-tagged encumbrance is re-homed append-only (RELEASE+RESERVE/COMMIT).',
+  })
+  @ApiResponse({ status: 201, description: 'Envelope split successfully' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Amounts do not sum to allocated_amount, or AGREEMENT_SPEND_TYPE_SPLIT_REQUIRED',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Envelope already split, or UNTYPED_ENCUMBRANCE_PRESENT',
+  })
+  async splitEnvelope(
+    @TenantId() tenantId: string,
+    @CurrentUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() splitDto: SplitBudgetEnvelopeDto,
+  ) {
+    return this.budgetService.splitEnvelope(
+      tenantId,
+      user.id,
+      id,
+      splitDto.onInvoiceAllocated,
+      splitDto.offInvoiceAllocated,
+    );
   }
 
   @Get('envelopes/:id/transactions')

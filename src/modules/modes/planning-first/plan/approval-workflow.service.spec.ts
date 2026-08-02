@@ -111,6 +111,10 @@ describe('ApprovalWorkflowService', () => {
           useValue: {
             findEnvelopeByDimensions: jest.fn(),
             getBudgetStatus: jest.fn(),
+            // T-019b (§5.5): checkBudgetAvailability now resolves ON/OFF
+            // envelopes independently and calls this per-envelope check
+            // instead of getBudgetStatus.
+            checkEnvelopeAvailability: jest.fn(),
             reserveForPlan: jest.fn(),
             commitReservedForPlan: jest.fn(),
             commitAllReservedForPlan: jest.fn(),
@@ -151,6 +155,15 @@ describe('ApprovalWorkflowService', () => {
     budgetService = module.get(BudgetService);
     spendCalc = module.get(SpendCalculationService);
     approvalHistoryRepo = module.get(getRepositoryToken(PlanApprovalHistory));
+
+    // T-019b: safe default for tests that don't care about the exact
+    // availability numbers (e.g. version-conflict tests, which never reach
+    // the reservation writes) — checkBudgetAvailability now unconditionally
+    // calls this once per submitForApproval, even for a 0/0 spend plan.
+    budgetService.checkEnvelopeAvailability.mockResolvedValue({
+      available: 150000,
+      sufficient: true,
+    });
 
     // T-034b — see plan.service.spec.ts's identical setup.
     queryRunnerManager = {
@@ -245,6 +258,17 @@ describe('ApprovalWorkflowService', () => {
         mockEnvelope as any,
       );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+      // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
+      // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
+      // checkBudgetAvailability's combined-pool branch calls
+      // checkEnvelopeAvailability ONCE with (on+off).
+      budgetService.checkEnvelopeAvailability.mockImplementation(
+        (_tenantId: string, _envelopeId: string, amount: number) =>
+          Promise.resolve({
+            available: mockBudgetStatus.available,
+            sufficient: amount <= mockBudgetStatus.available,
+          }),
+      );
       approvalService.createRequest.mockResolvedValue(
         mockApprovalRequest as any,
       );
@@ -523,6 +547,17 @@ describe('ApprovalWorkflowService', () => {
         mockEnvelope as any,
       );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+      // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
+      // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
+      // checkBudgetAvailability's combined-pool branch calls
+      // checkEnvelopeAvailability ONCE with (on+off).
+      budgetService.checkEnvelopeAvailability.mockImplementation(
+        (_tenantId: string, _envelopeId: string, amount: number) =>
+          Promise.resolve({
+            available: mockBudgetStatus.available,
+            sufficient: amount <= mockBudgetStatus.available,
+          }),
+      );
       approvalService.createRequest.mockResolvedValue(
         mockApprovalRequest as any,
       );
@@ -617,6 +652,17 @@ describe('ApprovalWorkflowService', () => {
         mockEnvelope as any,
       );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+      // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
+      // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
+      // checkBudgetAvailability's combined-pool branch calls
+      // checkEnvelopeAvailability ONCE with (on+off).
+      budgetService.checkEnvelopeAvailability.mockImplementation(
+        (_tenantId: string, _envelopeId: string, amount: number) =>
+          Promise.resolve({
+            available: mockBudgetStatus.available,
+            sufficient: amount <= mockBudgetStatus.available,
+          }),
+      );
 
       const result = await service.submitForApproval(
         mockPlanId,
@@ -689,6 +735,17 @@ describe('ApprovalWorkflowService', () => {
         mockEnvelope as any,
       );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+      // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
+      // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
+      // checkBudgetAvailability's combined-pool branch calls
+      // checkEnvelopeAvailability ONCE with (on+off).
+      budgetService.checkEnvelopeAvailability.mockImplementation(
+        (_tenantId: string, _envelopeId: string, amount: number) =>
+          Promise.resolve({
+            available: mockBudgetStatus.available,
+            sufficient: amount <= mockBudgetStatus.available,
+          }),
+      );
 
       const result = await service.submitForApproval(
         mockPlanId,
@@ -767,6 +824,17 @@ describe('ApprovalWorkflowService', () => {
         mockEnvelope as any,
       );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+      // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
+      // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
+      // checkBudgetAvailability's combined-pool branch calls
+      // checkEnvelopeAvailability ONCE with (on+off).
+      budgetService.checkEnvelopeAvailability.mockImplementation(
+        (_tenantId: string, _envelopeId: string, amount: number) =>
+          Promise.resolve({
+            available: mockBudgetStatus.available,
+            sufficient: amount <= mockBudgetStatus.available,
+          }),
+      );
       approvalService.createRequest.mockResolvedValue(
         mockApprovalRequest as any,
       );
@@ -792,6 +860,168 @@ describe('ApprovalWorkflowService', () => {
       expect(
         result.budgetCheck.warnings?.some((w) => w.includes('RED RAG status')),
       ).toBe(true);
+    });
+
+    // -----------------------------------------------------------------
+    // T-019b (§5.5 SPLIT regime + ADR 0004 Karar 2 kapsam netleştirmesi,
+    // 2026-08-02): ON and OFF resolve to DIFFERENT envelopes.
+    // -----------------------------------------------------------------
+    describe('checkBudgetAvailability — SPLIT dimension (ON/OFF distinct envelopes)', () => {
+      function mockSplitFuBreakdown(onInvoice: number, offInvoice: number) {
+        return {
+          fuId: 'plan-fu-1',
+          skuBreakdowns: [],
+          aggregatedBase: {
+            ltaOnInvoice: 0,
+            ltaOffInvoice: 0,
+            totalOnInvoice: 0,
+            totalOffInvoice: 0,
+            totalSpend: 0,
+          },
+          aggregatedPlanned: {
+            ltaOnInvoice: 0,
+            ltaOffInvoice: 0,
+            promoOnInvoice: {},
+            promoOffInvoice: {},
+            totalPromoOnInvoice: onInvoice,
+            totalPromoOffInvoice: offInvoice,
+            totalOnInvoice: onInvoice,
+            totalOffInvoice: offInvoice,
+            totalSpend: onInvoice + offInvoice,
+          },
+          aggregatedIncremental: {
+            onInvoice,
+            offInvoice,
+            total: onInvoice + offInvoice,
+          },
+        } as any;
+      }
+
+      function mockSplitEnvelopes(onAvailable: number, offAvailable: number) {
+        budgetService.findEnvelopeByDimensions.mockImplementation(
+          (
+            _tenantId: string,
+            _channel: string,
+            _period: string,
+            _category?: string,
+            spendType?: string,
+          ) =>
+            Promise.resolve(
+              spendType === 'ON_INVOICE'
+                ? ({ id: 'env-on' } as any)
+                : ({ id: 'env-off' } as any),
+            ),
+        );
+        budgetService.checkEnvelopeAvailability.mockImplementation(
+          (_tenantId: string, envelopeId: string, amount: number) => {
+            const available =
+              envelopeId === 'env-on' ? onAvailable : offAvailable;
+            return Promise.resolve({
+              available,
+              sufficient: amount <= available,
+            });
+          },
+        );
+      }
+
+      it('a plan spending ONLY on-invoice is not blocked by an exhausted off-invoice envelope (Karar 2 eki: harcanmayan tip zarfın durumu planı bloklamaz)', async () => {
+        mockSplitEnvelopes(100000, 0); // off envelope fully exhausted
+        planRepo.findById.mockResolvedValue(mockPlan as Plan);
+        planRepo.findByIdForUpdate.mockResolvedValue({
+          ...mockPlan,
+          status: PlanStatus.DRAFT,
+          version: 1,
+        } as Plan);
+        spendCalc.calculateAllSpendsForFU.mockResolvedValue(
+          mockSplitFuBreakdown(50000, 0),
+        );
+        approvalService.createRequest.mockResolvedValue({
+          id: mockApprovalRequestId,
+          requestType: ApprovalRequestType.PLAN,
+        } as any);
+        planRepo.updateStatusCas.mockResolvedValue(1);
+        budgetService.reserveForPlan.mockResolvedValue({} as any);
+        approvalHistoryRepo.create.mockReturnValue({} as any);
+        approvalHistoryRepo.save.mockResolvedValue({} as any);
+
+        const result = await service.submitForApproval(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          submitDto,
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.budgetCheck?.overallSufficient).toBe(true);
+        expect(result.budgetCheck?.offInvoice.requested).toBe(0);
+        // Only the ON leg reserves — no OFF_INVOICE reserveForPlan call for
+        // a zero amount (see submitForApproval's `if (spendBreakdown... > 0)`).
+        expect(budgetService.reserveForPlan).toHaveBeenCalledTimes(1);
+        expect(budgetService.reserveForPlan).toHaveBeenCalledWith(
+          mockPlanId,
+          50000,
+          expect.any(String),
+          expect.any(String),
+          'TRY',
+          mockTenantId,
+          mockUserId,
+          'ON_INVOICE',
+          expect.anything(),
+        );
+      });
+
+      it('a plan spending BOTH types is rejected ATOMICALLY when only the off-invoice envelope is insufficient — on leg individually fits but whole request blocked', async () => {
+        mockSplitEnvelopes(100000, 10000); // off envelope nearly exhausted
+        planRepo.findById.mockResolvedValue(mockPlan as Plan);
+        spendCalc.calculateAllSpendsForFU.mockResolvedValue(
+          mockSplitFuBreakdown(50000, 20000), // off (20000) > off available (10000)
+        );
+
+        const result = await service.submitForApproval(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          submitDto,
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.budgetCheck?.onInvoice.sufficient).toBe(true);
+        expect(result.budgetCheck?.offInvoice.sufficient).toBe(false);
+        expect(result.budgetCheck?.overallSufficient).toBe(false);
+        expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+      });
+
+      it('a plan spending BOTH types succeeds when both typed envelopes are independently sufficient', async () => {
+        mockSplitEnvelopes(100000, 100000);
+        planRepo.findById.mockResolvedValue(mockPlan as Plan);
+        planRepo.findByIdForUpdate.mockResolvedValue({
+          ...mockPlan,
+          status: PlanStatus.DRAFT,
+          version: 1,
+        } as Plan);
+        spendCalc.calculateAllSpendsForFU.mockResolvedValue(
+          mockSplitFuBreakdown(50000, 30000),
+        );
+        approvalService.createRequest.mockResolvedValue({
+          id: mockApprovalRequestId,
+          requestType: ApprovalRequestType.PLAN,
+        } as any);
+        planRepo.updateStatusCas.mockResolvedValue(1);
+        budgetService.reserveForPlan.mockResolvedValue({} as any);
+        approvalHistoryRepo.create.mockReturnValue({} as any);
+        approvalHistoryRepo.save.mockResolvedValue({} as any);
+
+        const result = await service.submitForApproval(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          submitDto,
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.budgetCheck?.overallSufficient).toBe(true);
+        expect(budgetService.reserveForPlan).toHaveBeenCalledTimes(2);
+      });
     });
   });
 

@@ -4,7 +4,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { EntityManager } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { BudgetRepository } from './budget.repository';
 import { BudgetThresholdService } from './budget-threshold.service';
 import {
@@ -39,12 +39,31 @@ import {
  */
 export type PlanBudgetBucket = 'ON_INVOICE' | 'OFF_INVOICE' | 'TOTAL';
 
+/** T-019b (Faz 2, §4): one re-homed (source, envelope) bucket's outcome. */
+export interface SplitEnvelopeRehomedBucket {
+  sourceType: BudgetTransactionSourceType;
+  sourceId: string;
+  amount: number;
+  txType: BudgetTransactionType.RESERVE | BudgetTransactionType.COMMIT;
+}
+
+export interface SplitEnvelopeResult {
+  onEnvelope: BudgetEnvelope;
+  offEnvelope: BudgetEnvelope;
+  rehomed: SplitEnvelopeRehomedBucket[];
+}
+
 @Injectable()
 export class BudgetService {
   constructor(
     private readonly budgetRepository: BudgetRepository,
     private readonly budgetThresholdService: BudgetThresholdService,
     private readonly budgetReservationService: BudgetReservationService,
+    // T-019b: split() needs its own QueryRunner transaction (envelope
+    // FOR UPDATE lock + OFF-twin creation + re-home writes must all
+    // commit/rollback atomically) — same pattern as
+    // ApprovalWorkflowService/PlanService (docs/analysis/0005 §4).
+    private readonly dataSource: DataSource,
   ) {}
 
   /** T-019 Faz 1: does `tx` belong to the given plan-budget bucket? */
@@ -316,6 +335,39 @@ export class BudgetService {
     if (existingReserve) {
       // Return existing transaction - true idempotency regardless of envelope lookup result
       return existingReserve;
+    }
+
+    // T-019b (ADR 0004 Karar 3, §5.7): a BOTH (or, pre-guard above, NULL)
+    // agreement cannot reserve against a SPLIT dimension — the cap's on/off
+    // split is unknown (BRD has no evidence for how BOTH divides), so
+    // silently parking it in one arbitrary twin would be exactly the
+    // mis-attribution class this session has repeatedly hit. UNSPLIT
+    // dimensions are unaffected (pre-existing behaviour, §5.7 interim rule).
+    if (spendTypeColumn === null) {
+      const [onTyped, offTyped] = await Promise.all([
+        this.budgetRepository.findEnvelopeByDimensionsStrict(
+          tenantId,
+          channel,
+          periodMonth,
+          undefined,
+          BudgetSpendType.ON_INVOICE,
+        ),
+        this.budgetRepository.findEnvelopeByDimensionsStrict(
+          tenantId,
+          channel,
+          periodMonth,
+          undefined,
+          BudgetSpendType.OFF_INVOICE,
+        ),
+      ]);
+      if (onTyped || offTyped) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'AGREEMENT_SPEND_TYPE_SPLIT_REQUIRED',
+          message:
+            'This budget dimension has been split into ON_INVOICE/OFF_INVOICE envelopes; agreement.spend_type must be ON_INVOICE or OFF_INVOICE (BOTH/NULL is not allowed here).',
+        });
+      }
     }
 
     // Find matching envelope by dimensions. T-019 Faz 1: BOTH (null column)
@@ -948,30 +1000,63 @@ export class BudgetService {
 
   /**
    * Find envelope by dimensions (exposed for use by other services)
+   *
+   * T-019b (§5.1): `spendType` is OPTIONAL and forwarded as-is to the
+   * repository — when provided, a typed match wins over the UNSPLIT (NULL)
+   * fallback; when omitted, behaviour is unchanged (pre-T-019b callers keep
+   * working, `plan.service.ts#submit`'s TOTAL bucket among them).
    */
   async findEnvelopeByDimensions(
     tenantId: string,
     channel: string,
     periodMonth: string,
     category?: string,
+    spendType?: BudgetSpendType,
   ): Promise<BudgetEnvelope | null> {
     return this.budgetRepository.findEnvelopeByDimensions(
       tenantId,
       channel,
       periodMonth,
       category,
+      spendType,
+    );
+  }
+
+  /**
+   * T-019b (§5.5): availability check for a caller that has ALREADY resolved
+   * a specific (typed or UNSPLIT) envelope — used by
+   * `ApprovalWorkflowService#checkBudgetAvailability` so the on/off split
+   * decision stays in ONE place (this class) instead of being re-derived by
+   * callers (§5.7 "shared/budget bu kararı yeniden uygulamaz").
+   */
+  async checkEnvelopeAvailability(
+    tenantId: string,
+    envelopeId: string,
+    amount: number,
+  ): Promise<{ available: number; sufficient: boolean }> {
+    return this.budgetRepository.checkBudgetAvailability(
+      envelopeId,
+      tenantId,
+      amount,
     );
   }
 
   /**
    * Get budget status for channel and category
    * Returns total allocation, available amount, and planned amount
+   *
+   * T-019b (§5.6): `spendType` is OPTIONAL and additive — when provided, the
+   * dimension lookup resolves the typed (or UNSPLIT-fallback) envelope for
+   * THAT type specifically. When omitted, behaviour is BYTE-FOR-BYTE
+   * unchanged (existing callers — `plan.service.ts#checkBudget`, dashboards —
+   * keep reading the single dimension-matched envelope exactly as before).
    */
   async getBudgetStatus(
     tenantId: string,
     channel: string,
     categoryId?: string,
     periodMonth?: string,
+    spendType?: BudgetSpendType,
   ): Promise<{
     totalAllocation: number;
     available: number;
@@ -996,6 +1081,7 @@ export class BudgetService {
       channel,
       periodMonth,
       categoryId,
+      spendType,
     );
 
     if (!envelope) {
@@ -1042,5 +1128,274 @@ export class BudgetService {
       planned: 0, // Will be set by frontend for current STA
       status: this.budgetThresholdService.toStatus(usagePercent, thresholds),
     };
+  }
+
+  /**
+   * T-019b (Faz 2, docs/analysis/0008 §4 "Faz 2", ADR 0004 Karar 4):
+   * Finance-only operation that splits an UNSPLIT (legacy, `spend_type IS
+   * NULL`) envelope into two typed envelopes:
+   *  - the ORIGINAL row keeps its id (FK safety: `budget_transactions
+   *    .envelope_id`, `ledger_entries.budget_envelope_id`,
+   *    `budget_reservations.envelope_id` never dangle) and becomes
+   *    ON_INVOICE;
+   *  - a NEW row (`code`+`-OFF`) is created as OFF_INVOICE;
+   *  - any encumbrance already tagged `spend_type='OFF_INVOICE'` on the
+   *    original row is RE-HOMED to the new row, APPEND-ONLY (RELEASE the
+   *    old net + RESERVE/COMMIT the same net on the new envelope — no
+   *    UPDATE/DELETE of any existing row, net total is conserved).
+   *
+   * Guard (§4 step 5): if any UNTYPED (`spend_type IS NULL`) encumbrance has
+   * net > 0 on the envelope, the split is REJECTED (409
+   * UNTYPED_ENCUMBRANCE_PRESENT) — there is no evidence which twin that
+   * money belongs to (it could be a TOTAL-bucket plan reservation OR a
+   * BOTH-agreement reservation, §5.7).
+   *
+   * All reads/writes happen inside ONE QueryRunner transaction, opened after
+   * the envelope is locked `FOR UPDATE` — no other writer can observe or
+   * race a partially-split envelope.
+   */
+  async splitEnvelope(
+    tenantId: string,
+    userId: string,
+    envelopeId: string,
+    onInvoiceAllocated: number,
+    offInvoiceAllocated: number,
+  ): Promise<SplitEnvelopeResult> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const manager = queryRunner.manager;
+
+      // 1. Lock + validate.
+      const envelope = await this.budgetRepository.findEnvelopeWithLock(
+        tenantId,
+        envelopeId,
+        manager,
+      );
+      if (!envelope) {
+        throw new NotFoundException(
+          `Budget envelope with ID ${envelopeId} not found`,
+        );
+      }
+      if (envelope.spendType) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'ENVELOPE_ALREADY_SPLIT',
+          message: `Budget envelope ${envelopeId} is already split (spend_type=${envelope.spendType})`,
+        });
+      }
+
+      // 2. Amounts must sum EXACTLY to the current allocated_amount —
+      // Finance cannot grow/shrink the budget from this endpoint (that is a
+      // separate operation); this endpoint only re-labels the existing pool.
+      const currentAllocated = Number(envelope.allocatedAmount);
+      const sum = Number(onInvoiceAllocated) + Number(offInvoiceAllocated);
+      const EPSILON = 0.01;
+      if (Math.abs(sum - currentAllocated) > EPSILON) {
+        throw new BadRequestException(
+          `onInvoiceAllocated + offInvoiceAllocated (${sum}) must equal the envelope's current allocated_amount (${currentAllocated})`,
+        );
+      }
+
+      // 3. Read every POSTED transaction on this envelope (same manager —
+      // consistent with the FOR UPDATE lock above) and bucket by spend_type.
+      const allTx = await this.budgetRepository.findTransactionsByEnvelope(
+        tenantId,
+        envelopeId,
+        undefined,
+        manager,
+      );
+      const posted = allTx.filter(
+        (tx) => tx.txStatus === BudgetTransactionStatus.POSTED,
+      );
+
+      const netOf = (rows: BudgetTransaction[]): number =>
+        rows.reduce((net, tx) => {
+          const amt = Number(tx.amount);
+          if (
+            tx.txType === BudgetTransactionType.RESERVE ||
+            tx.txType === BudgetTransactionType.COMMIT
+          ) {
+            return net + amt;
+          }
+          if (tx.txType === BudgetTransactionType.RELEASE) {
+            return net - amt;
+          }
+          return net; // ALLOCATE/ADJUST/TRANSFER — not encumbrance.
+        }, 0);
+
+      // 4. Guard (§4 step 5): untyped net > 0 blocks the split entirely —
+      // no writes below have happened yet, so this is a clean no-op reject.
+      const untypedRows = posted.filter((tx) => !tx.spendType);
+      const untypedNet = netOf(untypedRows);
+      if (untypedNet > EPSILON) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'UNTYPED_ENCUMBRANCE_PRESENT',
+          message: `Envelope ${envelopeId} has ${untypedNet} of untyped (spend_type IS NULL) outstanding encumbrance — cannot determine which twin it belongs to. Resolve (release/commit/reject) the untyped source(s) first.`,
+        });
+      }
+
+      // 5. OFF-twin code collision guard (defensive — see createEnvelope's
+      // identical check).
+      const offCode = `${envelope.code}-OFF`;
+      const codeCollision = await this.budgetRepository.findEnvelopeByCode(
+        tenantId,
+        offCode,
+        manager,
+      );
+      if (codeCollision) {
+        throw new ConflictException(
+          `Budget envelope with code ${offCode} already exists`,
+        );
+      }
+
+      // 6. Original row keeps its id, becomes ON_INVOICE (FK safety —
+      // see class JSDoc). `availableAmount`/`consumedAmount` follow the same
+      // convention as #createEnvelope (available = allocated at
+      // (re-)initialization) — these two columns are NOT maintained by any
+      // encumbrance write path in this codebase (v_budget_summary is the
+      // real-time source of truth), so this is consistent with their
+      // existing (pre-split) semantics, not a new staleness.
+      envelope.spendType = BudgetSpendType.ON_INVOICE;
+      envelope.allocatedAmount = onInvoiceAllocated;
+      envelope.availableAmount = onInvoiceAllocated;
+      envelope.updatedBy = userId;
+      const onEnvelope = await this.budgetRepository.updateEnvelope(
+        envelope,
+        manager,
+      );
+
+      // 7. OFF twin — new row, new id.
+      const offEnvelope = await this.budgetRepository.createEnvelope(
+        {
+          code: offCode,
+          name: `${envelope.name} (Off-Invoice)`,
+          fiscalYear: envelope.fiscalYear,
+          period: envelope.period,
+          allocatedAmount: offInvoiceAllocated,
+          availableAmount: offInvoiceAllocated,
+          consumedAmount: 0,
+          status: envelope.status,
+          budgetOwnerId: envelope.budgetOwnerId,
+          budgetOwnerEmail: envelope.budgetOwnerEmail,
+          budgetOwnerName: envelope.budgetOwnerName,
+          channel: envelope.channel,
+          category: envelope.category,
+          channelId: envelope.channelId,
+          categoryId: envelope.categoryId,
+          currency: envelope.currency,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          description: envelope.description,
+          metadata: envelope.metadata ? { ...envelope.metadata } : undefined,
+          tenantId,
+          createdBy: userId,
+        } as Partial<BudgetEnvelope>,
+        manager,
+      );
+
+      // 8. Re-home (append-only): every OFF_INVOICE-tagged (sourceType,
+      // sourceId) bucket with net > 0 moves — RELEASE(net) on the OLD
+      // envelope (now the ON_INVOICE row, `|REHOME` key suffix — see class
+      // JSDoc / §4 for why the suffix is non-negotiable), RESERVE(net) or
+      // COMMIT(net) (whichever the bucket currently holds) on the NEW
+      // (OFF_INVOICE) envelope. No existing row is ever UPDATEd/DELETEd.
+      const offTagged = posted.filter(
+        (tx) => tx.spendType === BudgetSpendType.OFF_INVOICE,
+      );
+      const groups = new Map<string, BudgetTransaction[]>();
+      for (const tx of offTagged) {
+        if (!tx.sourceType || !tx.sourceId) continue; // defensive — spend_type=OFF_INVOICE rows always carry a source in this codebase.
+        const key = `${tx.sourceType}|${tx.sourceId}`;
+        const arr = groups.get(key) ?? [];
+        arr.push(tx);
+        groups.set(key, arr);
+      }
+
+      const rehomed: SplitEnvelopeRehomedBucket[] = [];
+      for (const [, rows] of groups) {
+        const net = netOf(rows);
+        if (net <= EPSILON) continue; // already net-zero — no-op, not an error.
+
+        const { sourceType, sourceId, currency } = rows[0];
+        const hasCommit = rows.some(
+          (tx) => tx.txType === BudgetTransactionType.COMMIT,
+        );
+        const writeType = hasCommit
+          ? BudgetTransactionType.COMMIT
+          : BudgetTransactionType.RESERVE;
+
+        const releaseKey = `RELEASE|${sourceType}|${sourceId}|${onEnvelope.id}|REHOME`;
+        const existingRelease =
+          await this.budgetRepository.findTransactionByIdempotencyKey(
+            tenantId,
+            releaseKey,
+            manager,
+          );
+        if (!existingRelease) {
+          await this.budgetRepository.createTransaction(
+            {
+              tenantId,
+              envelopeId: onEnvelope.id,
+              txType: BudgetTransactionType.RELEASE,
+              txStatus: BudgetTransactionStatus.POSTED,
+              sourceType,
+              sourceId,
+              amount: net,
+              currency: currency || 'TRY',
+              idempotencyKey: releaseKey,
+              spendType: BudgetSpendType.OFF_INVOICE,
+              description: `T-019b split re-home: OFF_INVOICE net released from envelope ${onEnvelope.code} (now ON_INVOICE) on split into ${offEnvelope.code}`,
+              createdBy: userId,
+            },
+            manager,
+          );
+        }
+
+        const newKey = `${writeType}|${sourceType}|${sourceId}|${offEnvelope.id}`;
+        const existingNew =
+          await this.budgetRepository.findTransactionByIdempotencyKey(
+            tenantId,
+            newKey,
+            manager,
+          );
+        if (!existingNew) {
+          await this.budgetRepository.createTransaction(
+            {
+              tenantId,
+              envelopeId: offEnvelope.id,
+              txType: writeType,
+              txStatus: BudgetTransactionStatus.POSTED,
+              sourceType,
+              sourceId,
+              amount: net,
+              currency: currency || 'TRY',
+              idempotencyKey: newKey,
+              spendType: BudgetSpendType.OFF_INVOICE,
+              description: `T-019b split re-home: OFF_INVOICE net moved to envelope ${offEnvelope.code} (split from ${onEnvelope.code})`,
+              createdBy: userId,
+            },
+            manager,
+          );
+        }
+
+        rehomed.push({
+          sourceType: sourceType as BudgetTransactionSourceType,
+          sourceId: sourceId as string,
+          amount: net,
+          txType: writeType,
+        });
+      }
+
+      await queryRunner.commitTransaction();
+      return { onEnvelope, offEnvelope, rehomed };
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
   }
 }

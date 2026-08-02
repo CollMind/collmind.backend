@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { DataSource } from 'typeorm';
 import { BudgetService } from './budget.service';
 import { BudgetRepository } from './budget.repository';
 import { BudgetThresholdService } from './budget-threshold.service';
@@ -7,8 +8,12 @@ import {
   BudgetTransaction,
   BudgetTransactionType,
   BudgetTransactionStatus,
+  BudgetTransactionSourceType,
 } from '../../../database/entities/budget-transaction.entity';
-import { BudgetEnvelope } from '../../../database/entities/budget-envelope.entity';
+import {
+  BudgetEnvelope,
+  BudgetSpendType,
+} from '../../../database/entities/budget-envelope.entity';
 import { BadRequestException } from '@nestjs/common';
 
 const TENANT_ID = 'tenant-001';
@@ -36,13 +41,35 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
   let service: BudgetService;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockBudgetRepository: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockDataSource: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let queryRunner: any;
 
   beforeEach(async () => {
+    // T-019b: splitEnvelope() opens its own QueryRunner transaction; since
+    // BudgetRepository is fully mocked below, `queryRunner.manager` is just
+    // forwarded to those mocks unused — an empty object is enough.
+    queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      startTransaction: jest.fn().mockResolvedValue(undefined),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      rollbackTransaction: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      manager: {},
+    };
+    mockDataSource = {
+      createQueryRunner: jest.fn().mockReturnValue(queryRunner),
+    };
+
     mockBudgetRepository = {
       findEnvelopeByDimensions: jest.fn().mockResolvedValue({
         id: ENVELOPE_ID,
         allocatedAmount: 1000000,
       } as BudgetEnvelope),
+      // T-019b (ADR 0004 Karar 3): strict typed lookup — no UNSPLIT
+      // (spend_type IS NULL) fallback. Default: dimension is NOT split.
+      findEnvelopeByDimensionsStrict: jest.fn().mockResolvedValue(null),
       findTransactionsBySource: jest.fn().mockResolvedValue([]),
       findTransactionByIdempotencyKey: jest.fn().mockResolvedValue(null),
       checkBudgetAvailability: jest
@@ -52,6 +79,18 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
         .fn()
         .mockImplementation((tx: any) =>
           Promise.resolve({ ...tx, id: `tx-created-${Math.random()}` }),
+        ),
+      // T-019b (splitEnvelope):
+      findEnvelopeWithLock: jest.fn(),
+      updateEnvelope: jest
+        .fn()
+        .mockImplementation((envelope: any) => Promise.resolve(envelope)),
+      findTransactionsByEnvelope: jest.fn().mockResolvedValue([]),
+      findEnvelopeByCode: jest.fn().mockResolvedValue(null),
+      createEnvelope: jest
+        .fn()
+        .mockImplementation((envelope: any) =>
+          Promise.resolve({ ...envelope, id: `env-off-${Math.random()}` }),
         ),
     };
 
@@ -66,6 +105,12 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
         {
           provide: BudgetReservationService,
           useValue: { releasePlanReservation: jest.fn() },
+        },
+        // T-019b: BudgetService#splitEnvelope opens its own QueryRunner
+        // transaction (mirrors ApprovalWorkflowService/PlanService pattern).
+        {
+          provide: DataSource,
+          useValue: mockDataSource,
         },
       ],
     }).compile();
@@ -272,6 +317,52 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
       );
       expect(tx.spendType).toBeNull();
     });
+
+    // -----------------------------------------------------------------
+    // T-019b (ADR 0004 Karar 3, §5.7): BOTH agreement vs. a SPLIT dimension.
+    // -----------------------------------------------------------------
+    it('rejects BOTH with 400 AGREEMENT_SPEND_TYPE_SPLIT_REQUIRED when the dimension has been split (a typed ON or OFF envelope exists)', async () => {
+      mockBudgetRepository.findEnvelopeByDimensionsStrict.mockImplementation(
+        (_t: string, _c: string, _p: string, _cat: string, spendType: string) =>
+          Promise.resolve(
+            spendType === 'ON_INVOICE' ? ({ id: 'env-on-1' } as any) : null,
+          ),
+      );
+
+      await expect(
+        service.reserveForAgreement(
+          AGREEMENT_ID,
+          1000,
+          'NKA',
+          '2026-01',
+          'TRY',
+          TENANT_ID,
+          USER_ID,
+          'BOTH',
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'AGREEMENT_SPEND_TYPE_SPLIT_REQUIRED' },
+      });
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('still accepts BOTH on an UNSPLIT dimension (no typed envelope found either side)', async () => {
+      mockBudgetRepository.findEnvelopeByDimensionsStrict.mockResolvedValue(
+        null,
+      );
+
+      const tx = await service.reserveForAgreement(
+        AGREEMENT_ID,
+        1000,
+        'NKA',
+        '2026-01',
+        'TRY',
+        TENANT_ID,
+        USER_ID,
+        'BOTH',
+      );
+      expect(tx.spendType).toBeNull();
+    });
   });
 
   describe('commitReservedForPlan — kova-farkındalı COMMIT (T-048 mirror fix)', () => {
@@ -462,6 +553,354 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
       const netEncumbrance =
         stillOutstandingReserveTotal + Number(blindCommit.amount);
       expect(netEncumbrance).toBe(200); // ← the double-encumbrance bug
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // T-019b (Faz 2, docs/analysis/0008 §4) — splitEnvelope
+  // ---------------------------------------------------------------------
+  describe('splitEnvelope — Faz 2 split + append-only re-home', () => {
+    function envelopeFixture(overrides: Record<string, any> = {}) {
+      return {
+        id: ENVELOPE_ID,
+        tenantId: TENANT_ID,
+        code: 'ENV-2026-NKA-Q1',
+        name: 'NKA Q1 Budget',
+        fiscalYear: '2026',
+        period: '2026-01',
+        allocatedAmount: 1000000,
+        availableAmount: 1000000,
+        consumedAmount: 0,
+        status: 'ACTIVE',
+        currency: 'TRY',
+        spendType: null,
+        metadata: null,
+        ...overrides,
+      } as unknown as BudgetEnvelope;
+    }
+
+    it('happy path: no prior encumbrance — original id preserved as ON_INVOICE, OFF twin created, no re-home writes', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture(),
+      );
+      mockBudgetRepository.findTransactionsByEnvelope.mockResolvedValue([]);
+
+      const result = await service.splitEnvelope(
+        TENANT_ID,
+        USER_ID,
+        ENVELOPE_ID,
+        600000,
+        400000,
+      );
+
+      expect(result.onEnvelope.id).toBe(ENVELOPE_ID); // id PRESERVED
+      expect(result.onEnvelope.spendType).toBe(BudgetSpendType.ON_INVOICE);
+      expect(result.onEnvelope.allocatedAmount).toBe(600000);
+      expect(result.offEnvelope.id).not.toBe(ENVELOPE_ID); // NEW row
+      expect(result.offEnvelope.spendType).toBe(BudgetSpendType.OFF_INVOICE);
+      expect(result.offEnvelope.allocatedAmount).toBe(400000);
+      expect(result.offEnvelope.code).toBe('ENV-2026-NKA-Q1-OFF');
+      expect(result.rehomed).toEqual([]);
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
+    });
+
+    it('rejects with 409 ENVELOPE_ALREADY_SPLIT when spend_type is already set', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture({ spendType: BudgetSpendType.ON_INVOICE }),
+      );
+
+      await expect(
+        service.splitEnvelope(TENANT_ID, USER_ID, ENVELOPE_ID, 600000, 400000),
+      ).rejects.toMatchObject({
+        response: { code: 'ENVELOPE_ALREADY_SPLIT' },
+      });
+      expect(mockBudgetRepository.createEnvelope).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+    });
+
+    it('rejects with 400 when onInvoiceAllocated + offInvoiceAllocated != allocated_amount (Finance cannot resize from this endpoint)', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture({ allocatedAmount: 1000000 }),
+      );
+
+      await expect(
+        service.splitEnvelope(TENANT_ID, USER_ID, ENVELOPE_ID, 600000, 500000), // sums to 1,100,000
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockBudgetRepository.createEnvelope).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+    });
+
+    it('rejects with 409 UNTYPED_ENCUMBRANCE_PRESENT when untyped (spend_type IS NULL) net > 0 exists — no writes happen', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture(),
+      );
+      mockBudgetRepository.findTransactionsByEnvelope.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 50000,
+          spendType: null, // TOTAL-bucket / untyped
+          sourceType: BudgetTransactionSourceType.PLAN,
+          sourceId: 'plan-untyped-1',
+        }),
+      ]);
+
+      await expect(
+        service.splitEnvelope(TENANT_ID, USER_ID, ENVELOPE_ID, 600000, 400000),
+      ).rejects.toMatchObject({
+        response: { code: 'UNTYPED_ENCUMBRANCE_PRESENT' },
+      });
+      expect(mockBudgetRepository.createEnvelope).not.toHaveBeenCalled();
+      expect(mockBudgetRepository.updateEnvelope).not.toHaveBeenCalled();
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+    });
+
+    it('re-homes an OFF_INVOICE-tagged RESERVE bucket: RELEASE(net) on the OLD envelope + RESERVE(net) on the NEW envelope, net conserved', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture(),
+      );
+      mockBudgetRepository.findTransactionsByEnvelope.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 75000,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          sourceType: BudgetTransactionSourceType.AGREEMENT,
+          sourceId: AGREEMENT_ID,
+        }),
+      ]);
+
+      const result = await service.splitEnvelope(
+        TENANT_ID,
+        USER_ID,
+        ENVELOPE_ID,
+        925000,
+        75000,
+      );
+
+      expect(result.rehomed).toEqual([
+        {
+          sourceType: BudgetTransactionSourceType.AGREEMENT,
+          sourceId: AGREEMENT_ID,
+          amount: 75000,
+          txType: BudgetTransactionType.RESERVE,
+        },
+      ]);
+
+      const calls = mockBudgetRepository.createTransaction.mock.calls.map(
+        ([tx]: any) => tx,
+      );
+      expect(calls.length).toBe(2);
+
+      const release = calls.find(
+        (tx: any) => tx.txType === BudgetTransactionType.RELEASE,
+      );
+      expect(release.envelopeId).toBe(ENVELOPE_ID); // OLD (now ON_INVOICE) row
+      expect(release.amount).toBe(75000);
+      expect(release.spendType).toBe(BudgetSpendType.OFF_INVOICE);
+      expect(release.idempotencyKey).toBe(
+        `RELEASE|AGREEMENT|${AGREEMENT_ID}|${ENVELOPE_ID}|REHOME`,
+      );
+
+      const reserve = calls.find(
+        (tx: any) => tx.txType === BudgetTransactionType.RESERVE,
+      );
+      expect(reserve.envelopeId).toBe(result.offEnvelope.id); // NEW row
+      expect(reserve.amount).toBe(75000);
+      expect(reserve.spendType).toBe(BudgetSpendType.OFF_INVOICE);
+      expect(reserve.idempotencyKey).toBe(
+        `RESERVE|AGREEMENT|${AGREEMENT_ID}|${result.offEnvelope.id}`,
+      );
+
+      // T1 ledger-conservation invariant (§7 T1): net BEFORE (75000 on the
+      // single old envelope) === net AFTER (summed across BOTH envelopes:
+      // old bucket net 75000-75000=0, new bucket net 75000-0=75000).
+      const netBefore = 75000;
+      const oldBucketNetAfter = 75000 - release.amount;
+      const newBucketNetAfter = reserve.amount;
+      expect(oldBucketNetAfter + newBucketNetAfter).toBe(netBefore);
+    });
+
+    it('re-homes a COMMITTED OFF_INVOICE bucket as COMMIT (not RESERVE) on the new envelope', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture(),
+      );
+      // RESERVE(75000) converted to COMMIT(75000) via the normal
+      // approve/convert flow (RELEASE|...|CONVERT + COMMIT) — net is still
+      // 75000, but the LATEST state is "committed", not "reserved".
+      mockBudgetRepository.findTransactionsByEnvelope.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 75000,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          sourceType: BudgetTransactionSourceType.PLAN,
+          sourceId: PLAN_ID,
+        }),
+        buildTx({
+          txType: BudgetTransactionType.RELEASE,
+          amount: 75000,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          sourceType: BudgetTransactionSourceType.PLAN,
+          sourceId: PLAN_ID,
+        }),
+        buildTx({
+          txType: BudgetTransactionType.COMMIT,
+          amount: 75000,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          sourceType: BudgetTransactionSourceType.PLAN,
+          sourceId: PLAN_ID,
+        }),
+      ]);
+
+      const result = await service.splitEnvelope(
+        TENANT_ID,
+        USER_ID,
+        ENVELOPE_ID,
+        925000,
+        75000,
+      );
+
+      expect(result.rehomed[0].txType).toBe(BudgetTransactionType.COMMIT);
+      const calls = mockBudgetRepository.createTransaction.mock.calls.map(
+        ([tx]: any) => tx,
+      );
+      const newSideWrite = calls.find(
+        (tx: any) => tx.envelopeId === result.offEnvelope.id,
+      );
+      expect(newSideWrite.txType).toBe(BudgetTransactionType.COMMIT);
+      expect(newSideWrite.idempotencyKey).toBe(
+        `COMMIT|PLAN|${PLAN_ID}|${result.offEnvelope.id}`,
+      );
+    });
+
+    it('does NOT re-home an ON_INVOICE-tagged bucket (it already correctly stays on the id-preserved ON row)', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture(),
+      );
+      mockBudgetRepository.findTransactionsByEnvelope.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 50000,
+          spendType: BudgetSpendType.ON_INVOICE,
+          sourceType: BudgetTransactionSourceType.PLAN,
+          sourceId: PLAN_ID,
+        }),
+      ]);
+
+      const result = await service.splitEnvelope(
+        TENANT_ID,
+        USER_ID,
+        ENVELOPE_ID,
+        600000,
+        400000,
+      );
+
+      expect(result.rehomed).toEqual([]);
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('net<=0 OFF_INVOICE bucket (already fully released) is skipped — no-op, not an error', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture(),
+      );
+      mockBudgetRepository.findTransactionsByEnvelope.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 20000,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          sourceType: BudgetTransactionSourceType.AGREEMENT,
+          sourceId: AGREEMENT_ID,
+        }),
+        buildTx({
+          txType: BudgetTransactionType.RELEASE,
+          amount: 20000,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          sourceType: BudgetTransactionSourceType.AGREEMENT,
+          sourceId: AGREEMENT_ID,
+        }),
+      ]);
+
+      const result = await service.splitEnvelope(
+        TENANT_ID,
+        USER_ID,
+        ENVELOPE_ID,
+        1000000,
+        0,
+      );
+
+      expect(result.rehomed).toEqual([]);
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    // -----------------------------------------------------------------
+    // MUTATION PROOF (bağlayıcı kanıt #1, T-019b tuzağı): the `|REHOME`
+    // idempotency-key suffix is NOT optional. Without it, the re-home
+    // RELEASE key on the OLD envelope is BYTE-IDENTICAL to
+    // `BudgetReservationService#releaseNetReservation`'s UNTYPED terminal
+    // release key format (`RELEASE|<SRC>|<sourceId>|<envelopeId>`, no
+    // spendType component — see that class's JSDoc kural #3). If this
+    // source later legitimately needs an untyped-bucket release on the SAME
+    // envelope (e.g. it also had an untyped/TOTAL-bucket reservation there),
+    // `findTransactionByIdempotencyKey` would find THIS re-home row already
+    // posted and treat the real release as a no-op — the reservation stays
+    // outstanding FOREVER (T-030 F1's exact regression class).
+    // -----------------------------------------------------------------
+    it('MUTATION PROOF: the re-home RELEASE key must be DISTINCT from the UNTYPED terminal release key format for the same (source, envelope)', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture(),
+      );
+      mockBudgetRepository.findTransactionsByEnvelope.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 75000,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          sourceType: BudgetTransactionSourceType.AGREEMENT,
+          sourceId: AGREEMENT_ID,
+        }),
+      ]);
+
+      await service.splitEnvelope(
+        TENANT_ID,
+        USER_ID,
+        ENVELOPE_ID,
+        925000,
+        75000,
+      );
+
+      const release = mockBudgetRepository.createTransaction.mock.calls
+        .map(([tx]: any) => tx)
+        .find((tx: any) => tx.txType === BudgetTransactionType.RELEASE);
+
+      // BudgetReservationService's OWN untyped-bucket key format (class
+      // JSDoc kural #3 / T-053): `RELEASE|<SRC>|<sourceId>|<envelopeId>`.
+      const untypedTerminalFormatKey = `RELEASE|AGREEMENT|${AGREEMENT_ID}|${ENVELOPE_ID}`;
+
+      // Passes TODAY (suffix present). If `|REHOME` is removed from
+      // splitEnvelope's release key, this assertion FLIPS to a collision
+      // (idempotencyKey === untypedTerminalFormatKey) and the test goes RED.
+      expect(release.idempotencyKey).not.toBe(untypedTerminalFormatKey);
+      expect(release.idempotencyKey).toBe(`${untypedTerminalFormatKey}|REHOME`);
+    });
+
+    it('tenant isolation: envelope lookup is tenant-scoped (findEnvelopeWithLock called with the caller tenantId)', async () => {
+      mockBudgetRepository.findEnvelopeWithLock.mockResolvedValue(
+        envelopeFixture(),
+      );
+      mockBudgetRepository.findTransactionsByEnvelope.mockResolvedValue([]);
+
+      await service.splitEnvelope(
+        TENANT_ID,
+        USER_ID,
+        ENVELOPE_ID,
+        600000,
+        400000,
+      );
+
+      expect(mockBudgetRepository.findEnvelopeWithLock).toHaveBeenCalledWith(
+        TENANT_ID,
+        ENVELOPE_ID,
+        queryRunner.manager,
+      );
     });
   });
 });
