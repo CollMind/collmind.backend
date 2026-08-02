@@ -1733,19 +1733,14 @@ export class PlanService {
     for (const planFu of plan.planFus) {
       const skuResults: Array<Record<string, CalculationResult>> = [];
 
-      // Build mechanic values map for this FU (needed by SpendCalc)
-      const mechanicValues: Record<string, number> = {};
-      for (const pmv of (planFu as any).planMechanicValues || []) {
-        if (pmv.mechanic?.code && pmv.enteredValue != null) {
-          mechanicValues[pmv.mechanic.code] = pmv.enteredValue;
-        } else if (pmv.mechanicCode && pmv.enteredValue != null) {
-          mechanicValues[pmv.mechanicCode] = pmv.enteredValue;
-        }
-      }
-      // Also read tactic values if stored in planFu.tactics
-      for (const [code, val] of Object.entries(planFu.tactics || {})) {
-        if (val != null) mechanicValues[code] = val as number;
-      }
+      // Build mechanic values map for this FU (needed by SpendCalc).
+      // T-052: single shared derivation point — see
+      // `SpendCalculationService#buildMechanicValues` doc comment.
+      // `calculateAllSpendsForFU` (the OTHER canonical spend-derivation
+      // path, used by `ApprovalWorkflowService#submitForApproval`) now
+      // calls the exact same method, so the two can never diverge again
+      // (T-049 postmortem: duplicate derivations of the same fact drift).
+      const mechanicValues = this.spendCalc.buildMechanicValues(planFu);
 
       // Build SpendCalc CalculationContext for this FU
       const calcCtx: CalculationContext = {

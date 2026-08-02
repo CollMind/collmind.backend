@@ -168,6 +168,27 @@ describe('PlanService', () => {
             // and reuses across all SKUs instead of re-querying per SKU
             // (and, before this fix, per SKU x mechanic).
             getLtaContextForPlan: jest.fn().mockResolvedValue(null),
+            // T-052: single shared derivation point for a FU's
+            // mechanic-code -> entered-value map (merges
+            // plan_mechanic_values.enteredValue and plan_fus.tactics,
+            // tactics wins on collision) — mirrors the real
+            // SpendCalculationService#buildMechanicValues implementation so
+            // recalc tests exercising `planFu.tactics` still see those
+            // values flow into the KPI engine context.
+            buildMechanicValues: jest.fn((planFu: any) => {
+              const mechanicValues: Record<string, number> = {};
+              for (const pmv of planFu?.planMechanicValues || []) {
+                if (pmv.mechanic?.code && pmv.enteredValue != null) {
+                  mechanicValues[pmv.mechanic.code] = pmv.enteredValue;
+                } else if (pmv.mechanicCode && pmv.enteredValue != null) {
+                  mechanicValues[pmv.mechanicCode] = pmv.enteredValue;
+                }
+              }
+              for (const [code, val] of Object.entries(planFu?.tactics || {})) {
+                if (val != null) mechanicValues[code] = val as number;
+              }
+              return mechanicValues;
+            }),
           },
         },
         {

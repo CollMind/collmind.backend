@@ -560,6 +560,63 @@ export class SpendCalculationService {
   }
 
   /**
+   * T-052: single derivation point for a FU's mechanic-code -> entered-value
+   * map. There are TWO places a value can be entered today:
+   *   1. `plan_mechanic_values.enteredValue` (normalized table) — the only
+   *      writer is `POST /spend-calculation/distribute/:planFuId/:mechanicId`,
+   *      which DISTRIBUTES an already-set value FU->SKU; it never SETS one.
+   *   2. `plan_fus.tactics` (JSONB) — written by the ONLY UI-reachable entry
+   *      point today, `PATCH /plans/:id/fus/:fuId/tactics` ->
+   *      `PlanService#updateFuTactic`.
+   * Before T-052, `calculateAllSpendsForFU` read ONLY (1), so a plan built
+   * through the real (tactics-PATCH) UI flow computed 0/0 spend when it went
+   * through `ApprovalWorkflowService#submitForApproval`, even though the
+   * OTHER canonical path (`PlanService#submit`, via
+   * `recalculatePlanWithKpiEngineLocked`) already merged both sources and
+   * got a correct non-zero `plan.totalSpend`.
+   *
+   * Both canonical callers (`recalculatePlanWithKpiEngineLocked` here and
+   * `calculateAllSpendsForFU` below) now call this ONE method instead of
+   * each re-implementing the merge — T-049 postmortem: two independent
+   * derivations of the same fact WILL drift apart over time.
+   *
+   * Precedence on key collision (same mechanic code present in both
+   * sources): `tactics` wins, matching the pre-existing behaviour of
+   * `recalculatePlanWithKpiEngineLocked` (tactics loop ran second,
+   * unconditionally overwriting). This is a same-tenant, same-FU, legacy/
+   * migration-only scenario (no current writer can produce it going
+   * forward, given `plan_mechanic_values`'s only writer is the SKU-level
+   * distribute endpoint) — values are never summed for a colliding code, so
+   * this cannot double-count, only pick one source over the other.
+   */
+  buildMechanicValues(planFu: {
+    tactics?: Record<string, number> | null;
+    planMechanicValues?: Array<{
+      mechanic?: { code?: string };
+      mechanicCode?: string;
+      enteredValue?: number;
+    }>;
+  }): Record<string, number> {
+    const mechanicValues: Record<string, number> = {};
+
+    for (const pmv of planFu.planMechanicValues || []) {
+      if (pmv.mechanic?.code && pmv.enteredValue != null) {
+        mechanicValues[pmv.mechanic.code] = pmv.enteredValue;
+      } else if (pmv.mechanicCode && pmv.enteredValue != null) {
+        mechanicValues[pmv.mechanicCode] = pmv.enteredValue;
+      }
+    }
+
+    for (const [code, val] of Object.entries(planFu.tactics || {})) {
+      if (val != null) {
+        mechanicValues[code] = val as number;
+      }
+    }
+
+    return mechanicValues;
+  }
+
+  /**
    * Calculate all spends for a FU
    */
   async calculateAllSpendsForFU(
@@ -588,13 +645,11 @@ export class SpendCalculationService {
       );
     }
 
-    // Build context
-    const mechanicValues: Record<string, number> = {};
-    for (const pmv of planFu.planMechanicValues || []) {
-      if (pmv.enteredValue) {
-        mechanicValues[pmv.mechanic.code] = pmv.enteredValue;
-      }
-    }
+    // Build context. T-052: merge `plan_mechanic_values.enteredValue` AND
+    // `plan_fus.tactics` via the single shared derivation point (see
+    // `buildMechanicValues` doc comment) — reading only the former left the
+    // real (tactics-PATCH) UI flow computing 0/0 spend through this path.
+    const mechanicValues = this.buildMechanicValues(planFu);
 
     // Get plan context for LTA
     const planContext: PlanContextDto = {

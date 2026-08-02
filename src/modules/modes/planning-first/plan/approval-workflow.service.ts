@@ -107,11 +107,14 @@ export class ApprovalWorkflowService {
     const warnings: string[] = [];
 
     // 1. Check required mechanics/tactics.
-    // SpendCalculationService reads planMechanicValues (enteredValue) as its authoritative
-    // source. Validation must use the same source to stay consistent: if no mechanic values
-    // are entered, SpendCalc will return zero spend for that FU — an invalid plan.
+    // T-052: SpendCalculationService now reads BOTH sources (planMechanicValues
+    // AND plan_fus.tactics, merged via SpendCalculationService#buildMechanicValues
+    // — see its doc comment for why both exist and which wins on collision).
+    // Validation must use the same two sources to stay consistent: if neither is
+    // populated for a FU, SpendCalc will return zero spend for it — an invalid plan.
     // We accept either planMechanicValues with at least one enteredValue, OR a non-empty
-    // tactics JSONB (legacy/planning-first flow) so that both modes are covered.
+    // tactics JSONB (the ONLY UI-reachable entry point today, PATCH .../tactics)
+    // so that both are covered.
     if (!plan.planFus || plan.planFus.length === 0) {
       validationErrors.push('Plan must have at least one FU');
     } else {

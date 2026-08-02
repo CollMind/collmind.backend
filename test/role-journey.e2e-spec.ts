@@ -52,7 +52,6 @@ let FU_TUP_BOYA: string; // FU-TUP-BOYA
 let FU_WELLA_HC_500ML: string; // agreement seed FU (FU-WELLA-HC-500ML)
 let TACTIC_PROMO: string; // TAC-PROMO
 let MECHANIC_DISCOUNT: string; // MEC-DISCOUNT (on_invoice_discount, PERCENT)
-let MECHANIC_OFF_PCT: string; // CPP_OFF_PCT (off_invoice_discount, PERCENT) — T-048 A8c fixture
 
 /** Kod → id çözümlemesi; bulunamazsa anlaşılır hata (seed eksik demektir). */
 async function resolveIdByCode(
@@ -145,7 +144,6 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       FU_WELLA_HC_500ML,
       TACTIC_PROMO,
       MECHANIC_DISCOUNT,
-      MECHANIC_OFF_PCT,
     ] = await Promise.all([
       resolveIdByCode(dataSource, t, 'cpls', 'BS0501.50001'),
       resolveIdByCode(dataSource, t, 'cpls', 'BS0501.50004'),
@@ -155,7 +153,6 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       resolveIdByCode(dataSource, t, 'forecasting_units', 'FU-WELLA-HC-500ML'),
       resolveIdByCode(dataSource, t, 'tactics', 'TAC-PROMO'),
       resolveIdByCode(dataSource, t, 'mechanics', 'MEC-DISCOUNT'),
-      resolveIdByCode(dataSource, t, 'mechanics', 'CPP_OFF_PCT'),
     ]);
   }, 60000);
 
@@ -618,28 +615,22 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     it('A8c. T-048 FIX PROOF — submit-for-approval writes TWO separate RESERVE rows (ON_INVOICE + OFF_INVOICE), off-invoice is genuinely encumbered', async () => {
       // Self-contained plan (NOT the shared golden-path `planId`).
       //
-      // ⚠️ Pre-existing, UNRELATED gap found while building this proof (not
-      // T-019/T-048's to fix — flagged separately): `PATCH .../tactics`
-      // persists raw values to `plan_fus.tactics` (JSONB) and triggers
-      // `recalculatePlanWithKpiEngine`, which reads `plan_fus.tactics`
-      // directly (plan.service.ts ~1746) to derive `plan.totalSpend`/
-      // `plan.onInvoiceSpend` (the field `plan.service.ts#submit`'s 'TOTAL'
-      // bucket reserves from — see A8's golden path, which works). But
-      // `ApprovalWorkflowService#submitForApproval`'s
-      // `calculateSpendBreakdown` calls `SpendCalculationService
-      // #calculateAllSpendsForFU`, which reads ONLY the normalized
-      // `plan_mechanic_values` table (`enteredValue`), never
-      // `plan_fus.tactics` — so a plan whose only mechanic input is the
-      // tactics PATCH (as A1-A4's shared golden-path plan is) computes
-      // on=0/off=0 through THIS path even though `plan.totalSpend` is
-      // correctly non-zero through the OTHER path. No production endpoint
-      // sets `plan_mechanic_values.enteredValue` directly (the only writer,
-      // `POST /spend-calculation/distribute/:planFuId/:mechanicId`,
-      // DISTRIBUTES an already-entered value FU→SKU, it doesn't set one).
-      // To exercise the REAL on/off-split RESERVE path this test targets,
-      // `plan_mechanic_values` rows are seeded directly here — same
-      // rationale as the A5c COGS fixture (sentetik test verisi, gerçek
-      // master data uydurma değil).
+      // T-052 FIX: this fixture used to INSERT directly into
+      // `plan_mechanic_values` (bypassing the real UI flow entirely) to
+      // work around a genuine bug — `SpendCalculationService
+      // #calculateAllSpendsForFU` (used by `ApprovalWorkflowService
+      // #submitForApproval`'s `calculateSpendBreakdown`) read ONLY
+      // `plan_mechanic_values.enteredValue`, never `plan_fus.tactics`
+      // (written by the ONLY UI-reachable entry point,
+      // `PATCH .../fus/:fuId/tactics` -> `PlanService#updateFuTactic`). A
+      // plan built the real way therefore computed on=0/off=0 through THIS
+      // path even though `plan.totalSpend` was correctly non-zero through
+      // the OTHER canonical path (`PlanService#submit`). Fixed by
+      // `SpendCalculationService#buildMechanicValues`, now the single
+      // shared derivation point both canonical paths call — see its doc
+      // comment. This test now drives the mechanic values through the REAL
+      // tactics-PATCH flow (no direct table seeding) to prove the fix
+      // against the actual UI-reachable path, not a fixture shortcut.
       const planner = await loginAs(app, 'PLANNER');
 
       const createRes = await request(app.getHttpServer())
@@ -679,18 +670,28 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
         .expect(200);
 
-      // Seed plan_mechanic_values directly (see comment above): MEC-DISCOUNT
-      // (on_invoice_discount, PERCENT, 10%) and CPP_OFF_PCT
-      // (off_invoice_discount, PERCENT, 5%) — both on the SAME FU/envelope,
-      // so submit-for-approval's TWO reserveBudgetForPlan calls (ON then
-      // OFF) land on the same UNSPLIT (Faz 1) envelope, which is exactly
-      // the T-048 bug's trigger condition.
-      await dataSource.query(
-        `INSERT INTO main.plan_mechanic_values
-           (tenant_id, plan_fu_id, mechanic_id, entered_value, distribution_method)
-         VALUES ($1, $2, $3, 10, 'percentage'), ($1, $2, $4, 5, 'percentage')`,
-        [fixture.tenantId, t048PlanFuId, MECHANIC_DISCOUNT, MECHANIC_OFF_PCT],
-      );
+      // T-052 FIX: drive mechanic values through the REAL tactics-PATCH flow
+      // (`PlanService#updateFuTactic`) instead of seeding
+      // `plan_mechanic_values` directly. MEC-DISCOUNT (on_invoice_discount,
+      // PERCENT, 10%) and CPP_OFF_PCT (off_invoice_discount, PERCENT, 5%) —
+      // both on the SAME FU/envelope, so submit-for-approval's TWO
+      // reserveBudgetForPlan calls (ON then OFF) land on the same UNSPLIT
+      // (Faz 1) envelope, which is exactly the T-048 bug's trigger
+      // condition. The tactics PATCH body is keyed by mechanic CODE, not id
+      // (`UpdateFuTacticDto#tactics`), so no mechanic id lookup is needed
+      // for CPP_OFF_PCT here.
+      const tacticsRes = await request(app.getHttpServer())
+        .patch(`/plans/${t048PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({
+          tactics: { 'MEC-DISCOUNT': 10, CPP_OFF_PCT: 5 },
+          version: 1,
+        })
+        .expect(200);
+      expect(tacticsRes.body.tactics).toEqual({
+        'MEC-DISCOUNT': 10,
+        CPP_OFF_PCT: 5,
+      });
 
       const preSubmitRes = await request(app.getHttpServer())
         .get(`/plans/${t048PlanId}`)
@@ -739,6 +740,37 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(
         budgetTxAfterSubmit.every((r: any) => r.tx_status === 'POSTED'),
       ).toBe(true);
+
+      // ── T-052 acceptance criterion: the TWO canonical spend-derivation
+      // paths must agree numerically for the SAME plan.
+      //   Path 1 (`PlanService#submit`): `plan.totalSpend`, computed by
+      //     `recalculatePlanWithKpiEngineLocked` — already fresh here
+      //     because the tactics PATCH above triggered a recalc, and
+      //     `preSubmitRes` re-reads the plan afterwards.
+      //   Path 2 (`ApprovalWorkflowService#submitForApproval`):
+      //     `spendBreakdown.onInvoice + spendBreakdown.offInvoice`, computed
+      //     by `calculateSpendBreakdown` -> `SpendCalculationService
+      //     #calculateAllSpendsForFU` — exactly what was just reserved
+      //     above (`bySpendType.ON_INVOICE + bySpendType.OFF_INVOICE`).
+      // Before T-052, Path 2 was 0 for a tactics-only plan while Path 1 was
+      // correctly non-zero — this assertion is the numeric proof they now
+      // match (both derive `mechanicValues` from the same
+      // `SpendCalculationService#buildMechanicValues`).
+      const path1TotalSpend = Number(preSubmitRes.body.totalSpend);
+      const path2TotalSpend = bySpendType.ON_INVOICE + bySpendType.OFF_INVOICE;
+
+      record({
+        step: 'A8c-T052',
+        role: '-',
+        endpoint: 'İki kanonik yol karşılaştırması (T-052)',
+        expected:
+          'path1TotalSpend === path2TotalSpend (aynı plan, aynı mekanik girişleri)',
+        actual: `path1(plan.service#submit → plan.totalSpend)=${path1TotalSpend}, path2(approval-workflow#submitForApproval → on+off)=${path2TotalSpend}`,
+        note: 'T-052 FIX: her iki yol da SpendCalculationService#buildMechanicValues üzerinden aynı mechanicValues haritasını türetiyor.',
+      });
+
+      expect(path1TotalSpend).toBeGreaterThan(0);
+      expect(path1TotalSpend).toBeCloseTo(path2TotalSpend, 2);
     });
 
     it('A9. CATEGORY_MANAGER → GET /plans/approval-queue', async () => {

@@ -468,6 +468,138 @@ describe('SpendCalculationService', () => {
   });
 
   /**
+   * T-052: `calculateAllSpendsForFU` (used by
+   * `ApprovalWorkflowService#submitForApproval` -> `calculateSpendBreakdown`)
+   * must read `plan_fus.tactics` — the ONLY UI-reachable way to set mechanic
+   * values (`PATCH .../fus/:fuId/tactics` -> `PlanService#updateFuTactic`) —
+   * not just `plan_mechanic_values.enteredValue`. Before the fix, a FU whose
+   * ONLY mechanic input was `tactics` computed zero spend through this path.
+   */
+  describe('calculateAllSpendsForFU – reads plan_fus.tactics (T-052)', () => {
+    const buildOnInvoiceMechanic = (): Partial<Mechanic> => ({
+      id: 'mech-tactic-1',
+      code: 'MEC-DISCOUNT',
+      category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      spendingType: SpendingType.ON_INVOICE,
+      isActive: true,
+    });
+
+    const buildMockPlanFu = (
+      overrides: Partial<PlanFu> = {},
+    ): Partial<PlanFu> => ({
+      id: mockFuId,
+      tenantId: mockTenantId,
+      planId: mockPlanId,
+      plan: {
+        cplId: 'cpl-1',
+        channel: { code: 'NKA' },
+        category: { code: 'Dairy' },
+      } as any,
+      planSkus: [
+        {
+          skuId: mockSkuId,
+          baseVolume: 800,
+          plannedVolume: 1000,
+          sku: { unitPrice: 10, cogs: 5 } as any,
+        } as any,
+      ],
+      planMechanicValues: [],
+      tactics: {},
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
+      mechanicRepo.find.mockResolvedValue([
+        buildOnInvoiceMechanic(),
+      ] as Mechanic[]);
+    });
+
+    it('should compute non-zero spend for a FU whose ONLY mechanic input is plan_fus.tactics (no plan_mechanic_values rows)', async () => {
+      planFuRepo.findOne.mockResolvedValue(
+        buildMockPlanFu({ tactics: { 'MEC-DISCOUNT': 10 } }) as PlanFu,
+      );
+
+      const result = await service.calculateAllSpendsForFU(
+        mockTenantId,
+        mockFuId,
+      );
+
+      // (PLANNED_GSV=10000) * 10% = 1000, no LTA (null context) — must be
+      // non-zero to prove `tactics` was actually read, not just present.
+      expect(result.aggregatedPlanned.totalOnInvoice).toBeGreaterThan(0);
+      expect(result.aggregatedPlanned.totalSpend).toBeGreaterThan(0);
+    });
+
+    it('should compute zero spend when plan_fus.tactics is empty and plan_mechanic_values is empty (both sources genuinely absent)', async () => {
+      planFuRepo.findOne.mockResolvedValue(buildMockPlanFu() as PlanFu);
+
+      const result = await service.calculateAllSpendsForFU(
+        mockTenantId,
+        mockFuId,
+      );
+
+      expect(result.aggregatedPlanned.totalSpend).toBe(0);
+    });
+
+    it('should still read plan_mechanic_values.enteredValue when tactics is empty (no regression on the pre-existing source)', async () => {
+      planFuRepo.findOne.mockResolvedValue(
+        buildMockPlanFu({
+          tactics: {},
+          planMechanicValues: [
+            {
+              enteredValue: 10,
+              mechanic: buildOnInvoiceMechanic(),
+            } as any,
+          ],
+        }) as PlanFu,
+      );
+
+      const result = await service.calculateAllSpendsForFU(
+        mockTenantId,
+        mockFuId,
+      );
+
+      expect(result.aggregatedPlanned.totalOnInvoice).toBeGreaterThan(0);
+    });
+  });
+
+  /**
+   * T-052: `buildMechanicValues` is the single shared derivation point both
+   * canonical spend-derivation paths (`calculateAllSpendsForFU` here, and
+   * `PlanService#recalculatePlanWithKpiEngineLocked`) call — asserted
+   * directly so the merge/precedence rule is pinned regardless of which
+   * caller exercises it.
+   */
+  describe('buildMechanicValues (T-052 shared derivation point)', () => {
+    it('should merge plan_mechanic_values and tactics into one map', () => {
+      const result = service.buildMechanicValues({
+        tactics: { VIS_LS: 2000 },
+        planMechanicValues: [
+          { mechanic: { code: 'CPP_ON_PCT' }, enteredValue: 10 },
+        ],
+      });
+
+      expect(result).toEqual({ CPP_ON_PCT: 10, VIS_LS: 2000 });
+    });
+
+    it('tactics should win over plan_mechanic_values on the same mechanic code (no summing / no double-count)', () => {
+      const result = service.buildMechanicValues({
+        tactics: { 'MEC-DISCOUNT': 7 },
+        planMechanicValues: [
+          { mechanic: { code: 'MEC-DISCOUNT' }, enteredValue: 10 },
+        ],
+      });
+
+      expect(result).toEqual({ 'MEC-DISCOUNT': 7 });
+    });
+
+    it('should return an empty map when both sources are absent', () => {
+      expect(service.buildMechanicValues({})).toEqual({});
+    });
+  });
+
+  /**
    * S-2: SpendingType.BOTH — mechanic with BOTH spendingType and no recognised
    * MechanicCategory should warn and produce zero spend (no double-counting).
    */
