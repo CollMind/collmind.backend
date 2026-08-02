@@ -9,7 +9,10 @@ import {
   IsUUID,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { BudgetEnvelopeStatus } from '../../../../database/entities/budget-envelope.entity';
+import {
+  BudgetEnvelopeStatus,
+  BudgetSpendType,
+} from '../../../../database/entities/budget-envelope.entity';
 
 export class CreateBudgetEnvelopeDto {
   @ApiPropertyOptional({
@@ -123,4 +126,19 @@ export class CreateBudgetEnvelopeDto {
   @ApiPropertyOptional()
   @IsOptional()
   metadata?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    enum: BudgetSpendType,
+    description:
+      'T-056 adım 6 (0009 §4.5, ADR 0004 §3): tipli (ON_INVOICE/OFF_INVOICE) ' +
+      'zarf yaratmak için opsiyonel. Verilmezse (varsayılan) UNSPLIT/legacy ' +
+      'zarf yaratılır (spend_type NULL) — bugünkü davranış. `splitEnvelope` ' +
+      'zaten bu alanı repository düzeyinde doğrudan kullanıyordu (bkz. ' +
+      'budget.service.ts#splitEnvelope); bu DTO alanı aynı yeteneği tek ' +
+      'türetim noktasından (`BudgetService#createEnvelope`) çağıranlara açar ' +
+      '(PlanService#approve auto-create tipli çift zarf yolu dahil).',
+  })
+  @IsEnum(BudgetSpendType)
+  @IsOptional()
+  spendType?: BudgetSpendType;
 }

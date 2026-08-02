@@ -206,6 +206,31 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       console.warn('Cleanup (plan) başarısız:', e);
     }
 
+    // A19 (T-056 adım 6): bu testin ürettiği split-envelope fixture'larını
+    // (ON ikizi id'yi korur, kod öneki 'E2E-A19-SPLIT-'; OFF ikizi aynı
+    // önekin '-OFF' sonekli kod türevi — LIKE deseni ikisini de yakalar)
+    // temizle. cleanupTestPlans'tan SONRA çalışmalı: bu planın
+    // budget_transactions satırları (envelope_id FK) zaten silinmiş olmalı.
+    try {
+      const a19EnvRows = await dataSource.query(
+        `SELECT id FROM main.budget_envelopes WHERE tenant_id = $1 AND code LIKE 'E2E-A19-SPLIT-%'`,
+        [fixture.tenantId],
+      );
+      const a19EnvIds: string[] = a19EnvRows.map((r: { id: string }) => r.id);
+      if (a19EnvIds.length > 0) {
+        await dataSource.query(
+          `DELETE FROM main.budget_transactions WHERE envelope_id = ANY($1::uuid[])`,
+          [a19EnvIds],
+        );
+        await dataSource.query(
+          `DELETE FROM main.budget_envelopes WHERE id = ANY($1::uuid[])`,
+          [a19EnvIds],
+        );
+      }
+    } catch (e) {
+      console.warn('Cleanup (A19 split envelope) başarısız:', e);
+    }
+
     // T-036: bu spec'in ürettiği TÜM agreement'ları (DRAFT/PENDING/APPROVED/
     // CLOSED/CANCELLED/REJECTED — hepsi 'E2E-' önekli) ve bütçe/ledger/audit
     // izlerini temizle. Özellikle C7-C9 (agreementReversalId) hiçbir zaman
@@ -2116,6 +2141,204 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           note: 'v_budget_summary hayalet COMMIT olsa bile korunur — F1 sessiz kalmasının nedeni budur.',
         });
       }
+    });
+
+    it('A19. T-056 adım 6 — bölünmüş bir boyutta submit → approve ÇALIŞMALI (R9: bu adım olmadan approve 400 verirdi, SQL kanıtı)', async () => {
+      // R9 (0009 §4.5 madde 2, ADR 0004 Karar 5): split edilmiş bir
+      // (channel, period) boyutunda approve()'un auto-create-on-approve
+      // yolu tipsiz `findEnvelopeByDimensions` çağırıyordu →
+      // SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION ile 400. Submit (adım 5)
+      // zaten ON/OFF'u ayrı çözüyordu — yani "submit çalışır, approve
+      // kırılır" ARA DURUMU tam burada canlı DB'de kanıtlanıyor.
+      const admin = await loginAs(app, 'ADMIN');
+      const fm = await loginAs(app, 'FINANCE_MANAGER');
+      const planner = await loginAs(app, 'PLANNER');
+      const manager = await loginAs(app, 'MANAGER');
+
+      // NKA kanalında bugüne kadar hiçbir testin kullanmadığı, taze bir
+      // dönem (2026-09) — seed'in NKA-Q1/NKA-Q2 zarflarına (T-047
+      // invaryantının izlediği) HİÇ dokunulmuyor.
+      const a19Period = '2026-09';
+      const a19EnvCode = `E2E-A19-SPLIT-${Date.now()}`;
+
+      // ── 1) Taze UNSPLIT zarf (NKA / 2026-09) ────────────────────────────
+      const createEnvRes = await request(app.getHttpServer())
+        .post('/budget/envelopes')
+        .set(admin.authHeader())
+        .send({
+          code: a19EnvCode,
+          name: 'A19 split fixture',
+          fiscalYear: '2026',
+          period: a19Period,
+          channel: 'NKA',
+          allocatedAmount: 100000,
+          status: 'ACTIVE',
+          currency: 'TRY',
+        })
+        .expect(201);
+      const a19EnvId = createEnvRes.body.id;
+
+      // ── 2) FINANCE_MANAGER split eder — ON/OFF ikizleri doğar ───────────
+      const splitRes = await request(app.getHttpServer())
+        .post(`/budget/envelopes/${a19EnvId}/split`)
+        .set(fm.authHeader())
+        .send({ onInvoiceAllocated: 60000, offInvoiceAllocated: 40000 })
+        .expect(201);
+      const a19OnEnvelopeId = splitRes.body.onEnvelope.id; // id korunur
+      const a19OffEnvelopeId = splitRes.body.offEnvelope.id; // yeni satır
+      expect(a19OnEnvelopeId).toBe(a19EnvId);
+      expect(a19OffEnvelopeId).not.toBe(a19EnvId);
+
+      // ── 3) Plan: aynı boyutta (NKA / 2026-09) ───────────────────────────
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-A19-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: `${a19Period}-05`,
+          endDate: `${a19Period}-30`,
+        })
+        .expect(201);
+      const a19PlanId = createRes.body.id;
+
+      const fuRes = await request(app.getHttpServer())
+        .post(`/plans/${a19PlanId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
+        .expect(201);
+      const a19PlanFuId = fuRes.body.id;
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${a19PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const a19SkuId = planRes.body.planFus.find(
+        (f: any) => f.id === a19PlanFuId,
+      ).planSkus[0].skuId;
+
+      await request(app.getHttpServer())
+        .patch(
+          `/plans/${a19PlanId}/fus/${FU_WELLA_HC_500ML}/skus/${a19SkuId}/volume`,
+        )
+        .set(planner.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
+        .expect(200);
+
+      // A17/A18'de kanıtlanmış kombinasyon: MEC-DISCOUNT (on-invoice) +
+      // CPP_OFF_PCT (off-invoice) — her iki tip de gerçekten > 0 harcar.
+      await request(app.getHttpServer())
+        .patch(`/plans/${a19PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { 'MEC-DISCOUNT': 10, CPP_OFF_PCT: 5 }, version: 1 })
+        .expect(200);
+
+      const recalcRes = await request(app.getHttpServer())
+        .post(`/plans/${a19PlanId}/recalculate`)
+        .set(planner.authHeader())
+        .send({})
+        .expect(200);
+      expect(Number(recalcRes.body.totalSpend)).toBeGreaterThan(0);
+
+      // ── 4) SUBMIT — split boyutta, ON/OFF ikizleri ZATEN var (adım 5) ───
+      const submitRes = await request(app.getHttpServer())
+        .post(`/plans/${a19PlanId}/submit`)
+        .set(planner.authHeader())
+        .send({ version: recalcRes.body.version })
+        .expect(200);
+      expect(submitRes.body.status).toBe('PENDING_APPROVAL');
+
+      const reserveRows = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, envelope_id
+           FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'
+          ORDER BY spend_type ASC`,
+        [a19PlanId],
+      );
+      record({
+        step: 'A19a',
+        role: '-',
+        endpoint: 'DB: main.budget_transactions (split boyutta submit sonrası)',
+        expected: '2 RESERVE — doğru tipli (ON/OFF ikizi) zarflara',
+        actual: JSON.stringify(reserveRows),
+        note: 'Adım 5 zaten çalışıyordu — bu adımın konusu DEĞİL, yalnız approve öncesi taban çizgisi.',
+      });
+      expect(reserveRows.length).toBe(2);
+      expect(
+        reserveRows.every((r: any) =>
+          [a19OnEnvelopeId, a19OffEnvelopeId].includes(r.envelope_id),
+        ),
+      ).toBe(true);
+      const onReserve = reserveRows.find(
+        (r: any) => r.spend_type === 'ON_INVOICE',
+      );
+      const offReserve = reserveRows.find(
+        (r: any) => r.spend_type === 'OFF_INVOICE',
+      );
+      expect(onReserve.envelope_id).toBe(a19OnEnvelopeId);
+      expect(offReserve.envelope_id).toBe(a19OffEnvelopeId);
+
+      // ── 5) APPROVE — R9'un asıl kanıt noktası ───────────────────────────
+      // Bu adım (T-056 adım 6) OLMADAN, `plan.service.ts` approve()'un
+      // auto-create-on-approve bloğu `findEnvelopeByDimensions`'ı
+      // spendType VERMEDEN çağırdığı için burada
+      // SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION ile 400 dönerdi ("submit
+      // çalışır, approve kırılır") — `.expect(200)` bunu canlı DB'de
+      // kanıtlar.
+      const approveRes = await request(app.getHttpServer())
+        .post(`/plans/${a19PlanId}/approve`)
+        .set(manager.authHeader())
+        .send({ comments: 'A19 e2e: split boyutta approve' })
+        .expect(200);
+      expect(approveRes.body.status).toBe('APPROVED');
+
+      const commitRows = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, envelope_id
+           FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'COMMIT'
+          ORDER BY spend_type ASC`,
+        [a19PlanId],
+      );
+      record({
+        step: 'A19b',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (split boyutta approve sonrası)',
+        expected: '2 COMMIT — ON/OFF ikizlerinde, RESERVE ile aynı tutar',
+        actual: JSON.stringify(commitRows),
+        note: 'T-056 adım 6: approve auto-create/existence-check artık ON/OFF ikizlerini AYRI AYRI çözüyor, tipsiz arama yapmıyor.',
+      });
+      expect(commitRows.length).toBe(2);
+      expect(
+        commitRows.every((r: any) =>
+          [a19OnEnvelopeId, a19OffEnvelopeId].includes(r.envelope_id),
+        ),
+      ).toBe(true);
+      for (const bucket of ['ON_INVOICE', 'OFF_INVOICE']) {
+        const reserveAmt = Number(
+          reserveRows.find((r: any) => r.spend_type === bucket)?.amount,
+        );
+        const commitAmt = Number(
+          commitRows.find((r: any) => r.spend_type === bucket)?.amount,
+        );
+        expect(commitAmt).toBe(reserveAmt);
+      }
+
+      // ── Auto-create hiç tetiklenmedi (ikiz zarflar zaten vardı) — split
+      // boyutta üçüncü/tipsiz bir zarf yaratılmadığının SQL kanıtı ────────
+      const envelopesForDimension = await dataSource.query(
+        `SELECT id, spend_type FROM main.budget_envelopes
+          WHERE tenant_id = $1 AND channel = 'NKA' AND period = $2`,
+        [fixture.tenantId, a19Period],
+      );
+      expect(envelopesForDimension.length).toBe(2); // yalnız ON + OFF
+      expect(
+        envelopesForDimension.every((e: any) =>
+          ['ON_INVOICE', 'OFF_INVOICE'].includes(e.spend_type),
+        ),
+      ).toBe(true);
     });
   });
 

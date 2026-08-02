@@ -27,7 +27,10 @@ import {
   PlanSku,
 } from '../../../../database/entities/plan.entity';
 import { BudgetService } from '../../../shared/budget/budget.service';
-import { BudgetEnvelopeStatus } from '../../../../database/entities/budget-envelope.entity';
+import {
+  BudgetEnvelopeStatus,
+  BudgetSpendType,
+} from '../../../../database/entities/budget-envelope.entity';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import {
   KpiEngineService,
@@ -1046,18 +1049,144 @@ export class PlanService {
 
       // Check if budget envelope exists (read-only; not manager-scoped —
       // see BudgetService#reserveForPlan comment on envelope lookups).
-      const existingEnvelope =
-        await this.budgetService.findEnvelopeByDimensions(
+      //
+      // T-056 adım 6 (0009 §4.5 madde 2, §6 adım 6; ADR 0004 Karar 5 —
+      // "[[T-056]], :1019'u da tipli hale getirmek zorundadır"): this
+      // UNQUALIFIED (no spendType) call is exactly the "5 tipsiz çağrı
+      // yerinden" biri that T-019b's split guard now protects. Once a
+      // dimension has actually been split, this call throws
+      // `SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION` — before this fix that
+      // meant "submit works, approve breaks" (R9): submit (adım 5) already
+      // resolves ON/OFF separately, but approve's existence-check/auto-
+      // create block still asked for ONE untyped envelope and 400'd.
+      //
+      // Split detection uses NO second/independent query (tek türetim
+      // noktası, budget.repository.ts §JSDoc) — it is derived from THIS
+      // SAME call's own guard: if it throws that specific code, the
+      // dimension is split and ON/OFF must be resolved (and, if missing,
+      // created) INDEPENDENTLY below. If it does not throw, behaviour for
+      // the UNSPLIT (today's) dimension is BYTE-FOR-BYTE unchanged — same
+      // call, same branch, same auto-create logic as before this task.
+      let existingEnvelope: Awaited<
+        ReturnType<typeof this.budgetService.findEnvelopeByDimensions>
+      > = null;
+      let splitDimension = false;
+      try {
+        existingEnvelope = await this.budgetService.findEnvelopeByDimensions(
           tenantId,
           channelCode,
           plan.periodMonth,
         );
+      } catch (err) {
+        if (
+          err instanceof BadRequestException &&
+          (err.getResponse() as Record<string, unknown>)?.code ===
+            'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION'
+        ) {
+          splitDimension = true;
+        } else {
+          throw err;
+        }
+      }
 
-      if (!existingEnvelope && autoCreateBudget) {
+      const periodLabel = plan.periodMonth; // e.g., "2026-01"
+      const fiscalYear = plan.periodMonth.substring(0, 4);
+
+      if (splitDimension) {
+        // ON_INVOICE and OFF_INVOICE resolved INDEPENDENTLY (typed lookup —
+        // the guard never fires when spendType is given, §5.1). Missing
+        // twin(s) are auto-created (or 400) PER TYPE — never a single
+        // untyped envelope, which would silently re-create the exact
+        // ambiguity the split guard exists to prevent.
+        const [existingOnEnvelope, existingOffEnvelope] = await Promise.all([
+          this.budgetService.findEnvelopeByDimensions(
+            tenantId,
+            channelCode,
+            plan.periodMonth,
+            undefined,
+            BudgetSpendType.ON_INVOICE,
+          ),
+          this.budgetService.findEnvelopeByDimensions(
+            tenantId,
+            channelCode,
+            plan.periodMonth,
+            undefined,
+            BudgetSpendType.OFF_INVOICE,
+          ),
+        ]);
+
+        // Evidence-based per-type sizing (NOT a fabricated split of a
+        // single total): adım 4's recalc already persisted the plan's REAL
+        // on/off breakdown (`plan.onInvoiceSpend`/`offInvoiceSpend`,
+        // 0009 §4.2) — each missing typed envelope reuses today's exact
+        // heuristic (`budgetAmount || max(spend*2, 100000)`) applied to
+        // its OWN type's spend, not an invented ratio of the total. An
+        // explicit `budgetAmount` override (rare — untested even in the
+        // UNSPLIT path) is applied AS-IS to whichever twin(s) are missing,
+        // never divided — dividing it would itself be a fabricated ratio.
+        const onSpend = Number(plan.onInvoiceSpend) || 0;
+        const offSpend = Number(plan.offInvoiceSpend) || 0;
+
+        if (!existingOnEnvelope && autoCreateBudget) {
+          const onAllocatedAmount =
+            budgetAmount || Math.max(onSpend * 2, 100000);
+          await this.budgetService.createEnvelope(
+            tenantId,
+            {
+              code: `${channelCode}/${periodLabel}-ON`,
+              name: `${channelName} - ${periodLabel} Bütçesi (On-Invoice)`,
+              fiscalYear,
+              period: periodLabel,
+              allocatedAmount: onAllocatedAmount,
+              status: BudgetEnvelopeStatus.ACTIVE,
+              currency: 'TRY',
+              spendType: BudgetSpendType.ON_INVOICE,
+              metadata: {
+                channel: channelCode,
+                autoCreated: true,
+                createdForPlanId: plan.id,
+              },
+            },
+            queryRunner.manager,
+          );
+        } else if (!existingOnEnvelope && !autoCreateBudget) {
+          throw new BadRequestException(
+            `No active ON_INVOICE budget envelope found for channel: ${channelCode}, period: ${plan.periodMonth}. Use autoCreateBudget to create one automatically.`,
+          );
+        }
+
+        if (!existingOffEnvelope && autoCreateBudget) {
+          const offAllocatedAmount =
+            budgetAmount || Math.max(offSpend * 2, 100000);
+          await this.budgetService.createEnvelope(
+            tenantId,
+            {
+              code: `${channelCode}/${periodLabel}-OFF`,
+              name: `${channelName} - ${periodLabel} Bütçesi (Off-Invoice)`,
+              fiscalYear,
+              period: periodLabel,
+              allocatedAmount: offAllocatedAmount,
+              status: BudgetEnvelopeStatus.ACTIVE,
+              currency: 'TRY',
+              spendType: BudgetSpendType.OFF_INVOICE,
+              metadata: {
+                channel: channelCode,
+                autoCreated: true,
+                createdForPlanId: plan.id,
+              },
+            },
+            queryRunner.manager,
+          );
+        } else if (!existingOffEnvelope && !autoCreateBudget) {
+          throw new BadRequestException(
+            `No active OFF_INVOICE budget envelope found for channel: ${channelCode}, period: ${plan.periodMonth}. Use autoCreateBudget to create one automatically.`,
+          );
+        }
+      } else if (!existingEnvelope && autoCreateBudget) {
+        // UNSPLIT dimension — behaviour BYTE-FOR-BYTE unchanged (today's
+        // single untyped envelope, T-056 adım 6 does not touch this branch).
         const allocatedAmount =
           budgetAmount || Math.max(Number(plan.totalSpend) * 2, 100000);
-        const periodLabel = plan.periodMonth; // e.g., "2026-01"
-        const fiscalYear = plan.periodMonth.substring(0, 4);
 
         await this.budgetService.createEnvelope(
           tenantId,

@@ -133,6 +133,8 @@ describe('PlanService', () => {
             commitReservedForPlan: jest.fn(),
             commitAllReservedForPlan: jest.fn(),
             releaseForPlan: jest.fn(),
+            // T-056 adım 6: approve() auto-create-on-approve path.
+            createEnvelope: jest.fn(),
           },
         },
         {
@@ -391,7 +393,10 @@ describe('PlanService', () => {
       // `plan.totalSpend` tek/ayrıştırılmamış tutar olarak DEĞİL.
       expect(budgetService.reserveTypedForPlan).toHaveBeenCalledWith(
         mockPlanId,
-        { onInvoice: planWithFus.onInvoiceSpend, offInvoice: planWithFus.offInvoiceSpend },
+        {
+          onInvoice: planWithFus.onInvoiceSpend,
+          offInvoice: planWithFus.offInvoiceSpend,
+        },
         planWithFus.channel?.code,
         planWithFus.periodMonth,
         'TRY',
@@ -756,6 +761,297 @@ describe('PlanService', () => {
       expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
       expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
       expect(budgetService.releaseForPlan).not.toHaveBeenCalled();
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // T-056 adım 6 (docs/analysis/0009 §4.5 madde 2, §6 adım 6; ADR 0004
+    // Karar 5): approve()'un auto-create-on-approve yolu artık split-
+    // farkındalı. Split tespiti İKİNCİ bir sorgu değil — ilk (unqualified)
+    // `findEnvelopeByDimensions` çağrısının KENDİ guard'ı
+    // (`SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION`) üzerinden yapılır; bu
+    // mock'lar production'daki `budget.repository.ts` guard'ının ATTIĞI
+    // gerçek response şeklini (`{ statusCode, code, message }`) birebir
+    // taklit eder.
+    // ─────────────────────────────────────────────────────────────────────
+    describe('T-056 adım 6: split-farkındalı auto-create', () => {
+      const splitGuardError = () =>
+        new BadRequestException({
+          statusCode: 400,
+          code: 'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION',
+          message: 'Budget dimension has been split.',
+        });
+
+      it('UNSPLIT (bugünkü davranış, BİREBİR AYNI): envelope yok + autoCreateBudget=true → TEK, tipsiz zarf yaratır', async () => {
+        const pendingPlan = {
+          ...mockPlan,
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: 'approval-request-1',
+          totalSpend: 40000,
+        } as Plan;
+
+        planRepo.findById
+          .mockResolvedValueOnce(pendingPlan as Plan)
+          .mockResolvedValueOnce({
+            ...pendingPlan,
+            status: PlanStatus.APPROVED,
+          } as Plan);
+        planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+        // UNSPLIT dimension: unqualified lookup returns null, does NOT throw.
+        budgetService.findEnvelopeByDimensions.mockResolvedValue(null);
+        budgetService.createEnvelope.mockResolvedValue({} as any);
+        budgetService.commitAllReservedForPlan.mockResolvedValue([{} as any]);
+        approvalService.approve.mockResolvedValue({} as any);
+        planRepo.updateStatusCas.mockResolvedValue(1);
+
+        const result = await service.approve(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          'Comments',
+          true,
+        );
+
+        expect(result.status).toBe(PlanStatus.APPROVED);
+        expect(budgetService.createEnvelope).toHaveBeenCalledTimes(1);
+        expect(budgetService.createEnvelope).toHaveBeenCalledWith(
+          mockTenantId,
+          expect.objectContaining({
+            code: `${pendingPlan.channel?.code}/${pendingPlan.periodMonth}`,
+            allocatedAmount: 100000, // max(40000*2, 100000) — bugünkü heuristik
+          }),
+          queryRunnerManager,
+        );
+        // Tipsiz yaratım: `spendType` alanı hiç set edilmemiş olmalı.
+        const call = budgetService.createEnvelope.mock.calls[0][1];
+        expect(call.spendType).toBeUndefined();
+      });
+
+      it('UNSPLIT: envelope yok + autoCreateBudget=false → 400, hiçbir zarf yaratılmaz', async () => {
+        const pendingPlan = {
+          ...mockPlan,
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: 'approval-request-1',
+        } as Plan;
+        planRepo.findById.mockResolvedValue(pendingPlan as Plan);
+        planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+        budgetService.findEnvelopeByDimensions.mockResolvedValue(null);
+
+        await expect(
+          service.approve(
+            mockPlanId,
+            mockTenantId,
+            mockUserId,
+            'Comments',
+            false,
+          ),
+        ).rejects.toThrow(BadRequestException);
+        expect(budgetService.createEnvelope).not.toHaveBeenCalled();
+        expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      });
+
+      it('SPLIT dimension — ON+OFF ikisi de zaten var → HİÇBİR zarf yaratmadan approve eder (mevcut tipli zarfları keşfeder)', async () => {
+        const pendingPlan = {
+          ...mockPlan,
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: 'approval-request-1',
+          totalSpend: 100000,
+          onInvoiceSpend: 60000,
+          offInvoiceSpend: 40000,
+        } as Plan;
+
+        planRepo.findById
+          .mockResolvedValueOnce(pendingPlan as Plan)
+          .mockResolvedValueOnce({
+            ...pendingPlan,
+            status: PlanStatus.APPROVED,
+          } as Plan);
+        planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+        budgetService.findEnvelopeByDimensions.mockImplementation((async (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: string,
+        ) => {
+          if (!spendType) {
+            throw splitGuardError();
+          }
+          return spendType === 'ON_INVOICE'
+            ? ({ id: 'env-on' } as any)
+            : ({ id: 'env-off' } as any);
+        }) as any);
+        budgetService.commitAllReservedForPlan.mockResolvedValue([{} as any]);
+        approvalService.approve.mockResolvedValue({} as any);
+        planRepo.updateStatusCas.mockResolvedValue(1);
+
+        const result = await service.approve(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          'Comments',
+          true,
+        );
+
+        expect(result.status).toBe(PlanStatus.APPROVED);
+        // R9'un asıl kanıtı: eskiden bu, unqualified çağrının fırlattığı
+        // SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION ile approve() 400
+        // verirdi ("submit çalışır, approve kırılır") — artık geçer.
+        expect(budgetService.createEnvelope).not.toHaveBeenCalled();
+        expect(budgetService.commitAllReservedForPlan).toHaveBeenCalled();
+      });
+
+      it('SPLIT dimension — yalnız OFF_INVOICE ikizi eksik → SADECE OFF zarfını, planın GERÇEK off-invoice harcamasından (uydurma bölme DEĞİL) yaratır', async () => {
+        const pendingPlan = {
+          ...mockPlan,
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: 'approval-request-1',
+          totalSpend: 140000,
+          onInvoiceSpend: 60000,
+          offInvoiceSpend: 80000,
+        } as Plan;
+
+        planRepo.findById
+          .mockResolvedValueOnce(pendingPlan as Plan)
+          .mockResolvedValueOnce({
+            ...pendingPlan,
+            status: PlanStatus.APPROVED,
+          } as Plan);
+        planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+        budgetService.findEnvelopeByDimensions.mockImplementation((async (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: string,
+        ) => {
+          if (!spendType) {
+            throw splitGuardError();
+          }
+          if (spendType === 'ON_INVOICE') {
+            return { id: 'env-on' } as any;
+          }
+          return null; // OFF twin missing
+        }) as any);
+        budgetService.createEnvelope.mockResolvedValue({
+          id: 'env-off-new',
+        } as any);
+        budgetService.commitAllReservedForPlan.mockResolvedValue([{} as any]);
+        approvalService.approve.mockResolvedValue({} as any);
+        planRepo.updateStatusCas.mockResolvedValue(1);
+
+        await service.approve(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          'Comments',
+          true,
+        );
+
+        expect(budgetService.createEnvelope).toHaveBeenCalledTimes(1);
+        expect(budgetService.createEnvelope).toHaveBeenCalledWith(
+          mockTenantId,
+          expect.objectContaining({
+            spendType: 'OFF_INVOICE',
+            code: expect.stringContaining('-OFF'),
+            allocatedAmount: 160000, // max(80000*2, 100000) — planın GERÇEK off spend'i
+          }),
+          queryRunnerManager,
+        );
+      });
+
+      it('SPLIT dimension — ON+OFF ikisi de eksik → İKİSİNİ de yaratır (ON önce, OFF sonra — deterministik sıra), her biri KENDİ gerçek tutarından', async () => {
+        const pendingPlan = {
+          ...mockPlan,
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: 'approval-request-1',
+          totalSpend: 90000,
+          onInvoiceSpend: 10000,
+          offInvoiceSpend: 80000,
+        } as Plan;
+
+        planRepo.findById
+          .mockResolvedValueOnce(pendingPlan as Plan)
+          .mockResolvedValueOnce({
+            ...pendingPlan,
+            status: PlanStatus.APPROVED,
+          } as Plan);
+        planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+        budgetService.findEnvelopeByDimensions.mockImplementation((async (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: string,
+        ) => {
+          if (!spendType) {
+            throw splitGuardError();
+          }
+          return null; // both twins missing
+        }) as any);
+        budgetService.createEnvelope.mockResolvedValue({} as any);
+        budgetService.commitAllReservedForPlan.mockResolvedValue([{} as any]);
+        approvalService.approve.mockResolvedValue({} as any);
+        planRepo.updateStatusCas.mockResolvedValue(1);
+
+        await service.approve(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          'Comments',
+          true,
+        );
+
+        expect(budgetService.createEnvelope).toHaveBeenCalledTimes(2);
+        const calls = budgetService.createEnvelope.mock.calls;
+        // Deterministik sıra (0008 §6 R4 disiplininin approve tarafındaki
+        // ikizi): ON her zaman OFF'tan ÖNCE yaratılır/çözülür.
+        expect(calls[0][1]).toEqual(
+          expect.objectContaining({
+            spendType: 'ON_INVOICE',
+            allocatedAmount: 100000, // max(10000*2, 100000)
+          }),
+        );
+        expect(calls[1][1]).toEqual(
+          expect.objectContaining({
+            spendType: 'OFF_INVOICE',
+            allocatedAmount: 160000, // max(80000*2, 100000)
+          }),
+        );
+      });
+
+      it('SPLIT dimension — envelope eksik + autoCreateBudget=false → 400, hiçbir zarf yaratılmaz', async () => {
+        const pendingPlan = {
+          ...mockPlan,
+          status: PlanStatus.PENDING_APPROVAL,
+          approvalRequestId: 'approval-request-1',
+        } as Plan;
+        planRepo.findById.mockResolvedValue(pendingPlan as Plan);
+        planRepo.findByIdForUpdate.mockResolvedValue(pendingPlan);
+        budgetService.findEnvelopeByDimensions.mockImplementation((async (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: string,
+        ) => {
+          if (!spendType) {
+            throw splitGuardError();
+          }
+          return null;
+        }) as any);
+
+        await expect(
+          service.approve(
+            mockPlanId,
+            mockTenantId,
+            mockUserId,
+            'Comments',
+            false,
+          ),
+        ).rejects.toThrow(BadRequestException);
+        expect(budgetService.createEnvelope).not.toHaveBeenCalled();
+        expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      });
     });
   });
 
