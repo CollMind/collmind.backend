@@ -74,6 +74,57 @@ export class BudgetService {
     return bucket === 'TOTAL' ? !tx.spendType : tx.spendType === bucket;
   }
 
+  /**
+   * T-056 F1 (docs/analysis/0009 §2.3) + Team Lead review (single-derivation
+   * follow-up): net (RESERVE+COMMIT-RELEASE) for a given bucket within an
+   * already-fetched transaction list — the ONE place this formula is
+   * implemented (`reserveForPlan`'s idempotency check (T-033),
+   * `commitAllReservedForPlan`'s bucket discovery, and
+   * `commitReservedForPlan`'s outstanding-reserve selection all delegate
+   * here now; none re-implements the reduce).
+   *
+   * A RESERVE row's txStatus stays POSTED forever in this append-only
+   * ledger even after being fully offset by a RELEASE, so "does a POSTED
+   * RESERVE row exist for this bucket" is NOT the same question as "is
+   * this bucket still outstanding" — every call site above asks the
+   * latter and must use this, not raw row presence.
+   *
+   * `envelopeId` (optional) narrows the net to a single envelope — pass it
+   * when the caller already has a specific envelope resolved and needs
+   * "outstanding for THIS bucket in THIS envelope" (`reserveForPlan`: a
+   * plan can in principle span more than one envelope over its lifetime,
+   * T-019 kısıtı). Omit it for "outstanding for THIS bucket across
+   * whichever envelope(s) the plan touched" (`commitAllReservedForPlan` /
+   * `commitReservedForPlan`: bucket-wide by design — a plan's bucket is
+   * expected to resolve to one envelope in practice, but these two callers
+   * don't have (and don't need) a pre-resolved envelope to scope by).
+   */
+  private computeBucketNet(
+    transactions: BudgetTransaction[],
+    bucket: PlanBudgetBucket,
+    envelopeId?: string,
+  ): number {
+    return transactions
+      .filter(
+        (tx) =>
+          this.matchesBucket(tx, bucket) &&
+          (envelopeId === undefined || tx.envelopeId === envelopeId),
+      )
+      .reduce((net, tx) => {
+        const amt = Number(tx.amount);
+        if (
+          tx.txType === BudgetTransactionType.RESERVE ||
+          tx.txType === BudgetTransactionType.COMMIT
+        ) {
+          return net + amt;
+        }
+        if (tx.txType === BudgetTransactionType.RELEASE) {
+          return net - amt;
+        }
+        return net;
+      }, 0);
+  }
+
   async createEnvelope(
     tenantId: string,
     createDto: CreateBudgetEnvelopeDto,
@@ -521,23 +572,15 @@ export class BudgetService {
     // already-released RESERVE row and skip creating a real new one, leaving
     // the plan's eventual COMMIT converted from a stale reservation and the
     // envelope under-encumbered.
-    const netOutstanding = existingTransactions
-      .filter(
-        (tx) => tx.envelopeId === envelope.id && this.matchesBucket(tx, bucket),
-      )
-      .reduce((net, tx) => {
-        const amt = Number(tx.amount);
-        if (
-          tx.txType === BudgetTransactionType.RESERVE ||
-          tx.txType === BudgetTransactionType.COMMIT
-        ) {
-          return net + amt;
-        }
-        if (tx.txType === BudgetTransactionType.RELEASE) {
-          return net - amt;
-        }
-        return net;
-      }, 0);
+    // Single-derivation follow-up (Team Lead review): was an inline
+    // duplicate of computeBucketNet's reduce — now delegates, scoped to
+    // THIS envelope via the optional third parameter (see that method's
+    // doc comment for the envelope-scoped vs. bucket-wide distinction).
+    const netOutstanding = this.computeBucketNet(
+      existingTransactions,
+      bucket,
+      envelope.id,
+    );
 
     if (netOutstanding > 0 && envelopeReserves.length > 0) {
       // Genuinely still outstanding (no intervening release) — idempotent
@@ -653,12 +696,26 @@ export class BudgetService {
       return existingCommit;
     }
 
-    const outstandingReserve = existingTransactions.find(
-      (tx) =>
-        this.matchesBucket(tx, bucket) &&
-        tx.txType === BudgetTransactionType.RESERVE &&
-        tx.txStatus === BudgetTransactionStatus.POSTED,
-    );
+    // T-056 F1: a raw POSTED RESERVE row for this bucket is NOT sufficient —
+    // it may already have been fully offset by a RELEASE (e.g. reject()),
+    // and this ledger never flips a RESERVE row's txStatus off POSTED (see
+    // computeBucketNet's doc comment). Only treat the bucket as genuinely
+    // outstanding (and eligible for CONVERT-RELEASE + COMMIT) when its net
+    // is still positive; the row picked below (most-recent POSTED RESERVE,
+    // findTransactionsBySource orders createdAt DESC) is then guaranteed to
+    // be the live/unreleased one in every reachable generation sequence
+    // (T-033/T-053 GEN-suffix discipline), so its raw `.amount` still equals
+    // the bucket's net.
+    const bucketNet = this.computeBucketNet(existingTransactions, bucket);
+    const outstandingReserve =
+      bucketNet > 0
+        ? existingTransactions.find(
+            (tx) =>
+              this.matchesBucket(tx, bucket) &&
+              tx.txType === BudgetTransactionType.RESERVE &&
+              tx.txStatus === BudgetTransactionStatus.POSTED,
+          )
+        : undefined;
 
     // T-019/T-048: TOTAL bucket keeps the pre-existing (unsuffixed) key
     // format; ON/OFF get a disjoint `|<BUCKET>` suffix — see reserveForPlan.
@@ -809,18 +866,42 @@ export class BudgetService {
         manager,
       );
 
-    const bucketKeys = new Set<PlanBudgetBucket>();
+    // T-056 F1 (docs/analysis/0009 §2.3): raw-row candidacy first (which
+    // buckets EVER had a POSTED RESERVE for this plan), then narrowed to
+    // buckets that are still genuinely outstanding (net > 0 —
+    // computeBucketNet, same RESERVE+COMMIT-RELEASE formula as
+    // reserveForPlan's T-033 idempotency check). Without the net filter, a
+    // bucket that was fully released (e.g. TOTAL-bucket submit → reject →
+    // return-to-draft → resubmit via the OTHER, typed ON/OFF route) is
+    // rediscovered here purely because its RESERVE row's txStatus never
+    // flips off POSTED in this append-only ledger — producing a phantom
+    // CONVERT-RELEASE + COMMIT for a bucket that already nets to zero (a
+    // plan carrying a stale generation's COMMIT it never actually owed).
+    const candidateBucketKeys = new Set<PlanBudgetBucket>();
     for (const tx of existingTransactions) {
       if (
         tx.txType === BudgetTransactionType.RESERVE &&
         tx.txStatus === BudgetTransactionStatus.POSTED
       ) {
-        bucketKeys.add((tx.spendType ?? 'TOTAL') as PlanBudgetBucket);
+        candidateBucketKeys.add((tx.spendType ?? 'TOTAL') as PlanBudgetBucket);
+      }
+    }
+    const bucketKeys = new Set<PlanBudgetBucket>();
+    for (const bucket of candidateBucketKeys) {
+      if (this.computeBucketNet(existingTransactions, bucket) > 0) {
+        bucketKeys.add(bucket);
       }
     }
 
-    if (bucketKeys.size === 0) {
-      // Legacy: no reserving submit ever happened for this plan.
+    if (candidateBucketKeys.size === 0) {
+      // Legacy: no reserving submit ever happened for this plan. (T-056 F1:
+      // this check stays on the RAW candidate set, not the net-filtered one
+      // — "never reserved" and "reserved, but every bucket now nets to
+      // zero" are different states; only the former is the pre-T-019
+      // legacy-direct-approve case this fallback exists for. The latter
+      // should be structurally unreachable for a plan actually reaching
+      // approve() — see the loop below, which simply commits nothing for
+      // it rather than fabricating a fresh TOTAL commit.)
       return [
         await this.commitReservedForPlan(
           planId,

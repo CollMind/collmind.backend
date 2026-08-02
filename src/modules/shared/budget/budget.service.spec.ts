@@ -208,6 +208,79 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
     });
   });
 
+  describe('reserveForPlan — zarf-kapsamlı net (Team Lead review follow-up, T-056 F1)', () => {
+    // computeBucketNet'in envelopeId parametresi olmadan önce, reserveForPlan
+    // kendi (artık kaldırılmış) inline netOutstanding reduce'unu YALNIZ
+    // `tx.envelopeId === envelope.id` ile filtreliyordu — computeBucketNet'e
+    // genelleştirilirken bu kapsam bir opsiyonel parametreye dönüştü. Bu
+    // testin varlık nedeni: parametrenin GERÇEKTEN kullanıldığını (yok
+    // sayılmadığını) kanıtlamak. Senaryo artık teorik değil — T-019b'nin
+    // split+re-home'u bir planı, AYNI kovada (ör. ON_INVOICE) İKİ FARKLI
+    // zarfta RESERVE bırakmış hâlde bırakabiliyor: split-öncesi zarfta eski
+    // (fully released) bir RESERVE, split-sonrası (hedef) zarfta ise henüz
+    // hiç RESERVE yok. Zarf kapsaması olmadan, hedef zarfın net'i YANLIŞLIKLA
+    // diğer zarfın outstanding RESERVE'ini de sayar → reserveForPlan
+    // "outstanding zaten var" sanıp erken döner, hedef zarfa YENİ RESERVE
+    // YAZMAZ — under-encumbrance (bu oturumun tekrar eden hata sınıfı).
+    const ENVELOPE_A = ENVELOPE_ID; // hedef zarf (findEnvelopeByDimensions bunu döner)
+    const ENVELOPE_B = 'env-002'; // planın GEÇMİŞTE rezerve ettiği FARKLI bir zarf
+
+    it('envelope-B üzerinde net>0 bırakan bir RESERVE, envelope-A (hedef, net=0) için erken dönüşü TETİKLEMEMELİ — yeni RESERVE yazılmalı', async () => {
+      mockBudgetRepository.findTransactionsBySource.mockResolvedValueOnce([
+        // envelope-B: outstanding (net=500) — AYRI bir zarf, hedef DEĞİL.
+        buildTx({
+          envelopeId: ENVELOPE_B,
+          txType: BudgetTransactionType.RESERVE,
+          amount: 500,
+          spendType: 'ON_INVOICE',
+          idempotencyKey: `RESERVE|PLAN|${PLAN_ID}|${ENVELOPE_B}|ON_INVOICE`,
+        }),
+        // envelope-A (hedef): RESERVE + onu tam sıfırlayan RELEASE — net=0,
+        // ama RESERVE satırının txStatus'u (T-033 gereği) hâlâ POSTED.
+        buildTx({
+          envelopeId: ENVELOPE_A,
+          txType: BudgetTransactionType.RESERVE,
+          amount: 200,
+          spendType: 'ON_INVOICE',
+          idempotencyKey: `RESERVE|PLAN|${PLAN_ID}|${ENVELOPE_A}|ON_INVOICE`,
+        }),
+        buildTx({
+          envelopeId: ENVELOPE_A,
+          txType: BudgetTransactionType.RELEASE,
+          amount: 200,
+          spendType: 'ON_INVOICE',
+          idempotencyKey: `RELEASE|PLAN|${PLAN_ID}|${ENVELOPE_A}|ON_INVOICE`,
+        }),
+      ]);
+
+      const result = await service.reserveForPlan(
+        PLAN_ID,
+        300,
+        'NKA',
+        '2026-01',
+        'TRY',
+        TENANT_ID,
+        USER_ID,
+        'ON_INVOICE',
+      );
+
+      // BUG (zarf kapsaması yoksayılırsa): netOutstanding envelope-B'nin
+      // 500'ünü de sayar (500 + 0 = 500 > 0), envelopeReserves (hâlâ POSTED
+      // olan envelope-A RESERVE'i) da bulunur → erken döner, HİÇ yeni
+      // RESERVE yazılmaz, dönen satır envelope-A'nın ESKİ (zaten release
+      // edilmiş) satırıdır.
+      expect(mockBudgetRepository.createTransaction).toHaveBeenCalledTimes(1);
+      expect(result.amount).toBe(300);
+      expect(result.envelopeId).toBe(ENVELOPE_A);
+      expect(result.spendType).toBe('ON_INVOICE');
+      // GEN2: envelope-A'da bu bucket için önceden 1 RESERVE vardı (şimdi
+      // release edilmiş) — T-033 jenerasyon disiplini korunuyor.
+      expect(result.idempotencyKey).toBe(
+        `RESERVE|PLAN|${PLAN_ID}|${ENVELOPE_A}|ON_INVOICE|GEN2`,
+      );
+    });
+  });
+
   describe('reserveForPlan — TOTAL bucket (plan.service.ts#submit) stays backward compatible', () => {
     it('uses the pre-T-019 idempotency key format (no bucket suffix)', async () => {
       await service.reserveForPlan(

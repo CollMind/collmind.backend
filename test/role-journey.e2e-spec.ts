@@ -1702,6 +1702,262 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(netContribution).toBeCloseTo(onAmount1 + offAmount1, 2);
       expect(netContribution).toBeGreaterThan(0);
     });
+
+    it('A18. T-056 F1 — çapraz yol (TOTAL /submit → reject → return-to-draft → tipli /submit-for-approval → approve) TOTAL kovada hayalet COMMIT üretmemeli (SQL kanıtı)', async () => {
+      // 0009 §2.3 F1 teşhisi: commitAllReservedForPlan'ın kova keşfi HAM
+      // POSTED RESERVE satırı varlığına bakıyor (net'e değil) — bir planın
+      // ilk (TOTAL) submit'i reddedilip TAMAMEN release edildikten sonra
+      // farklı (tipli ON/OFF) bir uçtan resubmit edilirse, eski TOTAL
+      // RESERVE satırı hâlâ txStatus=POSTED olduğu için approve'da TEKRAR
+      // "outstanding" sanılıp hayalet bir CONVERT-RELEASE + COMMIT çifti
+      // üretiyor. v_budget_summary'nin net'i bu çift RESERVE/RELEASE'in
+      // birbirini götürmesiyle korunur, ama bu planın TOTAL kovasındaki
+      // ham (RESERVE-RELEASE, COMMIT hariç) katkısı NEGATİFE düşer —
+      // APPROVED bir plan, bayat bir jenerasyonun COMMIT'ini taşımış olur.
+      const planner = await loginAs(app, 'PLANNER');
+      const manager = await loginAs(app, 'MANAGER');
+
+      // A17'deki gibi MEC-DISCOUNT (on_invoice_discount) + CPP_OFF_PCT
+      // (off_invoice_discount) — createT029TestPlan'ın CPP_ON_PCT+VIS_LS
+      // kombinasyonundan FARKLI: VIS_LS lumpsum, calculateAllSpendsForFU
+      // (submit-for-approval'ın kullandığı yol) lumpsum'u 0 döndürüyor
+      // (`spend-calculation.service.ts:165-167`, distributeSpendToSKUs ayrı
+      // bir çağrı zinciri) — o kombinasyon adım 4'te offAmount=0 üretir ve
+      // testin ön koşulunu (her iki kova da POSTED RESERVE > 0) bozar. Bu
+      // ayrım F1'in konusu değil; sadece doğru fixture seçimi.
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-T056-F1-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const f1PlanId = createRes.body.id;
+
+      const fuRes = await request(app.getHttpServer())
+        .post(`/plans/${f1PlanId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
+        .expect(201);
+      const f1PlanFuId = fuRes.body.id;
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${f1PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const f1SkuId = planRes.body.planFus.find((f: any) => f.id === f1PlanFuId)
+        .planSkus[0].skuId;
+
+      await request(app.getHttpServer())
+        .patch(
+          `/plans/${f1PlanId}/fus/${FU_WELLA_HC_500ML}/skus/${f1SkuId}/volume`,
+        )
+        .set(planner.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/plans/${f1PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { 'MEC-DISCOUNT': 10, CPP_OFF_PCT: 5 }, version: 1 })
+        .expect(200);
+
+      // /submit (TOTAL kova) plan.totalSpend'i OKUR (yeniden hesaplamaz) —
+      // ilk submit'in reserveForPlan(bucket='TOTAL') çağrısına girmesi için
+      // önce recalculate ile stored totalSpend'i doldurmak gerekiyor
+      // (`plan.service.ts:809`: `Number(plan.totalSpend) > 0` kapısı).
+      const recalcRes = await request(app.getHttpServer())
+        .post(`/plans/${f1PlanId}/recalculate`)
+        .set(planner.authHeader())
+        .send({})
+        .expect(200);
+      expect(Number(recalcRes.body.totalSpend)).toBeGreaterThan(0);
+      const f1Version = recalcRes.body.version;
+
+      // ── 1) İLK SUBMIT — CANLI ROTA, TOTAL kova ──────────────────────────
+      await request(app.getHttpServer())
+        .post(`/plans/${f1PlanId}/submit`)
+        .set(planner.authHeader())
+        .send({ version: f1Version })
+        .expect(200);
+
+      const reserveAfterSubmit1 = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'`,
+        [f1PlanId],
+      );
+      expect(reserveAfterSubmit1.length).toBe(1);
+      expect(reserveAfterSubmit1[0].spend_type).toBeNull(); // TOTAL kova
+      const totalReserveAmount = Number(reserveAfterSubmit1[0].amount);
+      expect(totalReserveAmount).toBeGreaterThan(0);
+
+      // ── 2) REJECT — TOTAL kova TAMAMEN release edilir (net = 0) ────────
+      const rejectRes = await request(app.getHttpServer())
+        .post(`/plans/${f1PlanId}/reject`)
+        .set(manager.authHeader())
+        .send({ reason: 'T-056 F1 e2e: cross-route repro' })
+        .expect(200);
+      expect(rejectRes.body.status).toBe('REJECTED');
+
+      // ── 3) RETURN TO DRAFT ───────────────────────────────────────────────
+      const returnRes = await request(app.getHttpServer())
+        .post(`/plans/${f1PlanId}/return-to-draft`)
+        .set(planner.authHeader())
+        .expect(200);
+      expect(returnRes.body.status).toBe('DRAFT');
+
+      // ── 4) RESUBMIT — ÇAPRAZ UÇ, tipli /submit-for-approval (ON+OFF) ────
+      const preSubmit2 = await request(app.getHttpServer())
+        .get(`/plans/${f1PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+
+      const submit2 = await request(app.getHttpServer())
+        .post(`/plans/${f1PlanId}/submit-for-approval`)
+        .set(planner.authHeader())
+        .send({
+          submissionNotes: 'T-056 F1 e2e: resubmit çapraz uçtan (tipli)',
+          version: preSubmit2.body.version,
+        })
+        .expect(200);
+      expect(submit2.body.status).toBe('PENDING_APPROVAL');
+
+      const reserveAfterSubmit2 = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, idempotency_key
+           FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'
+          ORDER BY created_at ASC`,
+        [f1PlanId],
+      );
+      record({
+        step: 'A18a',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (çapraz-uç resubmit sonrası, TÜM RESERVE)',
+        expected:
+          '3 RESERVE satırı: 1 eski TOTAL (hâlâ txStatus=POSTED, net=0) + 2 yeni tipli (ON_INVOICE+OFF_INVOICE)',
+        actual: JSON.stringify(reserveAfterSubmit2),
+        note: 'F1 ön koşulu: TOTAL RESERVE satırı append-only ledger gereği hâlâ POSTED — bucketKeys keşfi bunu görmeye devam ediyor.',
+      });
+      expect(reserveAfterSubmit2.length).toBe(3);
+      const onAmount = Number(
+        reserveAfterSubmit2.find((r: any) => r.spend_type === 'ON_INVOICE')
+          ?.amount,
+      );
+      const offAmount = Number(
+        reserveAfterSubmit2.find((r: any) => r.spend_type === 'OFF_INVOICE')
+          ?.amount,
+      );
+      expect(onAmount).toBeGreaterThan(0);
+      expect(offAmount).toBeGreaterThan(0);
+
+      // ── 5) APPROVE — F1'in asıl kanıt noktası ───────────────────────────
+      const approveRes = await request(app.getHttpServer())
+        .post(`/plans/${f1PlanId}/approve`)
+        .set(manager.authHeader())
+        .send({ comments: 'T-056 F1 e2e: approve after cross-route resubmit' })
+        .expect(200);
+      expect(approveRes.body.status).toBe('APPROVED');
+
+      const commitRows = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, idempotency_key
+           FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'COMMIT'
+          ORDER BY created_at ASC`,
+        [f1PlanId],
+      );
+      record({
+        step: 'A18b',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (approve sonrası, COMMIT satırları)',
+        expected:
+          'FIX ÖNCESİ (CANLI HATA): 3 COMMIT (TOTAL hayalet dahil, spend_type IS NULL) · FIX SONRASI: 2 COMMIT (yalnız ON_INVOICE+OFF_INVOICE)',
+        actual: JSON.stringify(commitRows),
+        note: 'F1: commitAllReservedForPlan kova keşfi ham RESERVE satırı varlığına bakıyor — net=0 olan TOTAL kova da "outstanding" sanılıyor.',
+      });
+
+      const phantomTotalCommit = commitRows.filter(
+        (r: any) => r.spend_type === null,
+      );
+      // F1 asıl regresyon assertion'ı: TOTAL kovada (spend_type NULL)
+      // approve sonrası HİÇBİR COMMIT olmamalı — o kova reject'te zaten
+      // tamamen release edilmişti (net=0), "outstanding" değildi.
+      expect(phantomTotalCommit.length).toBe(0);
+      expect(commitRows.length).toBe(2);
+      expect(
+        commitRows.every((r: any) =>
+          ['ON_INVOICE', 'OFF_INVOICE'].includes(r.spend_type),
+        ),
+      ).toBe(true);
+
+      // ── Plan'ın TOTAL kovadaki (spend_type IS NULL) ham net katkısı ─────
+      // (RESERVE - RELEASE, COMMIT hariç — 0009 §2.3'ün "getReservedAmount"
+      // formülünün bu plana scoped hâli). Reject net'i zaten 0'lamıştı;
+      // hayalet CONVERT-RELEASE eklenmediği sürece bu 0'da KALMALI —
+      // negatife düşerse F1 hatası hâlâ var demektir.
+      const totalBucketTx = await dataSource.query(
+        `SELECT tx_type, amount FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND spend_type IS NULL
+            AND tx_status = 'POSTED'`,
+        [f1PlanId],
+      );
+      const totalBucketNet = totalBucketTx.reduce((net: number, tx: any) => {
+        const amt = Number(tx.amount);
+        if (tx.tx_type === 'RESERVE') return net + amt;
+        if (tx.tx_type === 'RELEASE') return net - amt;
+        return net;
+      }, 0);
+      record({
+        step: 'A18c',
+        role: '-',
+        endpoint:
+          "TOTAL kova (spend_type IS NULL) ham net (RESERVE-RELEASE, COMMIT hariç) — bu plan'a scoped",
+        expected:
+          "0 (reject net'i zaten sıfırladı; hayalet CONVERT-RELEASE eklenmemeli)",
+        actual: `${totalBucketNet}`,
+        note: 'CANLI HATA varsa bu değer NEGATİF olur (fazladan bir CONVERT-RELEASE eklenir ama karşılığı RESERVE artmaz).',
+      });
+      expect(totalBucketNet).toBe(0);
+
+      // ── Ledger korunumu (0009 §7 T1): v_budget_summary net'i her koşulda
+      // korunur (hayalet COMMIT/RELEASE çifti birbirini götürür) — bu, F1'in
+      // "neden fark edilmedi" kısmının kanıtı, F1 fix gerekliliğini AZALTMAZ
+      // (getReservedAmount/audit-trail hâlâ yanlış).
+      const envelopeRow = await dataSource.query(
+        `SELECT e.id, e.code FROM main.budget_envelopes e
+           JOIN main.plans p ON p.channel_id = e.channel_id
+          WHERE p.id = $1 LIMIT 1`,
+        [f1PlanId],
+      );
+      if (envelopeRow.length > 0) {
+        const summaryRow = await dataSource.query(
+          `SELECT reserved_amount FROM main.v_budget_summary WHERE envelope_id = $1`,
+          [envelopeRow[0].id],
+        );
+        const ledgerNetRow = await dataSource.query(
+          `SELECT COALESCE(SUM(CASE WHEN tx_type IN ('RESERVE','COMMIT') THEN amount
+                                     WHEN tx_type = 'RELEASE' THEN -amount ELSE 0 END), 0) AS net
+             FROM main.budget_transactions
+            WHERE envelope_id = $1 AND tx_status = 'POSTED'`,
+          [envelopeRow[0].id],
+        );
+        record({
+          step: 'A18d',
+          role: '-',
+          endpoint: `Ledger korunumu — envelope ${envelopeRow[0].code}`,
+          expected:
+            'reserved_amount === ledger net (kova karışıklığından bağımsız)',
+          actual: `reserved_amount=${summaryRow[0]?.reserved_amount} ledger_net=${ledgerNetRow[0]?.net}`,
+          note: 'v_budget_summary hayalet COMMIT olsa bile korunur — F1 sessiz kalmasının nedeni budur.',
+        });
+      }
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════
