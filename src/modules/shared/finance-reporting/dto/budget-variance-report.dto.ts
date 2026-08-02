@@ -69,11 +69,14 @@ export class BudgetVarianceItem {
   })
   consumed!: number;
 
-  @ApiProperty({ description: 'Available amount (allocated - reserved - consumed)' })
+  @ApiProperty({
+    description: 'Available amount (allocated - reserved - consumed)',
+  })
   available!: number;
 
   @ApiProperty({
-    description: 'Variance amount = consumed - allocated (positive = over budget)',
+    description:
+      'Variance amount = consumed - allocated (positive = over budget)',
   })
   variance!: number;
 
@@ -104,7 +107,9 @@ export class BudgetVarianceGroup {
   @ApiProperty({ description: 'Group key (channel/category/period value)' })
   key!: string;
 
-  @ApiProperty({ description: 'Number of envelopes aggregated into this group' })
+  @ApiProperty({
+    description: 'Number of envelopes aggregated into this group',
+  })
   envelopeCount!: number;
 
   @ApiProperty() allocated!: number;
@@ -131,11 +136,17 @@ export class BudgetVarianceReport {
   @IsArray()
   items!: BudgetVarianceItem[];
 
-  @ApiProperty({ description: 'Breakdown by channel', type: [BudgetVarianceGroup] })
+  @ApiProperty({
+    description: 'Breakdown by channel',
+    type: [BudgetVarianceGroup],
+  })
   @IsArray()
   byChannel!: BudgetVarianceGroup[];
 
-  @ApiProperty({ description: 'Breakdown by category', type: [BudgetVarianceGroup] })
+  @ApiProperty({
+    description: 'Breakdown by category',
+    type: [BudgetVarianceGroup],
+  })
   @IsArray()
   byCategory!: BudgetVarianceGroup[];
 
@@ -146,7 +157,10 @@ export class BudgetVarianceReport {
   @IsArray()
   byPeriod!: BudgetVarianceGroup[];
 
-  @ApiProperty({ description: 'Tenant-wide (scope-filtered) total', type: BudgetVarianceGroup })
+  @ApiProperty({
+    description: 'Tenant-wide (scope-filtered) total',
+    type: BudgetVarianceGroup,
+  })
   total!: BudgetVarianceGroup;
 }
 
@@ -156,7 +170,10 @@ export class BudgetVarianceQueryDto {
   @IsString()
   fiscalYear?: string;
 
-  @ApiPropertyOptional({ description: 'Period filter (e.g. 2026-01)', type: [String] })
+  @ApiPropertyOptional({
+    description: 'Period filter (e.g. 2026-01)',
+    type: [String],
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -174,7 +191,9 @@ export class BudgetVarianceQueryDto {
   @IsString({ each: true })
   categories?: string[];
 
-  @ApiPropertyOptional({ description: 'Envelope status filter (default ACTIVE)' })
+  @ApiPropertyOptional({
+    description: 'Envelope status filter (default ACTIVE)',
+  })
   @IsOptional()
   @IsString()
   status?: string;

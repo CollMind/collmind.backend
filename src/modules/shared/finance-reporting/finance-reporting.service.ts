@@ -974,18 +974,24 @@ export class FinanceReportingService {
 
     if (envelopes.length === 0) {
       const emptyGroup = this.toVarianceGroup('ALL', []);
-      return { items: [], byChannel: [], byCategory: [], byPeriod: [], total: emptyGroup };
+      return {
+        items: [],
+        byChannel: [],
+        byCategory: [],
+        byPeriod: [],
+        total: emptyGroup,
+      };
     }
 
-    const thresholds = await this.budgetThresholdService.getThresholds(tenantId);
+    const thresholds =
+      await this.budgetThresholdService.getThresholds(tenantId);
 
     // v_budget_summary tek doğruluk kaynağı — no-recompute (T-005 ilkesi).
     // Tenant için tüm summary'ler bir kerede çekilir, envelopeId ile eşlenir
     // (N+1 önlenir); yalnızca scope+filter'dan geçen zarfların satırları
     // rapora dahil edilir.
-    const allSummaries = await this.budgetRepository.getAllBudgetSummaries(
-      tenantId,
-    );
+    const allSummaries =
+      await this.budgetRepository.getAllBudgetSummaries(tenantId);
     const summaryByEnvelopeId = new Map(
       allSummaries.map((s) => [s.envelopeId, s]),
     );
@@ -1006,13 +1012,17 @@ export class FinanceReportingService {
       const available = Number(summary.availableAmount) || 0;
 
       const variance = consumed - allocated;
-      const variancePercent = allocated > 0 ? (variance / allocated) * 100 : null;
+      const variancePercent =
+        allocated > 0 ? (variance / allocated) * 100 : null;
       const utilizationPercent =
         allocated > 0 ? ((reserved + consumed) / allocated) * 100 : null;
       const status =
         utilizationPercent === null
           ? null
-          : this.budgetThresholdService.toStatus(utilizationPercent, thresholds);
+          : this.budgetThresholdService.toStatus(
+              utilizationPercent,
+              thresholds,
+            );
 
       items.push({
         envelopeId: envelope.id,

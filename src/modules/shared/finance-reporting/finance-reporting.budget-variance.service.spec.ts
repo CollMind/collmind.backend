@@ -23,7 +23,11 @@ import { BudgetSummaryView } from '../../../database/entities/budget-summary.vie
 const TENANT = 'tenant-1';
 const USER = 'user-1';
 
-const THRESHOLDS: BudgetThresholds = { warning: 80, critical: 95, exceeded: 100 };
+const THRESHOLDS: BudgetThresholds = {
+  warning: 80,
+  critical: 95,
+  exceeded: 100,
+};
 
 function buildEnvelope(partial: Partial<BudgetEnvelope>): BudgetEnvelope {
   return {
@@ -124,7 +128,12 @@ describe('FinanceReportingService — getBudgetVarianceReport (T-023)', () => {
   it('resolves scope via AccessScopeService and applies it to the envelope query', async () => {
     qb.getMany.mockResolvedValue([]);
 
-    await service.getBudgetVarianceReport(TENANT, USER, UserRole.CATEGORY_MANAGER, {});
+    await service.getBudgetVarianceReport(
+      TENANT,
+      USER,
+      UserRole.CATEGORY_MANAGER,
+      {},
+    );
 
     expect(accessScopeService.resolveScope).toHaveBeenCalledWith(
       TENANT,
@@ -141,7 +150,12 @@ describe('FinanceReportingService — getBudgetVarianceReport (T-023)', () => {
   it('returns an empty report (no DB reads beyond the envelope query) when no envelopes match', async () => {
     qb.getMany.mockResolvedValue([]);
 
-    const report = await service.getBudgetVarianceReport(TENANT, USER, UserRole.ADMIN, {});
+    const report = await service.getBudgetVarianceReport(
+      TENANT,
+      USER,
+      UserRole.ADMIN,
+      {},
+    );
 
     expect(report.items).toEqual([]);
     expect(report.total.allocated).toBe(0);
@@ -162,7 +176,12 @@ describe('FinanceReportingService — getBudgetVarianceReport (T-023)', () => {
       }),
     ]);
 
-    const report = await service.getBudgetVarianceReport(TENANT, USER, UserRole.ADMIN, {});
+    const report = await service.getBudgetVarianceReport(
+      TENANT,
+      USER,
+      UserRole.ADMIN,
+      {},
+    );
 
     expect(report.items).toHaveLength(1);
     const item = report.items[0];
@@ -189,7 +208,12 @@ describe('FinanceReportingService — getBudgetVarianceReport (T-023)', () => {
       }),
     ]);
 
-    const report = await service.getBudgetVarianceReport(TENANT, USER, UserRole.ADMIN, {});
+    const report = await service.getBudgetVarianceReport(
+      TENANT,
+      USER,
+      UserRole.ADMIN,
+      {},
+    );
 
     const item = report.items[0];
     expect(item.variancePercent).toBeNull();
@@ -235,7 +259,12 @@ describe('FinanceReportingService — getBudgetVarianceReport (T-023)', () => {
       }),
     ]);
 
-    const report = await service.getBudgetVarianceReport(TENANT, USER, UserRole.ADMIN, {});
+    const report = await service.getBudgetVarianceReport(
+      TENANT,
+      USER,
+      UserRole.ADMIN,
+      {},
+    );
 
     expect(report.byChannel).toHaveLength(2);
     const category = report.byCategory.find((g) => g.key === 'HAIR_CARE')!;
@@ -257,7 +286,12 @@ describe('FinanceReportingService — getBudgetVarianceReport (T-023)', () => {
     qb.getMany.mockResolvedValue([envelope]);
     budgetRepository.getAllBudgetSummaries.mockResolvedValue([]); // no summary row
 
-    const report = await service.getBudgetVarianceReport(TENANT, USER, UserRole.ADMIN, {});
+    const report = await service.getBudgetVarianceReport(
+      TENANT,
+      USER,
+      UserRole.ADMIN,
+      {},
+    );
 
     expect(report.items).toEqual([]);
     expect(report.total.allocated).toBe(0);

@@ -157,9 +157,7 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       expect(staleReplay.status).toBe(409);
       expect(staleReplay.body.code).toBe('STALE_VERSION');
       expect(staleReplay.body.currentVersion).toBe(2);
-      expect(staleReplay.body.current.planName).toBe(
-        'E2E-OPTLOCK-CAS-WINNER',
-      );
+      expect(staleReplay.body.current.planName).toBe('E2E-OPTLOCK-CAS-WINNER');
 
       // No lost update: a fresh GET still shows the winner's value.
       const finalRes = await request(app.getHttpServer())
