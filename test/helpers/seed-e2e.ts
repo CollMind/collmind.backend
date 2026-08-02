@@ -154,12 +154,35 @@ export async function loadE2EFixture(
  * orijinal DEBIT satırlarını kesin olarak bulur. REVERSAL CREDIT satırları
  * ise `reverses_entry_id` FK'sı (ledger.service.ts#createReversalEntry) ile
  * bulunur — string parse yerine güvenilir bir ilişki.
+ *
+ * T-060 FIX (mutasyon kanıtı sırasında bulundu — bkz. task raporu): bu
+ * fonksiyon `main.agreement_transactions` satırlarını `cleanupTestAgreements`
+ * çağrılmadan ÖNCE (bazı testler bunu kendi `it()` bloğunun içinde/sonunda,
+ * dosyanın `afterAll`'ından ÖNCE çağırıyor — örn. role-journey.e2e-spec.ts
+ * C9, settlement-budget-release.e2e-spec.ts BR-E2E-06) hard-delete ediyordu.
+ * `cleanupTestAgreements`'ın T-060'ta eklenen admin_audit_logs
+ * (AGREEMENT_TRANSACTION) temizliği transaction id'lerini `agreement_
+ * transactions`'tan SELECT ederek buluyor — ama bu fonksiyon onları çoktan
+ * silmiş oluyordu, yani hiçbir zaman bulunamıyorlardı (transactionIds=[]).
+ * Sonuç: reversal.service.ts'in yazdığı AGREEMENT_TRANSACTION audit satırı
+ * öksüz kalıyordu. Aynı sınıf hata (FK'siz polimorfik referans, temizlik
+ * kapsam dışı bıraktı) burada bir seviye daha erken tekrarlamıştı. Şimdi bu
+ * fonksiyon da transaction id'lerini silmeden ÖNCE yakalayıp kendi
+ * admin_audit_logs izlerini temizliyor.
  */
 export async function cleanupTestTransactions(
   app: INestApplication,
   agreementId: string,
 ): Promise<void> {
   const dataSource = app.get<DataSource>(getDataSourceToken());
+
+  const targetTx = await dataSource.query(
+    `SELECT id FROM main.agreement_transactions
+      WHERE agreement_id = $1 AND invoice_no LIKE 'E2E-INV-%'`,
+    [agreementId],
+  );
+  const targetTxIds: string[] = targetTx.map((t: { id: string }) => t.id);
+
   await dataSource.query(
     `WITH target_tx AS (
        SELECT id FROM main.agreement_transactions
@@ -176,6 +199,13 @@ export async function cleanupTestTransactions(
         OR reverses_entry_id IN (SELECT id FROM orig_entries)`,
     [agreementId],
   );
+  if (targetTxIds.length > 0) {
+    await dataSource.query(
+      `DELETE FROM main.admin_audit_logs
+        WHERE entity_type = 'AGREEMENT_TRANSACTION' AND entity_id = ANY($1::uuid[])`,
+      [targetTxIds],
+    );
+  }
   await dataSource.query(
     `DELETE FROM main.agreement_transactions
      WHERE agreement_id = $1 AND invoice_no LIKE 'E2E-INV-%'`,
@@ -204,6 +234,20 @@ export async function cleanupTestTransactions(
  * `namePrefix` ile başlayan (varsayılan 'E2E-') agreement isimlerini
  * hedefler — seed verisi (`STA-2026-000x`) bu prefiksle eşleşmediğinden
  * dokunulmaz.
+ *
+ * T-060: `main.approval_requests` (entity_type='AGREEMENT') ve
+ * `main.admin_audit_logs` (entity_type='AGREEMENT_TRANSACTION',
+ * reversal.service.ts'in REVERSE audit satırı) da temizlenir. Her ikisi de
+ * `entity_id` üzerinden POLİMORFİK referans tutar — main.agreements/
+ * main.agreement_transactions'a FK YOKTUR (kasıtlı: approval_requests ve
+ * admin_audit_logs birden çok entity tipini tek tabloda tutar). Bu
+ * FK'sizlik, agreement/agreement_transaction hard-delete edildiğinde bu iki
+ * tabloda kalıcı öksüz satır bırakıyordu (T-060 ölçümü: 9.116 satır
+ * approval_requests'te, 3.167 satır admin_audit_logs'ta birikmişti — hepsi
+ * %100 öksüzdü, canlı bir agreement/plan/transaction'a işaret eden TEK satır
+ * yoktu). Kök neden `cleanupTestPlans`/`cleanupTestAgreements`'ın bu iki
+ * tabloyu hiç kapsamamasıydı (FK cascade eksikliği + temizlik sorgusunun
+ * kapsam dışı bırakması, ikisi birden).
  */
 export async function cleanupTestAgreements(
   app: INestApplication,
@@ -222,8 +266,20 @@ export async function cleanupTestAgreements(
     return;
   }
 
-  // FK/bağımlılık sırası: ledger → budget_transactions → agreement_transactions
-  // (FK main.agreements'a) → admin_audit_logs → agreements.
+  // T-060: agreement_transactions hard-delete edilmeden ÖNCE id'lerini
+  // yakala — reversal.service.ts bu id'lere işaret eden AGREEMENT_TRANSACTION
+  // audit satırı yazmış olabilir, aşağıda agreement_transactions silinince
+  // bu id'lere bir daha erişilemez (join imkansızlaşır).
+  const transactions = await dataSource.query(
+    `SELECT id FROM main.agreement_transactions WHERE agreement_id = ANY($1::uuid[])`,
+    [agreementIds],
+  );
+  const transactionIds: string[] = transactions.map((t: { id: string }) => t.id);
+
+  // FK/bağımlılık sırası: ledger → budget_transactions → approval_requests
+  // (FK yok, polimorfik) → agreement_transaction audit izleri (FK yok,
+  // polimorfik) → agreement_transactions (FK main.agreements'a) →
+  // admin_audit_logs (AGREEMENT) → agreements.
   await dataSource.query(
     `DELETE FROM main.ledger_entries WHERE agreement_id = ANY($1::uuid[])`,
     [agreementIds],
@@ -233,6 +289,18 @@ export async function cleanupTestAgreements(
       WHERE tenant_id = $1 AND source_type = 'AGREEMENT' AND source_id = ANY($2::uuid[])`,
     [tenantId, agreementIds],
   );
+  await dataSource.query(
+    `DELETE FROM main.approval_requests
+      WHERE tenant_id = $1 AND entity_type = 'AGREEMENT' AND entity_id = ANY($2::uuid[])`,
+    [tenantId, agreementIds],
+  );
+  if (transactionIds.length > 0) {
+    await dataSource.query(
+      `DELETE FROM main.admin_audit_logs
+        WHERE entity_type = 'AGREEMENT_TRANSACTION' AND entity_id = ANY($1::uuid[])`,
+      [transactionIds],
+    );
+  }
   await dataSource.query(
     `DELETE FROM main.agreement_transactions WHERE agreement_id = ANY($1::uuid[])`,
     [agreementIds],
@@ -313,6 +381,12 @@ export async function cleanupSalesActuals(
  * Bu temizlik uygulama katmanının immutability kuralını İHLAL ETMEZ: doğrudan SQL ile,
  * yalnızca test fixture'larını (`E2E-` önekli) siler — tıpkı `cleanupTestTransactions`ın
  * ledger/agreement_transactions temizlemesi gibi.
+ *
+ * T-060: `main.approval_requests` (entity_type='PLAN') de temizlenir —
+ * plan.service.ts'nin submit/approve akışı her plan için bir approval_request
+ * satırı yazıyor; bu tabloya `main.plans`'a FK YOKTUR (polimorfik entity_id).
+ * Kök neden ve ölçüm için `cleanupTestAgreements`'ın JSDoc'una bakınız (aynı
+ * sınıf hata, agreement tarafı).
  */
 export async function cleanupTestPlans(
   app: INestApplication,
@@ -338,6 +412,11 @@ export async function cleanupTestPlans(
     [tenantId, planIds],
   );
   await dataSource.query(
+    `DELETE FROM main.approval_requests
+      WHERE tenant_id = $1 AND entity_type = 'PLAN' AND entity_id = ANY($2::uuid[])`,
+    [tenantId, planIds],
+  );
+  await dataSource.query(
     `DELETE FROM main.plan_approval_history WHERE plan_id = ANY($1::uuid[])`,
     [planIds],
   );
@@ -357,6 +436,35 @@ export async function cleanupTestPlans(
   );
   await dataSource.query(`DELETE FROM main.plans WHERE id = ANY($1::uuid[])`, [
     planIds,
+  ]);
+}
+
+/**
+ * T-060: E2E'nin RBAC/scope teşhisi için `POST /users` ile oluşturduğu
+ * tek-kullanımlık kullanıcıları hard-delete eder.
+ *
+ * NEDEN GEREKLİ: `DELETE /users` endpoint'i yok (BRD'de kullanıcı silme API'si
+ * tanımlı değil) — role-journey.e2e-spec.ts'nin N9 testi (main.user_scopes
+ * satırı olmayan PLANNER, fail-closed kanıtı) bu yüzden yalnızca deactivate
+ * ediyordu, satır DB'de kalıcı birikti (ölçüldü: main.users'ın 289/298
+ * satırı — %97'si — bu tek testten, INACTIVE ama fiziksel olarak hâlâ orada).
+ *
+ * `cleanupTestPlans`/`cleanupTestAgreements`'ın aksine burada `LIKE` örüntüsü
+ * DEĞİL, çağıranın topladığı TAM id listesi kullanılır (T-051 dersi: örüntü
+ * eşleştirme başka bir suite'in ürettiği, henüz temizlenmemiş bir satırı
+ * yanlışlıkla silebilir — bu fonksiyon yalnızca kendi ürettiği kullanıcıları
+ * bilir).
+ */
+export async function cleanupTestUsers(
+  app: INestApplication,
+  userIds: string[],
+): Promise<void> {
+  if (userIds.length === 0) {
+    return;
+  }
+  const dataSource = app.get<DataSource>(getDataSourceToken());
+  await dataSource.query(`DELETE FROM main.users WHERE id = ANY($1::uuid[])`, [
+    userIds,
   ]);
 }
 

@@ -61,6 +61,14 @@
  * CASCADE) — o tenant'ı bu invaryanta dahil etmek yalnız gürültü ekler.
  * Ana fixture tenant'ı kapsamı, mevcut Team Lead invaryantıyla (ENV-2026-
  * NKA-Q1, aynı tenant) tutarlıdır.
+ *
+ * T-060: main.approval_requests / main.admin_audit_logs / main.users bu
+ * listeye eklendi. Kapsam ÖLÇÜLEREK belirlendi (ezbere değil) — TÜM
+ * main.* tabloları bir `npm run test:e2e` koşumu öncesi/sonrası sayıldı,
+ * yalnız bu üç tablo (agreements/plans/plan_fus/plan_skus dışında) sıfırdan
+ * farklı delta verdi. Tam ölçüm tablosu, kök neden ve "neden RAW count,
+ * neden admin_audit_logs artık dahil" gerekçesi için
+ * test/helpers/e2e-row-count.js'deki countRows() yorumuna bakınız.
  */
 
 const fs = require('fs');
@@ -84,7 +92,9 @@ module.exports = async function globalSetup() {
     console.log(
       `[T-047 invariant] BAŞLANGIÇ satır sayıları (tenant=Wella Turkey) — ` +
         `agreements=${counts.agreements} plans=${counts.plans} ` +
-        `plan_fus=${counts.planFus} plan_skus=${counts.planSkus}`,
+        `plan_fus=${counts.planFus} plan_skus=${counts.planSkus} ` +
+        `approval_requests=${counts.approvalRequests} ` +
+        `admin_audit_logs=${counts.adminAuditLogs} users=${counts.users}`,
     );
   } finally {
     await client.end();

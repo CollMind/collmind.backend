@@ -18,7 +18,17 @@ const path = require('path');
 const { connect, countRows } = require('./helpers/e2e-row-count');
 
 const SNAPSHOT_PATH = path.join(__dirname, '.e2e-row-count-snapshot.json');
-const COUNT_KEYS = ['agreements', 'plans', 'planFus', 'planSkus'];
+// T-060: approvalRequests/adminAuditLogs/users eklendi — bkz. global-setup.js
+// ve test/helpers/e2e-row-count.js'deki gerekçe (ölçülerek belirlendi).
+const COUNT_KEYS = [
+  'agreements',
+  'plans',
+  'planFus',
+  'planSkus',
+  'approvalRequests',
+  'adminAuditLogs',
+  'users',
+];
 
 module.exports = async function globalTeardown() {
   if (!fs.existsSync(SNAPSHOT_PATH)) {
@@ -50,7 +60,9 @@ module.exports = async function globalTeardown() {
   console.log(
     `[T-047 invariant] BİTİŞ satır sayıları (tenant=Wella Turkey) — ` +
       `agreements=${after.agreements} plans=${after.plans} ` +
-      `plan_fus=${after.planFus} plan_skus=${after.planSkus}`,
+      `plan_fus=${after.planFus} plan_skus=${after.planSkus} ` +
+      `approval_requests=${after.approvalRequests} ` +
+      `admin_audit_logs=${after.adminAuditLogs} users=${after.users}`,
   );
 
   const diffs = COUNT_KEYS.filter((k) => before[k] !== after[k]).map(
@@ -59,16 +71,21 @@ module.exports = async function globalTeardown() {
 
   if (diffs.length > 0) {
     const msg =
-      '[T-047 invariant] SATIR SAYISI İNVARYANTI İHLAL EDİLDİ — e2e suite ' +
-      'başlangıcı ile bitişi arasında main.agreements/plans(/plan_fus/plan_skus) ' +
-      'satır sayısı DEĞİŞTİ (bütçe zarfı sabit kalsa bile bu bir sızıntıdır — ' +
-      "bkz. T-047):\n  " +
+      '[T-047/T-060 invariant] SATIR SAYISI İNVARYANTI İHLAL EDİLDİ — e2e ' +
+      'suite başlangıcı ile bitişi arasında main.agreements/plans/plan_fus/' +
+      'plan_skus/approval_requests/admin_audit_logs/users satır sayısı ' +
+      'DEĞİŞTİ (bütçe zarfı sabit kalsa bile bu bir sızıntıdır — bkz. ' +
+      "T-047, T-060):\n  " +
       diffs.join('\n  ') +
-      '\nKök neden büyük olasılıkla: bir e2e fixture (agreement/plan) ' +
+      '\nKök neden büyük olasılıkla: (a) bir e2e fixture (agreement/plan) ' +
       "'E2E-' önekini bir rename ile kaybetti (cleanupTestPlans/" +
       "cleanupTestAgreements 'LIKE \\'E2E-%\\'' ile arıyor, test/helpers/" +
-      'seed-e2e.ts) — ya da bir test kendi ürettiği satırı hiç silmedi/' +
-      'temizlemedi.';
+      'seed-e2e.ts), (b) bir test kendi ürettiği satırı hiç silmedi/' +
+      'temizlemedi, ya da (c) approval_requests/admin_audit_logs delta ise: ' +
+      'yeni bir kod yolu bu tabloya main.plans/agreements/' +
+      'agreement_transactions\'a FK\'siz (polimorfik entity_id) bir satır ' +
+      'yazdı ve cleanupTestPlans/cleanupTestAgreements bu yeni entity_type\'ı ' +
+      'kapsamıyor (T-060 sınıfı hata — bkz. test/helpers/e2e-row-count.js).';
     // eslint-disable-next-line no-console
     console.error(msg);
     process.exitCode = 1;

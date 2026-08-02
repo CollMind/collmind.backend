@@ -17,7 +17,12 @@
  *   - Sales-actuals "2027-*" fiscalPeriod kullanır → cleanupSalesActuals.
  *   - Plan/agreement DELETE endpoint'i olmadığından (yalnızca DRAFT plan silinebilir,
  *     agreement'ın DELETE'i yok) bu kayıtlar DB'de "E2E-ROLE-JOURNEY-*" olarak kalır;
- *     dev DB'de gürültü yaratmamak için testin sonunda mümkün olanlar temizlenir.
+ *     dev DB'de gürültü yaratmamak için testin sonunda mümkün olanlar temizlenir
+ *     (cleanupTestPlans/cleanupTestAgreements — T-060'tan itibaren bunların
+ *     ürettiği approval_requests/admin_audit_logs izlerini de kapsar).
+ *   - N9'un POST /users ile yarattığı tek-kullanımlık kullanıcı → cleanupTestUsers
+ *     (T-060; DELETE /users yok, önceden yalnız deactivate ediliyordu ve DB'de
+ *     kalıcı birikiyordu — main.users'ın %97'si).
  */
 
 import request from 'supertest';
@@ -33,6 +38,7 @@ import {
   cleanupSalesActuals,
   cleanupTestPlans,
   cleanupTestAgreements,
+  cleanupTestUsers,
 } from './helpers/seed-e2e';
 
 // ── Seed sabitleri — beforeAll'da KODA göre çözülür (hardcoded UUID YASAK:
@@ -101,6 +107,11 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
   let agreementSettlementId: string; // settlement close için
   let agreementReversalId: string; // reversal için
   let reversalTransactionId: string;
+
+  // T-060: N9 (scope-satırı-olmayan PLANNER) testinin POST /users ile
+  // yarattığı tek-kullanımlık kullanıcı(lar) — DELETE /users yok, afterAll'da
+  // cleanupTestUsers ile hard-delete edilir (bkz. o testin içindeki yorum).
+  const scratchUserIds: string[] = [];
 
   // T-036: erken-yakalama invaryantı — bu suite'in agreement fixture'ları
   // NKA-Q2 envelope'unu kullanıyor (bkz. C1/C7 startDate 2026-02-*).
@@ -196,6 +207,14 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       await cleanupTestAgreements(app, fixture.tenantId, 'E2E-');
     } catch (e) {
       console.warn('Cleanup (agreement) başarısız:', e);
+    }
+
+    // T-060: N9'un POST /users ile yarattığı kullanıcı(lar)ı hard-delete et
+    // (bkz. N9 testi içindeki yorum ve cleanupTestUsers JSDoc'u).
+    try {
+      await cleanupTestUsers(app, scratchUserIds);
+    } catch (e) {
+      console.warn('Cleanup (users) başarısız:', e);
     }
 
     // ── T-036 invaryantı: temizlik sonrası NKA-Q2 tam olarak koşum-öncesi
@@ -2884,8 +2903,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         expect(res.body.length).toBeGreaterThan(0);
       }
 
-      // Temizlik: test kullanıcısını deaktive et (silme endpoint'i yok / hard
-      // delete istenmiyor — deactivate en yakın temiz kapama).
+      // T-060: hard-delete afterAll'da cleanupTestUsers ile yapılır (DELETE
+      // /users endpoint'i yok, satır DB'de kalıcı birikiyordu — ölçüm:
+      // main.users'ın %97'si, 289 satır, bu tek testten). Deactivate burada
+      // best-effort defense-in-depth olarak kalır: suite afterAll'a hiç
+      // ulaşmadan çökerse (örn. beforeAll/diğer bir test throw ederse) bu
+      // kullanıcı en azından aktif kalmaz.
+      scratchUserIds.push(createUserRes.body.id);
       try {
         await request(app.getHttpServer())
           .post(`/users/${createUserRes.body.id}/deactivate`)
