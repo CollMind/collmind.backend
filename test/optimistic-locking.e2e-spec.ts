@@ -1036,10 +1036,18 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
         .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
         .expect(200);
 
+      // T-056 adım 5 fixture düzeltmesi (bkz. role-journey.e2e-spec.ts'in
+      // createT029TestPlan'ındaki aynı not): `VIS_LS` (LUMPSUM_SPEND)
+      // `calculateAllSpendsForSKU` içinde her zaman 0 döner
+      // (`spend-calculation.service.ts:165-167`) — bu testler artık
+      // approve() sonrası kova başına COMMIT sayısını doğruladığı için
+      // (T-056 adım 5, 0009 §5.1 #6/#7) gerçekten hem on- hem off-invoice
+      // harcayan, ampirik doğrulanmış bir kombinasyon (A17'deki gibi
+      // MEC-DISCOUNT + CPP_OFF_PCT) gerekiyor.
       await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_WELLA_HC_500ML}/tactics`)
         .set(planner.authHeader())
-        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 }, version: 1 })
+        .send({ tactics: { 'MEC-DISCOUNT': 10, CPP_OFF_PCT: 5 }, version: 1 })
         .expect(200);
 
       const recalcRes = await request(app.getHttpServer())
@@ -1142,12 +1150,28 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
           .send({ comments: 'second' });
         expect(second.status).toBe(400);
 
+        // T-056 adım 5 (0009 §5.1 #6): fixture (CPP_ON_PCT + VIS_LS) hem
+        // on- hem off-invoice harcıyor -> submit artık ON_INVOICE +
+        // OFF_INVOICE kovalarına ayrı RESERVE yazıyor (TOTAL kova değil),
+        // dolayısıyla approve de İKİ COMMIT üretir (kova başına bir). "no
+        // double COMMIT" iddiası artık HAM SAYIYA değil, kova sayısına VE
+        // key düzeyinde distinct'liğe bağlı — sayı düzeyinde 1 beklemek bu
+        // adımdan sonra YANLIŞ pozitif üretirdi (2 farklı kovanın COMMIT'i
+        // "double-spend" değildir; aynı kovada 2. bir COMMIT olurdu).
         const commitTx = await dataSource.query(
-          `SELECT tx_type FROM main.budget_transactions
+          `SELECT tx_type, spend_type, idempotency_key FROM main.budget_transactions
            WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'COMMIT'`,
           [planId],
         );
-        expect(commitTx.length).toBe(1); // exactly one COMMIT — no double-spend
+        const commitBuckets = new Set(
+          commitTx.map((r: any) => r.spend_type),
+        );
+        const commitKeys = new Set(
+          commitTx.map((r: any) => r.idempotency_key),
+        );
+        expect(commitBuckets.size).toBe(2); // ON_INVOICE + OFF_INVOICE, fixture-guaranteed
+        expect(commitTx.length).toBe(commitBuckets.size); // exactly one COMMIT per bucket — no double-spend
+        expect(commitKeys.size).toBe(commitTx.length); // COMMIT keys are distinct
       });
     });
 
@@ -1184,15 +1208,24 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
           expect(statuses).toEqual([200, 400]);
 
           const commitTx = await dataSource.query(
-            `SELECT tx_type FROM main.budget_transactions
+            `SELECT tx_type, spend_type, idempotency_key FROM main.budget_transactions
              WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'COMMIT'`,
             [planId],
           );
-          // Mutation-proof anchor: if the FOR UPDATE lock or the
-          // status-CAS predicate were ever removed, this would
-          // intermittently observe 2 COMMIT rows (double-spend) instead of
-          // exactly 1 — the exact bug class T-034b closes.
-          expect(commitTx.length).toBe(1);
+          // T-056 adım 5 (0009 §5.1 #7): aynı gerekçe — fixture iki kova
+          // harcıyor, dolayısıyla tek başarılı approve İKİ COMMIT (kova
+          // başına bir) üretir. Mutation-proof anchor korunuyor, ama artık
+          // ham sayı yerine kova düzeyinde: her kovada en fazla (ve tam)
+          // bir COMMIT + distinct key. FOR UPDATE lock veya status-CAS
+          // kaldırılsaydı bu, herhangi bir kovada 2. bir COMMIT (aynı
+          // spend_type, farklı/aynı key) olarak görünürdü.
+          const raceBuckets = new Set(commitTx.map((r: any) => r.spend_type));
+          const raceKeys = new Set(
+            commitTx.map((r: any) => r.idempotency_key),
+          );
+          expect(raceBuckets.size).toBe(2); // ON_INVOICE + OFF_INVOICE, fixture-guaranteed
+          expect(commitTx.length).toBe(raceBuckets.size); // exactly one COMMIT per bucket — no double-spend
+          expect(raceKeys.size).toBe(commitTx.length); // COMMIT keys are distinct
         }
       });
     });

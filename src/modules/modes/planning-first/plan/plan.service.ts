@@ -801,34 +801,65 @@ export class PlanService {
         queryRunner.manager,
       );
 
-      // T-029 (SORUN 2): BRD plan state machine — Pending Approval → RESERVE.
-      // Best-effort: only reserves if a budget envelope already exists for
-      // this channel/period (auto-create-on-approve, via approve()'s
-      // autoCreateBudget flag, remains supported for plans submitted before
-      // any envelope exists).
+      // T-056 adım 5 (docs/analysis/0009 §4.1-§4.2, §6 adım 5): canlı submit
+      // yolu artık TOTAL kovaya değil, adım 3'ün `reserveTypedForPlan` tek
+      // rezervasyon motoruna geçer — on/off ayrımı ilk kez üründe erişilebilir
+      // olur (ADR 0005). Kaynak: adım 4'ün recalc'te yazdığı
+      // `plan.onInvoiceSpend`/`offInvoiceSpend` kolonları — submit anında
+      // yeniden hesaplama YAPILMAZ ([[T-046a]]'nın 1746 ms'lik yüzeyini canlı
+      // submit'e taşımamak ve rezerve edilen tutarı kullanıcının ekranda
+      // gördüğünden (`plan.totalSpend`, T-034f version CAS'ın koruduğu değer)
+      // ayırmamak için — 0009 §4.2 karar B).
       if (Number(plan.totalSpend) > 0) {
-        const envelope = await this.budgetService.findEnvelopeByDimensions(
-          tenantId,
+        const totalSpend = Number(plan.totalSpend);
+        const onInvoice = Number(plan.onInvoiceSpend) || 0;
+        const offInvoice = Number(plan.offInvoiceSpend) || 0;
+
+        // ADR 0005 K3 — bayat 0/0 → GÜRÜLTÜLÜ RED (sessiz onarım DEĞİL,
+        // 0009 §4.2'nin ilk taslağının aksine): kolonlar yalnız recalc
+        // koştuğunda yazılır (adım 4); hiç recalc edilmemiş/eski bir plan
+        // `0/0` taşır. Sessizce 0 rezerve etmek bütçeyi eksik düşürür — bu
+        // oturumda tekrar eden "sessiz sıfır" hata sınıfı (T-033/T-052/T-053).
+        if (onInvoice === 0 && offInvoice === 0) {
+          throw new BadRequestException({
+            statusCode: 400,
+            code: 'PLAN_SPEND_BREAKDOWN_STALE',
+            message:
+              `Plan ${id} has totalSpend=${totalSpend} but no on/off-invoice ` +
+              `spend breakdown recorded (0/0). Recalculate the plan (POST ` +
+              `/plans/${id}/recalculate) before submitting.`,
+          });
+        }
+
+        // Özdeşlik kapısı: `on + off === totalSpend` adım 4'ün inşaat gereği
+        // garanti ettiği bir değişmezdir (0009 §4.2/§2.5, tek türetim
+        // noktası — `buildMechanicValues`). Tutmuyorsa kolonlar bayat/bozuk
+        // demektir; sessizce farklı bir tutar rezerve etmek yerine reddet.
+        if (Math.abs(onInvoice + offInvoice - totalSpend) > 0.01) {
+          throw new BadRequestException({
+            statusCode: 400,
+            code: 'PLAN_SPEND_BREAKDOWN_INCONSISTENT',
+            message:
+              `Plan ${id} on/off-invoice breakdown (${onInvoice} + ` +
+              `${offInvoice} = ${onInvoice + offInvoice}) does not match ` +
+              `totalSpend (${totalSpend}). Recalculate the plan (POST ` +
+              `/plans/${id}/recalculate) before submitting.`,
+          });
+        }
+
+        // T-019/T-048/T-053 machinery, now reachable from the live UI route:
+        // gate-before-write (ADR 0004 Karar 2), only actually-spent types,
+        // deterministic ON→OFF order — all delegated to the single motor.
+        await this.budgetService.reserveTypedForPlan(
+          id,
+          { onInvoice, offInvoice },
           channelCode,
           plan.periodMonth,
+          'TRY',
+          tenantId,
+          userId,
+          queryRunner.manager,
         );
-        if (envelope) {
-          // T-019 Faz 1: 'TOTAL' bucket — this canonical path still reserves
-          // plan.totalSpend as a single undifferentiated amount (frontend's
-          // live route, docs/analysis/0008 §5.2 "Geriye uyum"). Key format
-          // and behaviour are BYTE-FOR-BYTE unchanged from before T-019.
-          await this.budgetService.reserveForPlan(
-            id,
-            plan.totalSpend,
-            channelCode,
-            plan.periodMonth,
-            'TRY',
-            tenantId,
-            userId,
-            'TOTAL',
-            queryRunner.manager,
-          );
-        }
       }
 
       // T-034b step 4: status-CAS write (second defense layer after the

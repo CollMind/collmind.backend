@@ -40,6 +40,14 @@ import {
   cleanupTestAgreements,
   cleanupTestUsers,
 } from './helpers/seed-e2e';
+// T-056 adım 5, A18 fixture düzeltmesi (Team Lead onaylı, 2026-08-03):
+// canlı `/submit` artık hiçbir zaman TOTAL kova yazmıyor (K1/§3.3) — A18'in
+// "legacy TOTAL RESERVE'li plan" ön koşulunu kurmak için gerçek servisleri
+// doğrudan çağırıyoruz (aynı `reserveForPlan(..., 'TOTAL', ...)` motoru,
+// `/submit`'in T-056 ÖNCESİ kullandığıyla birebir aynı key formatı/mantık).
+import { BudgetService } from '../src/modules/shared/budget/budget.service';
+import { ApprovalService } from '../src/modules/shared/approval/approval.service';
+import { ApprovalRequestType } from '../src/database/entities/approval-request.entity';
 
 // ── Seed sabitleri — beforeAll'da KODA göre çözülür (hardcoded UUID YASAK:
 // cleanup-and-seed master-data'yı yeniden yaratınca id'ler değişir; kod sabittir) ──
@@ -1067,10 +1075,23 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
         .expect(200);
 
+      // T-056 adım 5 fixture düzeltmesi (canlı DB ölçümüyle bulundu):
+      // `VIS_LS` (LUMPSUM_SPEND kategorisi) `calculateAllSpendsForSKU`
+      // içinde HER ZAMAN 0 döner (`spend-calculation.service.ts:165-167`,
+      // "Lumpsum is calculated at FU level and distributed... return 0") —
+      // dağıtım hiçbir yerden (`calculateAllSpendsForFU` DAHİL,
+      // `distributeSpendToSKUs` hiç çağrılmıyor) tetiklenmiyor. Bu, T-056'dan
+      // BAĞIMSIZ, önceden var olan bir spend-calculation boşluğu (ayrı task
+      // gerektirir); `CPP_ON_PCT + VIS_LS` kombinasyonu bu yüzden hiçbir
+      // zaman off-invoice > 0 üretmiyordu (yalnız TOTAL kova tek bir sayı
+      // taşıdığı için T-056'dan önce görünmezdi). A17/A18'de kanıtlanmış
+      // çalışan kombinasyona (`MEC-DISCOUNT` on-invoice + `CPP_OFF_PCT`
+      // off-invoice) geçildi — her iki tipin de gerçekten > 0 harcandığı
+      // ampirik olarak doğrulanmış (bkz. A17 `onAmount1`/`offAmount1`).
       await request(app.getHttpServer())
         .patch(`/plans/${t029PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
         .set(planner.authHeader())
-        .send({ tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 }, version: 1 })
+        .send({ tactics: { 'MEC-DISCOUNT': 10, CPP_OFF_PCT: 5 }, version: 1 })
         .expect(200);
 
       const recalcRes = await request(app.getHttpServer())
@@ -1119,20 +1140,38 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       ]);
 
       const budgetTxAfterSubmit = await dataSource.query(
-        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY spend_type ASC NULLS LAST, created_at ASC`,
+        [t029PlanId],
+      );
+      const planRowAfterSubmit = await dataSource.query(
+        `SELECT total_spend FROM main.plans WHERE id = $1`,
         [t029PlanId],
       );
       record({
         step: 'A14b',
         role: '-',
         endpoint: 'DB: main.budget_transactions (submit sonrası)',
-        expected: '1x RESERVE (POSTED)',
+        expected:
+          '2x RESERVE (POSTED) — ON_INVOICE + OFF_INVOICE, toplam plan.totalSpend’e eşit',
         actual: JSON.stringify(budgetTxAfterSubmit),
-        note: 'T-029 FIX (SORUN 2): budget.service.ts#reserveForPlan artık RESERVE tipi üretiyor (önceden yanlışlıkla her zaman COMMIT üretiyordu → /reserved endpoint plan rezervasyonları için hep 0 dönüyordu).',
+        note: "T-056 adım 5 (0009 §5.1 #1): canlı /submit artık TOTAL kova yerine reserveTypedForPlan'ı çağırıyor — T-029'un tek-satır iddiası, iki tipli satır + tutar özdeşliği iddiasına SIKILAŞTIRILDI (bu tutar iddiası bugüne kadar hiç yoktu).",
       });
-      expect(budgetTxAfterSubmit.length).toBe(1);
-      expect(budgetTxAfterSubmit[0].tx_type).toBe('RESERVE');
-      expect(budgetTxAfterSubmit[0].tx_status).toBe('POSTED');
+      expect(budgetTxAfterSubmit.length).toBe(2);
+      for (const tx of budgetTxAfterSubmit) {
+        expect(tx.tx_type).toBe('RESERVE');
+        expect(tx.tx_status).toBe('POSTED');
+      }
+      const onTxA14b = budgetTxAfterSubmit.find(
+        (r: any) => r.spend_type === 'ON_INVOICE',
+      );
+      const offTxA14b = budgetTxAfterSubmit.find(
+        (r: any) => r.spend_type === 'OFF_INVOICE',
+      );
+      expect(Number(onTxA14b?.amount)).toBeGreaterThan(0);
+      expect(Number(offTxA14b?.amount)).toBeGreaterThan(0);
+      expect(
+        Number(onTxA14b.amount) + Number(offTxA14b.amount),
+      ).toBeCloseTo(Number(planRowAfterSubmit[0].total_spend), 2);
 
       if (envelopeId) {
         const reservedRes = await request(app.getHttpServer())
@@ -1176,30 +1215,44 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       ]);
 
       const budgetTxAfterApprove = await dataSource.query(
-        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY spend_type ASC NULLS LAST, created_at ASC`,
         [t029PlanId],
       );
       record({
         step: 'A14e',
         role: '-',
         endpoint: 'DB: main.budget_transactions (approve sonrası)',
-        expected: 'RESERVE + RELEASE(convert) + COMMIT (aynı tutar)',
+        expected:
+          'ON_INVOICE ve OFF_INVOICE kovalarının HER İKİSİNDE de RESERVE + RELEASE(convert) + COMMIT (kova içi aynı tutar)',
         actual: JSON.stringify(budgetTxAfterApprove),
-        note: "T-029 FIX (SORUN 2): budget.service.ts#commitReservedForPlan, submit'teki RESERVE'i RELEASE ile netleyip COMMIT'e çeviriyor (BRD: Approved → COMMIT).",
+        note: "T-056 adım 5 (0009 §5.1 #2): T-029'un ilk `.find`'a dayalı (sıralamaya bağlı, kırılgan) eşitliği kova bazlı eşitliğe SIKILAŞTIRILDI — her spend_type için ayrı RESERVE/COMMIT karşılaştırması.",
       });
       const types = budgetTxAfterApprove.map((r: any) => r.tx_type);
-      expect(types).toContain('RESERVE');
-      expect(types).toContain('COMMIT');
+      const bucketsWithReserveA14e = new Set(
+        budgetTxAfterApprove
+          .filter((r: any) => r.tx_type === 'RESERVE')
+          .map((r: any) => r.spend_type),
+      );
+      expect(bucketsWithReserveA14e.size).toBe(2);
+      expect(types.filter((t: string) => t === 'COMMIT').length).toBe(
+        bucketsWithReserveA14e.size,
+      );
       expect(
         types.filter((t: string) => t === 'RELEASE').length,
-      ).toBeGreaterThanOrEqual(1);
-      const reserveAmt = Number(
-        budgetTxAfterApprove.find((r: any) => r.tx_type === 'RESERVE')?.amount,
-      );
-      const commitAmt = Number(
-        budgetTxAfterApprove.find((r: any) => r.tx_type === 'COMMIT')?.amount,
-      );
-      expect(commitAmt).toBe(reserveAmt);
+      ).toBeGreaterThanOrEqual(bucketsWithReserveA14e.size);
+      for (const bucket of bucketsWithReserveA14e) {
+        const reserveAmt = Number(
+          budgetTxAfterApprove.find(
+            (r: any) => r.tx_type === 'RESERVE' && r.spend_type === bucket,
+          )?.amount,
+        );
+        const commitAmt = Number(
+          budgetTxAfterApprove.find(
+            (r: any) => r.tx_type === 'COMMIT' && r.spend_type === bucket,
+          )?.amount,
+        );
+        expect(commitAmt).toBe(reserveAmt);
+      }
 
       if (envelopeId) {
         const reservedAfter = await request(app.getHttpServer())
@@ -1266,26 +1319,46 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       );
 
       const budgetTxAfterReject = await dataSource.query(
-        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY spend_type ASC NULLS LAST, created_at ASC`,
         [rejectPlanId],
       );
       record({
         step: 'A15b',
         role: '-',
         endpoint: 'DB: main.budget_transactions (reject sonrası)',
-        expected: 'RESERVE + RELEASE (aynı tutar)',
+        expected:
+          'ON_INVOICE ve OFF_INVOICE kovalarının İKİSİNDE de RESERVE + RELEASE (kova içi aynı tutar, kova net’i 0)',
         actual: JSON.stringify(budgetTxAfterReject),
-        note: 'T-029 FIX (SORUN 2): PlanService.reject() artık budgetService.releaseForPlan() çağırıyor (BRD: Rejected → RELEASE) — önceden reject bütçeyi hiç serbest bırakmıyordu (bütçe sızıntısı).',
+        note: "T-056 adım 5 (0009 §5.1 #3): kova bazlı eşitlik + net(kova)=0 — T-053 sınıfı sızıntı (RELEASE'in yanlış/eksik kovaya yazılması) doğrudan kilitleniyor.",
       });
-      const reserveTx = budgetTxAfterReject.find(
-        (r: any) => r.tx_type === 'RESERVE',
+      const bucketsAfterRejectA15 = new Set(
+        budgetTxAfterReject.map((r: any) => r.spend_type),
       );
-      const releaseTx = budgetTxAfterReject.find(
-        (r: any) => r.tx_type === 'RELEASE',
-      );
-      expect(reserveTx).toBeDefined();
-      expect(releaseTx).toBeDefined();
-      expect(Number(releaseTx.amount)).toBe(Number(reserveTx.amount));
+      expect(bucketsAfterRejectA15.size).toBe(2);
+      for (const bucket of bucketsAfterRejectA15) {
+        const reserveAmt = Number(
+          budgetTxAfterReject.find(
+            (r: any) => r.tx_type === 'RESERVE' && r.spend_type === bucket,
+          )?.amount,
+        );
+        const releaseAmt = Number(
+          budgetTxAfterReject.find(
+            (r: any) => r.tx_type === 'RELEASE' && r.spend_type === bucket,
+          )?.amount,
+        );
+        expect(reserveAmt).toBeGreaterThan(0);
+        expect(releaseAmt).toBe(reserveAmt);
+        const net = budgetTxAfterReject
+          .filter((r: any) => r.spend_type === bucket)
+          .reduce((n: number, tx: any) => {
+            const amt = Number(tx.amount);
+            if (tx.tx_type === 'RESERVE' || tx.tx_type === 'COMMIT')
+              return n + amt;
+            if (tx.tx_type === 'RELEASE') return n - amt;
+            return n;
+          }, 0);
+        expect(net).toBe(0);
+      }
 
       // Temizlik notu: REJECTED plan silinemez (yalnızca DRAFT silinebilir,
       // plan.controller.ts @Delete Roles/guard) — bu kayıt DB'de
@@ -1392,7 +1465,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(returnRes.body.status).toBe('DRAFT');
 
       const budgetTxAfterReturn = await dataSource.query(
-        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY spend_type ASC NULLS LAST, created_at ASC`,
         [fullLoopPlanId],
       );
       record({
@@ -1400,11 +1473,27 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         role: '-',
         endpoint: 'DB: main.budget_transactions (return-to-draft sonrası)',
         expected:
-          'RESERVE + RELEASE ile aynı (return-to-draft bütçeye dokunmaz — yeni RESERVE yalnızca resubmit ile)',
+          '4 satır (ON_INVOICE + OFF_INVOICE kovalarının HER İKİSİNDE de RESERVE+RELEASE) — her kova net 0 (return-to-draft bütçeye dokunmaz)',
         actual: JSON.stringify(budgetTxAfterReturn),
-        note: 'T-033: BudgetService çağrılmıyor — reject() zaten RELEASE etmişti (T-029); işlem satır sayısı burada değişmemeli.',
+        note: 'T-033/T-056 adım 5 (0009 §5.1 #4): ham satır sayısı (1 kova/2 satır) yerine kova bazlı net iddiasına SIKILAŞTIRILDI — BudgetService çağrılmıyor, reject() zaten her iki kovayı da RELEASE etmişti (T-029/T-053).',
       });
-      expect(budgetTxAfterReturn.length).toBe(2); // RESERVE + RELEASE only
+      expect(budgetTxAfterReturn.length).toBe(4); // 2 kova x (RESERVE+RELEASE)
+      const bucketsAfterReturn = new Set(
+        budgetTxAfterReturn.map((r: any) => r.spend_type),
+      );
+      expect(bucketsAfterReturn.size).toBe(2);
+      for (const bucket of bucketsAfterReturn) {
+        const net = budgetTxAfterReturn
+          .filter((r: any) => r.spend_type === bucket)
+          .reduce((n: number, tx: any) => {
+            const amt = Number(tx.amount);
+            if (tx.tx_type === 'RESERVE' || tx.tx_type === 'COMMIT')
+              return n + amt;
+            if (tx.tx_type === 'RELEASE') return n - amt;
+            return n;
+          }, 0);
+        expect(net).toBe(0);
+      }
 
       // ── 4) RESUBMIT (must work from DRAFT again) ────────────────────────
       const resubmitRes = await request(app.getHttpServer())
@@ -1448,23 +1537,43 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       );
 
       const finalBudgetTx = await dataSource.query(
-        `SELECT tx_type, tx_status, amount FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY created_at ASC`,
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions WHERE source_type = 'PLAN' AND source_id = $1 ORDER BY spend_type ASC NULLS LAST, created_at ASC`,
         [fullLoopPlanId],
       );
       record({
         step: 'A16e',
         role: '-',
         endpoint: 'DB: main.budget_transactions (tam döngü sonrası)',
-        expected: 'RESERVE, RELEASE, RESERVE, RELEASE(convert), COMMIT',
+        expected:
+          'RESERVE x4, RELEASE (≥4), COMMIT x2 — ON_INVOICE ve OFF_INVOICE kovalarının HER İKİSİNDE jenerasyon×kova matrisi (RESERVE gen1, RELEASE gen1, RESERVE gen2, RELEASE(convert) gen2, COMMIT gen2); her kova net = o kovanın COMMIT toplamı',
         actual: JSON.stringify(finalBudgetTx),
-        note: 'T-033: return-to-draft rezerv KURMADI (satır eklemedi) — yalnızca resubmit yeni bir RESERVE üretti; approve bunu COMMIT’e çevirdi (T-029 semantiği korunuyor).',
+        note: 'T-033/T-056 adım 5 (0009 §5.1 #5): tek kovanın RESERVE 2/COMMIT 1 sayımı, iki kovanın jenerasyon×kova matrisine (RESERVE 4/COMMIT 2) SIKILAŞTIRILDI — return-to-draft satır eklemedi, yalnızca resubmit her iki kovada da yeni RESERVE üretti; approve bunları COMMIT’e çevirdi.',
       });
       const finalTypes = finalBudgetTx.map((r: any) => r.tx_type);
-      expect(finalTypes.filter((t: string) => t === 'RESERVE').length).toBe(2);
-      expect(finalTypes.filter((t: string) => t === 'COMMIT').length).toBe(1);
+      expect(finalTypes.filter((t: string) => t === 'RESERVE').length).toBe(4);
+      expect(finalTypes.filter((t: string) => t === 'COMMIT').length).toBe(2);
       expect(
         finalTypes.filter((t: string) => t === 'RELEASE').length,
-      ).toBeGreaterThanOrEqual(2);
+      ).toBeGreaterThanOrEqual(4);
+      const finalBuckets = new Set(finalBudgetTx.map((r: any) => r.spend_type));
+      expect(finalBuckets.size).toBe(2);
+      for (const bucket of finalBuckets) {
+        const net = finalBudgetTx
+          .filter((r: any) => r.spend_type === bucket)
+          .reduce((n: number, tx: any) => {
+            const amt = Number(tx.amount);
+            if (tx.tx_type === 'RESERVE' || tx.tx_type === 'COMMIT')
+              return n + amt;
+            if (tx.tx_type === 'RELEASE') return n - amt;
+            return n;
+          }, 0);
+        const commitTotal = finalBudgetTx
+          .filter(
+            (r: any) => r.spend_type === bucket && r.tx_type === 'COMMIT',
+          )
+          .reduce((s: number, tx: any) => s + Number(tx.amount), 0);
+        expect(net).toBe(commitTotal);
+      }
 
       // Sanity: final plan row's stale rejection/submission-of-record fields
       // were cleared by return-to-draft's DRAFT reset — the live row should
@@ -1767,24 +1876,74 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .send({ tactics: { 'MEC-DISCOUNT': 10, CPP_OFF_PCT: 5 }, version: 1 })
         .expect(200);
 
-      // /submit (TOTAL kova) plan.totalSpend'i OKUR (yeniden hesaplamaz) —
-      // ilk submit'in reserveForPlan(bucket='TOTAL') çağrısına girmesi için
-      // önce recalculate ile stored totalSpend'i doldurmak gerekiyor
-      // (`plan.service.ts:809`: `Number(plan.totalSpend) > 0` kapısı).
+      // plan.totalSpend'i doldurmak için recalculate.
       const recalcRes = await request(app.getHttpServer())
         .post(`/plans/${f1PlanId}/recalculate`)
         .set(planner.authHeader())
         .send({})
         .expect(200);
       expect(Number(recalcRes.body.totalSpend)).toBeGreaterThan(0);
-      const f1Version = recalcRes.body.version;
 
-      // ── 1) İLK SUBMIT — CANLI ROTA, TOTAL kova ──────────────────────────
-      await request(app.getHttpServer())
-        .post(`/plans/${f1PlanId}/submit`)
+      // ── 1) İLK "SUBMIT" — LEGACY TOTAL KOVA SİMÜLASYONU ─────────────────
+      // Team Lead onayı (2026-08-03): T-056 adım 5'ten sonra canlı `/submit`
+      // ARTIK HİÇBİR ZAMAN TOTAL yazmıyor (K1/§3.3'ün doğrudan sonucu —
+      // TOTAL yalnızca okuma/keşif tarafında yaşıyor); bu, 0009 §5.2 madde
+      // 11'in zaten öngördüğü "elle kurulmuş TOTAL satırı"dır. A18'in
+      // konusu F1'in KORUMASI (bu tür bir legacy/tarihsel satırın approve'da
+      // hayalet COMMIT üretmemesi) — kurulum YÖNTEMİ değil. Bu yüzden
+      // canlı `/submit`'in T-056 ÖNCESİ kullandığı GERÇEK servisleri
+      // (raw SQL DEĞİL) doğrudan çağırıyoruz: `reserveForPlan(..., 'TOTAL',
+      // ...)` — üretimdeki `RESERVE|PLAN|<id>|<env>` (soneksiz) key
+      // formatının BİREBİR AYNISINI üretir (bkz. `budget.service.ts:507-`).
+      const budgetService = app.get(BudgetService);
+      const approvalService = app.get(ApprovalService);
+
+      const f1PlanForTotal = await request(app.getHttpServer())
+        .get(`/plans/${f1PlanId}`)
         .set(planner.authHeader())
-        .send({ version: f1Version })
         .expect(200);
+      const f1ChannelCode = f1PlanForTotal.body.channel.code;
+      const f1PeriodMonth = f1PlanForTotal.body.periodMonth;
+      const f1TotalSpend = Number(f1PlanForTotal.body.totalSpend);
+      expect(f1TotalSpend).toBeGreaterThan(0);
+
+      // T-019 Faz 1 döneminde `/submit`'in yaptığı BİREBİR AYNI çağrı
+      // (bkz. git history, plan.service.ts#submit T-056 öncesi): TOTAL
+      // kovaya tek, ayrıştırılmamış tutar.
+      await budgetService.reserveForPlan(
+        f1PlanId,
+        f1TotalSpend,
+        f1ChannelCode,
+        f1PeriodMonth,
+        'TRY',
+        fixture.tenantId,
+        planner.userId,
+        'TOTAL',
+      );
+
+      // Plan durumunu da eski `/submit`'in yaptığı gibi PENDING_APPROVAL'a
+      // taşımak gerekiyor (reject() PENDING_APPROVAL + approvalRequestId
+      // + submittedById şartlarını arıyor, plan.service.ts:1186-1198) —
+      // gerçek ApprovalService.createRequest ile approval_request satırı
+      // kuruluyor (FK/referential integrity korunur), yalnızca durum
+      // GEÇİŞİ (status/submitted_by/approval_request_id) SQL ile yazılıyor
+      // çünkü bunu tetikleyecek "eski tipte" bir canlı endpoint artık yok.
+      const f1ApprovalRequest = await approvalService.createRequest(
+        {
+          requestType: ApprovalRequestType.PLAN,
+          entityType: 'PLAN',
+          entityId: f1PlanId,
+        },
+        fixture.tenantId,
+        planner.userId,
+      );
+      await dataSource.query(
+        `UPDATE main.plans
+            SET status = 'PENDING_APPROVAL', approval_request_id = $2,
+                submitted_by = $3, submitted_at = now(), version = version + 1
+          WHERE id = $1`,
+        [f1PlanId, f1ApprovalRequest.id, planner.userId],
+      );
 
       const reserveAfterSubmit1 = await dataSource.query(
         `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions

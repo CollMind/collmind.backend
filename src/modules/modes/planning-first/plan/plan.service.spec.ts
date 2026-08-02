@@ -127,6 +127,9 @@ describe('PlanService', () => {
             findEnvelopeByDimensions: jest.fn(),
             getBudgetStatus: jest.fn(),
             reserveForPlan: jest.fn(),
+            // T-056 adım 5: canlı `/submit` artık TOTAL kova yerine bunu
+            // çağırıyor (0009 §6 adım 5).
+            reserveTypedForPlan: jest.fn(),
             commitReservedForPlan: jest.fn(),
             commitAllReservedForPlan: jest.fn(),
             releaseForPlan: jest.fn(),
@@ -378,24 +381,141 @@ describe('PlanService', () => {
         id: 'approval-request-1',
       } as any);
       planRepo.updateStatusCas.mockResolvedValue(1);
-      budgetService.findEnvelopeByDimensions.mockResolvedValue({
-        id: 'envelope-1',
-      } as any);
-      budgetService.reserveForPlan.mockResolvedValue({} as any);
+      budgetService.reserveTypedForPlan.mockResolvedValue([{} as any]);
 
       await service.submit(mockPlanId, mockTenantId, mockUserId, undefined, 1);
 
-      expect(budgetService.reserveForPlan).toHaveBeenCalledWith(
+      // T-056 adım 5 (0009 §5.1 #8): canlı submit artık TOTAL kova yerine
+      // adım 3'ün tek rezervasyon motorunu, `plan.onInvoiceSpend`/
+      // `offInvoiceSpend` (adım 4'ün recalc kolonları) üzerinden çağırır —
+      // `plan.totalSpend` tek/ayrıştırılmamış tutar olarak DEĞİL.
+      expect(budgetService.reserveTypedForPlan).toHaveBeenCalledWith(
         mockPlanId,
-        planWithFus.totalSpend,
+        { onInvoice: planWithFus.onInvoiceSpend, offInvoice: planWithFus.offInvoiceSpend },
         planWithFus.channel?.code,
         planWithFus.periodMonth,
         'TRY',
         mockTenantId,
         mockUserId,
-        'TOTAL',
         queryRunnerManager,
       );
+      // Legacy TOTAL kova yazıcısı: yakınsama sonrası submit'ten hiç
+      // çağrılmaz (K1 — TOTAL yalnız okuma/keşif tarafında yaşıyor).
+      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+    });
+
+    it('T-056 adım 5: does not fall back to the legacy TOTAL reserveForPlan when reserveTypedForPlan rejects (insufficient budget)', async () => {
+      // ADR 0004 Karar 2 atomikliği: `overallSufficient=false` durumunda
+      // `reserveTypedForPlan` reddeder ve HİÇBİR satır yazmaz (0009 §3.2
+      // madde 1). Bu test, submit'in bu reddi yuttuğu/legacy TOTAL yoluna
+      // düştüğü bir gizli fallback İCAT ETMEDİĞİNİ kilitler.
+      const planWithFus = {
+        ...mockPlan,
+        totalSpend: 100000,
+        planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
+      } as Plan;
+      const lockedPlan = { ...planWithFus, version: 1 } as Plan;
+
+      planRepo.findById.mockResolvedValueOnce(planWithFus as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(lockedPlan);
+      queryRunnerManager.count.mockResolvedValue(1);
+      approvalService.createRequest.mockResolvedValue({
+        id: 'approval-request-1',
+      } as any);
+      planRepo.updateStatusCas.mockResolvedValue(1);
+      budgetService.reserveTypedForPlan.mockRejectedValue(
+        new BadRequestException('Insufficient budget.'),
+      );
+
+      await expect(
+        service.submit(mockPlanId, mockTenantId, mockUserId, undefined, 1),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+    });
+
+    it('T-056 adım 5 (ADR 0005 K3): rejects with a noisy error when totalSpend > 0 but on/off breakdown is stale 0/0', async () => {
+      // K3 (bağlayıcı, ADR 0005): sessizce 0 rezerve etmek YASAK. Kolonlar
+      // yalnız recalc koştuğunda yazılır (adım 4) — hiç recalc edilmemiş bir
+      // plan 0/0 taşır ve submit bunu GÜRÜLTÜLÜ reddetmelidir (sessiz-onarım
+      // DEĞİL).
+      const staleplan = {
+        ...mockPlan,
+        totalSpend: 100000,
+        onInvoiceSpend: 0,
+        offInvoiceSpend: 0,
+        planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
+      } as Plan;
+      const lockedPlan = { ...staleplan, version: 1 } as Plan;
+
+      planRepo.findById.mockResolvedValueOnce(staleplan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(lockedPlan);
+      queryRunnerManager.count.mockResolvedValue(1);
+      planRepo.updateStatusCas.mockResolvedValue(1);
+
+      const err: unknown = await service
+        .submit(mockPlanId, mockTenantId, mockUserId, undefined, 1)
+        .catch((e) => e);
+
+      // Mutasyon-farkındalı: yalnızca "bir BadRequestException fırlatıldı"
+      // İDDİASI yetersiz — 0+0 durumunda özdeşlik kapısı (on+off!=totalSpend)
+      // DA tetiklenir (K3'ün koşulu, totalSpend>0 iken özdeşlik kapısının
+      // koşulunun kesin bir alt kümesidir). K3 satırı kaldırılırsa istek
+      // YİNE reddedilir — ama `PLAN_SPEND_BREAKDOWN_INCONSISTENT` koduyla,
+      // `PLAN_SPEND_BREAKDOWN_STALE` DEĞİL. Spesifik `code` alanını
+      // doğrulamak, K3'ün AYRI bir satır olarak ÇALIŞTIĞINI (yalnızca genel
+      // "reddedildi mi" sonucunu değil) kanıtlamanın tek yolu.
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).toEqual(
+        expect.objectContaining({ code: 'PLAN_SPEND_BREAKDOWN_STALE' }),
+      );
+
+      expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
+      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+    });
+
+    it('T-056 adım 5: rejects when on + off does not match totalSpend (stale/corrupt breakdown, identity kapısı)', async () => {
+      // 0009 §4.2/§2.5 özdeşliği (`on + off === totalSpend`) adım 4'ün
+      // inşaat gereği garanti ettiği bir değişmezdir; tutmuyorsa kolonlar
+      // bayat/bozuktur — sessizce farklı bir tutar rezerve etmek yerine
+      // reddet.
+      const inconsistentPlan = {
+        ...mockPlan,
+        totalSpend: 100000,
+        onInvoiceSpend: 60000,
+        offInvoiceSpend: 30000, // 60000 + 30000 = 90000 != 100000
+        planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
+      } as Plan;
+      const lockedPlan = { ...inconsistentPlan, version: 1 } as Plan;
+
+      planRepo.findById.mockResolvedValueOnce(inconsistentPlan as Plan);
+      planRepo.findByIdForUpdate.mockResolvedValue(lockedPlan);
+      queryRunnerManager.count.mockResolvedValue(1);
+      planRepo.updateStatusCas.mockResolvedValue(1);
+
+      const err: unknown = await service
+        .submit(mockPlanId, mockTenantId, mockUserId, undefined, 1)
+        .catch((e) => e);
+
+      // Bu senaryoda K3 TETİKLENMEZ (on=60000, off=30000 — ikisi de sıfır
+      // değil) — yalnızca özdeşlik kapısı devrede, bu yüzden bu test K3'ten
+      // BAĞIMSIZ olarak özdeşlik kapısını izole eder (K3 testinin aksine).
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).toEqual(
+        expect.objectContaining({ code: 'PLAN_SPEND_BREAKDOWN_INCONSISTENT' }),
+      );
+
+      expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
+      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
     });
 
     it('should fail if plan is not in DRAFT status', async () => {
