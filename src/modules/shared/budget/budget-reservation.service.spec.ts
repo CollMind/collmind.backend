@@ -7,6 +7,7 @@ import {
   BudgetTransactionType,
   BudgetTransactionStatus,
 } from '../../../database/entities/budget-transaction.entity';
+import { BudgetSpendType } from '../../../database/entities/budget-envelope.entity';
 
 const TENANT_ID = 'tenant-001';
 const USER_ID = 'user-001';
@@ -539,6 +540,165 @@ describe('BudgetReservationService', () => {
       // net = 100 + 100 - 100 - 100 = 0 -> no-op, no third RELEASE.
       expect(result).toEqual([]);
       expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // T-053 fix — bucket-aware grouping (envelopeId, spendType), NOT envelopeId
+  // alone. docs/analysis/0008 §5.4/§7 T4. Reproduces the plan-side
+  // reject->resubmit live bug (task T-053): a plan's RESERVE rows can carry
+  // DIFFERENT spendTypes on the SAME (Faz 1 UNSPLIT) envelope.
+  // -------------------------------------------------------------------------
+
+  describe('T-053 fix — kova-farkındalı (envelopeId, spendType) gruplama', () => {
+    it('two spend-type buckets on the SAME envelope -> TWO typed RELEASE rows, each carrying its own spendType and net', async () => {
+      mockBudgetRepository.findTransactionsBySource.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 10000,
+          spendType: BudgetSpendType.ON_INVOICE,
+          idempotencyKey: `RESERVE|PLAN|${PLAN_ID}|${ENVELOPE_ID}|ON_INVOICE`,
+        }),
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 4500,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          idempotencyKey: `RESERVE|PLAN|${PLAN_ID}|${ENVELOPE_ID}|OFF_INVOICE`,
+        }),
+      ]);
+      mockBudgetRepository.createTransaction.mockImplementation((tx: any) =>
+        Promise.resolve({ ...tx, id: `release-${tx.spendType}` }),
+      );
+
+      const result = await service.releasePlanReservation(
+        PLAN_ID,
+        TENANT_ID,
+        USER_ID,
+        'REJECT',
+      );
+
+      // Pre-fix: this would have been ONE untyped RELEASE of 14500 — the
+      // exact bug that made resubmit's bucket-scoped netOutstanding blind
+      // to the release (see task T-053 / A17 e2e proof).
+      expect(result).toHaveLength(2);
+      expect(mockBudgetRepository.createTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          envelopeId: ENVELOPE_ID,
+          spendType: BudgetSpendType.ON_INVOICE,
+          amount: 10000,
+          idempotencyKey: `RELEASE|PLAN|${PLAN_ID}|${ENVELOPE_ID}|ON_INVOICE`,
+        }),
+        undefined,
+      );
+      expect(mockBudgetRepository.createTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          envelopeId: ENVELOPE_ID,
+          spendType: BudgetSpendType.OFF_INVOICE,
+          amount: 4500,
+          idempotencyKey: `RELEASE|PLAN|${PLAN_ID}|${ENVELOPE_ID}|OFF_INVOICE`,
+        }),
+        undefined,
+      );
+    });
+
+    it('UNTYPED bucket (spend_type IS NULL) keeps the EXACT pre-T-053 idempotency key format — no suffix', async () => {
+      mockBudgetRepository.findTransactionsBySource.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 5000,
+          spendType: null,
+          idempotencyKey: `RESERVE|PLAN|${PLAN_ID}|${ENVELOPE_ID}`,
+        }),
+      ]);
+      mockBudgetRepository.createTransaction.mockImplementation((tx: any) =>
+        Promise.resolve({ ...tx, id: 'release-untyped' }),
+      );
+
+      await service.releasePlanReservation(
+        PLAN_ID,
+        TENANT_ID,
+        USER_ID,
+        'REJECT',
+      );
+
+      expect(mockBudgetRepository.createTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          spendType: null,
+          idempotencyKey: `RELEASE|PLAN|${PLAN_ID}|${ENVELOPE_ID}`, // NO suffix
+        }),
+        undefined,
+      );
+    });
+
+    it('R2 regression guard: replaying a pre-T-019 (untyped) already-released source is a no-op — the UNTYPED key must still match the OLD row', async () => {
+      // Simulates a source+envelope pair that was released BEFORE T-053
+      // (untyped key, no suffix) — a second call (e.g. a duplicate
+      // compensation retry) must find it via the SAME key and no-op, not
+      // write a second (now-typed-format) RELEASE on top -> double refund.
+      mockBudgetRepository.findTransactionsBySource.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 5000,
+          spendType: null,
+        }),
+        buildTx({
+          txType: BudgetTransactionType.RELEASE,
+          amount: 5000,
+          spendType: null,
+          idempotencyKey: `RELEASE|PLAN|${PLAN_ID}|${ENVELOPE_ID}`,
+        }),
+      ]);
+
+      const result = await service.releasePlanReservation(
+        PLAN_ID,
+        TENANT_ID,
+        USER_ID,
+        'REJECT',
+      );
+
+      expect(result).toEqual([]);
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('one bucket already net-zero (typed RELEASE exists), the other still outstanding -> releases ONLY the outstanding bucket', async () => {
+      mockBudgetRepository.findTransactionsBySource.mockResolvedValue([
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 10000,
+          spendType: BudgetSpendType.ON_INVOICE,
+        }),
+        buildTx({
+          txType: BudgetTransactionType.RELEASE,
+          amount: 10000,
+          spendType: BudgetSpendType.ON_INVOICE,
+          idempotencyKey: `RELEASE|PLAN|${PLAN_ID}|${ENVELOPE_ID}|ON_INVOICE`,
+        }),
+        buildTx({
+          txType: BudgetTransactionType.RESERVE,
+          amount: 4500,
+          spendType: BudgetSpendType.OFF_INVOICE,
+        }),
+      ]);
+      mockBudgetRepository.createTransaction.mockImplementation((tx: any) =>
+        Promise.resolve({ ...tx, id: 'release-off' }),
+      );
+
+      const result = await service.releasePlanReservation(
+        PLAN_ID,
+        TENANT_ID,
+        USER_ID,
+        'REJECT',
+      );
+
+      expect(result).toHaveLength(1);
+      expect(mockBudgetRepository.createTransaction).toHaveBeenCalledTimes(1);
+      expect(mockBudgetRepository.createTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          spendType: BudgetSpendType.OFF_INVOICE,
+          amount: 4500,
+        }),
+        undefined,
+      );
     });
   });
 });

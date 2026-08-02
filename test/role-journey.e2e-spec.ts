@@ -1462,6 +1462,227 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(finalPlanRow[0].submitted_by).toBe(planner.userId);
       expect(finalPlanRow[0].approved_by).toBe(manager.userId);
     });
+
+    it('A17. T-053 — submit-for-approval (tipli kova) → reject → resubmit tam döngüsü YENİ RESERVE yazmalı (SQL kanıtı)', async () => {
+      // A16'nın tipsiz ('TOTAL' bucket, PlanService#submit) ikizi — burada
+      // TİPLİ ('ON_INVOICE'/'OFF_INVOICE' bucket, ApprovalWorkflowService
+      // #submitForApproval) uçtan aynı reject→resubmit döngüsü kanıtlanıyor.
+      // A8c'deki gibi hem on- hem off-invoice mekanik girip submit-for-approval'ın
+      // İKİ RESERVE satırı yazmasını sağlıyoruz, sonra A16'daki gibi
+      // reject→return-to-draft→resubmit yapıyoruz. T-053 teşhisi: reject'in
+      // yazdığı RELEASE satırı spend_type=NULL (untyped) olduğu için,
+      // resubmit'in bucket-farkındalı netOutstanding hesabı (matchesBucket)
+      // bu RELEASE'i HİÇ görmüyor — eski RESERVE hâlâ "outstanding" görünüyor
+      // ve resubmit YENİ bir RESERVE yazmadan sessizce eski (zaten net'i
+      // sıfırlanmış) satırı döndürüyor.
+      const planner = await loginAs(app, 'PLANNER');
+      const manager = await loginAs(app, 'MANAGER');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-A17-T053-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const t053PlanId = createRes.body.id;
+
+      const fuRes = await request(app.getHttpServer())
+        .post(`/plans/${t053PlanId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
+        .expect(201);
+      const t053PlanFuId = fuRes.body.id;
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${t053PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const t053SkuId = planRes.body.planFus.find(
+        (f: any) => f.id === t053PlanFuId,
+      ).planSkus[0].skuId;
+
+      await request(app.getHttpServer())
+        .patch(
+          `/plans/${t053PlanId}/fus/${FU_WELLA_HC_500ML}/skus/${t053SkuId}/volume`,
+        )
+        .set(planner.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
+        .expect(200);
+
+      // MEC-DISCOUNT (on_invoice_discount) + CPP_OFF_PCT (off_invoice_discount)
+      // — aynı A8c'deki gibi, submit-for-approval'ın İKİ reserveBudgetForPlan
+      // çağrısının (ON sonra OFF) ikisinin de non-zero olmasını garanti eder.
+      await request(app.getHttpServer())
+        .patch(`/plans/${t053PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { 'MEC-DISCOUNT': 10, CPP_OFF_PCT: 5 }, version: 1 })
+        .expect(200);
+
+      // ── 1) İLK SUBMIT-FOR-APPROVAL ───────────────────────────────────────
+      const preSubmit1 = await request(app.getHttpServer())
+        .get(`/plans/${t053PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+
+      const submit1 = await request(app.getHttpServer())
+        .post(`/plans/${t053PlanId}/submit-for-approval`)
+        .set(planner.authHeader())
+        .send({
+          submissionNotes: 'T-053 e2e: ilk submit',
+          version: preSubmit1.body.version,
+        })
+        .expect(200);
+      expect(submit1.body.status).toBe('PENDING_APPROVAL');
+
+      const reserveAfterSubmit1 = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'
+          ORDER BY spend_type ASC NULLS LAST`,
+        [t053PlanId],
+      );
+      record({
+        step: 'A17a',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (ilk submit-for-approval sonrası)',
+        expected: '2 RESERVE satırı (ON_INVOICE + OFF_INVOICE)',
+        actual: JSON.stringify(reserveAfterSubmit1),
+        note: 'A8c ile aynı ön koşul — tipli kova RESERVE ikisi de yazılmış olmalı.',
+      });
+      expect(reserveAfterSubmit1.length).toBe(2);
+      const onAmount1 = Number(
+        reserveAfterSubmit1.find((r: any) => r.spend_type === 'ON_INVOICE')
+          ?.amount,
+      );
+      const offAmount1 = Number(
+        reserveAfterSubmit1.find((r: any) => r.spend_type === 'OFF_INVOICE')
+          ?.amount,
+      );
+      expect(onAmount1).toBeGreaterThan(0);
+      expect(offAmount1).toBeGreaterThan(0);
+
+      // ── 2) REJECT (MANAGER == CATEGORY_MANAGER fixture role, legacy
+      //    PlanService#reject — bkz. A16; budgetService.releaseForPlan'a
+      //    delege eder, submitForApproval ile aynı release motorunu kullanır) ──
+      const rejectRes = await request(app.getHttpServer())
+        .post(`/plans/${t053PlanId}/reject`)
+        .set(manager.authHeader())
+        .send({ reason: 'T-053 e2e: needs correction' })
+        .expect(200);
+      expect(rejectRes.body.status).toBe('REJECTED');
+
+      const releaseAfterReject = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, idempotency_key
+           FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RELEASE'
+          ORDER BY created_at ASC`,
+        [t053PlanId],
+      );
+      record({
+        step: 'A17b',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (reject sonrası, RELEASE satırları)',
+        expected:
+          'FIX ÖNCESİ: 1 tipsiz RELEASE (spend_type=NULL, tutar=on1+off1) · FIX SONRASI: 2 tipli RELEASE (ON_INVOICE=on1, OFF_INVOICE=off1)',
+        actual: JSON.stringify(releaseAfterReject),
+        note: 'T-053 teşhisi: releaseNetReservation yalnızca envelopeId ile grupluyor (kova-farkında değil).',
+      });
+
+      // ── 3) RETURN TO DRAFT ────────────────────────────────────────────────
+      const returnRes = await request(app.getHttpServer())
+        .post(`/plans/${t053PlanId}/return-to-draft`)
+        .set(planner.authHeader())
+        .expect(200);
+      expect(returnRes.body.status).toBe('DRAFT');
+
+      // ── 4) RESUBMIT-FOR-APPROVAL (T-053'ün asıl kanıtı) ─────────────────
+      const preSubmit2 = await request(app.getHttpServer())
+        .get(`/plans/${t053PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+
+      const submit2 = await request(app.getHttpServer())
+        .post(`/plans/${t053PlanId}/submit-for-approval`)
+        .set(planner.authHeader())
+        .send({
+          submissionNotes: 'T-053 e2e: resubmit (reject sonrası)',
+          version: preSubmit2.body.version,
+        });
+
+      record({
+        step: 'A17c',
+        role: 'PLANNER',
+        endpoint:
+          'POST /plans/:id/submit-for-approval (resubmit, reject sonrası)',
+        expected: 200,
+        actual: submit2.status,
+        note: `status=${submit2.body?.status}`,
+      });
+      expect(submit2.status).toBe(200);
+      expect(submit2.body.status).toBe('PENDING_APPROVAL');
+
+      const reserveAfterSubmit2 = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, idempotency_key, created_at
+           FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'
+          ORDER BY created_at ASC`,
+        [t053PlanId],
+      );
+      record({
+        step: 'A17d',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (resubmit sonrası, TÜM RESERVE satırları)',
+        expected:
+          '4 RESERVE satırı (2 ilk submit + 2 resubmit) — CANLI HATA varsa 2 kalır (yeni RESERVE hiç yazılmaz)',
+        actual: JSON.stringify(reserveAfterSubmit2),
+        note: "T-053 asıl kanıt: reserveForPlan bucket-scoped netOutstanding, tipsiz RELEASE'i görmediği için erken dönüyor (:490).",
+      });
+
+      // ── Ledger korunum invaryantı (tasarım §7 T1, bu plan'a scoped): bu
+      // plan'ın envelope'a net katkısı submit1 sonrası on1+off1, reject
+      // sonrası TAM 0 (envelope-net RELEASE tüm bucket'ları netler), resubmit
+      // sonrası TEKRAR on2+off2 (yeni RESERVE'ler, on2=on1/off2=off1 — plan
+      // konfigürasyonu değişmedi) olmalı. Bunu doğrudan bu plan'ın TÜM
+      // POSTED tx'lerinin net toplamıyla (RESERVE+COMMIT-RELEASE) ölçüyoruz —
+      // bu envelope-wide v_budget_summary'den BAĞIMSIZ, yalnızca bu plan'ın
+      // kaynak bazlı net katkısı.
+      const allPostedTx = await dataSource.query(
+        `SELECT tx_type, amount FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_status = 'POSTED'`,
+        [t053PlanId],
+      );
+      const netContribution = allPostedTx.reduce((net: number, tx: any) => {
+        const amt = Number(tx.amount);
+        if (tx.tx_type === 'RESERVE' || tx.tx_type === 'COMMIT')
+          return net + amt;
+        if (tx.tx_type === 'RELEASE') return net - amt;
+        return net;
+      }, 0);
+      record({
+        step: 'A17e',
+        role: '-',
+        endpoint:
+          "Ledger korunum — bu plan'ın envelope'a net katkısı (resubmit sonrası)",
+        expected: `on1+off1 = ${onAmount1 + offAmount1} (resubmit gerçek bir yeni encumbrance yazmış olmalı)`,
+        actual: `${netContribution}`,
+        note: 'CANLI HATA varsa net katkı 0 kalır — plan PENDING_APPROVAL ama bütçeden sessizce hiçbir şey rezerve edilmemiş (BRD ihlali).',
+      });
+
+      // T-053 asıl regresyon assertion'ı: resubmit YENİ RESERVE satırları
+      // yazmış olmalı (toplam 4) ve plan'ın envelope'a net katkısı GERÇEKTEN
+      // pozitif olmalı (sessizce 0 kalmamalı).
+      expect(reserveAfterSubmit2.length).toBe(4);
+      expect(netContribution).toBeCloseTo(onAmount1 + offAmount1, 2);
+      expect(netContribution).toBeGreaterThan(0);
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════
