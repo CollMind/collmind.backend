@@ -274,7 +274,9 @@ export async function cleanupTestAgreements(
     `SELECT id FROM main.agreement_transactions WHERE agreement_id = ANY($1::uuid[])`,
     [agreementIds],
   );
-  const transactionIds: string[] = transactions.map((t: { id: string }) => t.id);
+  const transactionIds: string[] = transactions.map(
+    (t: { id: string }) => t.id,
+  );
 
   // FK/bağımlılık sırası: ledger → budget_transactions → approval_requests
   // (FK yok, polimorfik) → agreement_transaction audit izleri (FK yok,

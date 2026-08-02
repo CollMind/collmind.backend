@@ -498,7 +498,7 @@ describe('Budget Envelope Split — T-019b Faz 2 (E2E)', () => {
       expect(offSummary.available).toBe(80000);
     });
 
-    it('YANLIŞ-POZİTİF YOK: başka bir boyut split edilmişken, split OLMAYAN bir boyutta spendType\'sız çözüm hâlâ ÇALIŞIR (tek türetim noktası — boyut yüklemleri karışmaz)', async () => {
+    it("YANLIŞ-POZİTİF YOK: başka bir boyut split edilmişken, split OLMAYAN bir boyutta spendType'sız çözüm hâlâ ÇALIŞIR (tek türetim noktası — boyut yüklemleri karışmaz)", async () => {
       const splitChannel = `E2E-SPG-B-${randomUUID().slice(0, 8)}`;
       const unsplitChannel = `E2E-SPG-C-${randomUUID().slice(0, 8)}`;
 
@@ -598,7 +598,9 @@ describe('Budget Envelope Split — T-019b Faz 2 (E2E)', () => {
         .query({ channel, periodMonth: splitPeriod })
         .set(admin.authHeader())
         .expect(400);
-      expect(splitRes.body.code).toBe('SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION');
+      expect(splitRes.body.code).toBe(
+        'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION',
+      );
     });
 
     it('kategori boyutu da aynı sınıf sızıntıya açık (category opsiyonel → hiç filtrelenmiyor): aynı kanal+dönem, farklı kategori split olsa da diğer kategorinin tipsiz araması ÇALIŞMALI', async () => {
