@@ -1275,6 +1275,151 @@ describe('PlanService', () => {
       expect(updateCall.ragStatus).toBeNull();
     });
 
+    /**
+     * T-056 step 4 (design 0009 §4.2/§6 step 4): recalc must persist
+     * `plans.on_invoice_spend` / `off_invoice_spend`, accumulated from the
+     * SAME per-SKU `spendBreakdown.planned` object already used for
+     * `totalSpend` — not a second classification, not `totalSpend - on`
+     * subtraction (that's the F3 fallback bug this step deliberately
+     * avoids). Two SKUs with DIFFERENT (unequal) on/off splits are used
+     * deliberately: a bug that writes `on` into the `off` accumulator (or
+     * zeroes one side) only diverges the `on + off === totalSpend`
+     * identity when on != off per SKU — equal-split fixtures would hide
+     * exactly this class of bug.
+     */
+    it('T-056 step 4: persists on/off-invoice split on plans and preserves on+off=totalSpend identity', async () => {
+      const planWithFus = {
+        ...mockPlan,
+        cplId: 'cpl-1',
+        channel: { id: 'ch-1', code: 'NKA', name: 'NKA' } as any,
+        category: { id: 'cat-1', code: 'DAIRY', name: 'Dairy' } as any,
+        planFus: [
+          {
+            id: 'fu-1',
+            fuId: 'fu-1',
+            planId: mockPlanId,
+            tactics: { CPP_ON_PCT: 10, VIS_LS: 2000 },
+            planSkus: [
+              {
+                id: 'ps-1',
+                skuId: 'sku-a',
+                baseVolume: 100,
+                plannedVolume: 200,
+                sku: { id: 'sku-a', unitPrice: 10, cogs: 5 },
+              },
+              {
+                id: 'ps-2',
+                skuId: 'sku-b',
+                baseVolume: 50,
+                plannedVolume: 150,
+                sku: { id: 'sku-b', unitPrice: 8, cogs: 3 },
+              },
+            ],
+          } as any,
+        ],
+      } as Plan;
+
+      // SKU-A: on-heavy (1200 on / 800 off); SKU-B: off-heavy (300 on /
+      // 1700 off) — deliberately unequal per-SKU splits (see doc comment).
+      const skuABreakdown = {
+        skuId: 'sku-a',
+        base: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        planned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: { CPP_ON_PCT: 1200 },
+          promoOffInvoice: { VIS_LS: 800 },
+          totalPromoOnInvoice: 1200,
+          totalPromoOffInvoice: 800,
+          totalOnInvoice: 1200,
+          totalOffInvoice: 800,
+          totalSpend: 2000,
+        },
+        incremental: { onInvoice: 1200, offInvoice: 800, total: 2000 },
+      };
+      const skuBBreakdown = {
+        skuId: 'sku-b',
+        base: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        planned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: { CPP_ON_PCT: 300 },
+          promoOffInvoice: { VIS_LS: 1700 },
+          totalPromoOnInvoice: 300,
+          totalPromoOffInvoice: 1700,
+          totalOnInvoice: 300,
+          totalOffInvoice: 1700,
+          totalSpend: 2000,
+        },
+        incremental: { onInvoice: 300, offInvoice: 1700, total: 2000 },
+      };
+
+      spendCalc.calculateAllSpendsForSKU
+        .mockResolvedValueOnce(skuABreakdown as any)
+        .mockResolvedValueOnce(skuBBreakdown as any);
+
+      kpiEngine.calculateSku.mockResolvedValue({
+        GP_ROI_PCT: {
+          kpiCode: 'GP_ROI_PCT',
+          value: 10,
+          displayFormat: 'percentage',
+          decimalPlaces: 1,
+          ragStatus: 'GREEN',
+        },
+      } as any);
+      kpiEngine.calculateFu.mockResolvedValue({} as any);
+      kpiEngine.calculatePlan.mockResolvedValue({} as any);
+
+      planRepo.findById
+        .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce(planWithFus)
+        .mockResolvedValueOnce({ ...planWithFus, planFus: [] } as any);
+      planRepo.findPlanSku.mockResolvedValue({
+        id: 'ps-1',
+        plannedVolume: 200,
+        plannedGp: 100,
+      } as any);
+      planRepo.updatePlanSkuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.batchUpdatePlanSkusUnversioned.mockResolvedValue(
+        undefined as any,
+      );
+      planRepo.updatePlanFuUnversioned.mockResolvedValue(undefined as any);
+      planRepo.updateUnversioned.mockResolvedValue({} as any);
+
+      await service.recalculatePlanWithKpiEngine(mockPlanId, mockTenantId);
+
+      expect(spendCalc.calculateAllSpendsForSKU).toHaveBeenCalledTimes(2);
+
+      // `updateUnversioned(planId, tenantId, data, manager, skipReadback)`
+      // — `data` is the third positional argument.
+      const planUpdateData = planRepo.updateUnversioned.mock.calls[0][2] as {
+        onInvoiceSpend: number;
+        offInvoiceSpend: number;
+        totalSpend: number;
+      };
+
+      // Correct sums: on = 1200+300=1500, off = 800+1700=2500, total=4000.
+      expect(planUpdateData.onInvoiceSpend).toBe(1500);
+      expect(planUpdateData.offInvoiceSpend).toBe(2500);
+      expect(planUpdateData.totalSpend).toBe(4000);
+      // The identity this whole step exists to guarantee.
+      expect(
+        planUpdateData.onInvoiceSpend + planUpdateData.offInvoiceSpend,
+      ).toBe(planUpdateData.totalSpend);
+    });
+
     it('should surface KPI engine errors instead of silently swallowing them', async () => {
       const planWithFus = {
         ...mockPlan,

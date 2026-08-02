@@ -1729,6 +1729,19 @@ export class PlanService {
     let planTotalPlannedVolume = 0;
     let planTotalSpend = 0;
     let planTotalGp = 0;
+    // T-056 step 4: on/off-invoice breakdown, accumulated from the SAME
+    // per-SKU `spendBreakdown` this loop already reads for
+    // `plannedOnInvoiceSpend`/`totalPlannedSpend` (T-052's single
+    // derivation point, `spend-calculation.service.ts` §"planned" —
+    // see design 0009 §4.2 / §6 step 4). Summed on+off is mathematically
+    // identical to `planTotalSpend` above by construction (both come from
+    // the same `spendBreakdown.planned` object per SKU:
+    // `totalSpend = totalOnInvoice + totalOffInvoice`,
+    // `spend-calculation.service.ts:511-514`) — DO NOT derive off by
+    // subtracting on from totalSpend (that's the F3 fallback bug this
+    // step deliberately avoids, design 0009 §2.6/§4.2).
+    let planTotalOnInvoiceSpend = 0;
+    let planTotalOffInvoiceSpend = 0;
 
     for (const planFu of plan.planFus) {
       const skuResults: Array<Record<string, CalculationResult>> = [];
@@ -1761,6 +1774,10 @@ export class PlanService {
       let fuTotalPlannedSpend = 0;
       let fuTotalPlannedVolume = 0;
       let fuTotalGp = 0;
+      // T-056 step 4: FU-level on/off accumulators (see plan-level comment
+      // above for the identity this preserves).
+      let fuTotalOnInvoiceSpend = 0;
+      let fuTotalOffInvoiceSpend = 0;
 
       // T-045: accumulate this FU's SKU writes and flush as a single
       // multi-row UPDATE after the loop, instead of one UPDATE per SKU.
@@ -1824,7 +1841,13 @@ export class PlanService {
         // BRD NIV semantics: only on-invoice deductions reduce Turnover.
         // plannedOnInvoiceSpend = LTA_ON + all on-invoice promo spends (CPP_ON etc.)
         const plannedOnInvoiceSpend = spendBreakdown.planned.totalOnInvoice;
+        // T-056 step 4: off-invoice counterpart, SAME `spendBreakdown.planned`
+        // object as `plannedOnInvoiceSpend` above (not derived by
+        // subtraction — see plan-level comment on `planTotalOnInvoiceSpend`).
+        const plannedOffInvoiceSpend = spendBreakdown.planned.totalOffInvoice;
         fuTotalPlannedSpend += totalPlannedSpend;
+        fuTotalOnInvoiceSpend += plannedOnInvoiceSpend;
+        fuTotalOffInvoiceSpend += plannedOffInvoiceSpend;
 
         // ── Step 2: Build KPI engine context with BRD-required external values ──
         // BRD canonical fields (all must be present for GP_ROI_PCT to resolve):
@@ -1997,6 +2020,10 @@ export class PlanService {
       planTotalPlannedVolume += fuTotalPlannedVolume;
       planTotalSpend += fuTotalPlannedSpend;
       planTotalGp += fuTotalGp;
+      // T-056 step 4: same in-memory accumulation discipline as the three
+      // totals above — no re-read, no re-derivation.
+      planTotalOnInvoiceSpend += fuTotalOnInvoiceSpend;
+      planTotalOffInvoiceSpend += fuTotalOffInvoiceSpend;
     }
 
     // ── Plan-level KPI aggregation ────────────────────────────────────────
@@ -2033,6 +2060,17 @@ export class PlanService {
         totalPlannedVolume: planTotalPlannedVolume,
         totalSpend: planTotalSpend,
         totalGp: planTotalGp,
+        // T-056 step 4: on/off-invoice breakdown, single derivation point
+        // (SpendCalculationService via `buildMechanicValues` ->
+        // `calculateAllSpendsForSKU`, T-052 chain) — same object recalc
+        // already reads for `totalSpend` above. Identity by construction:
+        // `onInvoiceSpend + offInvoiceSpend === totalSpend`
+        // (spend-calculation.service.ts:511-514, "planned" bucket).
+        // Consumed by nothing yet (design 0009 §6 step 4 is write-only;
+        // `/submit`'s reservation still reads `plan.totalSpend` via the
+        // TOTAL bucket until step 5).
+        onInvoiceSpend: planTotalOnInvoiceSpend,
+        offInvoiceSpend: planTotalOffInvoiceSpend,
         // T-027: persist null explicitly (not `undefined`) so a recalc
         // that newly discovers missing master data clears any stale prior
         // value.
