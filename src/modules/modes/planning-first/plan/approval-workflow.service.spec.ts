@@ -115,6 +115,16 @@ describe('ApprovalWorkflowService', () => {
             // envelopes independently and calls this per-envelope check
             // instead of getBudgetStatus.
             checkEnvelopeAvailability: jest.fn(),
+            // T-056 adım 2 (docs/analysis/0009 §3.1/§3.2): the UNSPLIT
+            // birleşik kural + SPLIT independent-envelope algorithm moved
+            // OUT of this class into BudgetService — ApprovalWorkflowService
+            // now only calls this ONE method and interprets its result. Its
+            // own real behaviour is covered where it now lives
+            // (budget.service.spec.ts's "checkPlanBudgetAvailability"
+            // describe block); this mock only needs to stand in for the
+            // CONTRACT so submitForApproval's orchestration (validationErrors,
+            // gating reserveForPlan) is exercised.
+            checkPlanBudgetAvailability: jest.fn(),
             reserveForPlan: jest.fn(),
             commitReservedForPlan: jest.fn(),
             commitAllReservedForPlan: jest.fn(),
@@ -156,13 +166,15 @@ describe('ApprovalWorkflowService', () => {
     spendCalc = module.get(SpendCalculationService);
     approvalHistoryRepo = module.get(getRepositoryToken(PlanApprovalHistory));
 
-    // T-019b: safe default for tests that don't care about the exact
-    // availability numbers (e.g. version-conflict tests, which never reach
-    // the reservation writes) — checkBudgetAvailability now unconditionally
-    // calls this once per submitForApproval, even for a 0/0 spend plan.
-    budgetService.checkEnvelopeAvailability.mockResolvedValue({
-      available: 150000,
-      sufficient: true,
+    // T-019b / T-056 adım 2: safe default for tests that don't care about
+    // the exact availability numbers (e.g. version-conflict tests, which
+    // never reach the reservation writes) — submitForApproval
+    // unconditionally calls checkPlanBudgetAvailability once, even for a
+    // 0/0 spend plan.
+    budgetService.checkPlanBudgetAvailability.mockResolvedValue({
+      onInvoice: { available: 150000, requested: 0, sufficient: true },
+      offInvoice: { available: 150000, requested: 0, sufficient: true },
+      overallSufficient: true,
     });
 
     // T-034b — see plan.service.spec.ts's identical setup.
@@ -652,17 +664,27 @@ describe('ApprovalWorkflowService', () => {
         mockEnvelope as any,
       );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
-      // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
-      // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
-      // checkBudgetAvailability's combined-pool branch calls
-      // checkEnvelopeAvailability ONCE with (on+off).
-      budgetService.checkEnvelopeAvailability.mockImplementation(
-        (_tenantId: string, _envelopeId: string, amount: number) =>
-          Promise.resolve({
-            available: mockBudgetStatus.available,
-            sufficient: amount <= mockBudgetStatus.available,
-          }),
-      );
+      // T-056 adım 2: the UNSPLIT-combined-pool arithmetic (on=30000,
+      // off=10000, one shared 10000-available envelope → both individually
+      // AND combined insufficient) now lives in and is verified against
+      // REAL code in budget.service.spec.ts's "checkPlanBudgetAvailability"
+      // suite. This mock reproduces exactly what that algorithm returns for
+      // these inputs (unchanged numbers) so submitForApproval's OWN
+      // orchestration (validationErrors, no-reserve-on-insufficient) stays
+      // under test here.
+      budgetService.checkPlanBudgetAvailability.mockResolvedValue({
+        onInvoice: {
+          available: mockBudgetStatus.available,
+          requested: 30000,
+          sufficient: false,
+        },
+        offInvoice: {
+          available: mockBudgetStatus.available,
+          requested: 10000,
+          sufficient: true,
+        },
+        overallSufficient: false,
+      });
 
       const result = await service.submitForApproval(
         mockPlanId,
@@ -735,17 +757,19 @@ describe('ApprovalWorkflowService', () => {
         mockEnvelope as any,
       );
       budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
-      // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
-      // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
-      // checkBudgetAvailability's combined-pool branch calls
-      // checkEnvelopeAvailability ONCE with (on+off).
-      budgetService.checkEnvelopeAvailability.mockImplementation(
-        (_tenantId: string, _envelopeId: string, amount: number) =>
-          Promise.resolve({
-            available: mockBudgetStatus.available,
-            sufficient: amount <= mockBudgetStatus.available,
-          }),
-      );
+      // T-056 adım 2: the "birleşik kural" arithmetic this test's name
+      // refers to (on=60, off=60, individually fit a shared 100-available
+      // envelope but TOGETHER (120) do not) now lives in — and is verified
+      // against REAL code in — budget.service.spec.ts's
+      // "checkPlanBudgetAvailability" suite (same T3 case, ported
+      // verbatim). This mock reproduces exactly what that algorithm returns
+      // for these inputs so submitForApproval's OWN orchestration (atomic
+      // gate BEFORE either reserveForPlan call) stays under test here.
+      budgetService.checkPlanBudgetAvailability.mockResolvedValue({
+        onInvoice: { available: 100, requested: 60, sufficient: true },
+        offInvoice: { available: 100, requested: 60, sufficient: true },
+        overallSufficient: false,
+      });
 
       const result = await service.submitForApproval(
         mockPlanId,
@@ -897,35 +921,21 @@ describe('ApprovalWorkflowService', () => {
         } as any;
       }
 
-      function mockSplitEnvelopes(onAvailable: number, offAvailable: number) {
-        budgetService.findEnvelopeByDimensions.mockImplementation(
-          (
-            _tenantId: string,
-            _channel: string,
-            _period: string,
-            _category?: string,
-            spendType?: string,
-          ) =>
-            Promise.resolve(
-              spendType === 'ON_INVOICE'
-                ? ({ id: 'env-on' } as any)
-                : ({ id: 'env-off' } as any),
-            ),
-        );
-        budgetService.checkEnvelopeAvailability.mockImplementation(
-          (_tenantId: string, envelopeId: string, amount: number) => {
-            const available =
-              envelopeId === 'env-on' ? onAvailable : offAvailable;
-            return Promise.resolve({
-              available,
-              sufficient: amount <= available,
-            });
-          },
-        );
-      }
+      // T-056 adım 2: the SPLIT-regime (independent per-envelope) arithmetic
+      // this describe block exercises now lives in — and is verified
+      // against REAL code in — budget.service.spec.ts's
+      // "checkPlanBudgetAvailability" suite (same 3 cases, ported
+      // verbatim). Each `it` below sets `checkPlanBudgetAvailability`
+      // directly to the exact value that algorithm returns for its inputs,
+      // so submitForApproval's OWN orchestration (which reserveForPlan
+      // calls fire, in what count) stays under test here.
 
       it('a plan spending ONLY on-invoice is not blocked by an exhausted off-invoice envelope (Karar 2 eki: harcanmayan tip zarfın durumu planı bloklamaz)', async () => {
-        mockSplitEnvelopes(100000, 0); // off envelope fully exhausted
+        budgetService.checkPlanBudgetAvailability.mockResolvedValue({
+          onInvoice: { available: 100000, requested: 50000, sufficient: true },
+          offInvoice: { available: 0, requested: 0, sufficient: true },
+          overallSufficient: true,
+        });
         planRepo.findById.mockResolvedValue(mockPlan as Plan);
         planRepo.findByIdForUpdate.mockResolvedValue({
           ...mockPlan,
@@ -971,7 +981,12 @@ describe('ApprovalWorkflowService', () => {
       });
 
       it('a plan spending BOTH types is rejected ATOMICALLY when only the off-invoice envelope is insufficient — on leg individually fits but whole request blocked', async () => {
-        mockSplitEnvelopes(100000, 10000); // off envelope nearly exhausted
+        // off envelope nearly exhausted (10000 available, 20000 requested)
+        budgetService.checkPlanBudgetAvailability.mockResolvedValue({
+          onInvoice: { available: 100000, requested: 50000, sufficient: true },
+          offInvoice: { available: 10000, requested: 20000, sufficient: false },
+          overallSufficient: false,
+        });
         planRepo.findById.mockResolvedValue(mockPlan as Plan);
         spendCalc.calculateAllSpendsForFU.mockResolvedValue(
           mockSplitFuBreakdown(50000, 20000), // off (20000) > off available (10000)
@@ -992,7 +1007,11 @@ describe('ApprovalWorkflowService', () => {
       });
 
       it('a plan spending BOTH types succeeds when both typed envelopes are independently sufficient', async () => {
-        mockSplitEnvelopes(100000, 100000);
+        budgetService.checkPlanBudgetAvailability.mockResolvedValue({
+          onInvoice: { available: 100000, requested: 50000, sufficient: true },
+          offInvoice: { available: 100000, requested: 30000, sufficient: true },
+          overallSufficient: true,
+        });
         planRepo.findById.mockResolvedValue(mockPlan as Plan);
         planRepo.findByIdForUpdate.mockResolvedValue({
           ...mockPlan,

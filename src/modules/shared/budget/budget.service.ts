@@ -1106,9 +1106,9 @@ export class BudgetService {
   /**
    * T-019b (§5.5): availability check for a caller that has ALREADY resolved
    * a specific (typed or UNSPLIT) envelope — used by
-   * `ApprovalWorkflowService#checkBudgetAvailability` so the on/off split
-   * decision stays in ONE place (this class) instead of being re-derived by
-   * callers (§5.7 "shared/budget bu kararı yeniden uygulamaz").
+   * `checkPlanBudgetAvailability` (below) so the on/off split decision stays
+   * in ONE place (this class) instead of being re-derived by callers (§5.7
+   * "shared/budget bu kararı yeniden uygulamaz").
    */
   async checkEnvelopeAvailability(
     tenantId: string,
@@ -1120,6 +1120,179 @@ export class BudgetService {
       tenantId,
       amount,
     );
+  }
+
+  /**
+   * T-056 adım 2 (docs/analysis/0009 §3.2, §6 adım 2): saf taşıma —
+   * `ApprovalWorkflowService#checkBudgetAvailability`'nin (T-019b, §5.5)
+   * BİREBİR AYNI mantığı, `shared/budget`'a yükseltildi. Davranış
+   * değişmedi; yalnız konum ve görünürlük (private → public, sınıf
+   * `ApprovalWorkflowService` → `BudgetService`) değişti.
+   *
+   * Gerekçe (0009 §3.1): iki mode-servisi (plan.service.ts#submit,
+   * approval-workflow.service.ts#submitForApproval) birbirinin private
+   * metodunu paylaşamaz — adım 3'te ikisi de bu metodu çağıracak. Kopyalamak
+   * ikinci bir türetim noktası açardı (bu oturumun tekrar eden hata sınıfı,
+   * bkz. T-049/T-052/T-053 ve T-056 adım 1'deki `computeBucketNet`).
+   *
+   * Yön kuralı (bağlayıcı, 0009 §3.1): bu metot yalnız `BudgetService`'in
+   * kendi genel metotlarını (`findEnvelopeByDimensions`,
+   * `checkEnvelopeAvailability`) çağırır — `modes/*`'tan hiçbir importu
+   * yoktur ve olmayacaktır.
+   *
+   * T-019b (§5.5): ON and OFF envelopes are resolved INDEPENDENTLY
+   * (`findEnvelopeByDimensions` with an explicit `spendType` — typed match
+   * preferred, UNSPLIT/NULL envelope as fallback, §5.1).
+   *
+   * Two regimes:
+   *  - UNSPLIT (legacy): both lookups fall back to the SAME envelope
+   *    (`onEnvelope.id === offEnvelope.id`) — the two requested amounts
+   *    share ONE pool, so they must be measured TOGETHER
+   *    (`on + off <= available`), not independently (§5.5 "birleşik kural",
+   *    R3: two amounts that individually fit can together overshoot).
+   *  - SPLIT: each type has its OWN envelope/available — measured
+   *    independently.
+   *
+   * Product-owner scope (ADR 0004 Karar 2 eki, 2026-08-02): the threshold
+   * check only considers types the plan ACTUALLY spends. A zero amount for
+   * a type is trivially sufficient regardless of that type's envelope state
+   * (a plan that spends 0 off-invoice is never blocked by a full/over-spent
+   * off-invoice envelope). When the plan spends BOTH types, Karar 2's
+   * atomicity is unchanged: if either exceeds, the ENTIRE request is
+   * rejected — no partial reservation (enforced by the caller checking
+   * `overallSufficient` BEFORE either reservation write).
+   *
+   * Mimari kural (§5.7, bağlayıcı): this method only READS/compares
+   * envelope availability — the on/off split of the plan's OWN spend is
+   * decided upstream by `SpendCalculationService`; this method does not
+   * re-derive or override that decision.
+   *
+   * ⚠️ F2 (0009 §2.4, taşınmadan sonra da geçerli — bu adımda ÇÖZÜLMEDİ):
+   * `checkEnvelopeAvailability` → `budgetRepository.checkBudgetAvailability`
+   * → `getBudgetSummary` `manager` parametresi ALMAZ
+   * (`budget.repository.ts:436-447`, `this.dataSource.getRepository(...)`).
+   * Yani bu metodun availability okuması, çağıranın açık transaction'ı
+   * içinde henüz commit edilmemiş yazımları GÖRMEZ. Ardışık iki çağrı aynı
+   * (stale) değeri okuyabilir — ADR 0004 Karar 2'nin "yazımdan önce kontrol"
+   * kapısı bu yüzden TEK koruma katmanıdır, sıralama otomatik doğruluk
+   * sağlamaz. Çözüm ayrı bir karar/adım gerektirir, bu taşımanın kapsamında
+   * DEĞİL.
+   */
+  async checkPlanBudgetAvailability(
+    tenantId: string,
+    channelCode: string,
+    periodMonth: string,
+    onInvoiceAmount: number,
+    offInvoiceAmount: number,
+  ): Promise<{
+    onInvoice: { available: number; requested: number; sufficient: boolean };
+    offInvoice: { available: number; requested: number; sufficient: boolean };
+    overallSufficient: boolean;
+  }> {
+    const [onEnvelope, offEnvelope] = await Promise.all([
+      this.findEnvelopeByDimensions(
+        tenantId,
+        channelCode,
+        periodMonth,
+        undefined,
+        BudgetSpendType.ON_INVOICE,
+      ),
+      this.findEnvelopeByDimensions(
+        tenantId,
+        channelCode,
+        periodMonth,
+        undefined,
+        BudgetSpendType.OFF_INVOICE,
+      ),
+    ]);
+
+    const unsplitSharedEnvelope =
+      !!onEnvelope && !!offEnvelope && onEnvelope.id === offEnvelope.id;
+
+    let onAvailable = 0;
+    let offAvailable = 0;
+    let onSufficient = true;
+    let offSufficient = true;
+    let overallSufficient: boolean;
+
+    if (unsplitSharedEnvelope) {
+      // §5.5 birleşik kural — ONE pool, both amounts measured TOGETHER for
+      // the GATE (`overallSufficient`). The per-leg `sufficient` flags below
+      // stay INFORMATIONAL (does this amount alone fit the shared pool?) —
+      // this is the pre-existing display contract (§7 T3: an on=60/off=60
+      // request against a 100-available pool reports EACH leg sufficient
+      // individually while the atomic combined gate still rejects the
+      // request as a whole; a UI can show "on: OK, off: OK, but together:
+      // insufficient").
+      const combined = await this.checkEnvelopeAvailability(
+        tenantId,
+        onEnvelope!.id,
+        onInvoiceAmount + offInvoiceAmount,
+      );
+      onAvailable = combined.available;
+      offAvailable = combined.available;
+      onSufficient =
+        onInvoiceAmount > 0 ? combined.available >= onInvoiceAmount : true;
+      offSufficient =
+        offInvoiceAmount > 0 ? combined.available >= offInvoiceAmount : true;
+      overallSufficient = combined.sufficient;
+    } else {
+      if (onInvoiceAmount > 0) {
+        if (!onEnvelope) {
+          onAvailable = 0;
+          onSufficient = false;
+        } else {
+          const r = await this.checkEnvelopeAvailability(
+            tenantId,
+            onEnvelope.id,
+            onInvoiceAmount,
+          );
+          onAvailable = r.available;
+          onSufficient = r.sufficient;
+        }
+      } else if (onEnvelope) {
+        onAvailable = (
+          await this.checkEnvelopeAvailability(tenantId, onEnvelope.id, 0)
+        ).available;
+      }
+
+      if (offInvoiceAmount > 0) {
+        if (!offEnvelope) {
+          offAvailable = 0;
+          offSufficient = false;
+        } else {
+          const r = await this.checkEnvelopeAvailability(
+            tenantId,
+            offEnvelope.id,
+            offInvoiceAmount,
+          );
+          offAvailable = r.available;
+          offSufficient = r.sufficient;
+        }
+      } else if (offEnvelope) {
+        offAvailable = (
+          await this.checkEnvelopeAvailability(tenantId, offEnvelope.id, 0)
+        ).available;
+      }
+      // SPLIT regime: each type has its own envelope — the atomic gate IS
+      // the per-leg sufficiency (Karar 2: reject entirely if either
+      // actually-spent type exceeds its OWN envelope).
+      overallSufficient = onSufficient && offSufficient;
+    }
+
+    return {
+      onInvoice: {
+        available: onAvailable,
+        requested: onInvoiceAmount,
+        sufficient: onSufficient,
+      },
+      offInvoice: {
+        available: offAvailable,
+        requested: offInvoiceAmount,
+        sufficient: offSufficient,
+      },
+      overallSufficient,
+    };
   }
 
   /**

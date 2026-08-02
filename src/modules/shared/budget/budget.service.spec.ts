@@ -630,6 +630,190 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
   });
 
   // ---------------------------------------------------------------------
+  // T-056 adım 2 (docs/analysis/0009 §2.4/§3.1/§3.2, §6 adım 2) — SAF
+  // TAŞIMA: bu mantık `approval-workflow.service.ts`'in private
+  // `checkBudgetAvailability`'siydi (T-019b, §5.5); şimdi
+  // `BudgetService#checkPlanBudgetAvailability` olarak buraya taşındı.
+  // Bu describe bloğu, önceden `approval-workflow.service.spec.ts`'te
+  // ApprovalWorkflowService'in mocklanmış BudgetService'i üzerinden
+  // dolaylı test edilen AYNI senaryoları (UNSPLIT birleşik kural, SPLIT
+  // bağımsız zarf, ADR 0004 Karar 2 eki) şimdi GERÇEK kodu (mock sadece
+  // `BudgetRepository`) çalıştırarak test eder — algoritmanın taşındığı
+  // katmanda doğrudan kanıt (bkz. Team Lead task: "gevşetme değil,
+  // korumanın doğru yere taşınması", 0009 §5.3'teki T-052 emsaliyle aynı
+  // sınıf).
+  // ---------------------------------------------------------------------
+  describe('checkPlanBudgetAvailability — taşınmış budget-domain kontrolü (T-056 adım 2)', () => {
+    function mockUnsplitEnvelope(allocatedAmount: number) {
+      // UNSPLIT: ON_INVOICE ve OFF_INVOICE aramaları AYNI zarfa düşer
+      // (spend_type IS NULL fallback) — §5.1.
+      mockBudgetRepository.findEnvelopeByDimensions.mockResolvedValue({
+        id: ENVELOPE_ID,
+        allocatedAmount,
+      } as BudgetEnvelope);
+    }
+
+    function mockAvailable(available: number) {
+      mockBudgetRepository.checkBudgetAvailability.mockImplementation(
+        (_envelopeId: string, _tenantId: string, requestedAmount: number) =>
+          Promise.resolve({
+            available,
+            sufficient: requestedAmount <= available,
+          }),
+      );
+    }
+
+    it('UNSPLIT birleşik kural (§5.5, ADR 0004 Karar 2, T3): on=60 ve off=60 AYRI AYRI 100-lük havuza sığar ama BİRLİKTE (120) sığmaz → overallSufficient=false, on/off leg sufficient=true (informational)', async () => {
+      mockUnsplitEnvelope(100);
+      mockAvailable(100);
+
+      const result = await service.checkPlanBudgetAvailability(
+        TENANT_ID,
+        'NKA',
+        '2026-01',
+        60,
+        60,
+      );
+
+      expect(result.onInvoice.sufficient).toBe(true); // 60 <= 100
+      expect(result.offInvoice.sufficient).toBe(true); // 60 <= 100
+      expect(result.overallSufficient).toBe(false); // 120 > 100 — atomik kapı
+      // Kombine sorgu — checkBudgetAvailability (on+off) ile TEK kez.
+      expect(mockBudgetRepository.checkBudgetAvailability).toHaveBeenCalledWith(
+        ENVELOPE_ID,
+        TENANT_ID,
+        120,
+      );
+    });
+
+    it('UNSPLIT: on=50 ve off=30 birlikte (80) 100-lük havuza sığar → overallSufficient=true', async () => {
+      mockUnsplitEnvelope(100);
+      mockAvailable(100);
+
+      const result = await service.checkPlanBudgetAvailability(
+        TENANT_ID,
+        'NKA',
+        '2026-01',
+        50,
+        30,
+      );
+
+      expect(result.overallSufficient).toBe(true);
+    });
+
+    it('SPLIT + ADR 0004 Karar 2 eki: yalnız on-invoice harcayan plan, tükenmiş off-invoice zarfından ETKİLENMEZ (off=0 istek, off zarfı 0 available olsa da sufficient)', async () => {
+      mockBudgetRepository.findEnvelopeByDimensions.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: string,
+        ) =>
+          Promise.resolve(
+            spendType === BudgetSpendType.ON_INVOICE
+              ? ({ id: 'env-on' } as BudgetEnvelope)
+              : ({ id: 'env-off' } as BudgetEnvelope),
+          ),
+      );
+      mockBudgetRepository.checkBudgetAvailability.mockImplementation(
+        (envelopeId: string, _tenantId: string, requestedAmount: number) => {
+          const available = envelopeId === 'env-on' ? 100000 : 0;
+          return Promise.resolve({
+            available,
+            sufficient: requestedAmount <= available,
+          });
+        },
+      );
+
+      const result = await service.checkPlanBudgetAvailability(
+        TENANT_ID,
+        'NKA',
+        '2026-01',
+        50000,
+        0,
+      );
+
+      expect(result.overallSufficient).toBe(true);
+      expect(result.offInvoice.requested).toBe(0);
+    });
+
+    it('SPLIT: plan HER İKİ tipi de harcıyor, on zarfına tek başına sığıyor ama off zarfı yetersiz → BÜTÜN istek reddedilir (atomiklik, kısmi rezervasyon yok)', async () => {
+      mockBudgetRepository.findEnvelopeByDimensions.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: string,
+        ) =>
+          Promise.resolve(
+            spendType === BudgetSpendType.ON_INVOICE
+              ? ({ id: 'env-on' } as BudgetEnvelope)
+              : ({ id: 'env-off' } as BudgetEnvelope),
+          ),
+      );
+      mockBudgetRepository.checkBudgetAvailability.mockImplementation(
+        (envelopeId: string, _tenantId: string, requestedAmount: number) => {
+          const available = envelopeId === 'env-on' ? 100000 : 10000;
+          return Promise.resolve({
+            available,
+            sufficient: requestedAmount <= available,
+          });
+        },
+      );
+
+      const result = await service.checkPlanBudgetAvailability(
+        TENANT_ID,
+        'NKA',
+        '2026-01',
+        50000,
+        20000, // off (20000) > off available (10000)
+      );
+
+      expect(result.onInvoice.sufficient).toBe(true);
+      expect(result.offInvoice.sufficient).toBe(false);
+      expect(result.overallSufficient).toBe(false);
+    });
+
+    it('SPLIT: her iki tip de bağımsız zarfına sığıyor → overallSufficient=true', async () => {
+      mockBudgetRepository.findEnvelopeByDimensions.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: string,
+        ) =>
+          Promise.resolve(
+            spendType === BudgetSpendType.ON_INVOICE
+              ? ({ id: 'env-on' } as BudgetEnvelope)
+              : ({ id: 'env-off' } as BudgetEnvelope),
+          ),
+      );
+      mockBudgetRepository.checkBudgetAvailability.mockImplementation(
+        (envelopeId: string, _tenantId: string, requestedAmount: number) => {
+          const available = envelopeId === 'env-on' ? 100000 : 100000;
+          return Promise.resolve({
+            available,
+            sufficient: requestedAmount <= available,
+          });
+        },
+      );
+
+      const result = await service.checkPlanBudgetAvailability(
+        TENANT_ID,
+        'NKA',
+        '2026-01',
+        50000,
+        30000,
+      );
+
+      expect(result.overallSufficient).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------
   // T-019b (Faz 2, docs/analysis/0008 §4) — splitEnvelope
   // ---------------------------------------------------------------------
   describe('splitEnvelope — Faz 2 split + append-only re-home', () => {
