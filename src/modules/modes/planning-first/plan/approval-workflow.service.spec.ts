@@ -113,6 +113,7 @@ describe('ApprovalWorkflowService', () => {
             getBudgetStatus: jest.fn(),
             reserveForPlan: jest.fn(),
             commitReservedForPlan: jest.fn(),
+            commitAllReservedForPlan: jest.fn(),
             releaseForPlan: jest.fn(),
           },
         },
@@ -633,6 +634,84 @@ describe('ApprovalWorkflowService', () => {
       ).toBe(true);
     });
 
+    // T-019 Faz 1 / ADR 0004 Karar 2 (docs/analysis/0008 §7 T3): atomic
+    // block — even when EACH type individually fits the shared UNSPLIT
+    // envelope (on=60<=100, off=60<=100), the COMBINED request (120) must
+    // be rejected entirely, and NEITHER reserveForPlan call may fire (no
+    // partial reservation). This is the exact regression §5.5's "birleşik
+    // kural" (onEnv.id === offEnv.id → on+off <= available) protects
+    // against — removing it would let two individually-fitting amounts
+    // both pass and together overshoot.
+    it('ADR 0004 Karar 2: rejects atomically when on+off together exceed the shared UNSPLIT envelope, even though EACH individually fits (T3)', async () => {
+      const mockEnvelope = {
+        id: 'envelope-1',
+        allocatedAmount: 100,
+      };
+
+      const mockBudgetStatus = {
+        totalAllocation: 100,
+        available: 100,
+        reserved: 0,
+        consumed: 0,
+        planned: 0,
+        status: UtilizationStatus.GREEN,
+      };
+
+      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      spendCalc.calculateAllSpendsForFU.mockResolvedValue({
+        fuId: 'plan-fu-1',
+        skuBreakdowns: [],
+        aggregatedBase: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        aggregatedPlanned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 60,
+          totalPromoOffInvoice: 60,
+          totalOnInvoice: 60,
+          totalOffInvoice: 60,
+          totalSpend: 120,
+        },
+        aggregatedIncremental: {
+          onInvoice: 60,
+          offInvoice: 60,
+          total: 120,
+        },
+      } as any);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(
+        mockEnvelope as any,
+      );
+      budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+
+      const result = await service.submitForApproval(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        submitDto,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.budgetCheck?.onInvoice.sufficient).toBe(true); // 60 <= 100
+      expect(result.budgetCheck?.offInvoice.sufficient).toBe(true); // 60 <= 100
+      expect(result.budgetCheck?.overallSufficient).toBe(false); // 120 > 100
+      expect(
+        result.validationErrors?.some((err) =>
+          err.includes('Insufficient budget'),
+        ),
+      ).toBe(true);
+      // MUTATION-GUARDING assertion: no reservation write of ANY kind
+      // happened — the atomic block must fire strictly BEFORE either
+      // reserveForPlan call (queryRunner transaction never opened).
+      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+    });
+
     it('should add warning for RED RAG status', async () => {
       const mockEnvelope = {
         id: 'envelope-1',
@@ -735,9 +814,10 @@ describe('ApprovalWorkflowService', () => {
       planRepo.findByIdForUpdate.mockResolvedValue(approvedPlan);
       planRepo.updateStatusCas.mockResolvedValue(1);
       approvalService.approve.mockResolvedValue({} as any);
-      // T-029: commitBudgetForPlan now delegates to commitReservedForPlan
-      // (RESERVE→COMMIT conversion), not the raw reserveForPlan.
-      budgetService.commitReservedForPlan.mockResolvedValue({} as any);
+      // T-029: commitAllBudgetForPlan now delegates to
+      // commitAllReservedForPlan (RESERVE→COMMIT conversion, bucket-aware
+      // cross-path fix — T-019/T-048), not the raw reserveForPlan.
+      budgetService.commitAllReservedForPlan.mockResolvedValue([{} as any]);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 

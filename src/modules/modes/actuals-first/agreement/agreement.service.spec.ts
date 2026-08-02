@@ -18,6 +18,7 @@ import { AdminAuditService } from '../../../../common/services/admin-audit.servi
 import {
   Agreement,
   AgreementStatus,
+  SpendType,
 } from '../../../../database/entities/agreement.entity';
 import { UserRole } from '../../../../database/entities/user.entity';
 
@@ -59,6 +60,9 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
     capTotalAmount: 1000,
     periodMonth: '2026-01',
     currency: 'TRY',
+    // T-019 Faz 1 / ADR 0004: reserveForAgreement now requires spend_type
+    // (NULL → 400) — fixture reflects a real (non-NULL) agreement.
+    spendType: SpendType.OFF_INVOICE,
   };
 
   beforeEach(async () => {
@@ -472,6 +476,7 @@ describe('AgreementService — T-028e (CM kategori-scope türetme + enforcement)
         pendingAgreement.currency,
         tenantId,
         userId,
+        pendingAgreement.spendType,
         queryRunnerManager,
       );
       expect(adminAuditService.flushPendingAlert).toHaveBeenCalled();

@@ -4,6 +4,7 @@ import { Repository, DataSource, EntityManager } from 'typeorm';
 import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
+  BudgetSpendType,
 } from '../../../database/entities/budget-envelope.entity';
 import {
   BudgetTransaction,
@@ -61,12 +62,20 @@ export class BudgetRepository {
    * Find budget envelope by dimensions (channel, category, period)
    * Used to determine which envelope an agreement should reserve from
    * Now uses dedicated columns with fallback to metadata for backward compatibility
+   *
+   * T-019 Faz 1 (docs/analysis/0008 §5.1): `spendType` is OPTIONAL — when
+   * omitted, behaviour is byte-for-byte unchanged (pre-T-019 callers keep
+   * working). When provided, matches a typed envelope OR a legacy UNSPLIT
+   * one (`spend_type IS NULL`), preferring the typed match — Faz 1 has no
+   * typed envelopes yet, so this always falls through to UNSPLIT today; it
+   * becomes load-bearing once Faz 2's split operation exists.
    */
   async findEnvelopeByDimensions(
     tenantId: string,
     channel: string,
     periodMonth: string,
     category?: string,
+    spendType?: BudgetSpendType,
   ): Promise<BudgetEnvelope | null> {
     const query = this.envelopeRepository
       .createQueryBuilder('envelope')
@@ -75,6 +84,13 @@ export class BudgetRepository {
       .andWhere('envelope.status = :status', {
         status: BudgetEnvelopeStatus.ACTIVE,
       });
+
+    if (spendType) {
+      query.andWhere(
+        '(envelope.spendType = :spendType OR envelope.spendType IS NULL)',
+        { spendType },
+      );
+    }
 
     // Match by period - prefer exact match, fallback to year pattern
     query.andWhere(
@@ -101,11 +117,22 @@ export class BudgetRepository {
 
     // Order by most specific match first
     // Prefer dedicated column matches over metadata matches
-    query
-      .orderBy(
+    // T-019 Faz 1 (§5.1): a typed envelope match beats the UNSPLIT (NULL)
+    // fallback when spendType was requested — no-op ordering key today
+    // (no typed envelopes exist yet), load-bearing once Faz 2 exists.
+    query.orderBy(
+      spendType
+        ? `CASE WHEN envelope.spendType = :spendType THEN 1 ELSE 2 END`
+        : `CASE WHEN envelope.period = :periodMonth THEN 1 ELSE 2 END`,
+      'ASC',
+    );
+    if (spendType) {
+      query.addOrderBy(
         `CASE WHEN envelope.period = :periodMonth THEN 1 ELSE 2 END`,
         'ASC',
-      )
+      );
+    }
+    query
       .addOrderBy(
         `CASE WHEN envelope.channel = :channel THEN 1 ELSE 2 END`,
         'ASC',

@@ -16,6 +16,7 @@ import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
 import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
+  BudgetSpendType,
 } from '../../../database/entities/budget-envelope.entity';
 import {
   BudgetTransaction,
@@ -24,6 +25,20 @@ import {
   BudgetTransactionSourceType,
 } from '../../../database/entities/budget-transaction.entity';
 
+/**
+ * T-019 Faz 1 / T-048: kova (bucket) discriminator used by the two
+ * plan-side budget flows. `TOTAL` is NOT a BRD concept — it is the
+ * backward-compatible bucket for `plan.service.ts#submit`, which still
+ * reserves `plan.totalSpend` as a single undifferentiated amount (frontend
+ * canonical path today, see docs/analysis/0008 §5.2/R6 + task T-019 note
+ * "Geriye uyum"). It is written to the DB as `spend_type = NULL` (same as
+ * pre-T-019 rows) and its idempotency key is BYTE-FOR-BYTE unchanged from
+ * before this change, so existing RESERVE rows/keys remain valid.
+ * `ON_INVOICE`/`OFF_INVOICE` are the real BRD-typed buckets used by
+ * `approval-workflow.service.ts#submitForApproval`.
+ */
+export type PlanBudgetBucket = 'ON_INVOICE' | 'OFF_INVOICE' | 'TOTAL';
+
 @Injectable()
 export class BudgetService {
   constructor(
@@ -31,6 +46,14 @@ export class BudgetService {
     private readonly budgetThresholdService: BudgetThresholdService,
     private readonly budgetReservationService: BudgetReservationService,
   ) {}
+
+  /** T-019 Faz 1: does `tx` belong to the given plan-budget bucket? */
+  private matchesBucket(
+    tx: Pick<BudgetTransaction, 'spendType'>,
+    bucket: PlanBudgetBucket,
+  ): boolean {
+    return bucket === 'TOTAL' ? !tx.spendType : tx.spendType === bucket;
+  }
 
   async createEnvelope(
     tenantId: string,
@@ -241,6 +264,16 @@ export class BudgetService {
    * Reserve budget for an approved agreement
    * Creates RESERVE transaction with idempotency
    * Automatically finds the matching envelope by dimensions
+   *
+   * T-019 Faz 1 / ADR 0004 Karar 1: `agreementSpendType` is REQUIRED (not
+   * optional) — the column has existed unused (`agreements.spend_type`) and
+   * this is where it starts being honoured. NULL/undefined → 400 (no silent
+   * default; a wrong default silently mis-attributes the reservation, see
+   * ADR 0004 gerekçe). `BOTH` is accepted and treated like the pre-T-019
+   * behaviour (goes to the UNSPLIT envelope, written as `spend_type = NULL`
+   * on the transaction) — BRD has no evidence for how a BOTH cap splits
+   * across on/off zarfları (docs/analysis/0008 §5.7 Q2), so no split is
+   * invented here.
    */
   async reserveForAgreement(
     agreementId: string,
@@ -250,8 +283,19 @@ export class BudgetService {
     currency: string,
     tenantId: string,
     userId: string,
+    agreementSpendType?: 'ON_INVOICE' | 'OFF_INVOICE' | 'BOTH' | null,
     manager?: EntityManager,
   ): Promise<BudgetTransaction> {
+    if (!agreementSpendType) {
+      throw new BadRequestException(
+        'Agreement spend_type (ON_INVOICE/OFF_INVOICE/BOTH) is required for budget reservation',
+      );
+    }
+    const spendTypeColumn: BudgetSpendType | null =
+      agreementSpendType === 'BOTH'
+        ? null
+        : (agreementSpendType as BudgetSpendType);
+
     // Check for existing RESERVE transaction for this agreement (true idempotency)
     // Idempotency key should be based on agreementId only, not envelope ID
     // This ensures that retrying with different envelope lookups doesn't create duplicate transactions
@@ -274,11 +318,15 @@ export class BudgetService {
       return existingReserve;
     }
 
-    // Find matching envelope by dimensions
+    // Find matching envelope by dimensions. T-019 Faz 1: BOTH (null column)
+    // omits the spendType filter, same as pre-T-019 (§5.7 interim rule) —
+    // no typed envelopes exist yet in Faz 1, so this is a no-op today.
     const envelope = await this.budgetRepository.findEnvelopeByDimensions(
       tenantId,
       channel,
       periodMonth,
+      undefined,
+      spendTypeColumn ?? undefined,
     );
 
     if (!envelope) {
@@ -304,6 +352,9 @@ export class BudgetService {
     // Create RESERVE transaction with idempotency key based on agreement only
     // Note: envelope ID is not included in idempotency key to ensure true idempotency
     // even if envelope lookup returns different results on retry
+    // (T-019: key format UNCHANGED — a single agreement never reserves
+    // twice with two different spend types, unlike the plan-side flow, so
+    // no bucket suffix is needed here — see budget.repository/T-030 note.)
     const idempotencyKey = `RESERVE|AGREEMENT|${agreementId}`;
 
     // Double-check idempotency (defensive check)
@@ -329,6 +380,7 @@ export class BudgetService {
         amount,
         currency: currency || 'TRY', // Use agreement currency, default to TRY if not provided
         idempotencyKey,
+        spendType: spendTypeColumn,
         description: `Budget reservation for agreement ${agreementId}`,
         createdBy: userId,
       },
@@ -357,16 +409,22 @@ export class BudgetService {
     currency: string,
     tenantId: string,
     userId: string,
+    bucket: PlanBudgetBucket,
     manager?: EntityManager,
   ): Promise<BudgetTransaction> {
     // Find matching envelope by dimensions. T-034b: NOT manager-scoped —
     // envelope existence/dimension lookup is a plain read; only the WRITES
     // below (transactions) must land on the caller's transaction for
     // atomicity with the plan status write (see plan.service.ts#submit).
+    // T-019 Faz 1: TOTAL bucket omits the spendType filter (byte-for-byte
+    // pre-T-019 behaviour); ON/OFF pass it through (no-op today — no typed
+    // envelopes exist yet, see findEnvelopeByDimensions §5.1).
     const envelope = await this.budgetRepository.findEnvelopeByDimensions(
       tenantId,
       channel,
       periodMonth,
+      undefined,
+      bucket === 'TOTAL' ? undefined : (bucket as unknown as BudgetSpendType),
     );
 
     if (!envelope) {
@@ -382,12 +440,19 @@ export class BudgetService {
         planId,
         manager,
       );
-    // Scoped to THIS envelope — a plan can (in principle) span more than one
-    // envelope over its lifetime (T-019 kısıtı, same caveat as
-    // BudgetReservationService#releaseNetReservation).
+    // Scoped to THIS envelope AND this bucket — a plan can (in principle)
+    // span more than one envelope over its lifetime (T-019 kısıtı, same
+    // caveat as BudgetReservationService#releaseNetReservation), and
+    // (T-048 fix) two DIFFERENT buckets (ON_INVOICE/OFF_INVOICE) can now
+    // legitimately share the SAME UNSPLIT envelope in Faz 1 — without the
+    // bucket filter, the second reserveForPlan() call for the same plan
+    // would see the first bucket's still-outstanding RESERVE and treat
+    // itself as an idempotent no-op, silently never writing its own RESERVE
+    // (docs/analysis/0008 §2.4 — the T-048 live bug).
     const envelopeReserves = existingTransactions.filter(
       (tx) =>
         tx.envelopeId === envelope.id &&
+        this.matchesBucket(tx, bucket) &&
         tx.txType === BudgetTransactionType.RESERVE &&
         tx.txStatus === BudgetTransactionStatus.POSTED,
     );
@@ -405,7 +470,9 @@ export class BudgetService {
     // the plan's eventual COMMIT converted from a stale reservation and the
     // envelope under-encumbered.
     const netOutstanding = existingTransactions
-      .filter((tx) => tx.envelopeId === envelope.id)
+      .filter(
+        (tx) => tx.envelopeId === envelope.id && this.matchesBucket(tx, bucket),
+      )
       .reduce((net, tx) => {
         const amt = Number(tx.amount);
         if (
@@ -446,10 +513,15 @@ export class BudgetService {
     // reservation cycle for the same plan+envelope (post return-to-draft)
     // must use a distinct key from the first cycle's, or this insert would
     // violate the unique index.
+    // T-019/T-048: TOTAL bucket keeps the EXACT pre-existing key format
+    // (no suffix) — plan.service.ts#submit's live rows/keys must stay valid.
+    // ON/OFF buckets get a new `|<BUCKET>` suffix so they occupy a disjoint
+    // key space from TOTAL and from each other.
+    const bucketSuffix = bucket === 'TOTAL' ? '' : `|${bucket}`;
     const idempotencyKey =
       envelopeReserves.length === 0
-        ? `RESERVE|PLAN|${planId}|${envelope.id}`
-        : `RESERVE|PLAN|${planId}|${envelope.id}|GEN${envelopeReserves.length + 1}`;
+        ? `RESERVE|PLAN|${planId}|${envelope.id}${bucketSuffix}`
+        : `RESERVE|PLAN|${planId}|${envelope.id}${bucketSuffix}|GEN${envelopeReserves.length + 1}`;
 
     const transaction = await this.budgetRepository.createTransaction(
       {
@@ -462,6 +534,8 @@ export class BudgetService {
         amount,
         currency: currency || 'TRY',
         idempotencyKey,
+        spendType:
+          bucket === 'TOTAL' ? null : (bucket as unknown as BudgetSpendType),
         description: `Budget reservation for plan ${planId} (submitted for approval)`,
         createdBy: userId,
       },
@@ -498,6 +572,7 @@ export class BudgetService {
     currency: string,
     tenantId: string,
     userId: string,
+    bucket: PlanBudgetBucket,
     manager?: EntityManager,
   ): Promise<BudgetTransaction> {
     const existingTransactions =
@@ -508,8 +583,17 @@ export class BudgetService {
         manager,
       );
 
+    // T-048 (mirror fix): same kova-farkındalı gap as reserveForPlan — a
+    // plan with two RESERVE buckets (ON_INVOICE/OFF_INVOICE, same UNSPLIT
+    // envelope in Faz 1) must COMMIT each bucket independently. The old
+    // "any POSTED COMMIT exists → return it" short-circuit meant the SECOND
+    // commitReservedForPlan() call (e.g. OFF_INVOICE) found the FIRST
+    // bucket's COMMIT (ON_INVOICE) and no-op'd — approve() would then leave
+    // the off-invoice bucket stuck in RESERVE forever (never COMMIT'd, never
+    // RELEASE'd).
     const existingCommit = existingTransactions.find(
       (tx) =>
+        this.matchesBucket(tx, bucket) &&
         tx.txType === BudgetTransactionType.COMMIT &&
         tx.txStatus === BudgetTransactionStatus.POSTED,
     );
@@ -519,16 +603,23 @@ export class BudgetService {
 
     const outstandingReserve = existingTransactions.find(
       (tx) =>
+        this.matchesBucket(tx, bucket) &&
         tx.txType === BudgetTransactionType.RESERVE &&
         tx.txStatus === BudgetTransactionStatus.POSTED,
     );
+
+    // T-019/T-048: TOTAL bucket keeps the pre-existing (unsuffixed) key
+    // format; ON/OFF get a disjoint `|<BUCKET>` suffix — see reserveForPlan.
+    const bucketSuffix = bucket === 'TOTAL' ? '' : `|${bucket}`;
+    const spendTypeColumn =
+      bucket === 'TOTAL' ? null : (bucket as unknown as BudgetSpendType);
 
     if (outstandingReserve) {
       const envelopeId = outstandingReserve.envelopeId;
       const commitAmount = Number(outstandingReserve.amount);
 
       // Release the RESERVE as part of the conversion (idempotent).
-      const releaseKey = `RELEASE|PLAN|${planId}|${envelopeId}|CONVERT`;
+      const releaseKey = `RELEASE|PLAN|${planId}|${envelopeId}|CONVERT${bucketSuffix}`;
       const existingConvertRelease =
         await this.budgetRepository.findTransactionByIdempotencyKey(
           tenantId,
@@ -547,6 +638,7 @@ export class BudgetService {
             amount: commitAmount,
             currency: outstandingReserve.currency,
             idempotencyKey: releaseKey,
+            spendType: spendTypeColumn,
             description: `Release RESERVE (converted to COMMIT on approval) for plan ${planId}`,
             createdBy: userId,
           },
@@ -554,7 +646,7 @@ export class BudgetService {
         );
       }
 
-      const commitKey = `COMMIT|PLAN|${planId}|${envelopeId}`;
+      const commitKey = `COMMIT|PLAN|${planId}|${envelopeId}${bucketSuffix}`;
       return this.budgetRepository.createTransaction(
         {
           tenantId,
@@ -566,6 +658,7 @@ export class BudgetService {
           amount: commitAmount,
           currency: outstandingReserve.currency,
           idempotencyKey: commitKey,
+          spendType: spendTypeColumn,
           description: `Budget commit for plan ${planId} (converted from RESERVE on approval)`,
           createdBy: userId,
         },
@@ -573,13 +666,15 @@ export class BudgetService {
       );
     }
 
-    // Fallback: no prior RESERVE — commit directly (legacy / plan approved
-    // without submit-for-approval reservation). Availability re-checked since
-    // this is a fresh encumbrance, not a bucket transfer.
+    // Fallback: no prior RESERVE for this bucket — commit directly (legacy /
+    // plan approved without submit-for-approval reservation). Availability
+    // re-checked since this is a fresh encumbrance, not a bucket transfer.
     const envelope = await this.budgetRepository.findEnvelopeByDimensions(
       tenantId,
       channel,
       periodMonth,
+      undefined,
+      bucket === 'TOTAL' ? undefined : (bucket as unknown as BudgetSpendType),
     );
 
     if (!envelope) {
@@ -601,7 +696,7 @@ export class BudgetService {
       );
     }
 
-    const commitKey = `COMMIT|PLAN|${planId}|${envelope.id}`;
+    const commitKey = `COMMIT|PLAN|${planId}|${envelope.id}${bucketSuffix}`;
     return this.budgetRepository.createTransaction(
       {
         tenantId,
@@ -613,11 +708,108 @@ export class BudgetService {
         amount,
         currency: currency || 'TRY',
         idempotencyKey: commitKey,
+        spendType: spendTypeColumn,
         description: `Budget commit for plan ${planId}`,
         createdBy: userId,
       },
       manager,
     );
+  }
+
+  /**
+   * T-019 Faz 1 / T-048 (cross-path fix): approve a plan REGARDLESS of which
+   * bucket(s) it was reserved under. There are two canonical submit routes
+   * (`plan.service.ts#submit` → 'TOTAL' bucket; `approval-workflow.service.ts
+   * #submitForApproval` → 'ON_INVOICE' + 'OFF_INVOICE' buckets) and — as of
+   * this task — TWO canonical approve routes too (`plan.service.ts#approve`,
+   * `approval-workflow.service.ts#approvePlan`/reviewPlan). Any plan may be
+   * submitted via one route and approved via the OTHER (proven live by the
+   * role-journey e2e's golden path: A8 submits via submit-for-approval,
+   * A12 approves via the plain PlanController#approve). A single
+   * bucket-blind `commitReservedForPlan(bucket)` call on the approve side
+   * would either (a) miss buckets it doesn't know to ask for — leaving them
+   * stuck in RESERVE forever — or worse (b) not find ITS bucket, fall
+   * through to the "no prior RESERVE" fallback, and write a FRESH direct
+   * COMMIT on top of the still-outstanding RESERVE(s) from the other route
+   * — a double encumbrance of the exact "6 çift-sayım" class this session
+   * has repeatedly hit. This method discovers every bucket that actually
+   * has an outstanding POSTED RESERVE for the plan and commits each one
+   * exactly once (delegating the per-bucket net/idempotency logic to
+   * `commitReservedForPlan`, unchanged). If the plan has NEVER been through
+   * a reserving submit (legacy direct-approve), falls back to a single
+   * fresh 'TOTAL' COMMIT of `fallbackAmount` — the pre-T-019 behaviour.
+   */
+  async commitAllReservedForPlan(
+    planId: string,
+    fallbackAmount: number,
+    channel: string,
+    periodMonth: string,
+    currency: string,
+    tenantId: string,
+    userId: string,
+    manager?: EntityManager,
+  ): Promise<BudgetTransaction[]> {
+    const existingTransactions =
+      await this.budgetRepository.findTransactionsBySource(
+        tenantId,
+        BudgetTransactionSourceType.PLAN,
+        planId,
+        manager,
+      );
+
+    const bucketKeys = new Set<PlanBudgetBucket>();
+    for (const tx of existingTransactions) {
+      if (
+        tx.txType === BudgetTransactionType.RESERVE &&
+        tx.txStatus === BudgetTransactionStatus.POSTED
+      ) {
+        bucketKeys.add((tx.spendType ?? 'TOTAL') as PlanBudgetBucket);
+      }
+    }
+
+    if (bucketKeys.size === 0) {
+      // Legacy: no reserving submit ever happened for this plan.
+      return [
+        await this.commitReservedForPlan(
+          planId,
+          fallbackAmount,
+          channel,
+          periodMonth,
+          currency,
+          tenantId,
+          userId,
+          'TOTAL',
+          manager,
+        ),
+      ];
+    }
+
+    const results: BudgetTransaction[] = [];
+    for (const bucket of bucketKeys) {
+      const bucketReserve = existingTransactions.find(
+        (tx) =>
+          this.matchesBucket(tx, bucket) &&
+          tx.txType === BudgetTransactionType.RESERVE &&
+          tx.txStatus === BudgetTransactionStatus.POSTED,
+      );
+      const bucketAmount = bucketReserve
+        ? Number(bucketReserve.amount)
+        : fallbackAmount;
+      results.push(
+        await this.commitReservedForPlan(
+          planId,
+          bucketAmount,
+          channel,
+          periodMonth,
+          currency,
+          tenantId,
+          userId,
+          bucket,
+          manager,
+        ),
+      );
+    }
+    return results;
   }
 
   /**

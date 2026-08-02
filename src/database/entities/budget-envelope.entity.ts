@@ -17,6 +17,18 @@ export enum BudgetEnvelopeStatus {
   ARCHIVED = 'ARCHIVED',
 }
 
+/**
+ * T-019 Faz 1 (docs/analysis/0008 §3, ADR 0004): BRD §8 "Ayrı ayrı: On-Invoice
+ * / Off-Invoice" bütçe boyutu. NULL = UNSPLIT (legacy) — hem on hem off kabul
+ * eder (Faz 1'de mevcut 4 zarf bu durumda kalır, para taşınmaz). Zarf
+ * tarafında BOTH diye bir değer YOKTUR — o yalnızca kaynak (agreement/tactic)
+ * tarafında bir sınıflandırmadır ve zarfa gelmeden önce çözülür.
+ */
+export enum BudgetSpendType {
+  ON_INVOICE = 'ON_INVOICE',
+  OFF_INVOICE = 'OFF_INVOICE',
+}
+
 @Entity({ name: 'budget_envelopes', schema: 'main' })
 @Index(['tenantId', 'code'], { unique: true })
 @Index(['tenantId', 'status'])
@@ -93,6 +105,16 @@ export class BudgetEnvelope extends BaseEntity {
 
   @Column({ name: 'currency', length: 3, default: 'TRY' })
   currency!: string;
+
+  // T-019 Faz 1: nullable = UNSPLIT/legacy envelope (accepts both types).
+  @Column({
+    name: 'spend_type',
+    type: 'enum',
+    enum: BudgetSpendType,
+    enumName: 'budget_spend_type_enum',
+    nullable: true,
+  })
+  spendType?: BudgetSpendType | null;
 
   @Column({ type: 'text', nullable: true })
   description?: string;

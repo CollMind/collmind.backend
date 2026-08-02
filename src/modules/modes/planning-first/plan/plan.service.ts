@@ -813,6 +813,10 @@ export class PlanService {
           plan.periodMonth,
         );
         if (envelope) {
+          // T-019 Faz 1: 'TOTAL' bucket — this canonical path still reserves
+          // plan.totalSpend as a single undifferentiated amount (frontend's
+          // live route, docs/analysis/0008 §5.2 "Geriye uyum"). Key format
+          // and behaviour are BYTE-FOR-BYTE unchanged from before T-019.
           await this.budgetService.reserveForPlan(
             id,
             plan.totalSpend,
@@ -821,6 +825,7 @@ export class PlanService {
             'TRY',
             tenantId,
             userId,
+            'TOTAL',
             queryRunner.manager,
           );
         }
@@ -1048,7 +1053,16 @@ export class PlanService {
       }
 
       // T-029 (SORUN 2): BRD plan state machine — Approved → COMMIT.
-      await this.budgetService.commitReservedForPlan(
+      // T-019/T-048 cross-path fix: this is one of TWO canonical approve
+      // routes (see approval-workflow.service.ts#approvePlan for the
+      // other) — the plan may have been submitted via EITHER canonical
+      // submit route (plan.service.ts#submit's 'TOTAL' bucket, or
+      // approval-workflow.service.ts#submitForApproval's ON/OFF buckets).
+      // commitAllReservedForPlan discovers and commits whatever bucket(s)
+      // actually have an outstanding RESERVE, instead of blindly assuming
+      // 'TOTAL' — see its JSDoc for why a bucket-blind call here would
+      // double-encumber (or strand) a plan submitted via the other route.
+      await this.budgetService.commitAllReservedForPlan(
         plan.id,
         plan.totalSpend,
         channelCode,

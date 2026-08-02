@@ -51,7 +51,8 @@ let CATEGORY_SAC_BOYASI: string; // CAT-SAC-BOYASI
 let FU_TUP_BOYA: string; // FU-TUP-BOYA
 let FU_WELLA_HC_500ML: string; // agreement seed FU (FU-WELLA-HC-500ML)
 let TACTIC_PROMO: string; // TAC-PROMO
-let MECHANIC_DISCOUNT: string; // MEC-DISCOUNT
+let MECHANIC_DISCOUNT: string; // MEC-DISCOUNT (on_invoice_discount, PERCENT)
+let MECHANIC_OFF_PCT: string; // CPP_OFF_PCT (off_invoice_discount, PERCENT) — T-048 A8c fixture
 
 /** Kod → id çözümlemesi; bulunamazsa anlaşılır hata (seed eksik demektir). */
 async function resolveIdByCode(
@@ -144,6 +145,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       FU_WELLA_HC_500ML,
       TACTIC_PROMO,
       MECHANIC_DISCOUNT,
+      MECHANIC_OFF_PCT,
     ] = await Promise.all([
       resolveIdByCode(dataSource, t, 'cpls', 'BS0501.50001'),
       resolveIdByCode(dataSource, t, 'cpls', 'BS0501.50004'),
@@ -153,6 +155,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       resolveIdByCode(dataSource, t, 'forecasting_units', 'FU-WELLA-HC-500ML'),
       resolveIdByCode(dataSource, t, 'tactics', 'TAC-PROMO'),
       resolveIdByCode(dataSource, t, 'mechanics', 'MEC-DISCOUNT'),
+      resolveIdByCode(dataSource, t, 'mechanics', 'CPP_OFF_PCT'),
     ]);
   }, 60000);
 
@@ -610,6 +613,132 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         note: 'submit-for-approval başarılı; plan durumu ve approval history tutarlı şekilde ilerledi',
       });
       expect(planCheck.body.status).toBe('PENDING_APPROVAL');
+    });
+
+    it('A8c. T-048 FIX PROOF — submit-for-approval writes TWO separate RESERVE rows (ON_INVOICE + OFF_INVOICE), off-invoice is genuinely encumbered', async () => {
+      // Self-contained plan (NOT the shared golden-path `planId`).
+      //
+      // ⚠️ Pre-existing, UNRELATED gap found while building this proof (not
+      // T-019/T-048's to fix — flagged separately): `PATCH .../tactics`
+      // persists raw values to `plan_fus.tactics` (JSONB) and triggers
+      // `recalculatePlanWithKpiEngine`, which reads `plan_fus.tactics`
+      // directly (plan.service.ts ~1746) to derive `plan.totalSpend`/
+      // `plan.onInvoiceSpend` (the field `plan.service.ts#submit`'s 'TOTAL'
+      // bucket reserves from — see A8's golden path, which works). But
+      // `ApprovalWorkflowService#submitForApproval`'s
+      // `calculateSpendBreakdown` calls `SpendCalculationService
+      // #calculateAllSpendsForFU`, which reads ONLY the normalized
+      // `plan_mechanic_values` table (`enteredValue`), never
+      // `plan_fus.tactics` — so a plan whose only mechanic input is the
+      // tactics PATCH (as A1-A4's shared golden-path plan is) computes
+      // on=0/off=0 through THIS path even though `plan.totalSpend` is
+      // correctly non-zero through the OTHER path. No production endpoint
+      // sets `plan_mechanic_values.enteredValue` directly (the only writer,
+      // `POST /spend-calculation/distribute/:planFuId/:mechanicId`,
+      // DISTRIBUTES an already-entered value FU→SKU, it doesn't set one).
+      // To exercise the REAL on/off-split RESERVE path this test targets,
+      // `plan_mechanic_values` rows are seeded directly here — same
+      // rationale as the A5c COGS fixture (sentetik test verisi, gerçek
+      // master data uydurma değil).
+      const planner = await loginAs(app, 'PLANNER');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-A8C-T048-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const t048PlanId = createRes.body.id;
+
+      const fuRes = await request(app.getHttpServer())
+        .post(`/plans/${t048PlanId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
+        .expect(201);
+      const t048PlanFuId = fuRes.body.id;
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${t048PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const t048SkuId = planRes.body.planFus.find(
+        (f: any) => f.id === t048PlanFuId,
+      ).planSkus[0].skuId;
+
+      await request(app.getHttpServer())
+        .patch(
+          `/plans/${t048PlanId}/fus/${FU_WELLA_HC_500ML}/skus/${t048SkuId}/volume`,
+        )
+        .set(planner.authHeader())
+        .send({ baseVolume: 800, plannedVolume: 1000, version: 1 })
+        .expect(200);
+
+      // Seed plan_mechanic_values directly (see comment above): MEC-DISCOUNT
+      // (on_invoice_discount, PERCENT, 10%) and CPP_OFF_PCT
+      // (off_invoice_discount, PERCENT, 5%) — both on the SAME FU/envelope,
+      // so submit-for-approval's TWO reserveBudgetForPlan calls (ON then
+      // OFF) land on the same UNSPLIT (Faz 1) envelope, which is exactly
+      // the T-048 bug's trigger condition.
+      await dataSource.query(
+        `INSERT INTO main.plan_mechanic_values
+           (tenant_id, plan_fu_id, mechanic_id, entered_value, distribution_method)
+         VALUES ($1, $2, $3, 10, 'percentage'), ($1, $2, $4, 5, 'percentage')`,
+        [fixture.tenantId, t048PlanFuId, MECHANIC_DISCOUNT, MECHANIC_OFF_PCT],
+      );
+
+      const preSubmitRes = await request(app.getHttpServer())
+        .get(`/plans/${t048PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+
+      const submitRes = await request(app.getHttpServer())
+        .post(`/plans/${t048PlanId}/submit-for-approval`)
+        .set(planner.authHeader())
+        .send({
+          submissionNotes: 'E2E T-048 proof',
+          version: preSubmitRes.body.version,
+        });
+
+      // MEC-DISCOUNT (on-invoice %) + CPP_OFF_PCT (off-invoice %) on this
+      // plan's FU → SpendCalculationService computes non-zero on AND off
+      // spend, so submit-for-approval (ApprovalWorkflowService
+      // #submitForApproval, the SECOND canonical submit path) reserves BOTH.
+      // Pre-T-048-fix, the OFF_INVOICE call silently no-op'd (kova-farkındalı
+      // olmayan idempotency, docs/analysis/0008 §2.4) and this query would
+      // have returned only 1 row.
+      const budgetTxAfterSubmit = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'
+          ORDER BY spend_type ASC NULLS LAST`,
+        [t048PlanId],
+      );
+
+      record({
+        step: 'A8c',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (submit-for-approval sonrası, T-048 kanıtı)',
+        expected: '2 RESERVE satırı (ON_INVOICE + OFF_INVOICE)',
+        actual: `submitStatus=${submitRes.status}, onInvoice=${submitRes.body?.budgetCheck?.onInvoice?.requested}, offInvoice=${submitRes.body?.budgetCheck?.offInvoice?.requested}, tx=${JSON.stringify(budgetTxAfterSubmit)}`,
+        note: "T-048 FIX: reserveBudgetForPlan/reserveForPlan artık kova-farkındalı (bucket-aware) — ikinci (OFF_INVOICE) çağrı ilk (ON_INVOICE) çağrının net'ini görüp erken dönmüyor.",
+      });
+
+      expect(submitRes.status).toBe(200);
+      expect(budgetTxAfterSubmit.length).toBe(2);
+      const bySpendType = Object.fromEntries(
+        budgetTxAfterSubmit.map((r: any) => [r.spend_type, Number(r.amount)]),
+      );
+      expect(bySpendType.ON_INVOICE).toBeGreaterThan(0);
+      expect(bySpendType.OFF_INVOICE).toBeGreaterThan(0);
+      expect(
+        budgetTxAfterSubmit.every((r: any) => r.tx_status === 'POSTED'),
+      ).toBe(true);
     });
 
     it('A9. CATEGORY_MANAGER → GET /plans/approval-queue', async () => {

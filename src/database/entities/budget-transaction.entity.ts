@@ -1,6 +1,6 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
-import { BudgetEnvelope } from './budget-envelope.entity';
+import { BudgetEnvelope, BudgetSpendType } from './budget-envelope.entity';
 import { Tenant } from './tenant.entity';
 
 export enum BudgetTransactionType {
@@ -70,6 +70,19 @@ export class BudgetTransaction extends BaseEntity {
 
   @Column({ length: 3, default: 'TRY' })
   currency!: string;
+
+  // T-019 Faz 1 (ADR 0004): sınıflandırma boyutu — NULL = untyped/UNSPLIT
+  // (ALLOCATE, T-019-öncesi satırlar, agreement.spendType='BOTH', ve
+  // plan.service.ts#submit'in geriye-uyumlu TOTAL kovası). Tutarı/yönü
+  // DEĞİŞTİRMEZ, yalnız audit/idempotency kovasını belirler.
+  @Column({
+    name: 'spend_type',
+    type: 'enum',
+    enum: BudgetSpendType,
+    enumName: 'budget_spend_type_enum',
+    nullable: true,
+  })
+  spendType?: BudgetSpendType | null;
 
   // Idempotency
   @Column({ name: 'idempotency_key', length: 200 })

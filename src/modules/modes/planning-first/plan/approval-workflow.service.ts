@@ -500,38 +500,28 @@ export class ApprovalWorkflowService {
   ): Promise<ReviewResult> {
     const channelCode = plan.channel?.code || '';
 
-    // Commit budget (reserved → utilized)
-    {
-      // Commit On-Invoice budget
-      if (plan.onInvoiceSpend > 0) {
-        await this.commitBudgetForPlan(
-          plan.id,
-          plan.onInvoiceSpend,
-          channelCode,
-          plan.periodMonth,
-          'TRY',
-          tenantId,
-          approverId,
-          'ON_INVOICE',
-          manager,
-        );
-      }
-
-      // Commit Off-Invoice budget
-      if (plan.offInvoiceSpend > 0) {
-        await this.commitBudgetForPlan(
-          plan.id,
-          plan.offInvoiceSpend,
-          channelCode,
-          plan.periodMonth,
-          'TRY',
-          tenantId,
-          approverId,
-          'OFF_INVOICE',
-          manager,
-        );
-      }
-    }
+    // T-019/T-048 cross-path fix: this is one of TWO canonical approve
+    // routes (see plan.service.ts#approve for the other) — the plan may
+    // have been submitted via EITHER canonical submit route (this class's
+    // own submitForApproval, ON/OFF buckets, OR plan.service.ts#submit's
+    // 'TOTAL' bucket). Two separate bucket-specific commit calls here
+    // (pre-fix) blindly assumed ON/OFF buckets exist; if the plan was
+    // instead submitted via the 'TOTAL' path, neither call would find its
+    // bucket's RESERVE and each would fall through to a fresh direct
+    // COMMIT — double-encumbering the envelope on top of the still-
+    // outstanding TOTAL RESERVE. commitAllReservedForPlan discovers and
+    // commits whichever bucket(s) actually have an outstanding RESERVE
+    // (see its JSDoc on BudgetService).
+    await this.commitAllBudgetForPlan(
+      plan.id,
+      Number(plan.onInvoiceSpend) + Number(plan.offInvoiceSpend),
+      channelCode,
+      plan.periodMonth,
+      'TRY',
+      tenantId,
+      approverId,
+      manager,
+    );
 
     // Update approval request
     if (plan.approvalRequestId) {
@@ -1015,8 +1005,15 @@ export class ApprovalWorkflowService {
     offInvoice: { available: number; requested: number; sufficient: boolean };
     overallSufficient: boolean;
   }> {
-    // TODO: Implement separate On-Invoice and Off-Invoice budget envelopes
-    // For now, use total budget
+    // T-019 Faz 1 (ADR 0004 Karar 2, docs/analysis/0008 §5.5): typed
+    // envelope splitting is Faz 2 (NOT this turn) — Faz 1 has only UNSPLIT
+    // (spend_type IS NULL) envelopes, which accept both types from the SAME
+    // pool. `overallSufficient = available >= on + off` below is therefore
+    // the CORRECT atomic check for Faz 1: it is exactly ADR 0004 Karar 2
+    // ("herhangi biri aşarsa TÜM istek reddedilir") applied to a single
+    // shared envelope — checking on/off independently against the same
+    // `available` would let two amounts that individually fit but together
+    // overshoot both pass (R3 in the design doc).
     const envelope = await this.budgetService.findEnvelopeByDimensions(
       tenantId,
       channelCode,
@@ -1075,7 +1072,15 @@ export class ApprovalWorkflowService {
     spendType: 'ON_INVOICE' | 'OFF_INVOICE',
     manager?: EntityManager,
   ): Promise<void> {
-    // Use existing reserveForPlan but with metadata to track On/Off Invoice
+    // T-048 FIX (was): `spendType` used to be silently dropped here — the
+    // comment claimed "with metadata to track On/Off Invoice" but no
+    // metadata was ever passed, so both the ON_INVOICE and OFF_INVOICE
+    // calls below landed in the SAME (envelope-only) idempotency/net bucket.
+    // The second call then saw the first call's still-outstanding RESERVE,
+    // treated itself as an idempotent no-op, and never wrote its own
+    // RESERVE — off-invoice spend was silently never encumbered (see
+    // docs/analysis/0008 §2.4 / T-048). Now forwarded so reserveForPlan can
+    // do kova-farkındalı (bucket-aware) net/idempotency accounting.
     await this.budgetService.reserveForPlan(
       planId,
       amount,
@@ -1084,27 +1089,33 @@ export class ApprovalWorkflowService {
       currency,
       tenantId,
       userId,
+      spendType,
       manager,
     );
   }
 
-  private async commitBudgetForPlan(
+  private async commitAllBudgetForPlan(
     planId: string,
-    amount: number,
+    fallbackAmount: number,
     channel: string,
     periodMonth: string,
     currency: string,
     tenantId: string,
     userId: string,
-    spendType: 'ON_INVOICE' | 'OFF_INVOICE',
     manager?: EntityManager,
   ): Promise<void> {
-    // T-029: Convert the outstanding RESERVE (created at submitForApproval)
-    // into a COMMIT — actual budget consumption on approval (BRD: Approved →
-    // COMMIT). Idempotent; falls back to a fresh COMMIT if no RESERVE exists.
-    await this.budgetService.commitReservedForPlan(
+    // T-029: Convert the outstanding RESERVE(s) (created at submitForApproval
+    // OR at plan.service.ts#submit) into COMMIT(s) — actual budget
+    // consumption on approval (BRD: Approved → COMMIT). T-019/T-048
+    // cross-path fix: delegates to BudgetService#commitAllReservedForPlan,
+    // which discovers and converts whichever bucket(s) (TOTAL, ON_INVOICE,
+    // OFF_INVOICE) actually have an outstanding RESERVE, instead of this
+    // caller blindly assuming ON/OFF buckets exist (see that method's JSDoc
+    // for why a bucket-blind call double-encumbers a plan submitted via the
+    // OTHER canonical route).
+    await this.budgetService.commitAllReservedForPlan(
       planId,
-      amount,
+      fallbackAmount,
       channel,
       periodMonth,
       currency,

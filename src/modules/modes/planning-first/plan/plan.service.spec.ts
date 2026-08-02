@@ -128,6 +128,7 @@ describe('PlanService', () => {
             getBudgetStatus: jest.fn(),
             reserveForPlan: jest.fn(),
             commitReservedForPlan: jest.fn(),
+            commitAllReservedForPlan: jest.fn(),
             releaseForPlan: jest.fn(),
           },
         },
@@ -371,6 +372,7 @@ describe('PlanService', () => {
         'TRY',
         mockTenantId,
         mockUserId,
+        'TOTAL',
         queryRunnerManager,
       );
     });
@@ -508,7 +510,7 @@ describe('PlanService', () => {
       budgetService.findEnvelopeByDimensions.mockResolvedValue(
         mockEnvelope as any,
       );
-      budgetService.commitReservedForPlan.mockResolvedValue({} as any);
+      budgetService.commitAllReservedForPlan.mockResolvedValue([{} as any]);
       approvalService.approve.mockResolvedValue({} as any);
       planRepo.updateStatusCas.mockResolvedValue(1);
 
@@ -526,7 +528,9 @@ describe('PlanService', () => {
         mockTenantId,
         queryRunnerManager,
       );
-      expect(budgetService.commitReservedForPlan).toHaveBeenCalledWith(
+      // T-019/T-048 cross-path fix: bucket-blind commitReservedForPlan(bucket)
+      // replaced by commitAllReservedForPlan (discovers outstanding buckets).
+      expect(budgetService.commitAllReservedForPlan).toHaveBeenCalledWith(
         mockPlanId,
         pendingPlan.totalSpend,
         pendingPlan.channel?.code,
@@ -596,7 +600,7 @@ describe('PlanService', () => {
       budgetService.findEnvelopeByDimensions.mockResolvedValue({
         id: 'envelope-1',
       } as any);
-      budgetService.commitReservedForPlan.mockResolvedValue({} as any);
+      budgetService.commitAllReservedForPlan.mockResolvedValue([{} as any]);
       approvalService.approve.mockResolvedValue({} as any);
       planRepo.updateStatusCas.mockResolvedValue(1);
       approvalHistoryRepo.save.mockRejectedValueOnce(new Error('DB down'));

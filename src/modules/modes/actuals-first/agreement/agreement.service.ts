@@ -753,6 +753,7 @@ export class AgreementService {
         agreementWithChannel.currency,
         tenantId,
         userId,
+        agreementWithChannel.spendType,
         queryRunner.manager,
       );
 
