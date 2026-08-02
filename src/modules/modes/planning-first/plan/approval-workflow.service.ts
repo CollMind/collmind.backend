@@ -239,32 +239,28 @@ export class ApprovalWorkflowService {
       approvalRequestId = approvalRequest.id;
 
       // Reserve budget (soft reservation - will be committed on approval).
-      if (spendBreakdown.onInvoice > 0) {
-        await this.reserveBudgetForPlan(
-          planId,
-          spendBreakdown.onInvoice,
-          channelCode,
-          plan.periodMonth,
-          'TRY',
-          tenantId,
-          userId,
-          'ON_INVOICE',
-          queryRunner.manager,
-        );
-      }
-      if (spendBreakdown.offInvoice > 0) {
-        await this.reserveBudgetForPlan(
-          planId,
-          spendBreakdown.offInvoice,
-          channelCode,
-          plan.periodMonth,
-          'TRY',
-          tenantId,
-          userId,
-          'OFF_INVOICE',
-          queryRunner.manager,
-        );
-      }
+      // T-056 adım 3 (docs/analysis/0009 §3.2, §6 adım 3): tek motor —
+      // `reserveTypedForPlan` (shared/budget) bu sınıfın bugünkü iki ayrı
+      // `reserveBudgetForPlan` çağrısının YERİNE geçer (kapı + deterministik
+      // ON→OFF yazım tek yerde). Davranış birebir aynı: yalnız amount>0
+      // olan tipler yazılır — kapı zaten satır ~159'da bir kez geçilmişti;
+      // buradaki tekrar F2 (0009 §2.4) nedeniyle TEK koruma katmanı olarak
+      // bilinçli kabul edildi, submitForApproval'ın dış sözleşmesini
+      // değiştirmez (aynı validationErrors/success:false yolu, aynı satır
+      // sayısı ve idempotency key uzayı).
+      await this.budgetService.reserveTypedForPlan(
+        planId,
+        {
+          onInvoice: spendBreakdown.onInvoice,
+          offInvoice: spendBreakdown.offInvoice,
+        },
+        channelCode,
+        plan.periodMonth,
+        'TRY',
+        tenantId,
+        userId,
+        queryRunner.manager,
+      );
 
       const affected = await this.planRepo.updateStatusCas(
         queryRunner.manager,
@@ -1009,38 +1005,12 @@ export class ApprovalWorkflowService {
   // Bu sınıf artık kendi kopyasını tutmaz, `submitForApproval` yukarıda
   // doğrudan `this.budgetService.checkPlanBudgetAvailability(...)`'i çağırır.
 
-  private async reserveBudgetForPlan(
-    planId: string,
-    amount: number,
-    channel: string,
-    periodMonth: string,
-    currency: string,
-    tenantId: string,
-    userId: string,
-    spendType: 'ON_INVOICE' | 'OFF_INVOICE',
-    manager?: EntityManager,
-  ): Promise<void> {
-    // T-048 FIX (was): `spendType` used to be silently dropped here — the
-    // comment claimed "with metadata to track On/Off Invoice" but no
-    // metadata was ever passed, so both the ON_INVOICE and OFF_INVOICE
-    // calls below landed in the SAME (envelope-only) idempotency/net bucket.
-    // The second call then saw the first call's still-outstanding RESERVE,
-    // treated itself as an idempotent no-op, and never wrote its own
-    // RESERVE — off-invoice spend was silently never encumbered (see
-    // docs/analysis/0008 §2.4 / T-048). Now forwarded so reserveForPlan can
-    // do kova-farkındalı (bucket-aware) net/idempotency accounting.
-    await this.budgetService.reserveForPlan(
-      planId,
-      amount,
-      channel,
-      periodMonth,
-      currency,
-      tenantId,
-      userId,
-      spendType,
-      manager,
-    );
-  }
+  // T-056 adım 3 (docs/analysis/0009 §3.2, §6 adım 3): the two-call
+  // ON_INVOICE/OFF_INVOICE reservation orchestration that used to live here
+  // (`reserveBudgetForPlan`, T-048 fix) moved to `shared/budget`
+  // (`BudgetService#reserveTypedForPlan`) — single engine, `submitForApproval`
+  // now calls it directly. See that method's JSDoc for the full contract
+  // (gate-before-write, ON→OFF order, only actually-spent types).
 
   private async commitAllBudgetForPlan(
     planId: string,

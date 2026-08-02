@@ -814,6 +814,153 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
   });
 
   // ---------------------------------------------------------------------
+  // T-056 adım 3 (docs/analysis/0009 §3.2, §6 adım 3) — TEK rezervasyon
+  // motoru. `ApprovalWorkflowService#submitForApproval` bu turdan itibaren
+  // bu metodu çağırıyor (bkz. approval-workflow.service.spec.ts — orada
+  // yalnız "hangi tutarlarla çağrıldı" doğrulanıyor, GERÇEK kapı/yazma
+  // davranışı burada, gerçek `BudgetRepository` mock'una karşı test edilir).
+  // ---------------------------------------------------------------------
+  describe('reserveTypedForPlan — tek rezervasyon motoru (T-056 adım 3)', () => {
+    it('MUTASYON 1 zemini — kapı yazımdan ÖNCE: on=60/off=60, UNSPLIT 100-lük paylaşılan havuz → BadRequestException, HİÇBİR RESERVE satırı yazılmaz (Karar 2, kısmi rezervasyon YOK)', async () => {
+      mockBudgetRepository.findEnvelopeByDimensions.mockResolvedValue({
+        id: ENVELOPE_ID,
+        allocatedAmount: 100,
+      } as BudgetEnvelope);
+      mockBudgetRepository.checkBudgetAvailability.mockImplementation(
+        (_envelopeId: string, _tenantId: string, requestedAmount: number) =>
+          Promise.resolve({
+            available: 100,
+            sufficient: requestedAmount <= 100,
+          }),
+      );
+
+      await expect(
+        service.reserveTypedForPlan(
+          PLAN_ID,
+          { onInvoice: 60, offInvoice: 60 },
+          'NKA',
+          '2026-01',
+          'TRY',
+          TENANT_ID,
+          USER_ID,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      // Kapı yazımdan SONRAYA alınsaydı (veya atlansaydı), on=60 tek
+      // başına 100-lük havuza sığdığı için ilk RESERVE yazılırdı — bu
+      // assertion tam olarak "biri aşarsa hiçbir satır yazılmaz"
+      // korumasını kilitler.
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('MUTASYON 2 zemini — yalnız fiilen harcanan tipler değerlendirilir/yazılır: off=0 iken OFF_INVOICE için ne kontrol ne yazma yapılır (dolu off zarfı planı bloklamaz)', async () => {
+      mockBudgetRepository.findEnvelopeByDimensions.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: string,
+        ) =>
+          Promise.resolve(
+            spendType === BudgetSpendType.ON_INVOICE
+              ? ({ id: 'env-on' } as BudgetEnvelope)
+              : ({ id: 'env-off' } as BudgetEnvelope),
+          ),
+      );
+      // off-invoice zarfı TAMAMEN DOLU (0 available) — off=0 istendiği için
+      // bu, planı bloklamamalı VE hiç yazılmamalı.
+      mockBudgetRepository.checkBudgetAvailability.mockImplementation(
+        (envelopeId: string, _tenantId: string, requestedAmount: number) => {
+          const available = envelopeId === 'env-on' ? 100000 : 0;
+          return Promise.resolve({
+            available,
+            sufficient: requestedAmount <= available,
+          });
+        },
+      );
+
+      const result = await service.reserveTypedForPlan(
+        PLAN_ID,
+        { onInvoice: 50000, offInvoice: 0 },
+        'NKA',
+        '2026-01',
+        'TRY',
+        TENANT_ID,
+        USER_ID,
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0].spendType).toBe('ON_INVOICE');
+      expect(result[0].amount).toBe(50000);
+      // Mutasyon (off=0 tipi de değerlendirilip yazılırsa): bu 2 olurdu —
+      // OFF_INVOICE için amount=0'lık gereksiz bir RESERVE satırı yazılırdı.
+      expect(mockBudgetRepository.createTransaction).toHaveBeenCalledTimes(1);
+      expect(mockBudgetRepository.createTransaction.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ spendType: 'ON_INVOICE', amount: 50000 }),
+      );
+    });
+
+    it('on=0 && off=0 → no-op: boş dizi döner, kapı dahi atlanır (hiçbir tip harcanmıyor)', async () => {
+      const result = await service.reserveTypedForPlan(
+        PLAN_ID,
+        { onInvoice: 0, offInvoice: 0 },
+        'NKA',
+        '2026-01',
+        'TRY',
+        TENANT_ID,
+        USER_ID,
+      );
+
+      expect(result).toEqual([]);
+      // Kapı (checkPlanBudgetAvailability) dahi çağrılmadı — envelope
+      // lookup'ı hiç tetiklenmedi.
+      expect(
+        mockBudgetRepository.findEnvelopeByDimensions,
+      ).not.toHaveBeenCalled();
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('her iki tip de harcanıyorsa: deterministik ON→OFF sırayla iki RESERVE yazılır, mevcut reserveForPlan (kova-farkındalı net/idempotency) DEĞİŞTİRİLMEDEN kullanılır', async () => {
+      // beforeEach'in varsayılan mock'u: UNSPLIT, tek zarf (ENVELOPE_ID),
+      // 1.000.000 available — hem ON hem OFF aynı zarfa düşer.
+      const result = await service.reserveTypedForPlan(
+        PLAN_ID,
+        { onInvoice: 100, offInvoice: 40 },
+        'NKA',
+        '2026-01',
+        'TRY',
+        TENANT_ID,
+        USER_ID,
+      );
+
+      expect(result).toHaveLength(2);
+      expect(result[0].spendType).toBe('ON_INVOICE');
+      expect(result[0].amount).toBe(100);
+      expect(result[1].spendType).toBe('OFF_INVOICE');
+      expect(result[1].amount).toBe(40);
+
+      // Yazma sırası ON→OFF (0008 §6 R4 — deadlock disiplini).
+      const createCalls = mockBudgetRepository.createTransaction.mock.calls;
+      expect(createCalls).toHaveLength(2);
+      expect(createCalls[0][0]).toEqual(
+        expect.objectContaining({ spendType: 'ON_INVOICE', amount: 100 }),
+      );
+      expect(createCalls[1][0]).toEqual(
+        expect.objectContaining({ spendType: 'OFF_INVOICE', amount: 40 }),
+      );
+      // T-019/T-048 key uzayı DOKUNULMADI — reserveForPlan'ın bugün
+      // ürettiği |ON_INVOICE / |OFF_INVOICE sonekli formatın AYNISI.
+      expect(createCalls[0][0].idempotencyKey).toBe(
+        `RESERVE|PLAN|${PLAN_ID}|${ENVELOPE_ID}|ON_INVOICE`,
+      );
+      expect(createCalls[1][0].idempotencyKey).toBe(
+        `RESERVE|PLAN|${PLAN_ID}|${ENVELOPE_ID}|OFF_INVOICE`,
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------
   // T-019b (Faz 2, docs/analysis/0008 §4) — splitEnvelope
   // ---------------------------------------------------------------------
   describe('splitEnvelope — Faz 2 split + append-only re-home', () => {

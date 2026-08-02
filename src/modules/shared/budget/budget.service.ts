@@ -1296,6 +1296,112 @@ export class BudgetService {
   }
 
   /**
+   * T-056 adım 3 (docs/analysis/0009 §3.2, §6 adım 3): TEK rezervasyon
+   * motoru — bir planın on/off tutarlarını tek yerden, ADR 0004 Karar 2
+   * (+ eki) atomikliğiyle rezerve eder. `ApprovalWorkflowService
+   * #submitForApproval` bugünkü iki ayrı `reserveForPlan` çağrısını
+   * bırakıp bunun yerine BUNU çağırır (adım 5'te `PlanService#submit` de
+   * geçecek — bu adımda DOKUNULMADI).
+   *
+   * Davranış (bağlayıcı, 0009 §3.2, aynen uygulandı):
+   * 1. **Kapı ÖNCE:** `checkPlanBudgetAvailability` (adım 2'de taşınan,
+   *    UNSPLIT birleşik kural + SPLIT bağımsız zarf mantığı) çağrılır;
+   *    `overallSufficient === false` ise `BadRequestException` fırlatılır
+   *    ve HİÇBİR satır yazılmaz (Karar 2 — kısmi rezervasyon YOK). Bu
+   *    kontrol yeniden yazılmadı — mevcut `checkPlanBudgetAvailability`
+   *    delege edilerek kullanıldı (tek türetim noktası, T-053/T-056 adım
+   *    1/2 dersi).
+   * 2. **Yalnız fiilen harcanan tipler yazılır** (ADR 0004 Karar 2 eki):
+   *    `amount > 0` olmayan tip için `reserveForPlan` hiç çağrılmaz.
+   *    `onInvoice <= 0 && offInvoice <= 0` → kapı de atlanır, boş dizi
+   *    döner (no-op; hiçbir tip harcanmıyorsa değerlendirilecek bir şey
+   *    yoktur).
+   * 3. **Deterministik yazma sırası:** her zaman ON_INVOICE önce,
+   *    OFF_INVOICE sonra (0008 §6 R4 — deadlock disiplini).
+   * 4. **Yazma** mevcut `reserveForPlan(..., bucket, manager)`'a delege
+   *    edilir — o metot DEĞİŞMEDİ (T-048/T-053 kova-farkındalı
+   *    net/idempotency mantığı, key formatları dokunulmadı).
+   *
+   * §5.7 uyumu (bağlayıcı): bu metot on/off SINIFLANDIRMASI yapmaz —
+   * çağıranın (`SpendCalculationService` zincirinden gelen) hazır iki
+   * skalerini (`amounts.onInvoice`/`offInvoice`) tüketir.
+   *
+   * Key uzayı: dokunulmadı — `reserveForPlan` `ON_INVOICE`/`OFF_INVOICE`
+   * bucket'ları için bugün yazdığı `|ON_INVOICE`/`|OFF_INVOICE` (+ `|GEN<n>`)
+   * sonekli key uzayını AYNEN üretmeye devam eder.
+   */
+  async reserveTypedForPlan(
+    planId: string,
+    amounts: { onInvoice: number; offInvoice: number },
+    channel: string,
+    periodMonth: string,
+    currency: string,
+    tenantId: string,
+    userId: string,
+    manager?: EntityManager,
+  ): Promise<BudgetTransaction[]> {
+    const { onInvoice, offInvoice } = amounts;
+
+    // Karar 2 eki: hiçbir tip fiilen harcanmıyorsa değerlendirilecek/
+    // yazılacak bir şey yok — kapı dahi atlanır.
+    if (onInvoice <= 0 && offInvoice <= 0) {
+      return [];
+    }
+
+    // 1) Kapı ÖNCE (Karar 2 — atomik, kısmi rezervasyon YOK). F2 (0009
+    // §2.4) nedeniyle bu okuma çağıranın açık transaction'ını görmez —
+    // bilinçli kabul edilmiş, TEK koruma katmanı (0009 §9 madde 3).
+    const budgetCheck = await this.checkPlanBudgetAvailability(
+      tenantId,
+      channel,
+      periodMonth,
+      onInvoice,
+      offInvoice,
+    );
+
+    if (!budgetCheck.overallSufficient) {
+      throw new BadRequestException(
+        `Insufficient budget. On-Invoice: ${budgetCheck.onInvoice.available} available, ${budgetCheck.onInvoice.requested} requested. ` +
+          `Off-Invoice: ${budgetCheck.offInvoice.available} available, ${budgetCheck.offInvoice.requested} requested.`,
+      );
+    }
+
+    // 2) + 3) Yalnız fiilen harcanan tipler, deterministik ON→OFF sırayla.
+    const results: BudgetTransaction[] = [];
+    if (onInvoice > 0) {
+      results.push(
+        await this.reserveForPlan(
+          planId,
+          onInvoice,
+          channel,
+          periodMonth,
+          currency,
+          tenantId,
+          userId,
+          'ON_INVOICE',
+          manager,
+        ),
+      );
+    }
+    if (offInvoice > 0) {
+      results.push(
+        await this.reserveForPlan(
+          planId,
+          offInvoice,
+          channel,
+          periodMonth,
+          currency,
+          tenantId,
+          userId,
+          'OFF_INVOICE',
+          manager,
+        ),
+      );
+    }
+    return results;
+  }
+
+  /**
    * Get budget status for channel and category
    * Returns total allocation, available amount, and planned amount
    *

@@ -125,7 +125,15 @@ describe('ApprovalWorkflowService', () => {
             // CONTRACT so submitForApproval's orchestration (validationErrors,
             // gating reserveForPlan) is exercised.
             checkPlanBudgetAvailability: jest.fn(),
-            reserveForPlan: jest.fn(),
+            // T-056 adım 3 (docs/analysis/0009 §3.2, §6 adım 3):
+            // submitForApproval now calls this SINGLE method instead of two
+            // separate `reserveForPlan` calls — the gate + ON→OFF ordering
+            // moved into `BudgetService#reserveTypedForPlan` itself (real
+            // behaviour covered in budget.service.spec.ts's
+            // "reserveTypedForPlan" suite). This mock only needs to stand in
+            // for the CONTRACT so submitForApproval's OWN orchestration
+            // (which amounts it passes, in what shape) stays under test here.
+            reserveTypedForPlan: jest.fn(),
             commitReservedForPlan: jest.fn(),
             commitAllReservedForPlan: jest.fn(),
             releaseForPlan: jest.fn(),
@@ -285,7 +293,10 @@ describe('ApprovalWorkflowService', () => {
         mockApprovalRequest as any,
       );
       planRepo.updateStatusCas.mockResolvedValue(1);
-      budgetService.reserveForPlan.mockResolvedValue({} as any);
+      budgetService.reserveTypedForPlan.mockResolvedValue([
+        {} as any,
+        {} as any,
+      ]);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
@@ -319,7 +330,19 @@ describe('ApprovalWorkflowService', () => {
         }),
       );
       expect(approvalService.createRequest).toHaveBeenCalled();
-      expect(budgetService.reserveForPlan).toHaveBeenCalledTimes(2); // On and Off Invoice
+      // T-056 adım 3: single call carrying BOTH amounts, replacing the old
+      // two-call (On and Off Invoice) orchestration.
+      expect(budgetService.reserveTypedForPlan).toHaveBeenCalledTimes(1);
+      expect(budgetService.reserveTypedForPlan).toHaveBeenCalledWith(
+        mockPlanId,
+        { onInvoice: 10000, offInvoice: 5100 },
+        expect.any(String),
+        expect.any(String),
+        'TRY',
+        mockTenantId,
+        mockUserId,
+        queryRunnerManager,
+      );
       expect(queryRunner.commitTransaction).toHaveBeenCalled();
     });
 
@@ -390,7 +413,7 @@ describe('ApprovalWorkflowService', () => {
       ).rejects.toThrow('version');
       expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
       expect(approvalService.createRequest).not.toHaveBeenCalled();
-      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+      expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
     });
 
     it('rejects with 409 STALE_VERSION when the client version does not match the locked row', async () => {
@@ -445,7 +468,7 @@ describe('ApprovalWorkflowService', () => {
       ).rejects.toThrow('modified by another user');
       expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
       expect(approvalService.createRequest).not.toHaveBeenCalled();
-      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+      expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
     });
 
     it('should fail if plan has no FUs', async () => {
@@ -574,7 +597,7 @@ describe('ApprovalWorkflowService', () => {
         mockApprovalRequest as any,
       );
       planRepo.updateStatusCas.mockResolvedValue(1);
-      budgetService.reserveForPlan.mockResolvedValue({} as any);
+      budgetService.reserveTypedForPlan.mockResolvedValue([{} as any]);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
@@ -705,8 +728,9 @@ describe('ApprovalWorkflowService', () => {
     // T-019 Faz 1 / ADR 0004 Karar 2 (docs/analysis/0008 §7 T3): atomic
     // block — even when EACH type individually fits the shared UNSPLIT
     // envelope (on=60<=100, off=60<=100), the COMBINED request (120) must
-    // be rejected entirely, and NEITHER reserveForPlan call may fire (no
-    // partial reservation). This is the exact regression §5.5's "birleşik
+    // be rejected entirely, and reserveTypedForPlan (T-056 adım 3: the
+    // single engine call) may not fire at all (no partial reservation).
+    // This is the exact regression §5.5's "birleşik
     // kural" (onEnv.id === offEnv.id → on+off <= available) protects
     // against — removing it would let two individually-fitting amounts
     // both pass and together overshoot.
@@ -764,7 +788,7 @@ describe('ApprovalWorkflowService', () => {
       // "checkPlanBudgetAvailability" suite (same T3 case, ported
       // verbatim). This mock reproduces exactly what that algorithm returns
       // for these inputs so submitForApproval's OWN orchestration (atomic
-      // gate BEFORE either reserveForPlan call) stays under test here.
+      // gate BEFORE the reserveTypedForPlan call) stays under test here.
       budgetService.checkPlanBudgetAvailability.mockResolvedValue({
         onInvoice: { available: 100, requested: 60, sufficient: true },
         offInvoice: { available: 100, requested: 60, sufficient: true },
@@ -788,9 +812,9 @@ describe('ApprovalWorkflowService', () => {
         ),
       ).toBe(true);
       // MUTATION-GUARDING assertion: no reservation write of ANY kind
-      // happened — the atomic block must fire strictly BEFORE either
-      // reserveForPlan call (queryRunner transaction never opened).
-      expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+      // happened — the atomic block must fire strictly BEFORE the
+      // reserveTypedForPlan call (queryRunner transaction never opened).
+      expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
     });
 
     it('should add warning for RED RAG status', async () => {
@@ -868,7 +892,7 @@ describe('ApprovalWorkflowService', () => {
         version: 1,
       } as Plan);
       planRepo.updateStatusCas.mockResolvedValue(1);
-      budgetService.reserveForPlan.mockResolvedValue({} as any);
+      budgetService.reserveTypedForPlan.mockResolvedValue([{} as any]);
       approvalHistoryRepo.create.mockReturnValue({} as any);
       approvalHistoryRepo.save.mockResolvedValue({} as any);
 
@@ -927,8 +951,8 @@ describe('ApprovalWorkflowService', () => {
       // "checkPlanBudgetAvailability" suite (same 3 cases, ported
       // verbatim). Each `it` below sets `checkPlanBudgetAvailability`
       // directly to the exact value that algorithm returns for its inputs,
-      // so submitForApproval's OWN orchestration (which reserveForPlan
-      // calls fire, in what count) stays under test here.
+      // so submitForApproval's OWN orchestration (whether/with what
+      // amounts reserveTypedForPlan is called) stays under test here.
 
       it('a plan spending ONLY on-invoice is not blocked by an exhausted off-invoice envelope (Karar 2 eki: harcanmayan tip zarfın durumu planı bloklamaz)', async () => {
         budgetService.checkPlanBudgetAvailability.mockResolvedValue({
@@ -950,7 +974,7 @@ describe('ApprovalWorkflowService', () => {
           requestType: ApprovalRequestType.PLAN,
         } as any);
         planRepo.updateStatusCas.mockResolvedValue(1);
-        budgetService.reserveForPlan.mockResolvedValue({} as any);
+        budgetService.reserveTypedForPlan.mockResolvedValue([{} as any]);
         approvalHistoryRepo.create.mockReturnValue({} as any);
         approvalHistoryRepo.save.mockResolvedValue({} as any);
 
@@ -964,18 +988,21 @@ describe('ApprovalWorkflowService', () => {
         expect(result.success).toBe(true);
         expect(result.budgetCheck?.overallSufficient).toBe(true);
         expect(result.budgetCheck?.offInvoice.requested).toBe(0);
-        // Only the ON leg reserves — no OFF_INVOICE reserveForPlan call for
-        // a zero amount (see submitForApproval's `if (spendBreakdown... > 0)`).
-        expect(budgetService.reserveForPlan).toHaveBeenCalledTimes(1);
-        expect(budgetService.reserveForPlan).toHaveBeenCalledWith(
+        // T-056 adım 3: single reserveTypedForPlan call carrying BOTH
+        // amounts — the "only the ON leg reserves, no OFF_INVOICE write for
+        // a zero amount" guarantee now lives INSIDE reserveTypedForPlan
+        // (real behaviour covered in budget.service.spec.ts's
+        // "reserveTypedForPlan" suite); here we assert submitForApproval
+        // passes the raw {onInvoice, offInvoice} shape through unchanged.
+        expect(budgetService.reserveTypedForPlan).toHaveBeenCalledTimes(1);
+        expect(budgetService.reserveTypedForPlan).toHaveBeenCalledWith(
           mockPlanId,
-          50000,
+          { onInvoice: 50000, offInvoice: 0 },
           expect.any(String),
           expect.any(String),
           'TRY',
           mockTenantId,
           mockUserId,
-          'ON_INVOICE',
           expect.anything(),
         );
       });
@@ -1003,7 +1030,7 @@ describe('ApprovalWorkflowService', () => {
         expect(result.budgetCheck?.onInvoice.sufficient).toBe(true);
         expect(result.budgetCheck?.offInvoice.sufficient).toBe(false);
         expect(result.budgetCheck?.overallSufficient).toBe(false);
-        expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
+        expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
       });
 
       it('a plan spending BOTH types succeeds when both typed envelopes are independently sufficient', async () => {
@@ -1026,7 +1053,7 @@ describe('ApprovalWorkflowService', () => {
           requestType: ApprovalRequestType.PLAN,
         } as any);
         planRepo.updateStatusCas.mockResolvedValue(1);
-        budgetService.reserveForPlan.mockResolvedValue({} as any);
+        budgetService.reserveTypedForPlan.mockResolvedValue([{} as any]);
         approvalHistoryRepo.create.mockReturnValue({} as any);
         approvalHistoryRepo.save.mockResolvedValue({} as any);
 
@@ -1039,7 +1066,19 @@ describe('ApprovalWorkflowService', () => {
 
         expect(result.success).toBe(true);
         expect(result.budgetCheck?.overallSufficient).toBe(true);
-        expect(budgetService.reserveForPlan).toHaveBeenCalledTimes(2);
+        // T-056 adım 3: single call carrying both amounts (was: 2 separate
+        // reserveForPlan calls).
+        expect(budgetService.reserveTypedForPlan).toHaveBeenCalledTimes(1);
+        expect(budgetService.reserveTypedForPlan).toHaveBeenCalledWith(
+          mockPlanId,
+          { onInvoice: 50000, offInvoice: 30000 },
+          expect.any(String),
+          expect.any(String),
+          'TRY',
+          mockTenantId,
+          mockUserId,
+          expect.anything(),
+        );
       });
     });
   });
