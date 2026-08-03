@@ -14,6 +14,15 @@
 #
 # Ayırt edilemeyen durum bulgu olarak basılır ve triyaja bırakılır — Faz 1'in amacı bu.
 #
+# ⚠️ KAPSAM SINIRI (Faz 2 review'ında ölçüldü — abartılı iddia yazmamak için burada):
+#   1. Kapsam yol bazlı: `src/modules` altındaki 273 dosyanın FIN_RE ile eşleşen
+#      176'sı taranır. "Kod tabanının tamamı" DEĞİLDİR.
+#   2. Guard yalnızca TIRNAKLI (literal) sıralama anahtarını görebilir. Değişkenle
+#      verilen dinamik anahtar görünmez:
+#        query.orderBy(sortField, ...)   → guard bunu değerlendiremez
+#      Gerçek örnek: finance-reporting.service.ts:492 — `plan.${pagination.sortBy}`
+#      şablonuyla kurulan sortField. Bu bir T-066 işidir ve bu guard onu YAKALAMAZ.
+#
 # GUARD_MODE=block (varsayılan) → bulgu varsa exit 1
 # GUARD_MODE=report             → bulguları bas, exit 0 (triyaj için)
 # Allowlist parse hatası        → exit 2 (her iki modda da)
@@ -34,8 +43,12 @@ if [ ! -d src/modules ]; then
   exit 0
 fi
 
-# Finansal modül kapsamı
-FIN_RE="ledger|budget|agreement|on-invoice|settlement|plan|approval|reversal|sales-actuals"
+# Finansal modül kapsamı.
+# Faz 2 review'ında genişletildi: ilk liste `src/modules` altındaki 273 dosyanın
+# 132'sini kapsıyordu ve finance-reporting / spend-calculation / kpi-engine
+# tamamen dışarıda kalıyordu — yani "kod tabanında 0 bulgu" iddiası kapsamdan
+# büyüktü. Yeni terimler: finance, spend, kpi, roi, invoice, claim, actual.
+FIN_RE="ledger|budget|agreement|on-invoice|settlement|plan|approval|reversal|sales-actuals|finance|spend|kpi|roi|invoice|claim|actual|report|dashboard|lta"
 
 scan() {
   find src/modules -type f -name "*.ts" | grep -E "$FIN_RE" | sort | while IFS= read -r f; do
@@ -98,9 +111,7 @@ scan() {
   done
 }
 
-OUT="$(scan | filter_allowlist)"
-[ -n "$OUT" ] && printf "%s\n" "$OUT"
-COUNT="$(printf "%s" "$OUT" | grep -c "^\[$GUARD_NAME\]" || true)"
+report_guard "$(scan)"
 
 if [ "$GUARD_MODE" = "block" ] && [ "$COUNT" -gt 0 ]; then
   exit 1

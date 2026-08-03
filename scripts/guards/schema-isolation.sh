@@ -61,9 +61,7 @@ scan() {
   fi
 }
 
-OUT="$(scan | filter_allowlist)"
-[ -n "$OUT" ] && printf "%s\n" "$OUT"
-COUNT="$(printf "%s" "$OUT" | grep -c "^\[$GUARD_NAME\]" || true)"
+report_guard "$(scan)"
 
 if [ "$GUARD_MODE" = "block" ] && [ "$COUNT" -gt 0 ]; then
   exit 1

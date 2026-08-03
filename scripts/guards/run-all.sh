@@ -22,6 +22,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS=(migration-schema ledger-direction financial-ordering schema-isolation)
 
 TOTAL=0
+TOTAL_SUP=0
+SKIPPED_OK=0
+SKIPPED_BAD=0
 SUMMARY=""
 
 for g in "${GUARDS[@]}"; do
@@ -39,6 +42,8 @@ for g in "${GUARDS[@]}"; do
 
   COUNT="$(printf "%s" "$OUT" | grep -c "^\[$g\]" || true)"
   SKIPPED="$(printf "%s" "$OUT" | grep -c "^-- \[$g\] SKIPPED" || true)"
+  SUP="$(printf "%s" "$OUT" | sed -n "s/^-- \[$g\] SUPPRESSED: \([0-9]*\) .*/\1/p")"
+  SUP="${SUP:-0}"
 
   echo "=== $g ==="
   if [ -n "$OUT" ]; then
@@ -49,19 +54,40 @@ for g in "${GUARDS[@]}"; do
   echo
 
   if [ "$SKIPPED" -gt 0 ]; then
-    SUMMARY="${SUMMARY}  ${g}: SKIPPED\n"
+    # SKIPPED "0 bulgu" DEĞİLDİR — "ölçülmedi"dir. Ayrı raporlanır, çünkü
+    # `npm run guards` yeşili artık Done kriteri (CLAUDE.md §4.2): Docker
+    # kapalıyken "guards yeşil" işaretlenebilmesi sessiz bir boşluk olurdu.
+    SUMMARY="${SUMMARY}  ${g}: ÖLÇÜLMEDİ (SKIPPED)\n"
+    if [ "$g" = "schema-isolation" ]; then
+      # Tek meşru SKIPPED: DB'siz ortamda DB kontrolü yapılamaz.
+      SKIPPED_OK=$((SKIPPED_OK + 1))
+    else
+      # Kaynak kod guard'ı atlanıyorsa bu bir kurulum hatasıdır, mazeret değil.
+      SKIPPED_BAD=$((SKIPPED_BAD + 1))
+    fi
   else
-    SUMMARY="${SUMMARY}  ${g}: ${COUNT} bulgu\n"
+    LINE="  ${g}: ${COUNT} bulgu"
+    [ "$SUP" -gt 0 ] && LINE="${LINE} (${SUP} susturuldu → allowlist)"
+    SUMMARY="${SUMMARY}${LINE}\n"
     TOTAL=$((TOTAL + COUNT))
+    TOTAL_SUP=$((TOTAL_SUP + SUP))
   fi
 done
 
 echo "=== ÖZET (GUARD_MODE=$GUARD_MODE) ==="
 printf "%b" "$SUMMARY"
 echo "  TOPLAM: $TOTAL bulgu"
+[ "$TOTAL_SUP" -gt 0 ] && echo "  SUSTURULAN: $TOTAL_SUP (gerekçeleri: scripts/guards/allowlist.txt)"
+[ "$SKIPPED_OK" -gt 0 ] && echo "  ÖLÇÜLMEYEN (DB erişimi yok): $SKIPPED_OK guard"
 
-if [ "$GUARD_MODE" = "block" ] && [ "$TOTAL" -gt 0 ]; then
-  echo "  → GUARD_MODE=block ve bulgu var: exit 1"
-  exit 1
+if [ "$GUARD_MODE" = "block" ]; then
+  if [ "$SKIPPED_BAD" -gt 0 ]; then
+    echo "  → kaynak kod guard'ı çalıştırılamadı ($SKIPPED_BAD adet): exit 1"
+    exit 1
+  fi
+  if [ "$TOTAL" -gt 0 ]; then
+    echo "  → GUARD_MODE=block ve bulgu var: exit 1"
+    exit 1
+  fi
 fi
 exit 0

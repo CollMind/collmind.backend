@@ -9,7 +9,7 @@
 # bir catalogue kontrolü yanlış şemadaki nesneyi görüp migration'ı sessizce
 # no-op yapar. Gerçek vaka: 1777000000000-LedgerReversalSupport.
 #
-# Yöntem (Faz 2 — T-065): Faz 1'deki ±10 satırlık pencere MASKELEME üretiyordu:
+# Yöntem (T-064 Faz 2): Faz 1'deki ±10 satırlık pencere MASKELEME üretiyordu:
 # şema-nitelendirilmiş bir sorgu, nitelendirilmemiş komşusunun penceresine
 # düşünce ikincisi kaçıyordu. Artık pencere yok, SORGU SINIRI var: her template
 # literal (`` ` ... ` ``) bir birim olarak çıkarılır ve ayrı ayrı değerlendirilir.
@@ -19,9 +19,13 @@
 #   'main.agreements'::regclass · to_regclass('main.x') · ::regnamespace
 #
 # Bilinen sınır: tek bir template literal içinde birden çok catalogue sorgusu
-# varsa (ör. `EXISTS(...) AND EXISTS(...)`) blok bütün olarak değerlendirilir;
+# varsa (ör. `EXISTS(...) AND NOT EXISTS(...)`) blok bütün olarak değerlendirilir;
 # biri nitelendirilmişse diğeri maskelenebilir. Pencere maskelemesinden çok daha
-# dar bir yüzey, ama sıfır değil. Bloklar bugün kod tabanında tek sorgu.
+# dar bir yüzey, ama sıfır değil.
+#   ⚠️ Böyle bir blok BUGÜN VAR: 1795000000000-AddSpendTypeToBudgetDimensions.ts:148-160
+#   (iki information_schema.columns sorgusu, tek literal). Bugün maskeleme yok
+#   çünkü İKİSİ DE `table_schema = 'main'` taşıyor — ama o bloğa nitelendirilmemiş
+#   üçüncü bir sorgu eklenirse guard susar.
 #
 # GUARD_MODE=block (varsayılan) → bulgu varsa exit 1
 # GUARD_MODE=report             → bulguları bas, exit 0 (triyaj için)
@@ -49,7 +53,24 @@ fi
 # numarası, o ana kadar tüketilen yeni satırlar sayılarak izlenir.
 scan() {
   find "$MIG_DIR" -type f -name "*.ts" | sort | while IFS= read -r f; do
-    awk -v file="$f" -v guard="$GUARD_NAME" '
+    # 1) Yorum satırlarındaki backtick'leri temizle. Bunlar SQL sınırı değil ama
+    #    pariteyi kaydırır: `// ... \`amount\` ...` gibi bir satır literal içi/dışı
+    #    ayrımını ters çevirip guard'ı SESSİZCE kör eder. Gerçek vaka:
+    #    1795000000000-AddSpendTypeToBudgetDimensions.ts:73,74,103,110.
+    PRE="$(awk '{ t = $0; sub(/^[ \t]+/, "", t); if (t ~ /^(\/\/|\*|\/\*)/) gsub(/`/, "", $0); print }' "$f")"
+
+    # 2) Self-check. Parite hâlâ tekse ya da kaçırılmış backtick (\`) varsa blok
+    #    sınırı güvenilmezdir. Bu durumda dosyayı ATLAMAK yanlış olur — atlamak
+    #    sessiz yanlış negatiftir ve bu guard artık bloklayıcı bir kapı. Bulgu bas.
+    BT="$(printf '%s' "$PRE" | tr -cd '`' | wc -c | tr -d ' ')"
+    if [ $((BT % 2)) -ne 0 ] || grep -q '\\`' "$f"; then
+      printf "[%s] %s:1\n" "$GUARD_NAME" "$f"
+      printf "  backtick paritesi bozuk veya kaçırılmış backtick var — blok sınırı güvenilmez\n"
+      printf "  > guard bu dosyayı güvenle tarayamıyor; catalogue sorgularını elle doğrula\n"
+      continue
+    fi
+
+    printf '%s\n' "$PRE" | awk -v file="$f" -v guard="$GUARD_NAME" '
       BEGIN {
         RS = "`"
         SQ = sprintf("%c", 39)
@@ -86,13 +107,11 @@ scan() {
           break
         }
       }
-    ' "$f"
+    '
   done
 }
 
-OUT="$(scan | filter_allowlist)"
-[ -n "$OUT" ] && printf "%s\n" "$OUT"
-COUNT="$(printf "%s" "$OUT" | grep -c "^\[$GUARD_NAME\]" || true)"
+report_guard "$(scan)"
 
 if [ "$GUARD_MODE" = "block" ] && [ "$COUNT" -gt 0 ]; then
   exit 1

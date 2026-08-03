@@ -34,9 +34,10 @@ validate_allowlist() {
       n = split(line, p, "|")
       for (i = 1; i <= n; i++) gsub(/^[ \t]+|[ \t]+$/, "", p[i])
 
-      if (n < 3) {
-        printf "  satır %d: 3 alan bekleniyor (<guard>|<anahtar>|<gerekçe>), %d bulundu\n", NR, n
+      if (n != 3) {
+        printf "  satır %d: tam 3 alan bekleniyor (<guard>|<anahtar>|<gerekçe>), %d bulundu\n", NR, n
         printf "    > %s\n", line
+        printf "    (gerekce metninde ayrac karakteri kullanma: sessizce budanmasin diye reddediliyor)\n"
         next
       }
       if (p[3] == "") {
@@ -52,6 +53,16 @@ validate_allowlist() {
       if (p[2] == "") {
         printf "  satır %d: anahtar alanı boş (<dosya>:<satır> veya ENV bekleniyor)\n", NR
         printf "    > %s\n", line
+        next
+      }
+      # ENV joker anahtari yalniz ortam guardi icin anlamli. Kaynak kod
+      # guardinda ENV yazmak o guardin tum dosya-disi bulgularini susturur:
+      # anlamsiz ve tehlikeli bir kombinasyon.
+      # (NOT: bu blok bash icinde tek tirnakli awk programi; Turkce kesme
+      #  isareti tirnagi kapatir, o yuzden awk-ici yorumlar aksansizdir.)
+      if (p[2] == "ENV" && p[1] != "schema-isolation") {
+        printf "  satır %d: ENV anahtarı yalnız schema-isolation için geçerli (%s yazılmış)\n", NR, p[1]
+        printf "    > %s\n", line
       }
     }
   ' "$al")"
@@ -65,6 +76,30 @@ validate_allowlist() {
     return 2
   fi
   return 0
+}
+
+# report_guard <ham-bulgu-akışı>
+# Allowlist filtresini uygular, sonucu basar, susturulan sayısını GÖRÜNÜR kılar ve
+# COUNT/SUPPRESSED değişkenlerini set eder.
+#
+# Susturmanın çıktıda görünmesi şart: `schema-isolation` bugün canlı bir gerçek
+# pozitif üretiyor ve allowlist onu düşürüyor. Çıktı sadece "0 bulgu" deseydi,
+# ortam ihlalinin (T-067) tek kaydı allowlist dosyası olurdu — kimse bakmazdı.
+report_guard() {
+  local raw="$1" out
+  out="$(printf '%s\n' "$raw" | filter_allowlist)"
+
+  local rawc outc
+  rawc="$(printf '%s' "$raw" | grep -c "^\[$GUARD_NAME\]" || true)"
+  outc="$(printf '%s' "$out" | grep -c "^\[$GUARD_NAME\]" || true)"
+
+  [ -n "$out" ] && printf '%s\n' "$out"
+
+  COUNT="$outc"
+  SUPPRESSED=$((rawc - outc))
+  if [ "$SUPPRESSED" -gt 0 ]; then
+    echo "-- [$GUARD_NAME] SUPPRESSED: $SUPPRESSED bulgu allowlist ile susturuldu"
+  fi
 }
 
 # filter_allowlist — stdin'deki bulgu akışından allowlist'tekileri düşürür.

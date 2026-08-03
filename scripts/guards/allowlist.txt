@@ -3,7 +3,10 @@
 # Format: <guard-adı>|<anahtar>|<gerekçe>
 #
 #   <anahtar> = <dosya-yolu>:<satır>   → kaynak kod bulgusu
-#             | ENV                    → dosya:satır'ı olmayan ortam bulgusu
+#             | <bulgunun tam anahtarı> → ör. `db:collmind_tpm` (ortam bulgusu)
+#             | ENV                    → SON ÇARE joker: o guard'ın dosya:satır
+#                                        biçiminde OLMAYAN *her* bulgusunu susturur.
+#                                        Geniştir — tam anahtar yazabiliyorsan onu yaz.
 #
 # Gerekçesiz veya alan sayısı eksik satır GEÇERSİZDİR ve guard'lar parse hatası
 # verip exit 2 döner (sessizce yok saymaz). Faz 2'de guard'lar bloklayıcı olduğu
@@ -19,4 +22,4 @@
 # şema-güvenlidir ve Faz 2'de migration-schema guard'ının içinde çözüldü;
 # allowlist'e girmedi.
 
-schema-isolation|ENV|Lokal geliştirme DB'si (collmind_tpm) hem main (CTPM) hem public (TTM) şemasını barındırıyor. Bu ortam gerçeği, kod kusuru değil; guard'ın amacı zaten bu riski görünür kılmaktı ve migration-schema guard'ı riski kaynakta kapatıyor. Şema ayırma işi: T-067
+schema-isolation|db:collmind_tpm|Lokal geliştirme DB'si (collmind_tpm) hem main (CTPM) hem public (TTM) şemasını barındırıyor. Bu ortam gerçeği, kod kusuru değil; guard'ın amacı zaten bu riski görünür kılmaktı ve migration-schema guard'ı riski kaynakta kapatıyor. Şema ayırma işi: T-067
