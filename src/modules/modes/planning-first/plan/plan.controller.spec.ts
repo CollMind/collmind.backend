@@ -87,11 +87,18 @@ describe('PlanController', () => {
 
       approvalWorkflowService.submitForApproval.mockResolvedValue(mockResult);
 
+      // T-056 adım 7: bu uç artık @Res({ passthrough: true }) alıyor
+      // (Deprecation başlığı yazmak için) — response nesnesini elle mock'la.
+      const mockRes = { setHeader: jest.fn() } as unknown as {
+        setHeader: jest.Mock;
+      };
+
       const result = await controller.submitForApproval(
         planId,
         dto,
         mockTenantId,
         mockUser,
+        mockRes as never,
       );
 
       expect(approvalWorkflowService.submitForApproval).toHaveBeenCalledWith(
@@ -102,6 +109,35 @@ describe('PlanController', () => {
         { userId: mockUser.id, role: mockUser.role },
       );
       expect(result).toEqual(mockResult);
+    });
+
+    it('T-056 adım 7: sets the HTTP Deprecation response header', async () => {
+      const planId = 'plan-1';
+      const dto: SubmitForApprovalDto = { submissionNotes: 'Test notes' };
+      approvalWorkflowService.submitForApproval.mockResolvedValue({
+        success: true,
+        planId,
+        status: PlanStatus.PENDING_APPROVAL,
+        budgetCheck: {
+          onInvoice: { available: 100000, requested: 60000, sufficient: true },
+          offInvoice: { available: 100000, requested: 40000, sufficient: true },
+          overallSufficient: true,
+        },
+        approvalRequestId: 'approval-request-1',
+      });
+      const mockRes = { setHeader: jest.fn() } as unknown as {
+        setHeader: jest.Mock;
+      };
+
+      await controller.submitForApproval(
+        planId,
+        dto,
+        mockTenantId,
+        mockUser,
+        mockRes as never,
+      );
+
+      expect(mockRes.setHeader).toHaveBeenCalledWith('Deprecation', 'true');
     });
   });
 

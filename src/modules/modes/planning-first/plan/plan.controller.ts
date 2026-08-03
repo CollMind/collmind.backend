@@ -348,6 +348,13 @@ export class PlanController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Submit plan for approval with pre-submission checks',
+    deprecated: true,
+    description:
+      // T-056 adım 7 (ADR 0005 K1, deprecation faz 1): para yolu artık
+      // POST /plans/:id/submit ile ortak (aynı reserveTypedForPlan motoru).
+      // Bu uç yaşamaya devam eder (davranış/sözleşme değişmedi); kaldırma
+      // faz 2'dir ([[T-058]]).
+      'DEPRECATED — use POST /plans/:id/submit instead. This endpoint remains functional (behavior unchanged) but will be removed in a future release (T-056/ADR 0005, phase 2 tracked as T-058).',
   })
   @ApiResponse({ status: 200, description: 'Plan submitted successfully' })
   @ApiResponse({
@@ -359,7 +366,11 @@ export class PlanController {
     @Body() dto: SubmitForApprovalDto,
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string; role: UserRole },
+    @Res({ passthrough: true }) res: Response,
   ) {
+    // T-056 adım 7: HTTP Deprecation sinyali (ADR 0005 K1). Endpoint hâlâ
+    // yaşıyor — yalnız uyarı, davranış değişmiyor.
+    res.setHeader('Deprecation', 'true');
     return this.approvalWorkflowService.submitForApproval(
       id,
       tenantId,

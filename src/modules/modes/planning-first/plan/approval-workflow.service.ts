@@ -68,6 +68,14 @@ export class ApprovalWorkflowService {
     dto: SubmitForApprovalDto,
     actor?: PlanActor,
   ): Promise<SubmissionResult> {
+    // T-056 adım 7 (ADR 0005 K1 — deprecation faz 1): bu uç hâlâ yaşıyor
+    // (davranış/sözleşme değişmedi), ama tek para yolu artık POST
+    // /plans/:id/submit üzerinden akıyor (PlanService#submit, T-056 adım 5).
+    // Çağıranı /submit'e yönlendiren gürültülü sinyal — endpoint kaldırma
+    // faz 2'de ([[T-058]]).
+    this.logger.warn(
+      `POST /plans/${planId}/submit-for-approval is deprecated — use POST /plans/${planId}/submit instead (T-056/ADR 0005 K1)`,
+    );
     const plan = await this.planRepo.findById(planId, tenantId);
     if (!plan) {
       throw new NotFoundException(`Plan with ID ${planId} not found`);

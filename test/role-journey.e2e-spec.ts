@@ -758,6 +758,19 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           version: preSubmitRes.body.version,
         });
 
+      // T-056 adım 7 (ADR 0005 K1, deprecation faz 1): /submit-for-approval
+      // hâlâ çalışıyor ama HTTP Deprecation başlığı taşımalı — çağıranı
+      // /submit'e yönlendiren sözleşme sinyali.
+      record({
+        step: 'A8c-deprecation',
+        role: '-',
+        endpoint: 'HTTP header: Deprecation (submit-for-approval yanıtı)',
+        expected: 'true',
+        actual: `${submitRes.headers['deprecation']}`,
+        note: 'T-056 adım 7: endpoint yaşıyor (davranış aynı), yalnız deprecation sinyali eklendi — kaldırma T-058.',
+      });
+      expect(submitRes.headers['deprecation']).toBe('true');
+
       // MEC-DISCOUNT (on-invoice %) + CPP_OFF_PCT (off-invoice %) on this
       // plan's FU → SpendCalculationService computes non-zero on AND off
       // spend, so submit-for-approval (ApprovalWorkflowService
@@ -823,6 +836,69 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
       expect(path1TotalSpend).toBeGreaterThan(0);
       expect(path1TotalSpend).toBeCloseTo(path2TotalSpend, 2);
+    });
+
+    it("A8c′. T-056 adım 7 — A8c'nin canlı-rota ikizi: POST /plans/:id/submit de İKİ tipli RESERVE satırı yazar (ON_INVOICE + OFF_INVOICE), SQL kanıtı", async () => {
+      // ADR 0005 K1 (docs/decisions/0005-*, §4.6 D6): T-056 adım 5'ten beri
+      // canlı `/submit` yolu da `reserveTypedForPlan` üzerinden aynı
+      // rezervasyon motorunu kullanıyor — A8c bunu `/submit-for-approval`
+      // ucunda kanıtlıyordu, bu test AYNI korumayı frontend'in gerçekten
+      // çağırdığı `/submit` ucunda kilitliyor. `createT029TestPlan` A14/A16
+      // ile aynı kanıtlı kombinasyonu (MEC-DISCOUNT on-invoice + CPP_OFF_PCT
+      // off-invoice) kurar, yani her iki tip de garantili > 0 harcar.
+      const planner = await loginAs(app, 'PLANNER');
+      const { planId: a8cPrimePlanId, version: a8cPrimeVersion } =
+        await createT029TestPlan(planner, 'E2E-ROLE-JOURNEY-A8CPRIME-T056');
+
+      const submitRes = await request(app.getHttpServer())
+        .post(`/plans/${a8cPrimePlanId}/submit`)
+        .set(planner.authHeader())
+        .send({ version: a8cPrimeVersion });
+
+      // T-056 adım 7 kontrast kanıtı: yalnız `/submit-for-approval`
+      // deprecate edildi — canlı `/submit` bu başlığı taşımamalı.
+      expect(submitRes.headers['deprecation']).toBeUndefined();
+
+      const planAfterSubmit = await request(app.getHttpServer())
+        .get(`/plans/${a8cPrimePlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+
+      const budgetTxAfterSubmit = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'
+          ORDER BY spend_type ASC NULLS LAST`,
+        [a8cPrimePlanId],
+      );
+
+      record({
+        step: 'A8c′',
+        role: '-',
+        endpoint:
+          "DB: main.budget_transactions (canlı POST /plans/:id/submit sonrası, A8c'nin ikizi)",
+        expected: '2 RESERVE satırı (ON_INVOICE + OFF_INVOICE), TOTAL kova YOK',
+        actual: `submitStatus=${submitRes.status}, tx=${JSON.stringify(budgetTxAfterSubmit)}`,
+        note: 'T-056 adım 5 fix: canlı /submit artık TOTAL kovaya değil, reserveTypedForPlan üzerinden tipli kovalara yazıyor — on/off ayrımı ilk kez frontend’in çağırdığı uçta erişilebilir.',
+      });
+
+      expect(submitRes.status).toBe(200);
+      expect(budgetTxAfterSubmit.length).toBe(2);
+      const bySpendTypeA8cPrime = Object.fromEntries(
+        budgetTxAfterSubmit.map((r: any) => [r.spend_type, Number(r.amount)]),
+      );
+      expect(bySpendTypeA8cPrime.ON_INVOICE).toBeGreaterThan(0);
+      expect(bySpendTypeA8cPrime.OFF_INVOICE).toBeGreaterThan(0);
+      expect(
+        bySpendTypeA8cPrime.ON_INVOICE + bySpendTypeA8cPrime.OFF_INVOICE,
+      ).toBeCloseTo(Number(planAfterSubmit.body.totalSpend), 2);
+      expect(
+        budgetTxAfterSubmit.every((r: any) => r.tx_status === 'POSTED'),
+      ).toBe(true);
+      // TOTAL kova (spend_type=NULL) bu plan için hiç yazılmamalı — K1'in
+      // "TOTAL yalnız legacy/okuma amaçlı" statüsünün canlı rota kanıtı.
+      expect(budgetTxAfterSubmit.some((r: any) => r.spend_type === null)).toBe(
+        false,
+      );
     });
 
     it('A9. CATEGORY_MANAGER → GET /plans/approval-queue', async () => {
@@ -1835,6 +1911,186 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(reserveAfterSubmit2.length).toBe(4);
       expect(netContribution).toBeCloseTo(onAmount1 + offAmount1, 2);
       expect(netContribution).toBeGreaterThan(0);
+    });
+
+    it("A17′. T-056 adım 7 — A17'nin canlı-rota ikizi: POST /plans/:id/submit ile reject → resubmit döngüsü TİPLİ RELEASE + YENİ (jenerasyon sonekli) RESERVE yazmalı (SQL kanıtı, T-053 korumasının yeni yolda geçerliliği)", async () => {
+      // ADR 0005 K1: A17, T-053'ün korumasını `/submit-for-approval`
+      // ucunda kanıtlıyordu. T-056 adım 5'ten beri para yolu ortak
+      // (reserveTypedForPlan + kova-farkındalı releaseNetReservation), bu
+      // test AYNI korumayı frontend'in gerçekten çağırdığı `/submit`
+      // ucunda kilitliyor: reject sonrası RELEASE satırları TİPLİ olmalı
+      // (spend_type NULL değil) ve resubmit YENİ (GEN2 soneki taşıyan)
+      // RESERVE satırları yazmalı — eski, net'i sıfırlanmış satırı sessizce
+      // "hâlâ outstanding" sanıp no-op dönmemeli.
+      const planner = await loginAs(app, 'PLANNER');
+      const manager = await loginAs(app, 'MANAGER');
+
+      const { planId: a17PrimePlanId, version: a17PrimeVersion } =
+        await createT029TestPlan(planner, 'E2E-ROLE-JOURNEY-A17PRIME-T056');
+
+      // ── 1) İLK SUBMIT (canlı rota) ───────────────────────────────────────
+      const submit1 = await request(app.getHttpServer())
+        .post(`/plans/${a17PrimePlanId}/submit`)
+        .set(planner.authHeader())
+        .send({ version: a17PrimeVersion })
+        .expect(200);
+      expect(submit1.body.status).toBe('PENDING_APPROVAL');
+
+      const reserveAfterSubmit1 = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, idempotency_key FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'
+          ORDER BY spend_type ASC NULLS LAST`,
+        [a17PrimePlanId],
+      );
+      record({
+        step: 'A17a′',
+        role: '-',
+        endpoint: 'DB: main.budget_transactions (ilk canlı /submit sonrası)',
+        expected:
+          '2 RESERVE satırı (ON_INVOICE + OFF_INVOICE), soneksiz key (ilk jenerasyon)',
+        actual: JSON.stringify(reserveAfterSubmit1),
+        note: "A17'deki gibi ön koşul — tipli kova RESERVE ikisi de yazılmış olmalı, ama motor artık PlanService#submit üzerinden çağrılıyor.",
+      });
+      expect(reserveAfterSubmit1.length).toBe(2);
+      const onAmount1Prime = Number(
+        reserveAfterSubmit1.find((r: any) => r.spend_type === 'ON_INVOICE')
+          ?.amount,
+      );
+      const offAmount1Prime = Number(
+        reserveAfterSubmit1.find((r: any) => r.spend_type === 'OFF_INVOICE')
+          ?.amount,
+      );
+      expect(onAmount1Prime).toBeGreaterThan(0);
+      expect(offAmount1Prime).toBeGreaterThan(0);
+      // İlk jenerasyon key'leri soneksiz olmalı (T-033 GEN disiplini).
+      expect(
+        reserveAfterSubmit1.every(
+          (r: any) => !String(r.idempotency_key).includes('|GEN'),
+        ),
+      ).toBe(true);
+
+      // ── 2) REJECT (aynı endpoint, T-053'ün release motoru) ──────────────
+      const rejectRes = await request(app.getHttpServer())
+        .post(`/plans/${a17PrimePlanId}/reject`)
+        .set(manager.authHeader())
+        .send({ reason: 'T-056 adım 7 e2e: A17′ needs correction' })
+        .expect(200);
+      expect(rejectRes.body.status).toBe('REJECTED');
+
+      const releaseAfterReject = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, idempotency_key
+           FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RELEASE'
+          ORDER BY spend_type ASC NULLS LAST`,
+        [a17PrimePlanId],
+      );
+      record({
+        step: 'A17b′',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (reject sonrası, RELEASE satırları)',
+        expected:
+          '2 TİPLİ RELEASE (ON_INVOICE=on1, OFF_INVOICE=off1) — spend_type=NULL YOK',
+        actual: JSON.stringify(releaseAfterReject),
+        note: 'T-053 korumasının canlı rotada da geçerliliği: releaseNetReservation kova-farkındalı, her iki tipi de ayrı ayrı release ediyor.',
+      });
+      expect(releaseAfterReject.length).toBe(2);
+      expect(releaseAfterReject.every((r: any) => r.spend_type !== null)).toBe(
+        true,
+      );
+      const releaseByType = Object.fromEntries(
+        releaseAfterReject.map((r: any) => [r.spend_type, Number(r.amount)]),
+      );
+      expect(releaseByType.ON_INVOICE).toBeCloseTo(onAmount1Prime, 2);
+      expect(releaseByType.OFF_INVOICE).toBeCloseTo(offAmount1Prime, 2);
+
+      // ── 3) RETURN TO DRAFT ────────────────────────────────────────────────
+      const returnRes = await request(app.getHttpServer())
+        .post(`/plans/${a17PrimePlanId}/return-to-draft`)
+        .set(planner.authHeader())
+        .expect(200);
+      expect(returnRes.body.status).toBe('DRAFT');
+
+      // ── 4) RESUBMIT (canlı rota, T-053'ün asıl kanıtı) ───────────────────
+      const submit2 = await request(app.getHttpServer())
+        .post(`/plans/${a17PrimePlanId}/submit`)
+        .set(planner.authHeader())
+        .send({ version: returnRes.body.version });
+
+      record({
+        step: 'A17c′',
+        role: 'PLANNER',
+        endpoint:
+          'POST /plans/:id/submit (resubmit, reject sonrası, canlı rota)',
+        expected: 200,
+        actual: submit2.status,
+        note: `status=${submit2.body?.status}`,
+      });
+      expect(submit2.status).toBe(200);
+      expect(submit2.body.status).toBe('PENDING_APPROVAL');
+
+      const reserveAfterSubmit2 = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type, idempotency_key, created_at
+           FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'RESERVE'
+          ORDER BY created_at ASC`,
+        [a17PrimePlanId],
+      );
+      record({
+        step: 'A17d′',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (resubmit sonrası, TÜM RESERVE satırları)',
+        expected:
+          '4 RESERVE satırı (2 ilk submit + 2 resubmit) — resubmit satırları |GEN2 soneki taşımalı. CANLI HATA varsa 2 kalır (yeni RESERVE hiç yazılmaz)',
+        actual: JSON.stringify(reserveAfterSubmit2),
+        note: "T-053'ün canlı-rota kanıtı: reserveForPlan bucket-scoped netOutstanding, T-053 fix sonrası tipli RELEASE'i görüp yeni RESERVE yazıyor.",
+      });
+      expect(reserveAfterSubmit2.length).toBe(4);
+
+      // GEN soneği kanıtı: ilk jenerasyon (submit1) soneksiz, ikinci
+      // jenerasyon (submit2/resubmit) |GEN2 taşımalı — her iki kovada da.
+      const gen2Rows = reserveAfterSubmit2.filter((r: any) =>
+        String(r.idempotency_key).includes('|GEN2'),
+      );
+      expect(gen2Rows.length).toBe(2);
+      const gen2ByType = Object.fromEntries(
+        gen2Rows.map((r: any) => [r.spend_type, Number(r.amount)]),
+      );
+      expect(gen2ByType.ON_INVOICE).toBeCloseTo(onAmount1Prime, 2);
+      expect(gen2ByType.OFF_INVOICE).toBeCloseTo(offAmount1Prime, 2);
+
+      // ── Ledger korunum invaryantı (A17'nin A17e'siyle aynı iddia,
+      // yalnızca kaynak /submit) ────────────────────────────────────────
+      const allPostedTx = await dataSource.query(
+        `SELECT tx_type, amount FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1 AND tx_status = 'POSTED'`,
+        [a17PrimePlanId],
+      );
+      const netContributionPrime = allPostedTx.reduce(
+        (net: number, tx: any) => {
+          const amt = Number(tx.amount);
+          if (tx.tx_type === 'RESERVE' || tx.tx_type === 'COMMIT')
+            return net + amt;
+          if (tx.tx_type === 'RELEASE') return net - amt;
+          return net;
+        },
+        0,
+      );
+      record({
+        step: 'A17e′',
+        role: '-',
+        endpoint:
+          "Ledger korunum — bu plan'ın envelope'a net katkısı (resubmit sonrası, canlı rota)",
+        expected: `on1+off1 = ${onAmount1Prime + offAmount1Prime} (resubmit gerçek bir yeni encumbrance yazmış olmalı)`,
+        actual: `${netContributionPrime}`,
+        note: 'CANLI HATA varsa net katkı 0 kalır — plan PENDING_APPROVAL ama bütçeden sessizce hiçbir şey rezerve edilmemiş (BRD ihlali).',
+      });
+      expect(netContributionPrime).toBeCloseTo(
+        onAmount1Prime + offAmount1Prime,
+        2,
+      );
+      expect(netContributionPrime).toBeGreaterThan(0);
     });
 
     it('A18. T-056 F1 — çapraz yol (TOTAL /submit → reject → return-to-draft → tipli /submit-for-approval → approve) TOTAL kovada hayalet COMMIT üretmemeli (SQL kanıtı)', async () => {
