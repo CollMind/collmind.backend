@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -12,21 +13,14 @@ import {
   SpendingType,
   MechanicType,
 } from '../../../database/entities/mechanic.entity';
-import {
-  PlanMechanicValue,
-  DistributionMethod,
-} from '../../../database/entities/plan-mechanic-value.entity';
-import {
-  MechanicSpendBreakdown,
-  DistributionBasis,
-} from '../../../database/entities/mechanic-spend-breakdown.entity';
+import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
+import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { LTAAgreementService } from '../lta/lta-agreement.service';
 import { LTAContext } from '../lta/dto/lta-context.dto';
 import { PlanContextDto } from '../../master-data/mechanic/dto/plan-context.dto';
 import {
   SpendBreakdown,
   FUSpendBreakdown,
-  SKUSpendDistribution,
   ValidationResult,
   BaseSpendBreakdown,
   PlannedSpendBreakdown,
@@ -163,8 +157,18 @@ export class SpendCalculationService {
         );
 
       case MechanicCategory.LUMPSUM_SPEND:
-        // Lumpsum is calculated at FU level and distributed
-        return 0; // Will be handled in distributeSpendToSKUs
+        // T-062: lumpsum is a FU-level amount, distributed across sibling
+        // SKUs by base volume (docs/decisions/0006) — this single-SKU
+        // method has no visibility into siblings, so it cannot compute a
+        // real share. `calculateAllSpendsForSKU` (the only production
+        // caller that matters) never reaches this branch for
+        // LUMPSUM_SPEND — it special-cases the category and reads
+        // `context.lumpsumSharesBySku` (computed once per FU by
+        // `computeLumpsumDistribution`) instead. This 0 only fires for a
+        // standalone/direct call to `calculateMechanicSpend` outside that
+        // FU-aware path (e.g. a future caller that queries a single
+        // mechanic's spend in isolation) — documented, not silent.
+        return 0;
 
       default:
         this.logger.warn(`Unknown mechanic category: ${mechanic.category}`);
@@ -221,89 +225,123 @@ export class SpendCalculationService {
   }
 
   /**
-   * Distribute spend to SKUs based on distribution method
+   * T-062: single derivation point for distributing a FU-level
+   * LUMPSUM_SPEND mechanic's entered value across its SKUs.
+   *
+   * Both canonical per-FU entry points (`calculateAllSpendsForFU` here and
+   * `PlanService#recalculatePlanWithKpiEngineLocked`) call this ONCE per
+   * FU, BEFORE looping over SKUs, and thread the result through
+   * `CalculationContext.lumpsumSharesBySku` — never re-derived per SKU
+   * (T-052 postmortem: two independent derivations of the same fact drift
+   * apart). This replaces `distributeSpendToSKUs`, which existed since
+   * this file's first commit but was NEVER wired to a production caller
+   * (measured via `git log -S`, see T-062 report) — kept alive only by its
+   * own unit tests, i.e. a second, permanently-unreachable source of the
+   * same fact. Deleted rather than merged with the ALSO-unreachable-from-
+   * the-UI `SpendDistributionService.distributeByLumpsum` (spend-
+   * distribution.service.ts): that path writes to a disconnected table
+   * (`mechanic_spend_breakdowns`) that never feeds `SpendBreakdown`/
+   * `plan.totalSpend`/budget reservation, AND its null-base fallback
+   * (planned-volume ratio, then equal split) violates ADR 0006 Karar 2 —
+   * wiring it into this pipeline would be a materially larger
+   * re-architecture than this bugfix's scope (see T-062 report).
+   *
+   * Rules (docs/decisions/0006-lumpsum-dagitimi.md):
+   *  - Distribution base: base volume, proportional (Karar 2).
+   *  - A SKU with null/zero base volume gets ZERO share (0001 Set C) — the
+   *    formula does this naturally (0 numerator), no special-case needed.
+   *  - If EVERY SKU in the FU has null/zero base volume and a lumpsum
+   *    value > 0 was entered, there is no valid base to prorate against.
+   *    Silently distributing 0 would silently under-reserve the budget by
+   *    exactly the amount this task was opened to fix — so this throws a
+   *    typed `BadRequestException` (ADR 0005 K3's "noisy reject over
+   *    silent zero" precedent, same pattern as `plan.service.ts`'s
+   *    `PLAN_SPEND_BREAKDOWN_STALE`/`_INCONSISTENT`) instead.
+   *  - Exact-sum rounding: shares are rounded to 2 decimals and any
+   *    remainder from that rounding is assigned to the SKU with the
+   *    largest base volume, so `sum(shares) === enteredValue` to the cent
+   *    (never a silent penny loss/gain against the FU total that has to
+   *    reconcile with budget reservation).
+   *
+   * @returns `skuId -> mechanicCode -> distributedAmount` for every
+   *   LUMPSUM_SPEND mechanic with `mechanicValues[code] > 0`. SKUs/
+   *   mechanics with no entered value are simply absent (not zero-filled)
+   *   — callers default missing keys to 0.
    */
-  async distributeSpendToSKUs(
-    tenantId: string,
+  computeLumpsumDistribution(
     fuId: string,
-    mechanicId: string,
-    totalSpend: number,
-    distributionMethod: DistributionMethod,
-  ): Promise<SKUSpendDistribution[]> {
-    const planFu = await this.planFuRepository.findOne({
-      where: { id: fuId, tenantId },
-      relations: ['planSkus', 'planSkus.sku'],
-    });
-
-    if (!planFu || !planFu.planSkus) {
-      return [];
+    mechanicValues: Record<string, number>,
+    mechanics: Mechanic[],
+    planSkus: Array<{ skuId: string; baseVolume?: number | null }>,
+  ): Record<string, Record<string, number>> {
+    const result: Record<string, Record<string, number>> = {};
+    if (planSkus.length === 0) {
+      return result;
     }
 
-    const distributions: SKUSpendDistribution[] = [];
+    const lumpsumMechanics = mechanics.filter(
+      (m) => m.category === MechanicCategory.LUMPSUM_SPEND,
+    );
 
-    switch (distributionMethod) {
-      case DistributionMethod.PERCENTAGE:
-        // Each SKU gets same percentage - distribute based on GSV
-        const totalGsv = planFu.planSkus.reduce(
-          (sum, ps) =>
-            sum +
-            (Number(ps.plannedVolume) || 0) * (Number(ps.sku?.unitPrice) || 0),
-          0,
-        );
+    for (const mechanic of lumpsumMechanics) {
+      const enteredValue = mechanicValues[mechanic.code] || 0;
+      if (!enteredValue) continue;
 
-        for (const planSku of planFu.planSkus) {
-          const skuGsv =
-            (Number(planSku.plannedVolume) || 0) *
-            (Number(planSku.sku?.unitPrice) || 0);
-          const ratio = totalGsv > 0 ? skuGsv / totalGsv : 0;
-          distributions.push({
-            skuId: planSku.skuId,
-            amount: totalSpend * ratio,
-            ratio,
-          });
+      const totalBaseVolume = planSkus.reduce(
+        (sum, ps) => sum + (Number(ps.baseVolume) || 0),
+        0,
+      );
+
+      if (totalBaseVolume <= 0) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'LUMPSUM_DISTRIBUTION_NO_BASE_VOLUME',
+          message:
+            `Cannot distribute lumpsum mechanic ${mechanic.code} ` +
+            `(entered value ${enteredValue}) for FU ${fuId}: no SKU in ` +
+            `this FU has a positive base volume to prorate against. ` +
+            `Enter a base volume for at least one SKU, or remove the ` +
+            `lumpsum value, before recalculating.`,
+        });
+      }
+
+      // Raw proportional shares, rounded to cents.
+      const rounded = planSkus.map((ps) => {
+        const skuBaseVolume = Number(ps.baseVolume) || 0;
+        const raw = (enteredValue * skuBaseVolume) / totalBaseVolume;
+        return {
+          skuId: ps.skuId,
+          skuBaseVolume,
+          amount: Math.round(raw * 100) / 100,
+        };
+      });
+
+      // Exact-sum rounding: give the leftover cent(s) to the SKU with the
+      // largest base volume (deterministic — first max in array order),
+      // so the distributed total always equals `enteredValue` exactly.
+      const distributedTotal = rounded.reduce((sum, r) => sum + r.amount, 0);
+      const remainder =
+        Math.round((enteredValue - distributedTotal) * 100) / 100;
+      if (remainder !== 0) {
+        let largestIdx = 0;
+        for (let i = 1; i < rounded.length; i++) {
+          if (rounded[i].skuBaseVolume > rounded[largestIdx].skuBaseVolume) {
+            largestIdx = i;
+          }
         }
-        break;
+        rounded[largestIdx].amount =
+          Math.round((rounded[largestIdx].amount + remainder) * 100) / 100;
+      }
 
-      case DistributionMethod.PER_UNIT:
-        // Distribute based on planned volume
-        const totalVolume = planFu.planSkus.reduce(
-          (sum, ps) => sum + (Number(ps.plannedVolume) || 0),
-          0,
-        );
-
-        for (const planSku of planFu.planSkus) {
-          const skuVolume = Number(planSku.plannedVolume) || 0;
-          const ratio = totalVolume > 0 ? skuVolume / totalVolume : 0;
-          distributions.push({
-            skuId: planSku.skuId,
-            amount: totalSpend * ratio,
-            ratio,
-          });
+      for (const r of rounded) {
+        if (!result[r.skuId]) {
+          result[r.skuId] = {};
         }
-        break;
-
-      case DistributionMethod.LUMPSUM:
-      case DistributionMethod.PROPORTIONAL:
-        // Distribute based on base volume ratio
-        const totalBaseVolume = planFu.planSkus.reduce(
-          (sum, ps) => sum + (Number(ps.baseVolume) || 0),
-          0,
-        );
-
-        for (const planSku of planFu.planSkus) {
-          const skuBaseVolume = Number(planSku.baseVolume) || 0;
-          const ratio =
-            totalBaseVolume > 0 ? skuBaseVolume / totalBaseVolume : 0;
-          distributions.push({
-            skuId: planSku.skuId,
-            amount: totalSpend * ratio,
-            ratio,
-          });
-        }
-        break;
+        result[r.skuId][mechanic.code] = r.amount;
+      }
     }
 
-    return distributions;
+    return result;
   }
 
   /**
@@ -468,16 +506,32 @@ export class SpendCalculationService {
       const enteredValue = context.mechanicValues[mechanic.code] || 0;
       if (!enteredValue) continue;
 
+      const alreadyOnInvoice = mechanic.code in promoOnInvoice;
+      if (alreadyOnInvoice) continue; // already classified in first pass
+
+      // T-062: LUMPSUM_SPEND is a FU-level amount distributed across SKUs
+      // proportional to base volume (docs/decisions/0006). A single SKU's
+      // `calculateMechanicSpend` call cannot compute this correctly — it
+      // has no visibility into sibling SKUs' base volumes — so read the
+      // pre-computed, exact-sum-rounded share from
+      // `context.lumpsumSharesBySku` (populated once per FU by
+      // `computeLumpsumDistribution`) instead of delegating to
+      // `calculateMechanicSpend`, which still returns 0 for this category
+      // when called directly/standalone (no FU context available).
+      if (mechanic.category === MechanicCategory.LUMPSUM_SPEND) {
+        const share =
+          context.lumpsumSharesBySku?.[skuContext.skuId]?.[mechanic.code] ?? 0;
+        promoOffInvoice[mechanic.code] = share;
+        totalPromoOffInv += share;
+        continue;
+      }
+
       const isOffInvoiceCategory =
         mechanic.category === MechanicCategory.OFF_INVOICE_DISCOUNT ||
-        mechanic.category === MechanicCategory.PER_UNIT_SUPPORT ||
-        mechanic.category === MechanicCategory.LUMPSUM_SPEND;
+        mechanic.category === MechanicCategory.PER_UNIT_SUPPORT;
       const isOffInvoiceType =
         mechanic.spendingType === SpendingType.OFF_INVOICE;
       const isBoth = mechanic.spendingType === SpendingType.BOTH;
-      const alreadyOnInvoice = mechanic.code in promoOnInvoice;
-
-      if (alreadyOnInvoice) continue; // already classified in first pass
 
       if (isOffInvoiceCategory || isOffInvoiceType) {
         // Filter out undefined values from promoOnInvoice for type compatibility
@@ -658,13 +712,6 @@ export class SpendCalculationService {
       categoryCode: planFu.plan?.category?.code,
     };
 
-    const context: CalculationContext = {
-      planId: planFu.planId,
-      fuId: planFu.id,
-      skuContexts: [],
-      mechanicValues,
-    };
-
     // Calculate for each SKU. T-045: fetch the active-mechanics list once
     // for this call and reuse it across all SKUs below (SKU-independent).
     // T-046a: same for LTA context — `planContext`/`planFu.planId` above are
@@ -677,6 +724,24 @@ export class SpendCalculationService {
       planContext,
       planFu.planId,
     );
+
+    // T-062: FU-level lumpsum distribution, computed ONCE before the SKU
+    // loop (needs every sibling's base volume — see
+    // `computeLumpsumDistribution` doc comment).
+    const lumpsumSharesBySku = this.computeLumpsumDistribution(
+      planFu.id,
+      mechanicValues,
+      activeMechanics,
+      planFu.planSkus || [],
+    );
+
+    const context: CalculationContext = {
+      planId: planFu.planId,
+      fuId: planFu.id,
+      skuContexts: [],
+      mechanicValues,
+      lumpsumSharesBySku,
+    };
 
     for (const planSku of planFu.planSkus || []) {
       const skuContext: SKUContext = {

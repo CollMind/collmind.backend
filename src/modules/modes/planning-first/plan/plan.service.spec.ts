@@ -194,6 +194,12 @@ describe('PlanService', () => {
               }
               return mechanicValues;
             }),
+            // T-062: FU-level lumpsum distribution — no lumpsum mechanics in
+            // these fixtures' `getActiveMechanics()` (mocked to `[]` above),
+            // so the real implementation would also return `{}` here; mocked
+            // directly to keep these BRD-parity tests focused on the KPI
+            // context they exercise.
+            computeLumpsumDistribution: jest.fn().mockReturnValue({}),
           },
         },
         {

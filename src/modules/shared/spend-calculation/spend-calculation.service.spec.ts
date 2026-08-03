@@ -8,10 +8,7 @@ import {
   MechanicCategory,
   SpendingType,
 } from '../../../database/entities/mechanic.entity';
-import {
-  PlanMechanicValue,
-  DistributionMethod,
-} from '../../../database/entities/plan-mechanic-value.entity';
+import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { LTAAgreementService } from '../lta/lta-agreement.service';
 import { CalculationContext, SKUContext } from './dto/calculation-context.dto';
@@ -252,45 +249,228 @@ describe('SpendCalculationService', () => {
     });
   });
 
-  describe('distributeSpendToSKUs', () => {
-    it('should distribute spend based on base volume ratio for lumpsum', async () => {
+  /**
+   * T-062: `computeLumpsumDistribution` is the single derivation point that
+   * replaced the dead-since-inception `distributeSpendToSKUs` (measured via
+   * `git log -S distributeSpendToSKUs` — never had a production caller in
+   * this repo's history). See the fuller behavioural coverage in the
+   * "LUMPSUM_SPEND distribution (T-062)" describe block below, which
+   * exercises this through the canonical `calculateAllSpendsForFU` entry
+   * point end-to-end.
+   */
+  describe('computeLumpsumDistribution', () => {
+    it('should distribute spend based on base volume ratio', () => {
+      const distributions = service.computeLumpsumDistribution(
+        mockFuId,
+        { 'mech-1': 1000 },
+        [
+          {
+            code: 'mech-1',
+            category: MechanicCategory.LUMPSUM_SPEND,
+          } as Mechanic,
+        ],
+        [
+          { skuId: 'sku-1', baseVolume: 1000 },
+          { skuId: 'sku-2', baseVolume: 2000 },
+        ],
+      );
+
+      expect(distributions['sku-1']['mech-1']).toBeCloseTo(1000 / 3, 2);
+      expect(distributions['sku-2']['mech-1']).toBeCloseTo(2000 / 3, 2);
+      expect(
+        distributions['sku-1']['mech-1'] + distributions['sku-2']['mech-1'],
+      ).toBe(1000);
+    });
+
+    it('should return an empty map when no SKUs are given', () => {
+      expect(
+        service.computeLumpsumDistribution(
+          mockFuId,
+          { 'mech-1': 1000 },
+          [
+            {
+              code: 'mech-1',
+              category: MechanicCategory.LUMPSUM_SPEND,
+            } as Mechanic,
+          ],
+          [],
+        ),
+      ).toEqual({});
+    });
+  });
+
+  /**
+   * T-062: LUMPSUM_SPEND must be distributed to SKUs, base-volume
+   * proportional, null-base SKU gets no share (ADR 0006 Karar 2, 0001 Set
+   * C). `calculateAllSpendsForFU` is one of the two canonical per-FU entry
+   * points (T-052) that both feed `plan.totalSpend`/budget reservation.
+   */
+  describe('LUMPSUM_SPEND distribution (T-062)', () => {
+    const lumpsumMechanic: Partial<Mechanic> = {
+      id: 'mech-ls',
+      code: 'VIS_LS',
+      category: MechanicCategory.LUMPSUM_SPEND,
+      spendingType: SpendingType.OFF_INVOICE,
+      isActive: true,
+    };
+
+    it('should distribute lumpsum spend to SKUs proportional to base volume (non-zero FU total, budget-visible)', async () => {
       const planFu: Partial<PlanFu> = {
         id: mockFuId,
+        tenantId: mockTenantId,
+        planId: mockPlanId,
+        plan: {
+          cplId: 'cpl-1',
+          channel: { code: 'NKA' },
+          category: { code: 'Dairy' },
+        } as any,
         planSkus: [
           {
-            id: 'ps-1',
-            skuId: 'sku-1',
-            baseVolume: 1000,
-            plannedVolume: 1200,
-            sku: { id: 'sku-1', unitPrice: 10 } as any,
-          } as PlanSku,
+            skuId: 'sku-a',
+            baseVolume: 100,
+            plannedVolume: 100,
+            sku: { unitPrice: 10, cogs: 5 } as any,
+          } as any,
           {
-            id: 'ps-2',
-            skuId: 'sku-2',
-            baseVolume: 2000,
-            plannedVolume: 2400,
-            sku: { id: 'sku-2', unitPrice: 10 } as any,
-          } as PlanSku,
-        ] as PlanSku[],
+            skuId: 'sku-b',
+            baseVolume: 200,
+            plannedVolume: 200,
+            sku: { unitPrice: 10, cogs: 5 } as any,
+          } as any,
+        ],
+        planMechanicValues: [],
+        tactics: { VIS_LS: 300 },
       };
 
       planFuRepo.findOne.mockResolvedValue(planFu as PlanFu);
+      mechanicRepo.find.mockResolvedValue([lumpsumMechanic] as Mechanic[]);
+      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
 
-      const distributions = await service.distributeSpendToSKUs(
+      const result = await service.calculateAllSpendsForFU(
         mockTenantId,
         mockFuId,
-        'mech-1',
-        1000,
-        DistributionMethod.LUMPSUM,
       );
 
-      expect(distributions).toHaveLength(2);
-      expect(distributions[0].ratio).toBeCloseTo(1000 / 3000, 4);
-      expect(distributions[1].ratio).toBeCloseTo(2000 / 3000, 4);
-      expect(distributions[0].amount + distributions[1].amount).toBeCloseTo(
-        1000,
-        2,
+      // FU total must see the full 300 — this is the T-062 bug: today it is 0.
+      expect(result.aggregatedPlanned.totalOffInvoice).toBeCloseTo(300, 2);
+      expect(result.aggregatedPlanned.totalSpend).toBeCloseTo(300, 2);
+
+      // Base-volume proportional: sku-a (100/300) -> 100, sku-b (200/300) -> 200.
+      const skuA = result.skuBreakdowns.find((b) => b.skuId === 'sku-a')!;
+      const skuB = result.skuBreakdowns.find((b) => b.skuId === 'sku-b')!;
+      expect(skuA.planned.promoOffInvoice['VIS_LS']).toBeCloseTo(100, 2);
+      expect(skuB.planned.promoOffInvoice['VIS_LS']).toBeCloseTo(200, 2);
+
+      // Rounding invariant: distributed shares must sum EXACTLY to the FU
+      // lumpsum total (no penny loss/gain).
+      const distributedSum =
+        (skuA.planned.promoOffInvoice['VIS_LS'] || 0) +
+        (skuB.planned.promoOffInvoice['VIS_LS'] || 0);
+      expect(distributedSum).toBe(300);
+    });
+
+    it('should give null-base SKU zero lumpsum share (0001 Set C / ADR 0006 Karar 2) and preserve exact-sum rounding', async () => {
+      const planFu: Partial<PlanFu> = {
+        id: mockFuId,
+        tenantId: mockTenantId,
+        planId: mockPlanId,
+        plan: {
+          cplId: 'cpl-1',
+          channel: { code: 'NKA' },
+          category: { code: 'Dairy' },
+        } as any,
+        planSkus: [
+          {
+            // Set C: new-product SKU, no historical base volume.
+            skuId: 'sku-new-product',
+            baseVolume: null,
+            plannedVolume: 500,
+            sku: { unitPrice: 10, cogs: 5 } as any,
+          } as any,
+          {
+            skuId: 'sku-1',
+            baseVolume: 1,
+            plannedVolume: 1,
+            sku: { unitPrice: 10, cogs: 5 } as any,
+          } as any,
+          {
+            skuId: 'sku-2',
+            baseVolume: 2,
+            plannedVolume: 2,
+            sku: { unitPrice: 10, cogs: 5 } as any,
+          } as any,
+        ],
+        planMechanicValues: [],
+        tactics: { VIS_LS: 100 },
+      };
+
+      planFuRepo.findOne.mockResolvedValue(planFu as PlanFu);
+      mechanicRepo.find.mockResolvedValue([lumpsumMechanic] as Mechanic[]);
+      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
+
+      const result = await service.calculateAllSpendsForFU(
+        mockTenantId,
+        mockFuId,
       );
+
+      const newProduct = result.skuBreakdowns.find(
+        (b) => b.skuId === 'sku-new-product',
+      )!;
+      const sku1 = result.skuBreakdowns.find((b) => b.skuId === 'sku-1')!;
+      const sku2 = result.skuBreakdowns.find((b) => b.skuId === 'sku-2')!;
+
+      expect(newProduct.planned.promoOffInvoice['VIS_LS'] || 0).toBe(0);
+      // sku-1:sku-2 base ratio 1:2 -> 33.33/66.67 (non-terminating decimal —
+      // exercises the rounding-remainder path, not a coincidentally exact split).
+      expect(sku1.planned.promoOffInvoice['VIS_LS']).toBeCloseTo(33.33, 2);
+      expect(sku2.planned.promoOffInvoice['VIS_LS']).toBeCloseTo(66.67, 2);
+
+      const distributedSum =
+        (newProduct.planned.promoOffInvoice['VIS_LS'] || 0) +
+        (sku1.planned.promoOffInvoice['VIS_LS'] || 0) +
+        (sku2.planned.promoOffInvoice['VIS_LS'] || 0);
+      expect(distributedSum).toBe(100);
+    });
+
+    it('should reject (not silently distribute 0) when ALL SKUs in the FU have null/zero base volume and lumpsum > 0 is entered', async () => {
+      const planFu: Partial<PlanFu> = {
+        id: mockFuId,
+        tenantId: mockTenantId,
+        planId: mockPlanId,
+        plan: {
+          cplId: 'cpl-1',
+          channel: { code: 'NKA' },
+          category: { code: 'Dairy' },
+        } as any,
+        planSkus: [
+          {
+            skuId: 'sku-a',
+            baseVolume: null,
+            plannedVolume: 100,
+            sku: { unitPrice: 10, cogs: 5 } as any,
+          } as any,
+          {
+            skuId: 'sku-b',
+            baseVolume: 0,
+            plannedVolume: 200,
+            sku: { unitPrice: 10, cogs: 5 } as any,
+          } as any,
+        ],
+        planMechanicValues: [],
+        tactics: { VIS_LS: 300 },
+      };
+
+      planFuRepo.findOne.mockResolvedValue(planFu as PlanFu);
+      mechanicRepo.find.mockResolvedValue([lumpsumMechanic] as Mechanic[]);
+      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
+
+      await expect(
+        service.calculateAllSpendsForFU(mockTenantId, mockFuId),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'LUMPSUM_DISTRIBUTION_NO_BASE_VOLUME',
+        }),
+      });
     });
   });
 
@@ -417,27 +597,6 @@ describe('SpendCalculationService', () => {
       expect(planFuRepo.findOne).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ tenantId: 'wrong-tenant' }),
-        }),
-      );
-    });
-
-    it('should pass tenantId in distributeSpendToSKUs findOne where clause', async () => {
-      planFuRepo.findOne.mockResolvedValue(null);
-
-      await service.distributeSpendToSKUs(
-        mockTenantId,
-        mockFuId,
-        'mech-1',
-        1000,
-        DistributionMethod.LUMPSUM,
-      );
-
-      expect(planFuRepo.findOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            id: mockFuId,
-            tenantId: mockTenantId,
-          }),
         }),
       );
     });

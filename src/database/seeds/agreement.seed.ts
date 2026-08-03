@@ -209,6 +209,56 @@ export async function seedAgreements(
     cogsFixtureSku = await skuRepo.save(cogsFixtureSku);
   }
 
+  // T-062: two additional synthetic e2e-only SKUs on the SAME fixture FU
+  // (FU-WELLA-HC-500ML), needed to test LUMPSUM_SPEND base-volume-
+  // proportional distribution across >1 SKU (SKU-E2E-COGS-FIXTURE alone
+  // is not enough — a single-SKU FU always gets 100% of any lumpsum,
+  // which cannot distinguish "distributed proportionally" from "not
+  // distributed at all"). PlanSku.baseVolume/plannedVolume are set per
+  // PLAN (via PATCH .../skus/:skuId/volume), not on the master Sku row,
+  // so these rows are safe to reuse across unrelated e2e plans.
+  const lumpsumFixtureSkuDefs = [
+    {
+      code: 'SKU-E2E-LUMPSUM-A',
+      name: 'E2E Lumpsum Fixture SKU A (Wella HC 500ml)',
+    },
+    {
+      code: 'SKU-E2E-LUMPSUM-B',
+      name: 'E2E Lumpsum Fixture SKU B (Wella HC 500ml)',
+    },
+  ];
+  for (const def of lumpsumFixtureSkuDefs) {
+    let lumpsumSku = await skuRepo.findOne({
+      where: { code: def.code, tenantId },
+    });
+    if (!lumpsumSku) {
+      try {
+        lumpsumSku = skuRepo.create({
+          code: def.code,
+          name: def.name,
+          guId: gu.id,
+          fuId: fu.id,
+          size: '500ml',
+          unitPrice: 100,
+          cogs: 60,
+          currency: 'TRY',
+          tenantId,
+          createdBy: createdByUserId,
+        });
+        lumpsumSku = await skuRepo.save(lumpsumSku);
+      } catch (error: any) {
+        if (isDuplicateError(error)) {
+          lumpsumSku = await skuRepo.findOne({
+            where: { code: def.code, tenantId },
+          });
+          if (!lumpsumSku) throw error;
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+
   // Create or get Tactic
   let tactic = await tacticRepo.findOne({
     where: { code: 'TAC-PROMO', tenantId },

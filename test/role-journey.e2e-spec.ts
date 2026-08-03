@@ -1270,9 +1270,10 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       );
       expect(Number(onTxA14b?.amount)).toBeGreaterThan(0);
       expect(Number(offTxA14b?.amount)).toBeGreaterThan(0);
-      expect(
-        Number(onTxA14b.amount) + Number(offTxA14b.amount),
-      ).toBeCloseTo(Number(planRowAfterSubmit[0].total_spend), 2);
+      expect(Number(onTxA14b.amount) + Number(offTxA14b.amount)).toBeCloseTo(
+        Number(planRowAfterSubmit[0].total_spend),
+        2,
+      );
 
       if (envelopeId) {
         const reservedRes = await request(app.getHttpServer())
@@ -1669,9 +1670,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
             return n;
           }, 0);
         const commitTotal = finalBudgetTx
-          .filter(
-            (r: any) => r.spend_type === bucket && r.tx_type === 'COMMIT',
-          )
+          .filter((r: any) => r.spend_type === bucket && r.tx_type === 'COMMIT')
           .reduce((s: number, tx: any) => s + Number(tx.amount), 0);
         expect(net).toBe(commitTotal);
       }
@@ -2595,6 +2594,226 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           ['ON_INVOICE', 'OFF_INVOICE'].includes(e.spend_type),
         ),
       ).toBe(true);
+    });
+
+    // ────────────────────────────────────────────────────────────────────
+    // T-062: LUMPSUM_SPEND (VIS_LS) was recognised and routed to off-invoice
+    // but ALWAYS computed as 0 (`distributeSpendToSKUs`, the method meant to
+    // handle it, was never wired to any production caller) — a lumpsum
+    // plan reserved ZERO budget. Fixed: distributed base-volume-proportional
+    // across SKUs (docs/decisions/0006), null-base SKU gets zero share
+    // (0001 Set C), exact-sum rounding, all-null-base FU noisily rejected
+    // (not silently zeroed).
+    // ────────────────────────────────────────────────────────────────────
+
+    it('A20. T-062: LUMPSUM_SPEND (VIS_LS) reserves non-zero budget, distributed base-volume-proportional, null-base SKU gets zero share (SQL kanıtı)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-T062-LUMPSUM-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const a20PlanId = createRes.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/plans/${a20PlanId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
+        .expect(201);
+
+      const planRes = await request(app.getHttpServer())
+        .get(`/plans/${a20PlanId}`)
+        .set(planner.authHeader())
+        .expect(200);
+      const planFu = planRes.body.planFus[0];
+      const lumpsumSkuA = planFu.planSkus.find(
+        (ps: any) => ps.sku?.code === 'SKU-E2E-LUMPSUM-A',
+      );
+      const lumpsumSkuB = planFu.planSkus.find(
+        (ps: any) => ps.sku?.code === 'SKU-E2E-LUMPSUM-B',
+      );
+      const nullBaseSku = planFu.planSkus.find(
+        (ps: any) => ps.sku?.code === 'SKU-E2E-COGS-FIXTURE',
+      );
+      expect(lumpsumSkuA).toBeDefined();
+      expect(lumpsumSkuB).toBeDefined();
+      expect(nullBaseSku).toBeDefined(); // deliberately left at null base volume below
+
+      // Base volume ratio 1:2 (non-terminating decimal 33.33/66.67 split) —
+      // exercises the exact-sum rounding-remainder path, not a coincidence.
+      await request(app.getHttpServer())
+        .patch(
+          `/plans/${a20PlanId}/fus/${FU_WELLA_HC_500ML}/skus/${lumpsumSkuA.skuId}/volume`,
+        )
+        .set(planner.authHeader())
+        .send({ baseVolume: 1, plannedVolume: 1, version: 1 })
+        .expect(200);
+      await request(app.getHttpServer())
+        .patch(
+          `/plans/${a20PlanId}/fus/${FU_WELLA_HC_500ML}/skus/${lumpsumSkuB.skuId}/volume`,
+        )
+        .set(planner.authHeader())
+        .send({ baseVolume: 2, plannedVolume: 2, version: 1 })
+        .expect(200);
+      // nullBaseSku (SKU-E2E-COGS-FIXTURE) intentionally left untouched —
+      // base volume stays null, proving the Set C rule end-to-end.
+
+      // MEC-DISCOUNT (on-invoice %) + VIS_LS (off-invoice lumpsum, FU-level
+      // amount) — proves BOTH buckets participate and on+off=total holds
+      // with a real lumpsum contribution in the off-invoice bucket.
+      await request(app.getHttpServer())
+        .patch(`/plans/${a20PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { 'MEC-DISCOUNT': 10, VIS_LS: 100 }, version: 1 })
+        .expect(200);
+
+      const recalcRes = await request(app.getHttpServer())
+        .post(`/plans/${a20PlanId}/recalculate`)
+        .set(planner.authHeader())
+        .send({})
+        .expect(200);
+
+      // GSV_A = 1*100 = 100, GSV_B = 2*100 = 200 (no LTA on NKA/CPL_1/
+      // CAT-SAC-BOYASI — the only seeded LTA fixture is a DRAFT agreement on
+      // a different channel). on = 10%*(100+200) = 30.00. off = pure VIS_LS
+      // (no other off-invoice mechanic entered) = 100.00 exactly.
+      record({
+        step: 'A20a',
+        role: '-',
+        endpoint: 'POST /plans/:id/recalculate (VIS_LS lumpsum)',
+        expected: 'on=30.00, off=100.00, total=130.00',
+        actual: `on=${recalcRes.body.onInvoiceSpend}, off=${recalcRes.body.offInvoiceSpend}, total=${recalcRes.body.totalSpend}`,
+        note: 'T-062 FIX: before this fix, VIS_LS always computed 0 — off would have been 0.00, total 30.00, and the plan would have reserved zero budget for its lumpsum mechanic.',
+      });
+      expect(Number(recalcRes.body.onInvoiceSpend)).toBeCloseTo(30, 2);
+      expect(Number(recalcRes.body.offInvoiceSpend)).toBeCloseTo(100, 2);
+      expect(Number(recalcRes.body.totalSpend)).toBeCloseTo(130, 2);
+      // T-056 step 4 identity — must still hold with lumpsum in the mix.
+      expect(
+        Number(recalcRes.body.onInvoiceSpend) +
+          Number(recalcRes.body.offInvoiceSpend),
+      ).toBeCloseTo(Number(recalcRes.body.totalSpend), 2);
+
+      // ── Per-SKU proof (main.plan_skus.tactic_spend) — the null-base SKU
+      // must carry ZERO lumpsum contribution; the other two split 33.33/66.67
+      // (rounding-remainder-corrected) plus their own on-invoice share.
+      const planSkuRows = await dataSource.query(
+        `SELECT s.code, ps.tactic_spend
+           FROM main.plan_skus ps
+           JOIN main.skus s ON s.id = ps.sku_id
+          WHERE ps.plan_fu_id = $1`,
+        [planFu.id],
+      );
+      const byCode: Record<string, number> = {};
+      for (const r of planSkuRows) byCode[r.code] = Number(r.tactic_spend);
+      record({
+        step: 'A20b',
+        role: '-',
+        endpoint: 'DB: main.plan_skus.tactic_spend (per-SKU, VIS_LS dahil)',
+        expected:
+          'SKU-E2E-COGS-FIXTURE=0 (null base, 0001 Set C), LUMPSUM-A≈43.33, LUMPSUM-B≈86.67',
+        actual: JSON.stringify(byCode),
+        note: 'T-062: LUMPSUM-A/B tactic_spend = (10% on-invoice share) + (base-volume-proportional VIS_LS share, 33.33/66.67).',
+      });
+      expect(byCode['SKU-E2E-COGS-FIXTURE']).toBe(0);
+      expect(byCode['SKU-E2E-LUMPSUM-A']).toBeCloseTo(10 + 33.33, 2);
+      expect(byCode['SKU-E2E-LUMPSUM-B']).toBeCloseTo(20 + 66.67, 2);
+
+      // ── SUBMIT — the actual bug this task closes: a lumpsum plan must
+      // reserve a NON-ZERO budget amount, not silently reserve 0. ──────────
+      const submitRes = await request(app.getHttpServer())
+        .post(`/plans/${a20PlanId}/submit`)
+        .set(planner.authHeader())
+        .send({ version: recalcRes.body.version })
+        .expect(200);
+      expect(submitRes.body.status).toBe('PENDING_APPROVAL');
+
+      const budgetTx = await dataSource.query(
+        `SELECT tx_type, tx_status, amount, spend_type FROM main.budget_transactions
+          WHERE source_type = 'PLAN' AND source_id = $1
+          ORDER BY spend_type ASC NULLS LAST, created_at ASC`,
+        [a20PlanId],
+      );
+      const onTx = budgetTx.find((r: any) => r.spend_type === 'ON_INVOICE');
+      const offTx = budgetTx.find((r: any) => r.spend_type === 'OFF_INVOICE');
+      record({
+        step: 'A20c',
+        role: '-',
+        endpoint:
+          'DB: main.budget_transactions (submit sonrası, VIS_LS içeren plan)',
+        expected:
+          'RESERVE ON_INVOICE=30.00, RESERVE OFF_INVOICE=100.00 (T-062 öncesi: OFF_INVOICE=0)',
+        actual: JSON.stringify(budgetTx),
+        note: 'T-062: bu, görev tanımının SORUN cümlesinin ("lumpsum harcamalı plan bütçeden hiç düşmüyor") doğrudan SQL kanıtıdır — OFF_INVOICE RESERVE artık 0 DEĞİL.',
+      });
+      expect(budgetTx.length).toBe(2);
+      expect(Number(onTx?.amount)).toBeCloseTo(30, 2);
+      expect(Number(offTx?.amount)).toBeCloseTo(100, 2);
+      expect(Number(offTx?.amount)).toBeGreaterThan(0); // the T-062 bug, directly asserted
+      expect(Number(onTx.amount) + Number(offTx.amount)).toBeCloseTo(130, 2);
+    });
+
+    it("A21. T-062: FU-deki TÜM SKU'ların base hacmi null/0 iken lumpsum girilirse recalculate GÜRÜLTÜLÜ reddetmeli (sessiz 0 dağıtım YASAK — SQL kanıtı yok, bütçe hiç dokunulmamalı)", async () => {
+      const planner = await loginAs(app, 'PLANNER');
+
+      const createRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-ROLE-JOURNEY-T062-NO-BASE-VOLUME-${Date.now()}`,
+          cplId: CPL_1,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      const a21PlanId = createRes.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/plans/${a21PlanId}/fus`)
+        .set(planner.authHeader())
+        .send({ fuId: FU_WELLA_HC_500ML, planVersion: 1 })
+        .expect(201);
+
+      // Deliberately NO volume PATCH — every SKU in this FU (3 fixture SKUs)
+      // keeps its null base volume from `addFu`'s auto-added planSkus.
+      // `PATCH .../tactics` itself triggers `recalculatePlanWithKpiEngine`
+      // synchronously (`PlanService#updateFuTactic`) — so the rejection
+      // surfaces right here, not on a later explicit `/recalculate` call.
+      const tacticsRes = await request(app.getHttpServer())
+        .patch(`/plans/${a21PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { VIS_LS: 100 }, version: 1 });
+
+      record({
+        step: 'A21',
+        role: '-',
+        endpoint:
+          'PATCH /plans/:id/fus/:fuId/tactics (VIS_LS, tüm SKUlar null base)',
+        expected:
+          '400 LUMPSUM_DISTRIBUTION_NO_BASE_VOLUME (gürültülü red, sessiz 0 DEĞİL)',
+        actual: `${tacticsRes.status} ${JSON.stringify(tacticsRes.body)}`,
+        note: 'T-062 tuzak: dağıtım tabanı 0 iken sessizce 0 dağıtmak, bu görevin kapattığı sessiz-eksik-rezervasyon hatasını AYNEN yeniden üretirdi (ADR 0005 K3 emsali: gürültülü red). PATCH .../tactics kendi içinde recalculatePlanWithKpiEngine çağırdığı için red burada, ayrı bir /recalculate çağrısı beklemeden gerçekleşiyor.',
+      });
+      expect(tacticsRes.status).toBe(400);
+      expect(tacticsRes.body.code).toBe('LUMPSUM_DISTRIBUTION_NO_BASE_VOLUME');
+
+      // Budget must not have been touched — recalculate failed before any
+      // reservation could happen (this plan never even reaches submit).
+      const planRow = await dataSource.query(
+        `SELECT total_spend, on_invoice_spend, off_invoice_spend FROM main.plans WHERE id = $1`,
+        [a21PlanId],
+      );
+      expect(Number(planRow[0].total_spend)).toBe(0);
     });
   });
 

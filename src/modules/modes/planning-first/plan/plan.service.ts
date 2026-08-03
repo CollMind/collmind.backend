@@ -1915,12 +1915,26 @@ export class PlanService {
       // (T-049 postmortem: duplicate derivations of the same fact drift).
       const mechanicValues = this.spendCalc.buildMechanicValues(planFu);
 
+      // T-062: FU-level LUMPSUM_SPEND distribution, computed ONCE per FU
+      // (needs every sibling SKU's base volume — see
+      // `SpendCalculationService#computeLumpsumDistribution` doc comment)
+      // and threaded through the same `calcCtx` every SKU in this FU reads
+      // below. `calculateAllSpendsForFU` (the OTHER canonical spend path)
+      // computes this identically — same shared method, not re-derived.
+      const lumpsumSharesBySku = this.spendCalc.computeLumpsumDistribution(
+        planFu.id,
+        mechanicValues,
+        cachedActiveMechanics,
+        planFu.planSkus || [],
+      );
+
       // Build SpendCalc CalculationContext for this FU
       const calcCtx: CalculationContext = {
         planId: plan.id,
         fuId: planFu.id,
         skuContexts: [],
         mechanicValues,
+        lumpsumSharesBySku,
       };
 
       // Track FU-level totals (summed from per-SKU SpendCalc results).

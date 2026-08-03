@@ -100,6 +100,37 @@ describe('Recalc perf regression — DB round-trip ceiling (T-046b, E2E)', () =>
       .send({ fuId: FU_TUP_BOYA, planVersion: 1 })
       .expect(201);
 
+    const planResBeforeTactics = await request(app.getHttpServer())
+      .get(`/plans/${planId}`)
+      .set(planner.authHeader())
+      .expect(200);
+    const planFuBeforeTactics = planResBeforeTactics.body.planFus.find(
+      (f: any) => f.id === addFuRes.body.id,
+    );
+    expect(planFuBeforeTactics.planSkus.length).toBe(52);
+    const skuId = planFuBeforeTactics.planSkus[0].skuId;
+
+    // T-062: VIS_LS (LUMPSUM_SPEND) is distributed base-volume-proportional
+    // (docs/decisions/0006) — an FU where EVERY SKU has null base volume
+    // (this fixture's default, before any volume PATCH) now noisily rejects
+    // a lumpsum tactic value instead of silently computing 0
+    // (`LUMPSUM_DISTRIBUTION_NO_BASE_VOLUME`). Give a DIFFERENT SKU (not the
+    // one this test measures below) a nominal base volume first, purely so
+    // the tactics PATCH below succeeds — this happens BEFORE the round-trip
+    // counter reset, so it does not affect the measured count.
+    const baseVolumeDonorSkuId = planFuBeforeTactics.planSkus[1].skuId;
+    await request(app.getHttpServer())
+      .patch(
+        `/plans/${planId}/fus/${FU_TUP_BOYA}/skus/${baseVolumeDonorSkuId}/volume`,
+      )
+      .set(planner.authHeader())
+      .send({
+        baseVolume: 100,
+        plannedVolume: 100,
+        version: planFuBeforeTactics.planSkus[1].version,
+      })
+      .expect(200);
+
     // A non-zero tactic (3 mechanics) — mirrors docs/analysis/0007 §1.4's
     // "tactic VAR" scenario, the more expensive of the two measured shapes.
     await request(app.getHttpServer())
@@ -119,8 +150,9 @@ describe('Recalc perf regression — DB round-trip ceiling (T-046b, E2E)', () =>
       (f: any) => f.id === addFuRes.body.id,
     );
     expect(planFu.planSkus.length).toBe(52);
-    const skuId = planFu.planSkus[0].skuId;
-    const skuVersion = planFu.planSkus[0].version;
+    const skuVersion = planFu.planSkus.find(
+      (ps: any) => ps.skuId === skuId,
+    ).version;
 
     // Reset AFTER all setup (plan/FU creation, tactic write) so only the
     // measured request's round-trips are counted.
