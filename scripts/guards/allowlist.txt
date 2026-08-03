@@ -1,0 +1,13 @@
+# Guard allowlist — susturulmuş bulgular
+#
+# Format: <guard-adı>|<dosya-yolu>:<satır>|<gerekçe>
+# Gerekçesiz satır GEÇERSİZDİR. Boş gerekçeyle susturma yapılamaz.
+# `#` ile başlayan satırlar ve boş satırlar yok sayılır.
+#
+# Geçerli guard adları:
+#   migration-schema | ledger-direction | financial-ordering | schema-isolation
+#
+# Örnek:
+# ledger-direction|src/modules/x/y.service.ts:42|Bu SUM budget_transactions üzerinde, ledger değil
+#
+# Faz 1'de bu dosya bilinçli olarak boştur — allowlist'i insan triyajı doldurur.
