@@ -19,7 +19,10 @@ set -uo pipefail
 
 GUARD_MODE="${GUARD_MODE:-block}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GUARDS=(migration-schema ledger-direction financial-ordering schema-isolation)
+# Guard listesi lib.sh'teki tek doğruluk kaynağından gelir (S1).
+source "$DIR/lib.sh"
+# shellcheck disable=SC2206
+GUARDS=($GUARD_NAMES_VALID)
 
 TOTAL=0
 TOTAL_SUP=0

@@ -48,66 +48,12 @@ if [ -z "$MIG_DIR" ]; then
   exit 0
 fi
 
-# Template literal'ları backtick ile bölerek çıkar. RS="`" ile tek sayılı
-# kayıtlar literal DIŞI, çift sayılı kayıtlar literal İÇİ metindir. Satır
-# numarası, o ana kadar tüketilen yeni satırlar sayılarak izlenir.
+# Template literal'ları gerçek bir lexer ile çıkar (scripts/guards/migration-schema.awk).
+# Parite/pencere sezgiseli YOK: literal içi/dışı durumu karakter karakter izlenir,
+# bir `//` ancak literal dışındayken yorum sayılır. Gerekçe .awk dosyasının başında.
 scan() {
   find "$MIG_DIR" -type f -name "*.ts" | sort | while IFS= read -r f; do
-    # 1) Yorum satırlarındaki backtick'leri temizle. Bunlar SQL sınırı değil ama
-    #    pariteyi kaydırır: `// ... \`amount\` ...` gibi bir satır literal içi/dışı
-    #    ayrımını ters çevirip guard'ı SESSİZCE kör eder. Gerçek vaka:
-    #    1795000000000-AddSpendTypeToBudgetDimensions.ts:73,74,103,110.
-    PRE="$(awk '{ t = $0; sub(/^[ \t]+/, "", t); if (t ~ /^(\/\/|\*|\/\*)/) gsub(/`/, "", $0); print }' "$f")"
-
-    # 2) Self-check. Parite hâlâ tekse ya da kaçırılmış backtick (\`) varsa blok
-    #    sınırı güvenilmezdir. Bu durumda dosyayı ATLAMAK yanlış olur — atlamak
-    #    sessiz yanlış negatiftir ve bu guard artık bloklayıcı bir kapı. Bulgu bas.
-    BT="$(printf '%s' "$PRE" | tr -cd '`' | wc -c | tr -d ' ')"
-    if [ $((BT % 2)) -ne 0 ] || grep -q '\\`' "$f"; then
-      printf "[%s] %s:1\n" "$GUARD_NAME" "$f"
-      printf "  backtick paritesi bozuk veya kaçırılmış backtick var — blok sınırı güvenilmez\n"
-      printf "  > guard bu dosyayı güvenle tarayamıyor; catalogue sorgularını elle doğrula\n"
-      continue
-    fi
-
-    printf '%s\n' "$PRE" | awk -v file="$f" -v guard="$GUARD_NAME" '
-      BEGIN {
-        RS = "`"
-        SQ = sprintf("%c", 39)
-        CAT      = "pg_constraint|pg_indexes|pg_class|pg_tables|information_schema"
-        SCHEMA   = "nspname|schemaname|table_schema"
-        consumed = 0
-      }
-      {
-        block     = $0
-        blockstart = consumed          # bu kaydın başladığı satır (0-tabanlı offset)
-        nl = gsub(/\n/, "\n", block)   # kayıttaki yeni satır sayısı (block değişmez)
-        consumed += nl
-
-        if (NR % 2 == 1) next          # literal dışı → SQL değil
-        if (block !~ CAT) next         # catalogue sorgusu yok
-        if (block ~ SCHEMA) next       # sorgunun kendisinde şema predicate*i var
-
-        # Şema-güvenli regclass/regnamespace desenleri: nitelendirilmiş literal
-        # zaten şemayı belirtir, ayrıca predicate gerekmez.
-        if (block ~ /'"'"'[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*'"'"'[ \t]*::[ \t]*regclass/) next
-        if (block ~ /to_regclass\([ \t]*'"'"'[A-Za-z_][A-Za-z0-9_]*\./) next
-        if (block ~ /::[ \t]*regnamespace/) next
-
-        # Bulgu: catalogue tokenının geçtiği ilk satırı raporla.
-        n = split(block, L, "\n")
-        for (i = 1; i <= n; i++) {
-          if (L[i] !~ CAT) continue
-          t = L[i]; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
-          if (t ~ /^--/) continue      # SQL yorum satırı
-          match(t, CAT); cat = substr(t, RSTART, RLENGTH)
-          printf "[%s] %s:%d\n", guard, file, blockstart + i
-          printf "  %s sorgusunda şema predicate" SQ "i yok\n", cat
-          printf "  > %s\n", t
-          break
-        }
-      }
-    '
+    awk -v file="$f" -v guard="$GUARD_NAME" -f "$ROOT/scripts/guards/migration-schema.awk" "$f"
   done
 }
 

@@ -16,7 +16,13 @@
 #
 # Gerekçesiz veya alan sayısı eksik satır → parse hatası, exit 2.
 
+# Guard adlarının TEK doğruluk kaynağı. `run-all.sh` koşacağı guard listesini
+# buradan okur — iki yerde tutulursa biri güncellenip diğeri unutulduğunda ya
+# doğrulama reddeder ya runner sessizce atlar.
 GUARD_NAMES_VALID="migration-schema ledger-direction financial-ordering schema-isolation"
+
+# `ENV` joker anahtarını kullanabilen guard'lar (dosya:satır'ı olmayan bulgular).
+GUARD_NAMES_ENV_OK="schema-isolation"
 
 # validate_allowlist <allowlist-yolu>
 # Bozuk satır varsa stderr'e yazar ve 2 döner. Dosya yoksa sorun değil (boş allowlist).
@@ -25,8 +31,11 @@ validate_allowlist() {
   [ -f "$al" ] || return 0
 
   local errors
-  errors="$(awk -v valid="$GUARD_NAMES_VALID" '
-    BEGIN { split(valid, v, " "); for (i in v) known[v[i]] = 1 }
+  errors="$(awk -v valid="$GUARD_NAMES_VALID" -v envok="$GUARD_NAMES_ENV_OK" '
+    BEGIN {
+      split(valid, v, " "); for (i in v) known[v[i]] = 1
+      split(envok, e, " "); for (i in e) env_allowed[e[i]] = 1
+    }
     {
       line = $0
       if (line ~ /^[ \t]*#/ || line ~ /^[ \t]*$/) next
@@ -60,8 +69,8 @@ validate_allowlist() {
       # anlamsiz ve tehlikeli bir kombinasyon.
       # (NOT: bu blok bash icinde tek tirnakli awk programi; Turkce kesme
       #  isareti tirnagi kapatir, o yuzden awk-ici yorumlar aksansizdir.)
-      if (p[2] == "ENV" && p[1] != "schema-isolation") {
-        printf "  satır %d: ENV anahtarı yalnız schema-isolation için geçerli (%s yazılmış)\n", NR, p[1]
+      if (p[2] == "ENV" && !(p[1] in env_allowed)) {
+        printf "  satır %d: ENV anahtari yalniz su guardlar icin gecerli: %s (%s yazilmis)\n", NR, envok, p[1]
         printf "    > %s\n", line
       }
     }
@@ -104,17 +113,27 @@ report_guard() {
 
 # filter_allowlist — stdin'deki bulgu akışından allowlist'tekileri düşürür.
 # GUARD_NAME ve ALLOWLIST değişkenlerini çağıran guard'dan alır.
+#
+# Kabul kuralları `validate_allowlist` ile BİREBİR aynı olmalı. Farklı olurlarsa
+# validate'in reddettiği bir satırı filtre kabul eder ve susturma sessizce geri
+# gelir. Bugün validate her zaman önce koşuyor, ama iki fonksiyonun aynı formatı
+# iki kuralla okuması kendi başına bir hata kaynağı.
 filter_allowlist() {
-  awk -v guard="$GUARD_NAME" -v al="$ALLOWLIST" '
+  awk -v guard="$GUARD_NAME" -v al="$ALLOWLIST" -v envok="$GUARD_NAMES_ENV_OK" '
     BEGIN {
+      split(envok, e, " "); for (k in e) env_allowed[e[k]] = 1
       while ((getline l < al) > 0) {
         if (l ~ /^[ \t]*#/ || l ~ /^[ \t]*$/) continue
         n = split(l, p, "|")
-        if (n < 3) continue
+        if (n != 3) continue                       # validate ile aynı: TAM 3 alan
         if (p[3] ~ /^[ \t]*$/) continue
         gsub(/^[ \t]+|[ \t]+$/, "", p[1]); gsub(/^[ \t]+|[ \t]+$/, "", p[2])
         if (p[1] != guard) continue
-        if (p[2] == "ENV") env_skip = 1; else skip[p[2]] = 1
+        if (p[2] == "") continue
+        if (p[2] == "ENV") {
+          if (!(p[1] in env_allowed)) continue     # validate ile aynı: ENV her guard-a değil
+          env_skip = 1
+        } else skip[p[2]] = 1
       }
     }
     /^\[/ {

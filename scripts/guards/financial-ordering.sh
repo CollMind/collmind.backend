@@ -15,8 +15,8 @@
 # Ayırt edilemeyen durum bulgu olarak basılır ve triyaja bırakılır — Faz 1'in amacı bu.
 #
 # ⚠️ KAPSAM SINIRI (Faz 2 review'ında ölçüldü — abartılı iddia yazmamak için burada):
-#   1. Kapsam yol bazlı: `src/modules` altındaki 273 dosyanın FIN_RE ile eşleşen
-#      176'sı taranır. "Kod tabanının tamamı" DEĞİLDİR.
+#   1. Kapsam yol bazlı ve yalnız ÜRETİM kodu: 239 üretim dosyasının FIN_RE ile
+#      eşleşen 148'i taranır (spec/e2e hariç). "Kod tabanının tamamı" DEĞİLDİR.
 #   2. Guard yalnızca TIRNAKLI (literal) sıralama anahtarını görebilir. Değişkenle
 #      verilen dinamik anahtar görünmez:
 #        query.orderBy(sortField, ...)   → guard bunu değerlendiremez
@@ -50,8 +50,14 @@ fi
 # büyüktü. Yeni terimler: finance, spend, kpi, roi, invoice, claim, actual.
 FIN_RE="ledger|budget|agreement|on-invoice|settlement|plan|approval|reversal|sales-actuals|finance|spend|kpi|roi|invoice|claim|actual|report|dashboard|lta"
 
+# Test dosyaları kapsam dışı: INV-N-001 ÜRETİM sıralama yolu hakkındadır. Bir
+# spec'teki `orderBy('x.id')` fixture kurulumu olabilir ve bloklayıcı bir guard
+# onu build kırıcıya çevirir; tek kaçış yolu allowlist olur ve allowlist son
+# çaredir. Üretim kodu kapsamda kalır.
 scan() {
-  find src/modules -type f -name "*.ts" | grep -E "$FIN_RE" | sort | while IFS= read -r f; do
+  find src/modules -type f -name "*.ts" \
+    -not -name "*.spec.ts" -not -name "*.e2e-spec.ts" \
+    | grep -E "$FIN_RE" | sort | while IFS= read -r f; do
     awk -v file="$f" -v guard="$GUARD_NAME" '
       BEGIN { SQ = sprintf("%c", 39); QC = "[" SQ "\"`]" }
 
