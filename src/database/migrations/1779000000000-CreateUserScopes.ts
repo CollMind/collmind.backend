@@ -99,8 +99,10 @@ export class CreateUserScopes1779000000000 implements MigrationInterface {
 
     // FK: tenant_id → main.tenants(id)
     const tenantFkRows = (await queryRunner.query(`
-      SELECT conname FROM pg_constraint
-      WHERE conname = 'FK_user_scopes_tenant'
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid = c.connamespace
+      WHERE c.conname = 'FK_user_scopes_tenant'
+        AND n.nspname = 'main'
       LIMIT 1
     `)) as Array<{ conname: string }>;
 
@@ -116,8 +118,10 @@ export class CreateUserScopes1779000000000 implements MigrationInterface {
 
     // FK: user_id → main.users(id)
     const userFkRows = (await queryRunner.query(`
-      SELECT conname FROM pg_constraint
-      WHERE conname = 'FK_user_scopes_user'
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid = c.connamespace
+      WHERE c.conname = 'FK_user_scopes_user'
+        AND n.nspname = 'main'
       LIMIT 1
     `)) as Array<{ conname: string }>;
 
@@ -133,8 +137,10 @@ export class CreateUserScopes1779000000000 implements MigrationInterface {
 
     // FK: cpl_id → main.cpls(id) — nullable, CASCADE
     const cplFkRows = (await queryRunner.query(`
-      SELECT conname FROM pg_constraint
-      WHERE conname = 'FK_user_scopes_cpl'
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid = c.connamespace
+      WHERE c.conname = 'FK_user_scopes_cpl'
+        AND n.nspname = 'main'
       LIMIT 1
     `)) as Array<{ conname: string }>;
 

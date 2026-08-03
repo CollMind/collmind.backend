@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 #
-# Guard runner — Faz 1 (RAPOR modu)
+# Guard runner — Faz 2 (BLOKLAMA modu)
 #
-# Bu fazda hiçbir guard build'i, testi veya commit'i kırmaz: varsayılan davranış
-# bulguyu basmak ve exit 0 dönmektir. Gerekçe: ilk koşumda yüzlerce yanlış pozitif
-# çıkarsa ekip guard'ları kapatır ve mekanizma ölür. Önce ölçüyoruz, sonra insan
-# triyaj ediyor, sonra bloklamaya çeviriyoruz (Faz 2).
+# Faz 1'de varsayılan `report` idi: hiçbir guard build'i, testi veya commit'i
+# kırmıyordu. Gerekçe, ilk koşumda yüzlerce yanlış pozitif çıkarsa ekibin
+# guard'ları tümden kapatmasıydı. Ölçüm yapıldı, ihlaller düzeltildi, allowlist
+# insan triyajıyla dolduruldu — artık kapı kapalı.
 #
-#   GUARD_MODE=report (varsayılan) → bulguları bas, exit 0
-#   GUARD_MODE=block               → bulgu varsa exit 1
+#   GUARD_MODE=block (varsayılan) → bulgu varsa exit 1
+#   GUARD_MODE=report             → bulguları bas, exit 0 (triyaj için)
+#   Allowlist parse hatası        → exit 2 (her iki modda da)
+#
+# CI yok (CLAUDE.md §5: manuel promote, pipeline yok). Çağrı yolları:
+#   - `/qa` komutu            → .claude/commands/qa.md
+#   - `code-reviewer` ajanı   → .claude/agents/code-reviewer.md
+#   - Done checklist'i        → .claude/backlog/BACKLOG.md
 set -uo pipefail
 
-GUARD_MODE="${GUARD_MODE:-report}"
+GUARD_MODE="${GUARD_MODE:-block}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS=(migration-schema ledger-direction financial-ordering schema-isolation)
 
@@ -21,6 +27,16 @@ SUMMARY=""
 for g in "${GUARDS[@]}"; do
   # Alt guard'ları her zaman report modunda çalıştır; exit kararını runner verir.
   OUT="$(GUARD_MODE=report bash "$DIR/$g.sh")"
+  RC=$?
+
+  # exit 2 = allowlist parse hatası. Bu bir yapılandırma hatasıdır, bulgu değil;
+  # sessizce yutulamaz — mod ne olursa olsun koşumu durdurur.
+  if [ "$RC" -eq 2 ]; then
+    echo "=== $g ==="
+    echo "!! allowlist parse hatası (detay stderr'de) — guard koşumu durduruldu"
+    exit 2
+  fi
+
   COUNT="$(printf "%s" "$OUT" | grep -c "^\[$g\]" || true)"
   SKIPPED="$(printf "%s" "$OUT" | grep -c "^-- \[$g\] SKIPPED" || true)"
 

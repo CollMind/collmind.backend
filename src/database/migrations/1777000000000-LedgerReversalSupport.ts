@@ -25,8 +25,10 @@ export class LedgerReversalSupport1777000000000 implements MigrationInterface {
 
     // 3) Self-FK — idempotent via pg_constraint check
     const fkRows = (await queryRunner.query(`
-      SELECT conname FROM pg_constraint
-      WHERE conname = 'FK_ledger_entries_reverses_entry'
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid = c.connamespace
+      WHERE c.conname = 'FK_ledger_entries_reverses_entry'
+        AND n.nspname = 'main'
       LIMIT 1
     `)) as Array<{ conname: string }>;
 
@@ -43,7 +45,8 @@ export class LedgerReversalSupport1777000000000 implements MigrationInterface {
     // 4) Partial unique index: çift-reversal'ı DB düzeyinde engelle
     const uqRows = (await queryRunner.query(`
       SELECT indexname FROM pg_indexes
-      WHERE indexname = 'UQ_ledger_entries_reversal_per_tenant'
+      WHERE schemaname = 'main'
+        AND indexname = 'UQ_ledger_entries_reversal_per_tenant'
       LIMIT 1
     `)) as Array<{ indexname: string }>;
 

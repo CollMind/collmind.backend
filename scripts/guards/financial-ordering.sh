@@ -14,15 +14,20 @@
 #
 # Ayırt edilemeyen durum bulgu olarak basılır ve triyaja bırakılır — Faz 1'in amacı bu.
 #
-# GUARD_MODE=report (varsayılan) → bulguları bas, exit 0
-# GUARD_MODE=block               → bulgu varsa exit 1
+# GUARD_MODE=block (varsayılan) → bulgu varsa exit 1
+# GUARD_MODE=report             → bulguları bas, exit 0 (triyaj için)
+# Allowlist parse hatası        → exit 2 (her iki modda da)
 set -uo pipefail
 
 GUARD_NAME="financial-ordering"
-GUARD_MODE="${GUARD_MODE:-report}"
+GUARD_MODE="${GUARD_MODE:-block}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOWLIST="$ROOT/scripts/guards/allowlist.txt"
 cd "$ROOT"
+# shellcheck source=lib.sh
+source "$ROOT/scripts/guards/lib.sh"
+
+validate_allowlist "$ALLOWLIST" || exit 2
 
 if [ ! -d src/modules ]; then
   echo "-- [$GUARD_NAME] SKIPPED: src/modules dizini bulunamadı"
@@ -91,24 +96,6 @@ scan() {
       }
     ' "$f"
   done
-}
-
-# allowlist filtresi: `<guard>|<dosya>:<satır>|<gerekçe>` — gerekçesiz satır geçersiz
-filter_allowlist() {
-  awk -v guard="$GUARD_NAME" -v al="$ALLOWLIST" '
-    BEGIN {
-      while ((getline l < al) > 0) {
-        if (l ~ /^[ \t]*#/ || l ~ /^[ \t]*$/) continue
-        n = split(l, p, "|")
-        if (n < 3) continue
-        if (p[3] ~ /^[ \t]*$/) continue
-        gsub(/^[ \t]+|[ \t]+$/, "", p[1]); gsub(/^[ \t]+|[ \t]+$/, "", p[2])
-        if (p[1] == guard) skip[p[2]] = 1
-      }
-    }
-    /^\[/ { key = $0; sub(/^\[[^]]*\] /, "", key); drop = (key in skip) }
-    { if (!drop) print }
-  '
 }
 
 OUT="$(scan | filter_allowlist)"

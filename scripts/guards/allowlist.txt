@@ -1,13 +1,22 @@
 # Guard allowlist — susturulmuş bulgular
 #
-# Format: <guard-adı>|<dosya-yolu>:<satır>|<gerekçe>
-# Gerekçesiz satır GEÇERSİZDİR. Boş gerekçeyle susturma yapılamaz.
+# Format: <guard-adı>|<anahtar>|<gerekçe>
+#
+#   <anahtar> = <dosya-yolu>:<satır>   → kaynak kod bulgusu
+#             | ENV                    → dosya:satır'ı olmayan ortam bulgusu
+#
+# Gerekçesiz veya alan sayısı eksik satır GEÇERSİZDİR ve guard'lar parse hatası
+# verip exit 2 döner (sessizce yok saymaz). Faz 2'de guard'lar bloklayıcı olduğu
+# için sessiz yok sayma "susturma çalışıyor sanılıyor" durumunu üretirdi.
+#
 # `#` ile başlayan satırlar ve boş satırlar yok sayılır.
 #
 # Geçerli guard adları:
 #   migration-schema | ledger-direction | financial-ordering | schema-isolation
 #
-# Örnek:
-# ledger-direction|src/modules/x/y.service.ts:42|Bu SUM budget_transactions üzerinde, ledger değil
-#
-# Faz 1'de bu dosya bilinçli olarak boştur — allowlist'i insan triyajı doldurur.
+# ALLOWLIST SON ÇARE'DİR. Bilinen bir yanlış pozitif deseni varsa guard'ın
+# kendisi tanımalıdır — buraya satır eklenmemelidir. Örnek: `'main.x'::regclass`
+# şema-güvenlidir ve Faz 2'de migration-schema guard'ının içinde çözüldü;
+# allowlist'e girmedi.
+
+schema-isolation|ENV|Lokal geliştirme DB'si (collmind_tpm) hem main (CTPM) hem public (TTM) şemasını barındırıyor. Bu ortam gerçeği, kod kusuru değil; guard'ın amacı zaten bu riski görünür kılmaktı ve migration-schema guard'ı riski kaynakta kapatıyor. Şema ayırma işi: T-067
