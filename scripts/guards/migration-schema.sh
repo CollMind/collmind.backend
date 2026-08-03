@@ -42,7 +42,9 @@ cd "$ROOT"
 
 validate_allowlist "$ALLOWLIST" || exit 2
 
-MIG_DIR="$(find src -type d -name migrations -not -path "*/node_modules/*" 2>/dev/null | head -1)"
+# GUARD_MIG_DIR: yalnızca self-test.sh fixture dizinini işaret etmek için kullanır.
+# Üretim koşumunda set edilmez; varsayılan davranış değişmez.
+MIG_DIR="${GUARD_MIG_DIR:-$(find src -type d -name migrations -not -path "*/node_modules/*" 2>/dev/null | head -1)}"
 if [ -z "$MIG_DIR" ]; then
   echo "-- [$GUARD_NAME] SKIPPED: migrations dizini bulunamadı"
   exit 0

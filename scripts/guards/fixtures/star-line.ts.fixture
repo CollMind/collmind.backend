@@ -1,0 +1,19 @@
+// FIXTURE — migration-schema · beklenen: 2 bulgu (satır 6 ve 9)
+//
+// KAYIT: code review 2. turunda üretilen REGRESYON. 1. turun düzeltmesi
+// yorum tespitinde `^\*` deseni kullanıyordu; `SELECT` sonrası satır başına
+// düşen `* FROM ...` sıradan SQL biçimlendirmesidir, yorum değil. O satırdaki
+// backtick silinince parite kayıyor ve İKİNCİ sorgu sessizce maskeleniyordu.
+// Bu dosya 2 bulgu vermiyorsa lexer yine satır-sezgiseline düşmüş demektir.
+import { MigrationInterface, QueryRunner } from 'typeorm';
+export class FixtureStarLine implements MigrationInterface {
+  public async up(q: QueryRunner): Promise<void> {
+    await q.query(`
+      SELECT
+        * FROM pg_indexes WHERE indexname = 'unsafe_a'`);
+    await q.query(`
+      SELECT
+        * FROM pg_constraint WHERE conname = 'unsafe_b'`);
+  }
+  public async down(): Promise<void> {}
+}

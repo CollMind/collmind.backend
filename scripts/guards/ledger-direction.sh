@@ -33,7 +33,7 @@ fi
 
 scan() {
   # Önce ledger geçen dosyalara daral — tarama maliyetini düşürür, davranışı değiştirmez.
-  grep -rlE "ledger_entries|LedgerEntry|ledger\." src --include="*.ts" 2>/dev/null | sort | while IFS= read -r f; do
+  grep -rlE "ledger_entries|LedgerEntry|ledger\." "${GUARD_SRC_DIR:-src}" --include="*.ts" 2>/dev/null | sort | while IFS= read -r f; do
     awk -v file="$f" -v guard="$GUARD_NAME" '
       BEGIN {
         SUMRE = "SUM[ \t]*\\(|\\.sum\\("

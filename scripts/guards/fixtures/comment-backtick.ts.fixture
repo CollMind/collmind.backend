@@ -1,0 +1,14 @@
+// FIXTURE — migration-schema · beklenen: 1 bulgu
+//
+// KAYIT: code review 1. turunun blocker'ı. `//` yorumundaki TEK bir backtick
+// literal içi/dışı paritesini kaydırıyor ve guard hiçbir çıktı vermeden
+// yeşil dönüyordu — bloklayıcı bir kapıda sessiz yanlış negatif.
+// Düzeltme öncesi bu dosya 0 bulgu veriyordu.
+import { MigrationInterface, QueryRunner } from 'typeorm';
+export class FixtureCommentBacktick implements MigrationInterface {
+  public async up(q: QueryRunner): Promise<void> {
+    // note: the `amount column is tricky
+    await q.query(`SELECT conname FROM pg_constraint WHERE conname = 'Y'`);
+  }
+  public async down(): Promise<void> {}
+}

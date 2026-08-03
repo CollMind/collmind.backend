@@ -1,0 +1,15 @@
+// FIXTURE — migration-schema · beklenen: 0 bulgu
+//
+// KAYIT: 1. tur düzeltmesinin YANLIŞ POZİTİF yüzü. Satır ortasında başlayan
+// bir `//` yorumu temizlenmiyordu ve içindeki catalogue adları uydurma bulgu
+// üretiyordu. Tek gerçek sorgu şema-güvenli (`::regnamespace`), dolayısıyla
+// doğru cevap sıfırdır. Bulgu çıkarsa guard yorum ile SQL-i ayıramıyor.
+import { MigrationInterface, QueryRunner } from 'typeorm';
+export class FixtureMidlineComment implements MigrationInterface {
+  public async up(q: QueryRunner): Promise<void> {
+    const x = 1; // uses `pg_constraint` and `pg_indexes` here
+    await q.query(`SELECT 1 FROM pg_class WHERE relname='t' AND relnamespace='main'::regnamespace`);
+    return void x;
+  }
+  public async down(): Promise<void> {}
+}

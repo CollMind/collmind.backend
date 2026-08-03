@@ -38,7 +38,8 @@ source "$ROOT/scripts/guards/lib.sh"
 
 validate_allowlist "$ALLOWLIST" || exit 2
 
-if [ ! -d src/modules ]; then
+MODULES_DIR="${GUARD_MODULES_DIR:-src/modules}"   # override: self-test.sh
+if [ ! -d "$MODULES_DIR" ]; then
   echo "-- [$GUARD_NAME] SKIPPED: src/modules dizini bulunamadı"
   exit 0
 fi
@@ -55,7 +56,7 @@ FIN_RE="ledger|budget|agreement|on-invoice|settlement|plan|approval|reversal|sal
 # onu build kırıcıya çevirir; tek kaçış yolu allowlist olur ve allowlist son
 # çaredir. Üretim kodu kapsamda kalır.
 scan() {
-  find src/modules -type f -name "*.ts" \
+  find "$MODULES_DIR" -type f -name "*.ts" \
     -not -name "*.spec.ts" -not -name "*.e2e-spec.ts" \
     | grep -E "$FIN_RE" | sort | while IFS= read -r f; do
     awk -v file="$f" -v guard="$GUARD_NAME" '

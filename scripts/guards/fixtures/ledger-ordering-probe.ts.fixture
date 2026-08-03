@@ -1,0 +1,19 @@
+// FIXTURE — POZİTİF KONTROL
+// beklenen: financial-ordering 1 bulgu · ledger-direction 1 bulgu
+//
+// KAYIT: iki review turu boyunca elle koşulan kontrol. "0 bulgu" ile
+// "guard bozuk" arasındaki farkı ölçen TEK şey budur. Guard-ların awk-i
+// bozulursa (ör. bash tek tırnağını kapatan bir kesme işareti) sessizce
+// 0 bulgu dönerler ve her şey yeşil görünür. Bu dosya bulgu vermiyorsa
+// guard-lar çalışmıyor demektir — üretim kodunun temiz olduğu anlamına GELMEZ.
+//
+// Dosya adı FIN_RE ile eşleşmek zorunda ("ledger"), yoksa financial-ordering
+// bu dosyayı hiç taramaz.
+export class LedgerOrderingProbe {
+  ordering(q: any) {
+    return q.orderBy('entry.id', 'DESC');
+  }
+  direction() {
+    return `SELECT SUM(amount) FROM ledger_entries WHERE tenant_id = $1`;
+  }
+}

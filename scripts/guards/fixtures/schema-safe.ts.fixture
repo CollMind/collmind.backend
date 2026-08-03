@@ -1,0 +1,17 @@
+// FIXTURE — migration-schema · beklenen: 1 bulgu (yalnız satır 12)
+//
+// KAYIT: şema-güvenli desenlerin allowlist'e DEĞİL guard'ın kendisine
+// gömülmesi kararı (Faz 2). Dört sorgudan üçü güvenlidir:
+//   schemaname predicate-i · 'main.x'::regclass · to_regclass('main.x')
+// Yalnız nitelendirilmemiş pg_constraint sorgusu bulgudur. 1-den fazla bulgu
+// çıkarsa yanlış pozitif geri gelmiş, 0 çıkarsa gerçek ihlal kaçmış demektir.
+import { MigrationInterface, QueryRunner } from 'typeorm';
+export class FixtureSchemaSafe implements MigrationInterface {
+  public async up(q: QueryRunner): Promise<void> {
+    await q.query(`SELECT indexname FROM pg_indexes WHERE schemaname='main' AND indexname='X'`);
+    await q.query(`SELECT conname FROM pg_constraint WHERE conname='Y'`);
+    await q.query(`SELECT 1 FROM pg_constraint WHERE conrelid = 'main.agreements'::regclass`);
+    await q.query(`SELECT 1 FROM pg_class WHERE oid = to_regclass('main.users')`);
+  }
+  public async down(): Promise<void> {}
+}

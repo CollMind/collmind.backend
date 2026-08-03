@@ -24,6 +24,19 @@ source "$DIR/lib.sh"
 # shellcheck disable=SC2206
 GUARDS=($GUARD_NAMES_VALID)
 
+# Guard'lar ölçüme başlamadan ÖNCE kendi doğruluklarını kanıtlar.
+# Gerekçe: bozuk bir guard sessizce "0 bulgu" döner ve her şey yeşil görünür —
+# iki code review turunda tam olarak bu oldu. Self-test kırmızıysa bulgu
+# sayıları anlamsızdır, dolayısıyla koşum burada durur.
+echo "=== self-test ==="
+if bash "$DIR/self-test.sh"; then
+  echo "(guard fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! guard'lar kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0
