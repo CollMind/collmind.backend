@@ -659,4 +659,49 @@ describe('Budget Envelope Split — T-019b Faz 2 (E2E)', () => {
       expect(catBRes.body.code).toBe('SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // SP-E2E-10: Team Lead measured regression (2026-08-04) — the SP-E2E-09
+  // "own dimension" narrowing is itself wrong when the REQUESTED period has
+  // NO exact-match envelope at all. In that case every candidate ties on the
+  // first two ORDER BY keys (period-exact: none match; channel: all match
+  // the WHERE-filtered channel) and the decision falls through to
+  // `createdAt DESC` — i.e. the "winner" can be a split twin of a
+  // COMPLETELY UNRELATED period that merely shares the channel/year. The
+  // buggy "narrow to winner's own dimension" fix then builds its ambiguity
+  // group around THAT unrelated period and 400s a request that never asked
+  // about a split dimension.
+  // -------------------------------------------------------------------------
+  describe('SP-E2E-10: dönem tam eşleşmesi olmayan sorgu, alakasız bir dönemin split ikizine düşmemeli', () => {
+    it('istenen dönemin hiç zarfı yokken, aynı kanal+yılda split edilmiş BAŞKA bir dönem yüzünden 400 dönmemeli', async () => {
+      const channel = `E2E-SPG-R-${randomUUID().slice(0, 8)}`;
+      const splitPeriod = '2026-09';
+      const queriedPeriod = '2026-10'; // same channel/year, NO exact-match envelope exists for this period
+
+      const { id: splitId } = await createFreshUnsplitEnvelopeOnDimension(
+        90000,
+        channel,
+        splitPeriod,
+      );
+      const fm = await loginAs(app, 'FINANCE_MANAGER');
+      await request(app.getHttpServer())
+        .post(`/budget/envelopes/${splitId}/split`)
+        .set(fm.authHeader())
+        .send({ onInvoiceAllocated: 50000, offInvoiceAllocated: 40000 })
+        .expect(201);
+
+      const admin = await loginAs(app, 'ADMIN');
+
+      // No envelope has period === queriedPeriod (only the year-pattern
+      // fallback pulls in the split twins of `splitPeriod`). The requested
+      // dimension itself was never split — this must resolve normally, not
+      // 400.
+      const res = await request(app.getHttpServer())
+        .get('/budget/status')
+        .query({ channel, periodMonth: queriedPeriod })
+        .set(admin.authHeader())
+        .expect(200);
+      expect(res.body.code).not.toBe('SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION');
+    });
+  });
 });

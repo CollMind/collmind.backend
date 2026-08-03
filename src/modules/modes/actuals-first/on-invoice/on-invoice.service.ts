@@ -19,13 +19,17 @@ import {
 } from '../../../../database/entities/on-invoice-entry.entity';
 import { CustomerService } from '../../../customer/customer.service';
 import { SkuService } from '../../../master-data/sku/sku.service';
-import { BudgetService } from '../../../shared/budget/budget.service';
+import {
+  BudgetService,
+  isSplitDimensionGuardError,
+} from '../../../shared/budget/budget.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { CreateOnInvoiceEntryDto } from './dto';
 import { ValidationResponseDto, CompletionResponseDto } from './dto';
 import { randomUUID } from 'crypto';
 import { LedgerSourceType } from '../ledger/dto';
 import { SpendType } from '../../../../database/entities/ledger-entry.entity';
+import { BudgetSpendType } from '../../../../database/entities/budget-envelope.entity';
 
 @Injectable()
 export class OnInvoiceService {
@@ -435,13 +439,49 @@ export class OnInvoiceService {
               sku.genericUnit.category.code || sku.genericUnit.category.name;
           }
 
-          // Budget envelope bul
-          const envelope = await this.budgetService.findEnvelopeByDimensions(
-            tenantId,
-            channel,
-            entry.fiscalPeriod,
-            category,
-          );
+          // T-057 madde 4 (ölçüm sonucu, docs/analysis/0008 §5.7): this
+          // service is unconditionally ON_INVOICE — there is no field
+          // anywhere in `OnInvoiceEntry`/`CreateOnInvoiceEntryDto` that
+          // varies the type, and the ledger entry created below has ALWAYS
+          // hardcoded `spendType: SpendType.ON_INVOICE` (line ~466ish,
+          // pre-existing, unrelated to this fix).
+          //
+          // Team Lead bağımsız doğrulama (2026-08-03, madde 3'teki canlı
+          // regresyondan sonra genelleştirildi): HER ZAMAN tipli çözüm
+          // kullanmak, `findEnvelopeByDimensions`'ın tipli-eşleşme sırasının
+          // (§5.1: "tipli eşleşme UNSPLIT'i HER ZAMAN yener", dönem eşleşmesi
+          // İKİNCİL kriterdir) AYNI KANAL + AYNI YIL'daki TAMAMEN alakasız
+          // bir dönemde yaratılmış bir tipli zarfı (ör. bir test fixture'ı)
+          // bu dimension'ın GERÇEK UNSPLIT zarfının yerine geçirmesine yol
+          // açabilir — UNSPLIT boyutta davranış artık BİREBİR AYNI değildir.
+          // T-056 adım 6 deseni: ÖNCE unqualified çağrı (bugünkü davranışın
+          // ta kendisi), yalnızca GERÇEKTEN split edilmiş bir boyuta çarpıp
+          // guard fırlarsa tipli çözüme geçilir — ikinci/bağımsız bir
+          // "split mi?" sorgusu YOK.
+          let envelope: Awaited<
+            ReturnType<typeof this.budgetService.findEnvelopeByDimensions>
+          >;
+          try {
+            envelope = await this.budgetService.findEnvelopeByDimensions(
+              tenantId,
+              channel,
+              entry.fiscalPeriod,
+              category,
+            );
+          } catch (err) {
+            if (!isSplitDimensionGuardError(err)) {
+              throw err;
+            }
+            // Genuinely split dimension — typed lookup now resolves the
+            // correct ON_INVOICE twin (no ambiguity).
+            envelope = await this.budgetService.findEnvelopeByDimensions(
+              tenantId,
+              channel,
+              entry.fiscalPeriod,
+              category,
+              BudgetSpendType.ON_INVOICE,
+            );
+          }
 
           if (envelope) {
             // Ledger entry oluştur
@@ -453,7 +493,21 @@ export class OnInvoiceService {
                 spendType: SpendType.ON_INVOICE,
                 amount: entry.discount,
                 periodMonth: entry.fiscalPeriod,
-                postingDate: entry.invoiceDate.toISOString().split('T')[0],
+                // Independent bug found while producing T-057's e2e evidence
+                // (unrelated to spend-type resolution, pre-existing at HEAD,
+                // `git show HEAD` confirms): TypeORM hydrates a `type: 'date'`
+                // column (`OnInvoiceEntry#invoiceDate`) as a plain
+                // 'YYYY-MM-DD' STRING, not a `Date` — `entry.invoiceDate
+                // .toISOString()` therefore threw `TypeError` on EVERY row,
+                // for EVERY batch, always (proven live: measured 0/1 ledger
+                // entries posted before this fix, unconditionally, on an
+                // otherwise-valid UNSPLIT-dimension entry — not a split-
+                // dimension-specific failure). `new Date(...)` accepts both
+                // a `Date` and a date string, so this is safe regardless of
+                // which shape a given TypeORM/driver version returns.
+                postingDate: new Date(entry.invoiceDate)
+                  .toISOString()
+                  .split('T')[0],
                 budgetEnvelopeId: envelope.id,
                 channel,
                 cplId: customer.cplId,

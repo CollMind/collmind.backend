@@ -6,6 +6,13 @@ import {
 } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { BudgetRepository } from './budget.repository';
+// T-057: imported for use within this class AND re-exported so mode-service
+// callers (`plan.service.ts`, `agreement-transaction.service.ts`) derive
+// "is this dimension split?" from the SAME guard-error shape without
+// reaching past `BudgetService` into `BudgetRepository` directly (module
+// boundary discipline, §5.7).
+import { isSplitDimensionGuardError } from './budget.repository';
+export { isSplitDimensionGuardError } from './budget.repository';
 import { BudgetThresholdService } from './budget-threshold.service';
 import {
   BudgetReservationService,
@@ -445,7 +452,6 @@ export class BudgetService {
         tenantId,
         amount,
       );
-
     if (!sufficient) {
       throw new BadRequestException(
         `Insufficient budget. Available: ${available}, Requested: ${amount}`,
@@ -847,6 +853,22 @@ export class BudgetService {
    * `commitReservedForPlan`, unchanged). If the plan has NEVER been through
    * a reserving submit (legacy direct-approve), falls back to a single
    * fresh 'TOTAL' COMMIT of `fallbackAmount` — the pre-T-019 behaviour.
+   *
+   * T-057 F4 (ADR 0004 Karar 5, docs/analysis/0008 §4 "Faz 2 tuzağı"): the
+   * legacy "never reserved" fallback used to call the 'TOTAL' bucket
+   * unconditionally, which resolves its envelope via an UNQUALIFIED
+   * `findEnvelopeByDimensions` (see `commitReservedForPlan`'s own "no prior
+   * RESERVE" branch) — one of the tipsiz call sites this task closes. Split
+   * detection is derived from THAT SAME call's own guard error (no second/
+   * independent query, T-056 adım 6 pattern); when it fires, this legacy
+   * path commits ON_INVOICE/OFF_INVOICE INDEPENDENTLY using `spendBreakdown`
+   * — REAL evidence from the caller's own plan (`plan.onInvoiceSpend`/
+   * `offInvoiceSpend`, adım 4's recalc columns), never a fabricated ratio of
+   * `fallbackAmount`. Both current callers (`plan.service.ts#approve`,
+   * `approval-workflow.service.ts#approvePlan`) already hold the full
+   * `Plan` entity at their call site, so this costs no extra query. If no
+   * breakdown is supplied (or it is entirely zero) the split-dimension
+   * legacy case is rejected rather than guessing.
    */
   async commitAllReservedForPlan(
     planId: string,
@@ -857,6 +879,7 @@ export class BudgetService {
     tenantId: string,
     userId: string,
     manager?: EntityManager,
+    spendBreakdown?: { onInvoice: number; offInvoice: number },
   ): Promise<BudgetTransaction[]> {
     const existingTransactions =
       await this.budgetRepository.findTransactionsBySource(
@@ -902,19 +925,102 @@ export class BudgetService {
       // should be structurally unreachable for a plan actually reaching
       // approve() — see the loop below, which simply commits nothing for
       // it rather than fabricating a fresh TOTAL commit.)
-      return [
-        await this.commitReservedForPlan(
-          planId,
-          fallbackAmount,
-          channel,
-          periodMonth,
-          currency,
-          tenantId,
-          userId,
-          'TOTAL',
-          manager,
-        ),
-      ];
+      try {
+        return [
+          await this.commitReservedForPlan(
+            planId,
+            fallbackAmount,
+            channel,
+            periodMonth,
+            currency,
+            tenantId,
+            userId,
+            'TOTAL',
+            manager,
+          ),
+        ];
+      } catch (err) {
+        if (!isSplitDimensionGuardError(err)) {
+          throw err;
+        }
+        // T-057 F4: the dimension turned out to be split — a single
+        // untyped 'TOTAL' commit is no longer resolvable. Fall back to
+        // independent typed commits using the caller-supplied evidence
+        // (never a fabricated split of `fallbackAmount`).
+        if (
+          !spendBreakdown ||
+          (spendBreakdown.onInvoice <= 0 && spendBreakdown.offInvoice <= 0)
+        ) {
+          throw new BadRequestException({
+            statusCode: 400,
+            code: 'PLAN_SPEND_BREAKDOWN_REQUIRED_FOR_SPLIT_DIMENSION',
+            message:
+              `Plan ${planId} was never reserved (legacy direct-approve) ` +
+              `and its budget dimension (channel=${channel}, ` +
+              `period=${periodMonth}) has been split into ON_INVOICE/` +
+              `OFF_INVOICE envelopes; an on/off spend breakdown is required ` +
+              `to commit each type independently. Recalculate the plan ` +
+              `(POST /plans/${planId}/recalculate) and resubmit.`,
+          });
+        }
+
+        // T-057 B3 (code-reviewer, 2026-08-04): özdeşlik kapısı — aynı
+        // `PLAN_SPEND_BREAKDOWN_INCONSISTENT` kodu ve kapı deseninin
+        // `plan.service.ts` submit yolundaki (`Math.abs(onInvoice +
+        // offInvoice - totalSpend) > 0.01`) birebir eşdeğeri, buraya da
+        // uygulanır. Bu dal hem `fallbackAmount` (çağıranın `totalSpend`'i)
+        // HEM DE ayrı bir `spendBreakdown` (çağıranın `onInvoiceSpend`/
+        // `offInvoiceSpend`'i) alıyor — ikisi aynı `Plan` satırından, aynı
+        // anda okunuyor olsa da İKİ AYRI kolon çiftidir; biri diğerini
+        // güncellemeden yazılmışsa (bayat recalc) sessizce `fallbackAmount`
+        // kadar rezerve/commit etmek yanlış tutarı bütçeye yazar. Reddet.
+        const breakdownSum =
+          Number(spendBreakdown.onInvoice) + Number(spendBreakdown.offInvoice);
+        if (Math.abs(breakdownSum - fallbackAmount) > 0.01) {
+          throw new BadRequestException({
+            statusCode: 400,
+            code: 'PLAN_SPEND_BREAKDOWN_INCONSISTENT',
+            message:
+              `Plan ${planId} on/off-invoice breakdown (${spendBreakdown.onInvoice} + ` +
+              `${spendBreakdown.offInvoice} = ${breakdownSum}) does not match ` +
+              `totalSpend (${fallbackAmount}). Recalculate the plan (POST ` +
+              `/plans/${planId}/recalculate) before submitting.`,
+          });
+        }
+
+        const results: BudgetTransaction[] = [];
+        if (spendBreakdown.onInvoice > 0) {
+          results.push(
+            await this.commitReservedForPlan(
+              planId,
+              spendBreakdown.onInvoice,
+              channel,
+              periodMonth,
+              currency,
+              tenantId,
+              userId,
+              'ON_INVOICE',
+              manager,
+            ),
+          );
+        }
+        if (spendBreakdown.offInvoice > 0) {
+          results.push(
+            await this.commitReservedForPlan(
+              planId,
+              spendBreakdown.offInvoice,
+              channel,
+              periodMonth,
+              currency,
+              tenantId,
+              userId,
+              'OFF_INVOICE',
+              manager,
+            ),
+          );
+        }
+        return results;
+      }
     }
 
     const results: BudgetTransaction[] = [];

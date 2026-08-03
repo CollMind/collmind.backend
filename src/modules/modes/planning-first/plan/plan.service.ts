@@ -26,7 +26,10 @@ import {
   PlanFu,
   PlanSku,
 } from '../../../../database/entities/plan.entity';
-import { BudgetService } from '../../../shared/budget/budget.service';
+import {
+  BudgetService,
+  isSplitDimensionGuardError,
+} from '../../../shared/budget/budget.service';
 import {
   BudgetEnvelopeStatus,
   BudgetSpendType,
@@ -916,6 +919,21 @@ export class PlanService {
 
   /**
    * Check budget availability for a plan before approval
+   *
+   * T-057 madde 1 (docs/analysis/0008 §5.6, ADR 0004 Karar 5): this is the
+   * ONE unqualified `findEnvelopeByDimensions` call proven to be consumed
+   * live by the frontend (`BudgetApprovalModal.tsx` → `planEndpoints
+   * .checkBudget`). Every pre-existing field below is preserved BYTE-FOR-
+   * BYTE (same shape, same meaning) for the UNSPLIT case — the frontend is
+   * NOT touched by this task. `bySpendType` is a purely ADDITIVE §5.6 block;
+   * no existing consumer reads it, so adding it cannot break anything.
+   *
+   * Split-dimension handling (NEW — previously this call would 500/400
+   * crash the moment any dimension was actually split, which is exactly
+   * what ADR 0004 Karar 5 blocked `POST /budget/envelopes/:id/split` on):
+   * split detection reuses T-056 adım 6's pattern — no second/independent
+   * "is this split?" query — derived from THIS SAME unqualified call's own
+   * guard error (`isSplitDimensionGuardError`, budget.repository.ts).
    */
   async checkBudget(
     id: string,
@@ -936,24 +954,212 @@ export class PlanService {
       currency: string;
     };
     sufficient?: boolean;
+    // T-057 (§5.6, additive): per-type breakdown. Always present once an
+    // envelope of EITHER type exists for the dimension (SPLIT or UNSPLIT —
+    // typed lookups fall back to the UNSPLIT envelope, §5.1, so this is
+    // populated even before any split has ever happened).
+    bySpendType?: {
+      onInvoice: {
+        totalAllocation: number;
+        available: number;
+        reserved: number;
+        consumed: number;
+      };
+      offInvoice: {
+        totalAllocation: number;
+        available: number;
+        reserved: number;
+        consumed: number;
+      };
+    };
+    // T-057 S3 (code-reviewer, 2026-08-04, additive/geriye uyumlu): whether
+    // the caller's (channel, periodMonth) dimension has actually been split
+    // into distinct ON_INVOICE/OFF_INVOICE envelopes. When `false` (UNSPLIT,
+    // legacy or never-split dimension), `bySpendType.onInvoice` and
+    // `bySpendType.offInvoice` are the SAME underlying legacy envelope
+    // reported TWICE (§5.1 typed lookups both fall back to the one UNSPLIT
+    // envelope) — a UI must NOT treat `bySpendType` as evidence of a real
+    // split without also checking this flag, or it double-counts a single
+    // pool's allocation/available as if it were two independent pools. When
+    // `true`, `bySpendType.onInvoice`/`offInvoice` are genuinely independent
+    // envelopes.
+    splitDimension: boolean;
   }> {
     const plan = await this.findById(id, tenantId, actor);
     const channelCode = plan.channel?.code || '';
     const channelName = plan.channel?.name || channelCode;
 
-    const envelope = await this.budgetService.findEnvelopeByDimensions(
-      tenantId,
-      channelCode,
-      plan.periodMonth,
-    );
+    let envelope: Awaited<
+      ReturnType<typeof this.budgetService.findEnvelopeByDimensions>
+    > = null;
+    let splitDimension = false;
+    try {
+      envelope = await this.budgetService.findEnvelopeByDimensions(
+        tenantId,
+        channelCode,
+        plan.periodMonth,
+      );
+    } catch (err) {
+      if (isSplitDimensionGuardError(err)) {
+        splitDimension = true;
+      } else {
+        throw err;
+      }
+    }
 
-    if (!envelope) {
+    if (!envelope && !splitDimension) {
+      // No envelope of ANY type for this dimension — the unqualified lookup
+      // above already covers BOTH typed and UNSPLIT candidates (§5.1's `OR
+      // spend_type IS NULL`), so typed lookups below would be redundant
+      // no-op queries returning null again. Zero-valued bySpendType, no
+      // extra DB round trips — byte-for-byte the pre-existing early return,
+      // plus the additive field.
       return {
         hasBudget: false,
         planTotalSpend: Number(plan.totalSpend),
         channel: channelCode,
         channelName,
         period: plan.periodMonth,
+        bySpendType: {
+          onInvoice: {
+            totalAllocation: 0,
+            available: 0,
+            reserved: 0,
+            consumed: 0,
+          },
+          offInvoice: {
+            totalAllocation: 0,
+            available: 0,
+            reserved: 0,
+            consumed: 0,
+          },
+        },
+        splitDimension, // guard condition above already proves this is false
+      };
+    }
+
+    // §5.6 typed lookups NEVER hit the guard (spendType is given) — safe to
+    // run unconditionally at this point (an envelope of some kind is known
+    // to exist, or the dimension is split), SPLIT or UNSPLIT alike (UNSPLIT:
+    // both resolve to the same legacy envelope, §5.1).
+    const [onStatus, offStatus] = await Promise.all([
+      this.budgetService.getBudgetStatus(
+        tenantId,
+        channelCode,
+        undefined,
+        plan.periodMonth,
+        BudgetSpendType.ON_INVOICE,
+      ),
+      this.budgetService.getBudgetStatus(
+        tenantId,
+        channelCode,
+        undefined,
+        plan.periodMonth,
+        BudgetSpendType.OFF_INVOICE,
+      ),
+    ]);
+    const bySpendType = {
+      onInvoice: {
+        totalAllocation: onStatus.totalAllocation,
+        available: onStatus.available,
+        reserved: onStatus.reserved,
+        consumed: onStatus.consumed,
+      },
+      offInvoice: {
+        totalAllocation: offStatus.totalAllocation,
+        available: offStatus.available,
+        reserved: offStatus.reserved,
+        consumed: offStatus.consumed,
+      },
+    };
+
+    if (splitDimension) {
+      // No SINGLE envelope exists anymore for this dimension — `envelope`/
+      // `sufficient` become a combined view built ONLY from numbers already
+      // computed above (bySpendType) plus each typed envelope's OWN real id/
+      // code/name (never fabricated) — deterministic ON-first identity, the
+      // same ordering convention used everywhere else in this machinery
+      // (ADR 0004 R4: "her zaman önce ON_INVOICE, sonra OFF_INVOICE").
+      const [onEnvelope, offEnvelope] = await Promise.all([
+        this.budgetService.findEnvelopeByDimensions(
+          tenantId,
+          channelCode,
+          plan.periodMonth,
+          undefined,
+          BudgetSpendType.ON_INVOICE,
+        ),
+        this.budgetService.findEnvelopeByDimensions(
+          tenantId,
+          channelCode,
+          plan.periodMonth,
+          undefined,
+          BudgetSpendType.OFF_INVOICE,
+        ),
+      ]);
+      const identity = onEnvelope ?? offEnvelope;
+      const combinedAllocated =
+        onStatus.totalAllocation + offStatus.totalAllocation;
+      const combinedAvailable = onStatus.available + offStatus.available;
+
+      // T-057 S2 (code-reviewer, 2026-08-04): `sufficient` must be TYPE
+      // BASED, not a sum of the two zarfs — ADR 0004 Karar 2 eki (§5.6)
+      // evaluates thresholds per the plan's ACTUALLY-SPENT types
+      // independently, the same rule `checkPlanBudgetAvailability` already
+      // enforces at submit-time. Summing `onStatus.available +
+      // offStatus.available` and comparing to `plan.totalSpend` let a plan
+      // with a full off-invoice envelope but an OVER-COMMITTED on-invoice
+      // envelope read "sufficient" here (green in the UI) purely because the
+      // off-invoice slack masked the on-invoice shortfall, then get 400'd by
+      // the real (type-based) gate at submit. `plan.onInvoiceSpend`/
+      // `offInvoiceSpend` are the same recalc columns `checkPlanBudgetAvailability`'s
+      // callers already pass as `onInvoiceAmount`/`offInvoiceAmount`
+      // (adım 4, `onInvoiceSpend + offInvoiceSpend === totalSpend` by
+      // construction — see line ~2421) — a zero-spent type is trivially
+      // sufficient regardless of its own envelope's state (Karar 2 eki).
+      const onSpend = Number(plan.onInvoiceSpend) || 0;
+      const offSpend = Number(plan.offInvoiceSpend) || 0;
+      const onTypeSufficient =
+        onSpend > 0 ? onStatus.available >= onSpend : true;
+      const offTypeSufficient =
+        offSpend > 0 ? offStatus.available >= offSpend : true;
+
+      return {
+        hasBudget: !!identity,
+        planTotalSpend: Number(plan.totalSpend),
+        channel: channelCode,
+        channelName,
+        period: plan.periodMonth,
+        envelope: identity
+          ? {
+              id: identity.id,
+              code: identity.code,
+              name: identity.name,
+              allocatedAmount: combinedAllocated,
+              availableAmount: combinedAvailable,
+              currency: identity.currency,
+            }
+          : undefined,
+        sufficient: identity
+          ? onTypeSufficient && offTypeSufficient
+          : undefined,
+        bySpendType,
+        splitDimension, // true here — the guard fired for this dimension
+      };
+    }
+
+    if (!envelope) {
+      // Unreachable at runtime (the `!envelope && !splitDimension` branch
+      // above already returned) — kept as a type-narrowing safety net for
+      // the `envelope.*` reads below (and as defensive coding, not load-
+      // bearing behaviour).
+      return {
+        hasBudget: false,
+        planTotalSpend: Number(plan.totalSpend),
+        channel: channelCode,
+        channelName,
+        period: plan.periodMonth,
+        bySpendType,
+        splitDimension,
       };
     }
 
@@ -980,6 +1186,8 @@ export class PlanService {
         currency: envelope.currency,
       },
       sufficient: budgetStatus.available >= Number(plan.totalSpend),
+      bySpendType,
+      splitDimension, // false here — UNSPLIT, bySpendType.onInvoice/offInvoice are the SAME legacy envelope reported twice
     };
   }
 
@@ -1078,11 +1286,13 @@ export class PlanService {
           plan.periodMonth,
         );
       } catch (err) {
-        if (
-          err instanceof BadRequestException &&
-          (err.getResponse() as Record<string, unknown>)?.code ===
-            'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION'
-        ) {
+        // T-057 S1 (code-reviewer, 2026-08-04): tek türetim noktası —
+        // budget.repository.ts'in `isSplitDimensionGuardError` helper'ı
+        // (line 991'de zaten kullanılan AYNI helper). Önceki inline
+        // `instanceof` + `code` kopyası, helper'ın kendi JSDoc'unun bu
+        // dosya için verdiği sözü (§ "plan.service.ts#approve recognise the
+        // IDENTICAL error shape") tutmuyordu.
+        if (isSplitDimensionGuardError(err)) {
           splitDimension = true;
         } else {
           throw err;
@@ -1222,6 +1432,10 @@ export class PlanService {
       // actually have an outstanding RESERVE, instead of blindly assuming
       // 'TOTAL' — see its JSDoc for why a bucket-blind call here would
       // double-encumber (or strand) a plan submitted via the other route.
+      // T-057 F4: evidence-based on/off breakdown for the legacy "never
+      // reserved" fallback's split-dimension branch (§4.5's own recalc
+      // columns, same source T-056 adım 6 uses for approve's auto-create —
+      // no new derivation).
       await this.budgetService.commitAllReservedForPlan(
         plan.id,
         plan.totalSpend,
@@ -1231,6 +1445,10 @@ export class PlanService {
         tenantId,
         userId,
         queryRunner.manager,
+        {
+          onInvoice: Number(plan.onInvoiceSpend) || 0,
+          offInvoice: Number(plan.offInvoiceSpend) || 0,
+        },
       );
 
       // Update approval request

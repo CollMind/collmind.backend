@@ -30,6 +30,7 @@ import {
   PlanApprovalHistory,
   ApprovalHistoryAction,
 } from '../../../../database/entities/plan-approval-history.entity';
+import { BudgetSpendType } from '../../../../database/entities/budget-envelope.entity';
 
 describe('PlanService', () => {
   let service: PlanService;
@@ -623,6 +624,9 @@ describe('PlanService', () => {
       expect(result.sufficient).toBe(true);
       expect(result.envelope?.id).toBe(mockEnvelope.id);
       expect(result.planTotalSpend).toBe(Number(mockPlan.totalSpend));
+      // T-057 S3: UNSPLIT dimension → splitDimension: false (bySpendType's
+      // two entries are the SAME legacy envelope reported twice).
+      expect(result.splitDimension).toBe(false);
     });
 
     it('should return budget check result without envelope if not found', async () => {
@@ -633,6 +637,260 @@ describe('PlanService', () => {
 
       expect(result.hasBudget).toBe(false);
       expect(result.envelope).toBeUndefined();
+      // T-057 madde 1 (§5.6, additive): present even in the "no envelope at
+      // all" branch, zero-valued, no extra queries (getBudgetStatus never
+      // called — verified below).
+      expect(result.bySpendType).toEqual({
+        onInvoice: {
+          totalAllocation: 0,
+          available: 0,
+          reserved: 0,
+          consumed: 0,
+        },
+        offInvoice: {
+          totalAllocation: 0,
+          available: 0,
+          reserved: 0,
+          consumed: 0,
+        },
+      });
+      expect(budgetService.getBudgetStatus).not.toHaveBeenCalled();
+      expect(result.splitDimension).toBe(false);
+    });
+
+    // T-057 madde 1 (docs/analysis/0008 §5.6, ADR 0004 Karar 5): existing
+    // fields preserved BYTE-FOR-BYTE for the pre-existing UNSPLIT/found
+    // case above — `bySpendType` is additive, asserted separately here so
+    // the original assertions above stay untouched (proof the new field
+    // does not alter old behaviour).
+    it('adds bySpendType additively on top of the UNSPLIT/found result (existing fields untouched)', async () => {
+      const mockEnvelope = {
+        id: 'envelope-1',
+        code: 'NKA/2026-01',
+        name: 'NKA 2026-01 Budget',
+        allocatedAmount: 200000,
+        currency: 'TRY',
+      };
+      const mockBudgetStatus = {
+        totalAllocation: 200000,
+        available: 150000,
+        reserved: 30000,
+        consumed: 20000,
+        planned: 0,
+        status: UtilizationStatus.GREEN,
+      };
+      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      budgetService.findEnvelopeByDimensions.mockResolvedValue(
+        mockEnvelope as any,
+      );
+      budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+
+      const result = await service.checkBudget(mockPlanId, mockTenantId);
+
+      expect(result.hasBudget).toBe(true);
+      expect(result.envelope?.id).toBe(mockEnvelope.id);
+      expect(result.bySpendType).toEqual({
+        onInvoice: {
+          totalAllocation: 200000,
+          available: 150000,
+          reserved: 30000,
+          consumed: 20000,
+        },
+        offInvoice: {
+          totalAllocation: 200000,
+          available: 150000,
+          reserved: 30000,
+          consumed: 20000,
+        },
+      });
+    });
+
+    // T-057 madde 1: previously this call CRASHED (uncaught 400
+    // SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION) the moment a dimension was
+    // ever actually split — exactly what ADR 0004 Karar 5 blocked
+    // `POST /budget/envelopes/:id/split` on. Split detection derives from
+    // THIS SAME unqualified call's own guard error (no second query).
+    it('SPLIT dimension: does not crash, returns a combined envelope view + bySpendType', async () => {
+      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+
+      budgetService.findEnvelopeByDimensions.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: BudgetSpendType,
+        ) => {
+          if (!spendType) {
+            return Promise.reject(
+              new BadRequestException({
+                statusCode: 400,
+                code: 'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION',
+                message: 'split dimension',
+              }),
+            );
+          }
+          if (spendType === BudgetSpendType.ON_INVOICE) {
+            return Promise.resolve({
+              id: 'env-on',
+              code: 'NKA/2026-01-ON',
+              name: 'NKA 2026-01 (ON)',
+              allocatedAmount: 60000,
+              currency: 'TRY',
+            } as any);
+          }
+          return Promise.resolve({
+            id: 'env-off',
+            code: 'NKA/2026-01-OFF',
+            name: 'NKA 2026-01 (OFF)',
+            allocatedAmount: 40000,
+            currency: 'TRY',
+          } as any);
+        },
+      );
+      budgetService.getBudgetStatus.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _categoryId?: string,
+          _periodMonth?: string,
+          spendType?: BudgetSpendType,
+        ) => {
+          if (spendType === BudgetSpendType.ON_INVOICE) {
+            return Promise.resolve({
+              totalAllocation: 60000,
+              available: 20000,
+              reserved: 30000,
+              consumed: 10000,
+              planned: 0,
+              status: UtilizationStatus.GREEN,
+            });
+          }
+          return Promise.resolve({
+            totalAllocation: 40000,
+            available: 15000,
+            reserved: 20000,
+            consumed: 5000,
+            planned: 0,
+            status: UtilizationStatus.GREEN,
+          });
+        },
+      );
+
+      const result = await service.checkBudget(mockPlanId, mockTenantId);
+
+      expect(result.hasBudget).toBe(true);
+      // Deterministic ON-first identity (real envelope id, never fabricated).
+      expect(result.envelope?.id).toBe('env-on');
+      expect(result.envelope?.allocatedAmount).toBe(100000); // 60000 + 40000
+      expect(result.envelope?.availableAmount).toBe(35000); // 20000 + 15000
+      expect(result.bySpendType).toEqual({
+        onInvoice: {
+          totalAllocation: 60000,
+          available: 20000,
+          reserved: 30000,
+          consumed: 10000,
+        },
+        offInvoice: {
+          totalAllocation: 40000,
+          available: 15000,
+          reserved: 20000,
+          consumed: 5000,
+        },
+      });
+      // T-057 S3: genuinely SPLIT dimension → splitDimension: true.
+      expect(result.splitDimension).toBe(true);
+    });
+
+    // T-057 S2 (code-reviewer, 2026-08-04): SPLIT dimension `sufficient`
+    // must be computed TYPE-BASED (ADR 0004 Karar 2 eki, §5.6 — the same
+    // rule `checkPlanBudgetAvailability` already enforces at submit-time),
+    // not by summing the two zarfs' available amounts. A plan spending
+    // ONLY on-invoice, whose on-invoice envelope is short, must read
+    // insufficient even when the (unused) off-invoice envelope is
+    // overflowing — summing would let the off-invoice slack mask the
+    // on-invoice shortfall and report a false "sufficient=true" in the UI,
+    // which then gets legitimately 400'd by the real gate at submit.
+    it('SPLIT dimension: sufficient is FALSE when the on-invoice envelope alone is short, even though the (unused) off-invoice envelope is abundant', async () => {
+      const onlyOnInvoicePlan = {
+        ...mockPlan,
+        totalSpend: 60000,
+        onInvoiceSpend: 60000,
+        offInvoiceSpend: 0,
+      } as Plan;
+      planRepo.findById.mockResolvedValue(onlyOnInvoicePlan);
+
+      budgetService.findEnvelopeByDimensions.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _period: string,
+          _category?: string,
+          spendType?: BudgetSpendType,
+        ) => {
+          if (!spendType) {
+            return Promise.reject(
+              new BadRequestException({
+                statusCode: 400,
+                code: 'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION',
+                message: 'split dimension',
+              }),
+            );
+          }
+          if (spendType === BudgetSpendType.ON_INVOICE) {
+            return Promise.resolve({
+              id: 'env-on',
+              code: 'NKA/2026-01-ON',
+              name: 'NKA 2026-01 (ON)',
+              allocatedAmount: 60000,
+              currency: 'TRY',
+            } as any);
+          }
+          return Promise.resolve({
+            id: 'env-off',
+            code: 'NKA/2026-01-OFF',
+            name: 'NKA 2026-01 (OFF)',
+            allocatedAmount: 1000000,
+            currency: 'TRY',
+          } as any);
+        },
+      );
+      budgetService.getBudgetStatus.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _categoryId?: string,
+          _periodMonth?: string,
+          spendType?: BudgetSpendType,
+        ) => {
+          if (spendType === BudgetSpendType.ON_INVOICE) {
+            // Short: only 20000 available for a 60000 on-invoice request.
+            return Promise.resolve({
+              totalAllocation: 60000,
+              available: 20000,
+              reserved: 40000,
+              consumed: 0,
+              planned: 0,
+              status: UtilizationStatus.RED,
+            });
+          }
+          // Abundant, but the plan spends 0 off-invoice — must NOT mask
+          // the on-invoice shortfall.
+          return Promise.resolve({
+            totalAllocation: 1000000,
+            available: 1000000,
+            reserved: 0,
+            consumed: 0,
+            planned: 0,
+            status: UtilizationStatus.GREEN,
+          });
+        },
+      );
+
+      const result = await service.checkBudget(mockPlanId, mockTenantId);
+
+      expect(result.hasBudget).toBe(true);
+      expect(result.sufficient).toBe(false);
     });
   });
 
@@ -682,6 +940,9 @@ describe('PlanService', () => {
       );
       // T-019/T-048 cross-path fix: bucket-blind commitReservedForPlan(bucket)
       // replaced by commitAllReservedForPlan (discovers outstanding buckets).
+      // T-057 F4: trailing spendBreakdown — evidence-based on/off breakdown
+      // (plan.onInvoiceSpend/offInvoiceSpend, mockPlan: 60000/40000) for the
+      // legacy "never reserved" fallback's split-dimension branch.
       expect(budgetService.commitAllReservedForPlan).toHaveBeenCalledWith(
         mockPlanId,
         pendingPlan.totalSpend,
@@ -691,6 +952,7 @@ describe('PlanService', () => {
         mockTenantId,
         mockUserId,
         queryRunnerManager,
+        { onInvoice: 60000, offInvoice: 40000 },
       );
       expect(approvalService.approve).toHaveBeenCalledWith(
         pendingPlan.approvalRequestId,

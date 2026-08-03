@@ -155,7 +155,16 @@ export class PlanController {
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Check budget availability for plan approval' })
-  @ApiResponse({ status: 200, description: 'Budget check result' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Budget check result. `bySpendType` is a per-type breakdown ' +
+      '(onInvoice/offInvoice) that is ALWAYS present once an envelope of ' +
+      'either type exists, but its two entries are the SAME UNSPLIT ' +
+      'envelope reported twice unless `splitDimension: true` (T-057 S3) — ' +
+      'callers must check `splitDimension` before treating `bySpendType` as ' +
+      'evidence of two independent budget pools.',
+  })
   budgetCheck(
     @Param('id', ParseUUIDPipe) id: string,
     @TenantId() tenantId: string,

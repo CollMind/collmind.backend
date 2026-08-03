@@ -534,6 +534,13 @@ export class ApprovalWorkflowService {
       tenantId,
       approverId,
       manager,
+      // T-057 F4: evidence-based on/off breakdown for the legacy "never
+      // reserved" fallback's split-dimension branch — same recalc columns
+      // already used above for `fallbackAmount`, no new derivation.
+      {
+        onInvoice: Number(plan.onInvoiceSpend) || 0,
+        offInvoice: Number(plan.offInvoiceSpend) || 0,
+      },
     );
 
     // Update approval request
@@ -1029,6 +1036,7 @@ export class ApprovalWorkflowService {
     tenantId: string,
     userId: string,
     manager?: EntityManager,
+    spendBreakdown?: { onInvoice: number; offInvoice: number },
   ): Promise<void> {
     // T-029: Convert the outstanding RESERVE(s) (created at submitForApproval
     // OR at plan.service.ts#submit) into COMMIT(s) — actual budget
@@ -1048,6 +1056,7 @@ export class ApprovalWorkflowService {
       tenantId,
       userId,
       manager,
+      spendBreakdown,
     );
   }
 

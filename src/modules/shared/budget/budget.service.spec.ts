@@ -627,6 +627,184 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
         stillOutstandingReserveTotal + Number(blindCommit.amount);
       expect(netEncumbrance).toBe(200); // ← the double-encumbrance bug
     });
+
+    // -----------------------------------------------------------------
+    // T-057 F4 (ADR 0004 Karar 5, docs/analysis/0008 §4): the legacy
+    // "never reserved" fallback used to resolve its 'TOTAL' bucket via an
+    // UNQUALIFIED findEnvelopeByDimensions call — one of the tipsiz call
+    // sites this task closes. These tests exercise it once that dimension
+    // is actually SPLIT.
+    // -----------------------------------------------------------------
+    describe('legacy fallback on a SPLIT dimension (T-057 F4)', () => {
+      function mockSplitDimensionGuard() {
+        // Unqualified call (no 5th arg) → throws the T-019b split guard.
+        // Typed calls (ON_INVOICE / OFF_INVOICE) resolve normally — mirrors
+        // the real repository's contract (guard never fires when spendType
+        // is given, §5.1).
+        mockBudgetRepository.findEnvelopeByDimensions.mockImplementation(
+          (
+            _tenantId: string,
+            _channel: string,
+            _period: string,
+            _category?: string,
+            spendType?: string,
+          ) => {
+            if (!spendType) {
+              return Promise.reject(
+                new BadRequestException({
+                  statusCode: 400,
+                  code: 'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION',
+                  message: 'split dimension',
+                }),
+              );
+            }
+            return Promise.resolve({
+              id: spendType === 'ON_INVOICE' ? 'env-on' : 'env-off',
+              allocatedAmount: 1000000,
+            } as BudgetEnvelope);
+          },
+        );
+      }
+
+      it('with a spendBreakdown: commits ON_INVOICE and OFF_INVOICE INDEPENDENTLY using the REAL evidence, never a fabricated split of fallbackAmount', async () => {
+        mockBudgetRepository.findTransactionsBySource.mockResolvedValue([]); // never reserved
+        mockSplitDimensionGuard();
+
+        // T-057 B3 (code-reviewer, 2026-08-04): fallbackAmount must now be
+        // the on+off IDENTITY (100 = 60 + 40) — the new consistency gate
+        // (mirrors plan.service.ts's PLAN_SPEND_BREAKDOWN_INCONSISTENT)
+        // rejects any caller whose fallbackAmount disagrees with its own
+        // spendBreakdown BEFORE this branch is even reached. That the
+        // resulting commits are 60/40 (not e.g. a fabricated 50/50 split of
+        // fallbackAmount) is still the thing this test proves; the
+        // "fallbackAmount is never used as a fabrication source" claim is
+        // now covered by the dedicated inconsistency test below (which uses
+        // a genuinely mismatched fallbackAmount and asserts the 400).
+        const results = await service.commitAllReservedForPlan(
+          PLAN_ID,
+          100, // fallbackAmount — must equal onInvoice + offInvoice (60 + 40)
+          'NKA',
+          '2026-01',
+          'TRY',
+          TENANT_ID,
+          USER_ID,
+          undefined,
+          { onInvoice: 60, offInvoice: 40 },
+        );
+
+        expect(results.length).toBe(2);
+        const byType = new Map(
+          results.map((r) => [r.spendType, Number(r.amount)]),
+        );
+        expect(byType.get(BudgetSpendType.ON_INVOICE)).toBe(60);
+        expect(byType.get(BudgetSpendType.OFF_INVOICE)).toBe(40);
+        // Not the fallbackAmount, and not a fabricated 50/50 split.
+        expect(results.some((r) => Number(r.amount) === 999999)).toBe(false);
+      });
+
+      // T-057 B3 (code-reviewer, 2026-08-04): identity gate — `on + off`
+      // must equal `fallbackAmount` exactly (§ same 0.01 epsilon as
+      // plan.service.ts's submit-side PLAN_SPEND_BREAKDOWN_INCONSISTENT
+      // gate). Without this, a caller whose `totalSpend`/`onInvoiceSpend`/
+      // `offInvoiceSpend` columns disagree (stale recalc) would silently
+      // commit the WRONG amount to the budget ledger.
+      it('B3 — fallbackAmount disagrees with spendBreakdown sum → 400 PLAN_SPEND_BREAKDOWN_INCONSISTENT, no COMMIT written', async () => {
+        mockBudgetRepository.findTransactionsBySource.mockResolvedValue([]); // never reserved
+        mockSplitDimensionGuard();
+
+        await expect(
+          service.commitAllReservedForPlan(
+            PLAN_ID,
+            999999, // fallbackAmount — deliberately inconsistent with 60 + 40
+            'NKA',
+            '2026-01',
+            'TRY',
+            TENANT_ID,
+            USER_ID,
+            undefined,
+            { onInvoice: 60, offInvoice: 40 },
+          ),
+        ).rejects.toMatchObject({
+          response: { code: 'PLAN_SPEND_BREAKDOWN_INCONSISTENT' },
+        });
+        const commitCalls =
+          mockBudgetRepository.createTransaction.mock.calls.filter(
+            ([tx]: any) => tx.txType === BudgetTransactionType.COMMIT,
+          );
+        expect(commitCalls.length).toBe(0);
+      });
+
+      it('spends only ON_INVOICE (offInvoice=0): writes ONE commit, not a zero-amount OFF_INVOICE row', async () => {
+        mockBudgetRepository.findTransactionsBySource.mockResolvedValue([]);
+        mockSplitDimensionGuard();
+
+        const results = await service.commitAllReservedForPlan(
+          PLAN_ID,
+          60,
+          'NKA',
+          '2026-01',
+          'TRY',
+          TENANT_ID,
+          USER_ID,
+          undefined,
+          { onInvoice: 60, offInvoice: 0 },
+        );
+
+        expect(results.length).toBe(1);
+        expect(results[0].spendType).toBe(BudgetSpendType.ON_INVOICE);
+        expect(Number(results[0].amount)).toBe(60);
+      });
+
+      it('WITHOUT a spendBreakdown: rejects rather than guessing (400 PLAN_SPEND_BREAKDOWN_REQUIRED_FOR_SPLIT_DIMENSION), no COMMIT written', async () => {
+        mockBudgetRepository.findTransactionsBySource.mockResolvedValue([]);
+        mockSplitDimensionGuard();
+
+        await expect(
+          service.commitAllReservedForPlan(
+            PLAN_ID,
+            500,
+            'NKA',
+            '2026-01',
+            'TRY',
+            TENANT_ID,
+            USER_ID,
+            // no manager, no spendBreakdown
+          ),
+        ).rejects.toMatchObject({
+          response: {
+            code: 'PLAN_SPEND_BREAKDOWN_REQUIRED_FOR_SPLIT_DIMENSION',
+          },
+        });
+        const commitCalls =
+          mockBudgetRepository.createTransaction.mock.calls.filter(
+            ([tx]: any) => tx.txType === BudgetTransactionType.COMMIT,
+          );
+        expect(commitCalls.length).toBe(0);
+      });
+
+      it('WITH a zero-valued spendBreakdown (0/0): rejects the same way as no breakdown at all', async () => {
+        mockBudgetRepository.findTransactionsBySource.mockResolvedValue([]);
+        mockSplitDimensionGuard();
+
+        await expect(
+          service.commitAllReservedForPlan(
+            PLAN_ID,
+            500,
+            'NKA',
+            '2026-01',
+            'TRY',
+            TENANT_ID,
+            USER_ID,
+            undefined,
+            { onInvoice: 0, offInvoice: 0 },
+          ),
+        ).rejects.toMatchObject({
+          response: {
+            code: 'PLAN_SPEND_BREAKDOWN_REQUIRED_FOR_SPLIT_DIMENSION',
+          },
+        });
+      });
+    });
   });
 
   // ---------------------------------------------------------------------

@@ -12,8 +12,18 @@ import {
 import { AgreementTransaction } from '../../../../database/entities/agreement-transaction.entity';
 import { LedgerService } from '../ledger/ledger.service';
 import { AgreementService } from '../agreement/agreement.service';
-import { BudgetService } from '../../../shared/budget/budget.service';
-import { AgreementStatus } from '../../../../database/entities/agreement.entity';
+import {
+  BudgetService,
+  isSplitDimensionGuardError,
+} from '../../../shared/budget/budget.service';
+import {
+  AgreementStatus,
+  SpendType as AgreementSpendType,
+} from '../../../../database/entities/agreement.entity';
+import {
+  BudgetEnvelope,
+  BudgetSpendType,
+} from '../../../../database/entities/budget-envelope.entity';
 import { randomUUID } from 'crypto';
 
 @Injectable()
@@ -109,6 +119,98 @@ export class AgreementTransactionService {
       fiscalPeriod = `${invoiceYear}-${invoiceMonth}`;
     }
 
+    // Find budget envelope for this agreement
+    // Note: findEnvelopeByDimensions expects channel as string (channel code), not channelId
+    // We need to get the channel code from the relation
+    if (!agreement.channel) {
+      throw new BadRequestException('Agreement channel relation is not loaded');
+    }
+    const channelCode = agreement.channel.code;
+
+    // T-057 madde 3 (docs/analysis/0008 §5.7, ADR 0004 Karar 3): this is
+    // the ledger-posting envelope lookup (distinct from `BudgetService
+    // #reserveForAgreement`'s RESERVE-time lookup, which already applies
+    // this same rule). Use fiscal period for envelope matching (as per BRD:
+    // "Bütçe buradan düşülür").
+    //
+    // Team Lead bağımsız doğrulama (2026-08-03): İLK teslim, agreement.spendType
+    // ne olursa olsun HER ZAMAN tipli çözümü tercih ediyordu. Bu, canlı bir
+    // regresyon üretti — `findEnvelopeByDimensions`'ın tipli-eşleşme sırası
+    // (§5.1: "tipli eşleşme UNSPLIT'i HER ZAMAN yener") EŞDEĞER dönemi
+    // GEREKTİRMEZ, yalnızca AYNI YIL + AYNI KANAL + doğru spend_type yeter —
+    // yani channel=NKA üzerinde TAMAMEN alakasız bir dönemde (ör. rol
+    // yolculuğu e2e'sinin A19 fixture'ı, 2026-09) test amaçlı yaratılmış bir
+    // tipli zarf, bu agreement'ın GERÇEK döneminden (2026-02) bağımsız olarak
+    // "kazanıyor" ve gerçek NKA-Q2 zarfının yerine geçiyordu (role-journey
+    // C9c'de canlı olarak "Insufficient budget" 400'üne yol açtı — SQL kanıtı
+    // T-057 teslim notlarında). UNSPLIT boyutta bugünkü davranış (unqualified
+    // çağrı, dönem-öncelikli sıralama) BİREBİR korunmalıydı; ilk tasarım bunu
+    // ihlal ediyordu.
+    //
+    // Düzeltme: T-056 adım 6 deseni artık HER İKİ dala da uygulanıyor —
+    // ÖNCE unqualified çağrı (bugünkü davranışın ta kendisi, UNSPLIT'te
+    // BYTE-FOR-BYTE aynı sonuç). Yalnızca bu çağrı GERÇEKTEN split edilmiş
+    // bir boyuta çarpıp guard fırlatırsa (yani BAŞKA bir alakasız dönem değil,
+    // TAM OLARAK bu (channel, fiscalPeriod) boyutu split edilmişse — guard'ın
+    // kendi dar kapsamlı "winner'ın kendi boyutu" kontrolü, budget.repository
+    // .ts'teki yanlış-pozitif düzeltmesi sayesinde), agreement.spendType'a
+    // göre tipli çözüme geçilir. İkinci/bağımsız bir "split mi?" sorgusu
+    // YAZILMAZ.
+    //
+    // T-057 B2 (code-reviewer, 2026-08-04): bu çözüm — ve özellikle
+    // AGREEMENT_SPEND_TYPE_SPLIT_REQUIRED reddi — `txRepo.create()`'ten
+    // (gerçek bir DB `save`) ÖNCE yapılmalı. Aksi halde 400 dönse bile satır
+    // DB'ye yazılmış olur ve bir sonraki çağrının `sumByAgreementId` cap
+    // kontrolü bu "yarım durum" satırını tüketir — ADR 0004 Karar 2'nin
+    // kaçınmaya çalıştığı sınıfın ta kendisi. Envelope çözümü artık
+    // side-effect'siz (yalnız okuma + olası throw); DB'ye ilk yazma bu
+    // bloktan SONRA, envelope kesinleşmiş haldeyken olur.
+    let envelope: BudgetEnvelope | null;
+    let splitDimension = false;
+    try {
+      envelope = await this.budgetService.findEnvelopeByDimensions(
+        tenantId,
+        channelCode,
+        fiscalPeriod, // Use transaction fiscal period, not agreement period
+      );
+    } catch (err) {
+      if (isSplitDimensionGuardError(err)) {
+        splitDimension = true;
+        envelope = null;
+      } else {
+        throw err;
+      }
+    }
+
+    if (splitDimension) {
+      if (
+        agreement.spendType === AgreementSpendType.ON_INVOICE ||
+        agreement.spendType === AgreementSpendType.OFF_INVOICE
+      ) {
+        // Typed agreement, GENUINELY split dimension — typed lookup now
+        // resolves the correct twin (no ambiguity: this dimension really
+        // does have ON/OFF twins).
+        envelope = await this.budgetService.findEnvelopeByDimensions(
+          tenantId,
+          channelCode,
+          fiscalPeriod,
+          undefined,
+          agreement.spendType as unknown as BudgetSpendType,
+        );
+      } else {
+        // BOTH or NULL on a genuinely split dimension — cap's on/off split
+        // is unknown (BRD has no evidence for how BOTH divides, §5.7);
+        // reject rather than silently mis-attributing to one arbitrary twin.
+        // No transaction row has been written yet — clean, no-op reject.
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'AGREEMENT_SPEND_TYPE_SPLIT_REQUIRED',
+          message:
+            'This budget dimension has been split into ON_INVOICE/OFF_INVOICE envelopes; agreement.spend_type must be ON_INVOICE or OFF_INVOICE (BOTH/NULL is not allowed here).',
+        });
+      }
+    }
+
     // Create transaction
     // Note: agreement_transactions.cpl_id refers to customers table, not cpls table
     // agreement.cplId is a CPL ID (references cpls table), not a Customer ID
@@ -129,21 +231,6 @@ export class AgreementTransactionService {
       // cplId is omitted - it refers to customers table, not cpls (agreement.cplId is a CPL ID, not Customer ID)
       // TypeORM will set it to null automatically since it's nullable
     });
-
-    // Find budget envelope for this agreement
-    // Note: findEnvelopeByDimensions expects channel as string (channel code), not channelId
-    // We need to get the channel code from the relation
-    if (!agreement.channel) {
-      throw new BadRequestException('Agreement channel relation is not loaded');
-    }
-    const channelCode = agreement.channel.code;
-
-    // Use fiscal period for envelope matching (as per BRD: "Bütçe buradan düşülür")
-    const envelope = await this.budgetService.findEnvelopeByDimensions(
-      tenantId,
-      channelCode,
-      fiscalPeriod, // Use transaction fiscal period, not agreement period
-    );
 
     if (envelope) {
       // Create corresponding ledger entry

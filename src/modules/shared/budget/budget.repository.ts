@@ -13,6 +13,35 @@ import {
 } from '../../../database/entities/budget-transaction.entity';
 import { BudgetSummaryView } from '../../../database/entities/budget-summary.view-entity';
 
+export const SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION_CODE =
+  'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION';
+
+/**
+ * T-057 (tek türetim noktası, 0008 §5.1/§5.7 disiplininin devamı): every
+ * caller that needs to react to "this dimension turned out to be split"
+ * derives that fact from the error `findEnvelopeByDimensions` throws when
+ * `spendType` is omitted on a split dimension — never a second/independent
+ * "is this split?" query (that would be exactly the second-doğruluk-kaynağı
+ * class T-049/T-052/T-053 closed). Centralised here so every T-057 call site
+ * (`plan.service.ts#checkBudget`, `agreement-transaction.service.ts#create`,
+ * `BudgetService#commitAllReservedForPlan`'s legacy fallback) and T-056
+ * adım 6's `plan.service.ts#approve` recognise the IDENTICAL error shape —
+ * a copy-pasted `instanceof` + `code` check in N places would itself be a
+ * second source of truth for "what does the guard error look like".
+ */
+export function isSplitDimensionGuardError(err: unknown): boolean {
+  if (!(err instanceof BadRequestException)) {
+    return false;
+  }
+  const response = err.getResponse();
+  return (
+    typeof response === 'object' &&
+    response !== null &&
+    (response as Record<string, unknown>).code ===
+      SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION_CODE
+  );
+}
+
 @Injectable()
 export class BudgetRepository {
   constructor(
@@ -194,17 +223,36 @@ export class BudgetRepository {
     // dimension that was never split — measured live: splitting
     // ENV-2026-NKA-Q2 alone broke every unqualified ENV-2026-NKA-Q1 lookup.
     //
-    // Fix: narrow the ambiguity check to candidates that share the WINNER's
-    // own effective dimension (period/channel/category, exact) — the same
-    // ordering that already picks the winner (period-exact match preferred)
-    // means: if the REQUESTED dimension is truly split, the winner IS one
-    // of the typed twins (they share the requested period, and a split
-    // twin's `spend_type` column update happens in-place — see
-    // `splitEnvelope` — so it keeps outranking any other-period fallback
-    // match). If the requested dimension is UNSPLIT, this group contains
-    // only that dimension's own (untyped) row(s), and another dimension's
-    // split status never leaks in. Still ONE query, tek türetim noktası —
-    // no second SELECT.
+    // Team Lead fix (2026-08-04, SECOND measured false-positive): the FIRST
+    // fix ("narrow to the WINNER's own dimension") was itself wrong. Its
+    // premise — "if the REQUESTED dimension is truly split, the winner IS
+    // one of the typed twins because period-exact match is preferred" — only
+    // holds when an exact-period candidate exists at all. When the CALLER's
+    // `periodMonth` has NO exact-match envelope (only the year-LIKE fallback
+    // produces candidates), EVERY candidate ties on the first ORDER BY key
+    // (`period = :periodMonth` is false for all of them) and on the second
+    // (`channel` — already exact via the WHERE clause, ties for all rows).
+    // The decision falls through to `createdAt DESC`, so the "winner" can be
+    // the split twin of a COMPLETELY UNRELATED period that merely shares the
+    // channel/year (measured: NKA + '2026-05' with no exact-period envelope
+    // → 2 year-fallback candidates, winner = newest row of an unrelated
+    // period's OFF twin). Grouping by THAT winner's period then 400s a
+    // request that never asked about a split dimension.
+    //
+    // Fix: ambiguity can only be asserted about the REQUESTED dimension. A
+    // real split of `periodMonth` always yields an EXACT period-match
+    // candidate (`splitEnvelope` updates the original row in place, keeping
+    // its `period`, and creates the OFF twin with the SAME `period` — see
+    // `splitEnvelope`). So if the winner is not an exact match for the
+    // requested `periodMonth`, the requested dimension was never split —
+    // skip the guard entirely and return the winner as-is (same fallback
+    // behaviour as before T-019b's guard existed). Only when the winner DOES
+    // exactly match `periodMonth` do we narrow to that dimension's own
+    // candidates (period/channel/category, exact) to decide ambiguity. Still
+    // ONE query, tek türetim noktası — no second SELECT.
+    if (winner.period !== periodMonth) {
+      return winner;
+    }
     const sameDimensionAsWinner = candidates.filter(
       (e) =>
         e.period === winner.period &&
@@ -215,7 +263,7 @@ export class BudgetRepository {
     if (typedCandidate) {
       throw new BadRequestException({
         statusCode: 400,
-        code: 'SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION',
+        code: SPEND_TYPE_REQUIRED_FOR_SPLIT_DIMENSION_CODE,
         message:
           `Budget dimension (channel=${channel}, period=${periodMonth}` +
           `${category ? `, category=${category}` : ''}) has been split into ` +
