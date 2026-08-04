@@ -133,5 +133,23 @@ export function readEnteredValue(
   pmv: Partial<Record<EnteredColumn, number | null | undefined>>,
   mechanic: Mechanic,
 ): number {
-  return pmv[enteredColumnFor(mechanic)] ?? 0;
+  return readEnteredRaw(pmv, mechanic) ?? 0;
+}
+
+/**
+ * Null-preserving read — "no value entered" stays distinguishable from "zero
+ * entered".
+ *
+ * Some callers depend on that distinction and must NOT go through
+ * `readEnteredValue`: the min/max validation skips entirely when nothing was
+ * entered, and collapsing null to 0 there would make it validate a value the
+ * planner never typed. This is the same distinction T-078 will decide for the
+ * arithmetic path; here it is already load-bearing, so it is preserved rather
+ * than deferred.
+ */
+export function readEnteredRaw(
+  pmv: Partial<Record<EnteredColumn, number | null | undefined>>,
+  mechanic: Mechanic,
+): number | null | undefined {
+  return pmv[enteredColumnFor(mechanic)];
 }

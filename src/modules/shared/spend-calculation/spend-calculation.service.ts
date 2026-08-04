@@ -42,6 +42,7 @@ import {
   MechanicInput,
   toMechanicInput,
   rawOf,
+  readEnteredRaw,
 } from '../../../common/numeric/mechanic-input';
 
 @Injectable()
@@ -655,7 +656,9 @@ export class SpendCalculationService {
       planMechanicValues?: Array<{
         mechanic?: { code?: string };
         mechanicCode?: string;
-        enteredValue?: number;
+        enteredRatePct?: number | null;
+        enteredUnitAmount?: number | null;
+        enteredTotalAmount?: number | null;
       }>;
     },
     mechanics: Mechanic[],
@@ -685,7 +688,13 @@ export class SpendCalculationService {
 
     for (const pmv of planFu.planMechanicValues || []) {
       const code = pmv.mechanic?.code ?? pmv.mechanicCode;
-      if (code && pmv.enteredValue != null) put(code, pmv.enteredValue);
+      if (!code) continue;
+      // F2/C2b-1: the entry lives in the column matching the mechanic's scale.
+      // Resolved through the shared derivation point so the column layer and
+      // the JSONB layer cannot disagree about a mechanic.
+      const mech = byCode.get(code);
+      const raw = mech ? readEnteredRaw(pmv, mech) : undefined;
+      if (raw != null) put(code, raw);
     }
 
     for (const [code, val] of Object.entries(planFu.tactics || {})) {
@@ -917,22 +926,21 @@ export class SpendCalculationService {
         const mechanic = pmv.mechanic;
         if (!mechanic) continue;
 
-        // Check min/max constraints
-        if (pmv.enteredValue !== null && pmv.enteredValue !== undefined) {
-          if (
-            mechanic.minValue !== null &&
-            pmv.enteredValue < mechanic.minValue
-          ) {
+        // Check min/max constraints.
+        // F2/C2b-1: read from the semantic column via the shared derivation
+        // point. `readEnteredRaw` (not `readEnteredValue`) because the null
+        // check below IS the semantics here — collapsing null to 0 would
+        // validate a value the planner never entered.
+        const entered = readEnteredRaw(pmv, mechanic);
+        if (entered !== null && entered !== undefined) {
+          if (mechanic.minValue !== null && entered < mechanic.minValue) {
             errors.push(
-              `Mechanic ${mechanic.code} value ${pmv.enteredValue} is below minimum ${mechanic.minValue} for FU ${planFu.id}`,
+              `Mechanic ${mechanic.code} value ${entered} is below minimum ${mechanic.minValue} for FU ${planFu.id}`,
             );
           }
-          if (
-            mechanic.maxValue !== null &&
-            pmv.enteredValue > mechanic.maxValue
-          ) {
+          if (mechanic.maxValue !== null && entered > mechanic.maxValue) {
             errors.push(
-              `Mechanic ${mechanic.code} value ${pmv.enteredValue} exceeds maximum ${mechanic.maxValue} for FU ${planFu.id}`,
+              `Mechanic ${mechanic.code} value ${entered} exceeds maximum ${mechanic.maxValue} for FU ${planFu.id}`,
             );
           }
         }

@@ -737,7 +737,7 @@ describe('SpendCalculationService', () => {
           tactics: {},
           planMechanicValues: [
             {
-              enteredValue: 10,
+              enteredRatePct: 10,
               mechanic: buildOnInvoiceMechanic(),
             } as any,
           ],
@@ -774,7 +774,7 @@ describe('SpendCalculationService', () => {
       const result = service.buildMechanicValues({
         tactics: { VIS_LS: 2000 },
         planMechanicValues: [
-          { mechanic: { code: 'CPP_ON_PCT' }, enteredValue: 10 },
+          { mechanic: { code: 'CPP_ON_PCT' }, enteredRatePct: 10 },
         ],
       }, mechs);
 
@@ -788,7 +788,7 @@ describe('SpendCalculationService', () => {
       const result = service.buildMechanicValues({
         tactics: { 'MEC-DISCOUNT': 7 },
         planMechanicValues: [
-          { mechanic: { code: 'MEC-DISCOUNT' }, enteredValue: 10 },
+          { mechanic: { code: 'MEC-DISCOUNT' }, enteredRatePct: 10 },
         ],
       }, mechs);
 
@@ -898,10 +898,11 @@ describe('SpendCalculationService', () => {
         planMechanicValues: [
           {
             id: 'pmv-1',
-            enteredValue: 3,
+            enteredRatePct: 3,
             mechanic: {
               id: 'mech-1',
               code: 'CPP_ON',
+              mechanicType: MechanicType.PERCENT,
               minValue: 5,
               maxValue: 10,
             } as Mechanic,
