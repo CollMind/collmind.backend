@@ -12,3 +12,4 @@ export * from './rounding';
 export * from './money';
 export * from './rate';
 export * from './allocation';
+export * from './mechanic-input';

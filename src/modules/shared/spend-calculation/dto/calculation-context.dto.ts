@@ -1,3 +1,4 @@
+import { MechanicInput } from '../../../../common/numeric/mechanic-input';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SKUContext {
@@ -37,7 +38,15 @@ export class CalculationContext {
   skuContexts!: SKUContext[];
 
   @ApiProperty({ description: 'Mechanic values map', type: 'object' })
-  mechanicValues!: Record<string, number>; // mechanicCode -> enteredValue
+  /**
+   * mechanicCode -> the planner's entry, TAGGED with the scale it means
+   * (ADR 0007 F2/C2a). Was `Record<string, number>`, which forced every reader
+   * to re-derive "is this a percentage or TRY?" from the mechanic row. The
+   * scale is now resolved once, in `toMechanicInput`.
+   * Collapse to a raw number with `rawOf()` — and see T-078 for what that
+   * collapse still loses.
+   */
+  mechanicValues!: Record<string, MechanicInput>;
 
   @ApiPropertyOptional({ description: 'LTA on-invoice percentage' })
   ltaOnInvoicePct?: number;

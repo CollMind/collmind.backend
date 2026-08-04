@@ -2131,7 +2131,7 @@ export class PlanService {
       // path, used by `ApprovalWorkflowService#submitForApproval`) now
       // calls the exact same method, so the two can never diverge again
       // (T-049 postmortem: duplicate derivations of the same fact drift).
-      const mechanicValues = this.spendCalc.buildMechanicValues(planFu);
+      const mechanicValues = this.spendCalc.buildMechanicValues(planFu, cachedActiveMechanics);
 
       // T-062: FU-level LUMPSUM_SPEND distribution, computed ONCE per FU
       // (needs every sibling SKU's base volume — see
