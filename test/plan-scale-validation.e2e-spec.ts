@@ -504,4 +504,184 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       expect(patchRes.body.tactics.CPP_ON_PCT).toBe(10);
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // §4 — T-080: `updatePlanFuVersioned`'s write of `tactics` changed from
+  // REPLACE (`dto.tactics || planFu.tactics`) to MERGE
+  // (`{ ...(planFu.tactics ?? {}), ...dto.tactics }`), plan.service.ts
+  // #updateFuTactic step 4. The grid sends ONE mechanic key per cell edit
+  // (PlanningGridEnhanced.tsx:1031, the single call site) — under replace,
+  // entering a second mechanic silently deleted the first: no error, no
+  // 409, the value just stopped existing.
+  //
+  // Every case above sends its mechanics in a SINGLE request and so does NOT exercise this: every one of them sends
+  // its mechanic(s) in a SINGLE request. Replace and merge produce an
+  // IDENTICAL result when there is only one write — the base
+  // (`planFu.tactics`) is irrelevant if the whole object is either replaced
+  // or merged into an empty/matching set. The only shape that tells the two
+  // semantics apart is two mechanics landing in TWO SEPARATE requests, each
+  // carrying one key — which is what every case below does.
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('T-080 — PATCH .../tactics merges across separate requests (grid sends one mechanic key per request)', () => {
+    it('two separate single-key requests both survive: CPP_ON_PCT (request 1) then CPP_OFF_PCT (request 2, separate call) -> GET shows both keys', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'MERGE-TWO-REQUESTS',
+      );
+
+      // Request 1: one mechanic only, as the grid sends it.
+      const first = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10 }, version: fuVersion });
+      expect(first.status).toBe(200);
+      expect(first.body.tactics).toEqual({ CPP_ON_PCT: 10 });
+
+      // Request 2: a DIFFERENT mechanic, a SEPARATE HTTP call, using the
+      // version the first request returned. Under the old replace semantics
+      // this would have overwritten `{ CPP_ON_PCT: 10 }` with
+      // `{ CPP_OFF_PCT: 5 }`, silently dropping CPP_ON_PCT.
+      const second = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_OFF_PCT: 5 }, version: first.body.version });
+      expect(second.status).toBe(200);
+      expect(second.body.tactics).toEqual({
+        CPP_ON_PCT: 10,
+        CPP_OFF_PCT: 5,
+      });
+
+      // Independently re-read via GET — not just trusting the PATCH response.
+      const after = await getPlanFu(planId);
+      expect(after.tactics).toEqual({ CPP_ON_PCT: 10, CPP_OFF_PCT: 5 });
+    });
+
+    it('a third separate request overwrites its own key and leaves the other key from a prior request untouched: CPP_ON_PCT 10 -> 20, CPP_OFF_PCT 5 survives', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'MERGE-OVERWRITE-VS-KEEP',
+      );
+
+      const first = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10 }, version: fuVersion })
+        .expect(200);
+
+      const second = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_OFF_PCT: 5 }, version: first.body.version })
+        .expect(200);
+      expect(second.body.tactics).toEqual({
+        CPP_ON_PCT: 10,
+        CPP_OFF_PCT: 5,
+      });
+
+      // Third separate request: re-enters CPP_ON_PCT with a new value. Must
+      // UPDATE the existing key (not add a duplicate, not leave 10 behind)
+      // while CPP_OFF_PCT — untouched by this request — must survive.
+      const third = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 20 }, version: second.body.version });
+      expect(third.status).toBe(200);
+      expect(third.body.tactics).toEqual({ CPP_ON_PCT: 20, CPP_OFF_PCT: 5 });
+
+      const after = await getPlanFu(planId);
+      expect(after.tactics).toEqual({ CPP_ON_PCT: 20, CPP_OFF_PCT: 5 });
+    });
+
+    it('`tactics: {}` is a no-op under merge: prior keys from earlier requests all survive (under the old replace semantics, `{}` wiped every key)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'MERGE-EMPTY-OBJECT-NOOP',
+      );
+
+      const first = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10 }, version: fuVersion })
+        .expect(200);
+
+      const second = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_OFF_PCT: 5 }, version: first.body.version })
+        .expect(200);
+      const versionBeforeEmpty = second.body.version;
+
+      const empty = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: {}, version: versionBeforeEmpty });
+      expect(empty.status).toBe(200);
+      // The row's version still advances (this is still a write, CAS still
+      // applies) — but the JSONB content is unchanged.
+      expect(empty.body.version).toBe(versionBeforeEmpty + 1);
+      expect(empty.body.tactics).toEqual({
+        CPP_ON_PCT: 10,
+        CPP_OFF_PCT: 5,
+      });
+
+      const after = await getPlanFu(planId);
+      expect(after.tactics).toEqual({ CPP_ON_PCT: 10, CPP_OFF_PCT: 5 });
+    });
+
+    it('`tactics` omitted entirely: prior keys from earlier requests are unchanged', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'MERGE-TACTICS-OMITTED',
+      );
+
+      const first = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 10 }, version: fuVersion })
+        .expect(200);
+
+      // No `tactics` key at all in the body — only `version`.
+      const omitted = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ version: first.body.version });
+      expect(omitted.status).toBe(200);
+      expect(omitted.body.tactics).toEqual({ CPP_ON_PCT: 10 });
+
+      const after = await getPlanFu(planId);
+      expect(after.tactics).toEqual({ CPP_ON_PCT: 10 });
+    });
+
+    it('merge does not bypass scale validation: an out-of-scale value on a separate request still 400s INVALID_SCALE, and a prior key from an earlier request is not corrupted', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'MERGE-SCALE-STILL-ENFORCED',
+      );
+
+      const first = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_OFF_PCT: 5 }, version: fuVersion })
+        .expect(200);
+      const versionBeforeBad = first.body.version;
+
+      // Separate request, a different mechanic key, out of the 0-100 bound.
+      const bad = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { CPP_ON_PCT: 150 }, version: versionBeforeBad });
+      expect(bad.status).toBe(400);
+      expect(bad.body.code).toBe('INVALID_SCALE');
+
+      // Rejected write: no partial merge, the row is untouched — the prior
+      // key survives exactly, and the bad key never lands.
+      const after = await getPlanFu(planId);
+      expect(after.version).toBe(versionBeforeBad);
+      expect(after.tactics).toEqual({ CPP_OFF_PCT: 5 });
+      expect(
+        Object.prototype.hasOwnProperty.call(after.tactics, 'CPP_ON_PCT'),
+      ).toBe(false);
+    });
+  });
 });

@@ -635,12 +635,52 @@ export class PlanService {
 
     // C3 step 4: the write. CAS against plan_fus.version — the real race
     // protection (see step 2).
+    //
+    // T-080: MERGE, not replace. This used to be `dto.tactics || planFu.tactics`,
+    // which put the request body in place of the whole JSONB. The grid sends ONE
+    // key per cell edit (`{ [mechanicCode]: value }`,
+    // PlanningGridEnhanced.tsx:1031, the single call site), so entering a second
+    // mechanic deleted the first. Silently: no error, no 409, the value simply
+    // stopped existing. Nobody had hit it because `plan_fus` holds 0 rows.
+    //
+    // WHY THE TESTS WERE GREEN THROUGH ALL OF IT
+    // Every pre-existing e2e case that covers multi-mechanic tactics sends its
+    // mechanics in a SINGLE request — and there, replace and merge produce
+    // identical results. Not one of them could tell the two semantics apart.
+    // (No count is quoted: two independent recounts of "how many" disagreed,
+    // and it moves with every test added. The property that matters is the
+    // SHAPE — one request — and that is what made them all blind.)
+    //
+    // The gap was not missing coverage but wrongly SHAPED coverage. The tests
+    // added with this change write two mechanics in two SEPARATE requests,
+    // which is the only shape that distinguishes them.
+    //
+    // WHY MERGE AND NOT REPLACE, given replace also "worked"
+    // Replace was not supporting a capability. Removing a tactic is not
+    // expressible today at all: an emptied cell yields `parseFloat('') = NaN`,
+    // and BOTH front-end entry paths drop the request on it —
+    // PlanningGridEnhanced.tsx:1498-1499 (and the Enter twin at :1505-1509) and
+    // grid-cells.tsx:78-79 (`EditableCell`, reached from :1567). So
+    // replace deleted only by accident. Merge costs no capability, and the
+    // deliberate "remove a key" path is T-083 — deferred because making `null`
+    // mean "remove" would decide the nullity question that T-078/T-082 own, and
+    // deciding it twice is how the two answers drift.
+    //
+    // Two shapes preserved on purpose:
+    //   `tactics` omitted  → unchanged (as before)
+    //   `tactics` is `{}`  → now a no-op; under replace it wiped every key
+    //
+    // The merge base cannot be stale: `planFu` was read above, and the CAS below
+    // fails with 409 if anything changed the row in between — so the base is
+    // always the row this write is actually applied to.
     await this.planRepo.updatePlanFuVersioned(
       planFu.id,
       tenantId,
       dto.version,
       {
-        tactics: dto.tactics || planFu.tactics,
+        tactics: dto.tactics
+          ? { ...(planFu.tactics ?? {}), ...dto.tactics }
+          : planFu.tactics,
       },
     );
 
