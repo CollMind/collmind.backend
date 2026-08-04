@@ -38,6 +38,42 @@ import {
   ROIMetrics,
   MarginMetrics,
 } from './dto/financial-metrics.dto';
+import {
+  MechanicInput,
+  toMechanicInput,
+  rawOf,
+  readEnteredRaw,
+} from '../../../common/numeric/mechanic-input';
+
+/**
+ * THE single producer of the UNKNOWN_MECHANIC_CODE 400.
+ *
+ * Why it names the code, the FU, and the known codes: before this error
+ * existed, `if (val != null)` accepted anything and the value then sat in the
+ * map UNREAD, because the calculation loops iterate over MECHANICS, not over
+ * tactic keys. A typo produced no spend and no message. A planner who mistyped
+ * must be able to read the error and fix it themselves.
+ *
+ * Extracted from `buildMechanicValues` (its original and still primary caller)
+ * when F2/C3 added the second raiser — the write-side gate in
+ * `PlanService#updateFuTactic`. Two call sites, one body: a client must not be
+ * able to tell "rejected at the write" from "rejected during recalc" by the
+ * shape of the error, and the only way to keep that true is to build it here.
+ */
+export function unknownMechanicCodeError(
+  code: string,
+  planFuId: string | undefined,
+  knownByCode: Map<string, Mechanic>,
+): BadRequestException {
+  return new BadRequestException({
+    statusCode: 400,
+    code: 'UNKNOWN_MECHANIC_CODE',
+    message:
+      `Unknown or inactive mechanic code "${code}" on FU ` +
+      `${planFuId ?? '<unknown>'}. It carries no spend and cannot be ` +
+      `interpreted. Known active codes: ${[...knownByCode.keys()].sort().join(', ')}.`,
+  });
+}
 
 @Injectable()
 export class SpendCalculationService {
@@ -100,7 +136,7 @@ export class SpendCalculationService {
       return 0;
     }
 
-    const enteredValue = context.mechanicValues[mechanicCode] || 0;
+    const enteredValue = rawOf(context.mechanicValues[mechanicCode]);
     if (!enteredValue) {
       return 0;
     }
@@ -270,7 +306,7 @@ export class SpendCalculationService {
    */
   computeLumpsumDistribution(
     fuId: string,
-    mechanicValues: Record<string, number>,
+    mechanicValues: Record<string, MechanicInput>,
     mechanics: Mechanic[],
     planSkus: Array<{ skuId: string; baseVolume?: number | null }>,
   ): Record<string, Record<string, number>> {
@@ -284,7 +320,7 @@ export class SpendCalculationService {
     );
 
     for (const mechanic of lumpsumMechanics) {
-      const enteredValue = mechanicValues[mechanic.code] || 0;
+      const enteredValue = rawOf(mechanicValues[mechanic.code]);
       if (!enteredValue) continue;
 
       const totalBaseVolume = planSkus.reduce(
@@ -464,7 +500,7 @@ export class SpendCalculationService {
     // SpendingType.BOTH without an explicit on-invoice category is routed to the
     // off-invoice pass below (category-driven routing takes precedence).
     for (const mechanic of mechanics) {
-      const enteredValue = context.mechanicValues[mechanic.code] || 0;
+      const enteredValue = rawOf(context.mechanicValues[mechanic.code]);
       if (!enteredValue) continue;
 
       const isOnInvoiceCategory =
@@ -503,7 +539,7 @@ export class SpendCalculationService {
     // SpendingType.BOTH with an off-invoice (or non-on-invoice) category is also routed here.
     // SpendingType.BOTH with no recognised category: warn and skip to avoid silent zero spend.
     for (const mechanic of mechanics) {
-      const enteredValue = context.mechanicValues[mechanic.code] || 0;
+      const enteredValue = rawOf(context.mechanicValues[mechanic.code]);
       if (!enteredValue) continue;
 
       const alreadyOnInvoice = mechanic.code in promoOnInvoice;
@@ -643,31 +679,47 @@ export class SpendCalculationService {
    * distribute endpoint) — values are never summed for a colliding code, so
    * this cannot double-count, only pick one source over the other.
    */
-  buildMechanicValues(planFu: {
-    tactics?: Record<string, number> | null;
-    planMechanicValues?: Array<{
-      mechanic?: { code?: string };
-      mechanicCode?: string;
-      enteredValue?: number;
-    }>;
-  }): Record<string, number> {
-    const mechanicValues: Record<string, number> = {};
+  buildMechanicValues(
+    planFu: {
+      id?: string;
+      tactics?: Record<string, number> | null;
+      planMechanicValues?: Array<{
+        mechanic?: { code?: string };
+        mechanicCode?: string;
+        enteredRatePct?: number | null;
+        enteredUnitAmount?: number | null;
+        enteredTotalAmount?: number | null;
+      }>;
+    },
+    mechanics: Mechanic[],
+  ): Record<string, MechanicInput> {
+    const byCode = new Map(mechanics.map((m) => [m.code, m]));
+    const values: Record<string, MechanicInput> = {};
+
+    const put = (code: string, raw: number): void => {
+      const mechanic = byCode.get(code);
+      if (!mechanic) {
+        throw unknownMechanicCodeError(code, planFu.id, byCode);
+      }
+      values[code] = toMechanicInput(mechanic, raw);
+    };
 
     for (const pmv of planFu.planMechanicValues || []) {
-      if (pmv.mechanic?.code && pmv.enteredValue != null) {
-        mechanicValues[pmv.mechanic.code] = pmv.enteredValue;
-      } else if (pmv.mechanicCode && pmv.enteredValue != null) {
-        mechanicValues[pmv.mechanicCode] = pmv.enteredValue;
-      }
+      const code = pmv.mechanic?.code ?? pmv.mechanicCode;
+      if (!code) continue;
+      // F2/C2b-1: the entry lives in the column matching the mechanic's scale.
+      // Resolved through the shared derivation point so the column layer and
+      // the JSONB layer cannot disagree about a mechanic.
+      const mech = byCode.get(code);
+      const raw = mech ? readEnteredRaw(pmv, mech) : undefined;
+      if (raw != null) put(code, raw);
     }
 
     for (const [code, val] of Object.entries(planFu.tactics || {})) {
-      if (val != null) {
-        mechanicValues[code] = val as number;
-      }
+      if (val != null) put(code, val as number);
     }
 
-    return mechanicValues;
+    return values;
   }
 
   /**
@@ -703,7 +755,11 @@ export class SpendCalculationService {
     // `plan_fus.tactics` via the single shared derivation point (see
     // `buildMechanicValues` doc comment) — reading only the former left the
     // real (tactics-PATCH) UI flow computing 0/0 spend through this path.
-    const mechanicValues = this.buildMechanicValues(planFu);
+    // Mechanics must be resolved BEFORE buildMechanicValues: semantics are
+    // derived from the mechanic row, in one place. Same call, moved earlier —
+    // no extra round-trip (it was already fetched a few lines below).
+    const activeMechanics = await this.getActiveMechanics(tenantId);
+    const mechanicValues = this.buildMechanicValues(planFu, activeMechanics);
 
     // Get plan context for LTA
     const planContext: PlanContextDto = {
@@ -718,7 +774,6 @@ export class SpendCalculationService {
     // built from `planFu.plan`, constant for every SKU in this FU, so
     // resolve once and reuse (docs/analysis/0007 §2.3).
     const skuBreakdowns: SpendBreakdown[] = [];
-    const activeMechanics = await this.getActiveMechanics(tenantId);
     const ltaContext = await this.getLtaContextForPlan(
       tenantId,
       planContext,
@@ -889,22 +944,21 @@ export class SpendCalculationService {
         const mechanic = pmv.mechanic;
         if (!mechanic) continue;
 
-        // Check min/max constraints
-        if (pmv.enteredValue !== null && pmv.enteredValue !== undefined) {
-          if (
-            mechanic.minValue !== null &&
-            pmv.enteredValue < mechanic.minValue
-          ) {
+        // Check min/max constraints.
+        // F2/C2b-1: read from the semantic column via the shared derivation
+        // point. `readEnteredRaw` (not `readEnteredValue`) because the null
+        // check below IS the semantics here — collapsing null to 0 would
+        // validate a value the planner never entered.
+        const entered = readEnteredRaw(pmv, mechanic);
+        if (entered !== null && entered !== undefined) {
+          if (mechanic.minValue !== null && entered < mechanic.minValue) {
             errors.push(
-              `Mechanic ${mechanic.code} value ${pmv.enteredValue} is below minimum ${mechanic.minValue} for FU ${planFu.id}`,
+              `Mechanic ${mechanic.code} value ${entered} is below minimum ${mechanic.minValue} for FU ${planFu.id}`,
             );
           }
-          if (
-            mechanic.maxValue !== null &&
-            pmv.enteredValue > mechanic.maxValue
-          ) {
+          if (mechanic.maxValue !== null && entered > mechanic.maxValue) {
             errors.push(
-              `Mechanic ${mechanic.code} value ${pmv.enteredValue} exceeds maximum ${mechanic.maxValue} for FU ${planFu.id}`,
+              `Mechanic ${mechanic.code} value ${entered} exceeds maximum ${mechanic.maxValue} for FU ${planFu.id}`,
             );
           }
         }

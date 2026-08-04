@@ -1,4 +1,8 @@
 import {
+  enteredColumnFor,
+  readEnteredValue,
+} from '../../../common/numeric/mechanic-input';
+import {
   Injectable,
   Logger,
   NotFoundException,
@@ -88,7 +92,11 @@ export class SpendDistributionService {
         tenantId,
         planFuId,
         mechanicId,
-        enteredValue: 0,
+        // F2/C2b: the entry now lives in the column that matches this
+        // mechanic's scale. Column choice comes from the same derivation point
+        // the JSONB path uses (enteredColumnFor -> toMechanicInput), so the two
+        // layers cannot disagree about what a mechanic means.
+        [enteredColumnFor(mechanic)]: 0,
         calculatedSpend: 0,
         onInvoiceAmount: 0,
         offInvoiceAmount: 0,
@@ -97,7 +105,7 @@ export class SpendDistributionService {
       await this.planMechanicValueRepository.save(planMechanicValue);
     }
 
-    const enteredValue = planMechanicValue.enteredValue || 0;
+    const enteredValue = readEnteredValue(planMechanicValue, mechanic);
     if (enteredValue === 0) {
       // Clear existing breakdowns
       await this.mechanicSpendBreakdownRepository.delete({
@@ -228,7 +236,7 @@ export class SpendDistributionService {
       if (!planFu) continue;
 
       const planSkus = planFu.planSkus || [];
-      const enteredValue = planMechanicValue.enteredValue || 0;
+      const enteredValue = readEnteredValue(planMechanicValue, mechanic);
 
       if (enteredValue === 0) continue;
 
@@ -310,13 +318,13 @@ export class SpendDistributionService {
         0,
       );
       const isValid =
-        Math.abs((pmv.enteredValue || 0) - distributedTotal) <=
+        Math.abs(readEnteredValue(pmv, mechanic) - distributedTotal) <=
         this.ROUNDING_TOLERANCE;
 
       mechanics[mechanic.code] = {
         mechanicCode: mechanic.code,
         mechanicName: mechanic.name,
-        fuValue: pmv.enteredValue || 0,
+        fuValue: readEnteredValue(pmv, mechanic),
         distributionMethod: pmv.distributionMethod || 'unknown',
         skuDistributions,
         totalDistributed: distributedTotal,
@@ -367,7 +375,7 @@ export class SpendDistributionService {
       const mechanicBreakdown = breakdown.mechanics[mechanic.code];
       if (!mechanicBreakdown) continue;
 
-      const fuValue = pmv.enteredValue || 0;
+      const fuValue = readEnteredValue(pmv, mechanic);
       const distributed = mechanicBreakdown.totalDistributed;
       const difference = Math.abs(fuValue - distributed);
 

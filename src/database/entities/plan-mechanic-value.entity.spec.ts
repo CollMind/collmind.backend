@@ -21,10 +21,20 @@ describe('PlanMechanicValue Entity', () => {
     expect(pmv.offInvoiceAmount).toBe(400.2);
   });
 
-  it('should support optional entered_value', () => {
+  it('should support the three semantic entry columns (ADR 0007 Karar 4)', () => {
+    // entered_value was split by semantics in migration 1796 and dropped in
+    // 1797: one column could not say whether 15.5 meant 15.5% or 15.50 TRY.
     const pmv = new PlanMechanicValue();
-    pmv.enteredValue = 15.5;
-    expect(pmv.enteredValue).toBe(15.5);
+    pmv.enteredRatePct = 15.5;
+    expect(pmv.enteredRatePct).toBe(15.5);
+
+    const perUnit = new PlanMechanicValue();
+    perUnit.enteredUnitAmount = 2.75;
+    expect(perUnit.enteredUnitAmount).toBe(2.75);
+
+    const total = new PlanMechanicValue();
+    total.enteredTotalAmount = 5000;
+    expect(total.enteredTotalAmount).toBe(5000);
   });
 
   it('should support distribution_method enum', () => {

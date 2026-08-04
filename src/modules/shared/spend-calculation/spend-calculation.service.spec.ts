@@ -1,3 +1,4 @@
+import { MechanicInput } from '../../../common/numeric/mechanic-input';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -6,6 +7,7 @@ import { PlanSku, PlanFu } from '../../../database/entities/plan.entity';
 import {
   Mechanic,
   MechanicCategory,
+  MechanicType,
   SpendingType,
 } from '../../../database/entities/mechanic.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
@@ -13,6 +15,25 @@ import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spen
 import { LTAAgreementService } from '../lta/lta-agreement.service';
 import { CalculationContext, SKUContext } from './dto/calculation-context.dto';
 import { SpendBreakdown } from './dto/spend-breakdown.dto';
+
+// F2/C2a: mechanicValues now carries the scale in the type. These builders keep
+// the fixtures readable and make each test state which scale it means, instead
+// of a bare number whose meaning lived in a comment.
+const rateIn = (code: string, percent: number): MechanicInput => ({
+  kind: 'rate',
+  code,
+  percent,
+});
+const totalIn = (code: string, tryTotal: number): MechanicInput => ({
+  kind: 'totalAmount',
+  code,
+  tryTotal,
+});
+const unitIn = (code: string, tryPerUnit: number): MechanicInput => ({
+  kind: 'unitAmount',
+  code,
+  tryPerUnit,
+});
 
 describe('SpendCalculationService', () => {
   let service: SpendCalculationService;
@@ -99,6 +120,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-1',
         code: 'CPP_ON',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      mechanicType: MechanicType.PERCENT,
         spendingType: SpendingType.ON_INVOICE,
         isActive: true,
       };
@@ -116,7 +138,7 @@ describe('SpendCalculationService', () => {
         planId: mockPlanId,
         fuId: mockFuId,
         skuContexts: [],
-        mechanicValues: { CPP_ON: 5 }, // 5%
+        mechanicValues: { CPP_ON: rateIn('CPP_ON', 5) },
       };
 
       ltaAgreementService.getLTAForPlanContext.mockResolvedValue({
@@ -144,6 +166,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-2',
         code: 'PRICE_SUPPORT',
         category: MechanicCategory.PER_UNIT_SUPPORT,
+      mechanicType: MechanicType.AMOUNT_PER_UNIT,
         spendingType: SpendingType.OFF_INVOICE,
         isActive: true,
       };
@@ -160,7 +183,7 @@ describe('SpendCalculationService', () => {
         planId: mockPlanId,
         fuId: mockFuId,
         skuContexts: [],
-        mechanicValues: { PRICE_SUPPORT: 0.5 }, // 0.5 per unit
+        mechanicValues: { PRICE_SUPPORT: unitIn('PRICE_SUPPORT', 0.5) },
       };
 
       mechanicRepo.findOne.mockResolvedValue(mechanic as Mechanic);
@@ -195,8 +218,8 @@ describe('SpendCalculationService', () => {
         fuId: mockFuId,
         skuContexts: [],
         mechanicValues: {
-          CPP_ON: 5, // 5%
-          PRICE_SUPPORT: 0.5, // 0.5 per unit
+          CPP_ON: rateIn('CPP_ON', 5),
+          PRICE_SUPPORT: unitIn('PRICE_SUPPORT', 0.5),
         },
       };
 
@@ -211,6 +234,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-1',
         code: 'CPP_ON',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      mechanicType: MechanicType.PERCENT,
         spendingType: SpendingType.ON_INVOICE,
         isActive: true,
       };
@@ -219,6 +243,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-2',
         code: 'PRICE_SUPPORT',
         category: MechanicCategory.PER_UNIT_SUPPORT,
+      mechanicType: MechanicType.AMOUNT_PER_UNIT,
         spendingType: SpendingType.OFF_INVOICE,
         isActive: true,
       };
@@ -262,11 +287,12 @@ describe('SpendCalculationService', () => {
     it('should distribute spend based on base volume ratio', () => {
       const distributions = service.computeLumpsumDistribution(
         mockFuId,
-        { 'mech-1': 1000 },
+        { 'mech-1': totalIn('mech-1', 1000) },
         [
           {
             code: 'mech-1',
             category: MechanicCategory.LUMPSUM_SPEND,
+      mechanicType: MechanicType.AMOUNT,
           } as Mechanic,
         ],
         [
@@ -286,11 +312,12 @@ describe('SpendCalculationService', () => {
       expect(
         service.computeLumpsumDistribution(
           mockFuId,
-          { 'mech-1': 1000 },
+          { 'mech-1': totalIn('mech-1', 1000) },
           [
             {
               code: 'mech-1',
               category: MechanicCategory.LUMPSUM_SPEND,
+      mechanicType: MechanicType.AMOUNT,
             } as Mechanic,
           ],
           [],
@@ -310,6 +337,7 @@ describe('SpendCalculationService', () => {
       id: 'mech-ls',
       code: 'VIS_LS',
       category: MechanicCategory.LUMPSUM_SPEND,
+      mechanicType: MechanicType.AMOUNT,
       spendingType: SpendingType.OFF_INVOICE,
       isActive: true,
     };
@@ -503,7 +531,7 @@ describe('SpendCalculationService', () => {
         fuId: mockFuId,
         skuContexts: [],
         mechanicValues: {
-          CPP_ON: 10, // 10% on-invoice
+          CPP_ON: rateIn('CPP_ON', 10),
         },
       };
 
@@ -514,6 +542,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-1',
         code: 'CPP_ON',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      mechanicType: MechanicType.PERCENT,
         spendingType: SpendingType.ON_INVOICE,
         isActive: true,
       };
@@ -639,6 +668,7 @@ describe('SpendCalculationService', () => {
       id: 'mech-tactic-1',
       code: 'MEC-DISCOUNT',
       category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      mechanicType: MechanicType.PERCENT,
       spendingType: SpendingType.ON_INVOICE,
       isActive: true,
     });
@@ -707,7 +737,7 @@ describe('SpendCalculationService', () => {
           tactics: {},
           planMechanicValues: [
             {
-              enteredValue: 10,
+              enteredRatePct: 10,
               mechanic: buildOnInvoiceMechanic(),
             } as any,
           ],
@@ -731,30 +761,42 @@ describe('SpendCalculationService', () => {
    * caller exercises it.
    */
   describe('buildMechanicValues (T-052 shared derivation point)', () => {
+    // F2/C2a: the derivation point now resolves scale from the mechanic row,
+    // so the mechanics must be supplied. That is the single derivation point
+    // C3's write-side validation will consume as well.
+    const mechs = [
+      { code: 'CPP_ON_PCT', mechanicType: 'PERCENT' },
+      { code: 'MEC-DISCOUNT', mechanicType: 'PERCENT' },
+      { code: 'VIS_LS', mechanicType: 'AMOUNT' },
+    ] as unknown as Mechanic[];
+
     it('should merge plan_mechanic_values and tactics into one map', () => {
       const result = service.buildMechanicValues({
         tactics: { VIS_LS: 2000 },
         planMechanicValues: [
-          { mechanic: { code: 'CPP_ON_PCT' }, enteredValue: 10 },
+          { mechanic: { code: 'CPP_ON_PCT' }, enteredRatePct: 10 },
         ],
-      });
+      }, mechs);
 
-      expect(result).toEqual({ CPP_ON_PCT: 10, VIS_LS: 2000 });
+      expect(result).toEqual({
+        CPP_ON_PCT: rateIn('CPP_ON_PCT', 10),
+        VIS_LS: totalIn('VIS_LS', 2000),
+      });
     });
 
     it('tactics should win over plan_mechanic_values on the same mechanic code (no summing / no double-count)', () => {
       const result = service.buildMechanicValues({
         tactics: { 'MEC-DISCOUNT': 7 },
         planMechanicValues: [
-          { mechanic: { code: 'MEC-DISCOUNT' }, enteredValue: 10 },
+          { mechanic: { code: 'MEC-DISCOUNT' }, enteredRatePct: 10 },
         ],
-      });
+      }, mechs);
 
-      expect(result).toEqual({ 'MEC-DISCOUNT': 7 });
+      expect(result).toEqual({ 'MEC-DISCOUNT': rateIn('MEC-DISCOUNT', 7) });
     });
 
     it('should return an empty map when both sources are absent', () => {
-      expect(service.buildMechanicValues({})).toEqual({});
+      expect(service.buildMechanicValues({}, mechs)).toEqual({});
     });
   });
 
@@ -777,7 +819,7 @@ describe('SpendCalculationService', () => {
         planId: mockPlanId,
         fuId: mockFuId,
         skuContexts: [],
-        mechanicValues: { BOTH_MECH: 5 },
+        mechanicValues: { BOTH_MECH: rateIn('BOTH_MECH', 5) },
       };
 
       ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
@@ -818,7 +860,7 @@ describe('SpendCalculationService', () => {
         planId: mockPlanId,
         fuId: mockFuId,
         skuContexts: [],
-        mechanicValues: { CPP_BOTH: 10 },
+        mechanicValues: { CPP_BOTH: rateIn('CPP_BOTH', 10) },
       };
 
       ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
@@ -827,6 +869,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-both-on',
         code: 'CPP_BOTH',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      mechanicType: MechanicType.PERCENT,
         spendingType: SpendingType.BOTH,
         isActive: true,
       };
@@ -855,10 +898,11 @@ describe('SpendCalculationService', () => {
         planMechanicValues: [
           {
             id: 'pmv-1',
-            enteredValue: 3,
+            enteredRatePct: 3,
             mechanic: {
               id: 'mech-1',
               code: 'CPP_ON',
+              mechanicType: MechanicType.PERCENT,
               minValue: 5,
               maxValue: 10,
             } as Mechanic,

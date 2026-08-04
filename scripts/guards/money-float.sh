@@ -60,6 +60,38 @@ if [ ! -f "$DOMAIN_LIST" ]; then
   exit 0
 fi
 
+# EXACTNESS PRIMITIVES — ADR 0007 errata E15.
+#
+# This directory is Domain A and is declared in NEW_MODULES, i.e. blocking. The
+# detector still does not fire inside it, and the reason is not an exemption:
+#
+# The guard looks for `Number(`, `parseFloat`, `toFixed` and `Math.round`
+# because those are the patterns by which exactness is LOST. In the module that
+# BUILDS exactness the same patterns produce it. `money.ts` parses a decimal
+# string into minor units — calling `Number()` on a digit substring is exactly
+# how an exact integer is obtained, not a lapse. `rounding.ts`'s `Math.round`
+# is not a `Math.round` to be banned; it is the one sanctioned rounding
+# primitive the ban exists to funnel everything into. A textual scanner cannot
+# tell those apart, and should not be expected to: it has no semantics.
+#
+# So this is guard KNOWLEDGE, not an allowlist entry — the same class as
+# migration-schema.sh learning that `'main.x'::regclass` is schema-safe.
+# allowlist.txt's own rule requires it to be here: "a known false-positive
+# pattern must be recognised by the guard itself".
+#
+# WHAT REPLACES THE DETECTOR HERE
+# Silencing a detector without replacing the protection would be the real
+# defect. The exactness guarantee of this module is held by F1's 17
+# property-based tests (`numeric.property.spec.ts`), not by this scan. E15 is
+# not "exempted, unprotected" — it is "protected by a stronger instrument".
+#
+# THE RULE FOR ADDING A FILE HERE (the risk of a directory-level rule)
+# Putting a file in this directory ASSERTS that it is an exactness primitive
+# and is covered by property-based tests. Business logic does not go here. A
+# file that does not meet that description belongs in its module, where the
+# detector does fire.
+EXACTNESS_PRIMITIVES='src/common/numeric/'
+
 # Resolve the declared modules to a concrete, deterministically sorted file set.
 domain_files() {
   local d
@@ -67,8 +99,34 @@ domain_files() {
     case "$d" in ''|\#*) continue ;; esac
     [ -d "$d" ] || continue
     find "$d" -type f -name "*.ts" ! -name "*.spec.ts" 2>/dev/null
-  done < "$DOMAIN_LIST" | sort -u
+  # `grep -E`, not plain `grep`: BSD grep's BRE does not support `\?`, so a
+  # `^\./\?<dir>` pattern silently matches nothing on macOS — the filter looks
+  # applied and filters zero files. Caught here only because the baseline was
+  # measured instead of assumed; a self-test below pins it.
+  done < "$DOMAIN_LIST" | grep -Ev "^(\./)?$EXACTNESS_PRIMITIVES" | sort -u
 }
+
+# E15 self-test — the filter above must EXCLUDE the primitives and INCLUDE
+# everything else. Both directions, because a broken filter fails silently in
+# both: a pattern that matches nothing leaves the directory scanned (what BSD
+# grep's unsupported `\?` actually did when E15 was written, caught only by
+# measuring the baseline), and a pattern that matches too much would empty the
+# whole scan while still exiting 0.
+self_test() {
+  local out rc=0
+  out="$(printf 'src/common/numeric/money.ts\nsrc/modules/shared/budget/budget.service.ts\n' \
+    | grep -Ev "^(\./)?$EXACTNESS_PRIMITIVES")"
+  case "$out" in
+    *src/common/numeric/*)
+      echo "-- [$GUARD_NAME] SELF-TEST FAIL: primitives not excluded"; rc=1 ;;
+  esac
+  case "$out" in
+    *budget.service.ts*) ;;
+    *) echo "-- [$GUARD_NAME] SELF-TEST FAIL: filter excluded a normal Domain A file"; rc=1 ;;
+  esac
+  return $rc
+}
+self_test || exit 2
 
 FILES="$(domain_files)"
 

@@ -558,14 +558,14 @@ describe('ApprovalWorkflowService', () => {
         requestType: ApprovalRequestType.PLAN,
       };
 
-      // FU has planMechanicValues with an enteredValue but NO tactics JSONB
+      // FU has planMechanicValues with an entry (semantic column) but NO tactics JSONB
       planRepo.findById.mockResolvedValue({
         ...mockPlan,
         planFus: [
           {
             ...mockPlan.planFus![0],
             tactics: {}, // empty tactics JSONB
-            planMechanicValues: [{ enteredValue: 10, mechanicId: 'mech-1' }],
+            planMechanicValues: [{ enteredRatePct: 10, mechanicId: 'mech-1' }],
           },
         ],
       } as Plan);
