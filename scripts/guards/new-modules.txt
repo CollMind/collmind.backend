@@ -32,3 +32,9 @@
 #
 # Fixture proof that the empty state is not a broken state:
 #   scripts/guards/fixtures/number-slot-*.ts.fixture
+
+# ADR 0007 errata E15 — born after the numeric contract (F1), written with
+# branded types, carries no float. Blocking from birth per E11: baseline 0,
+# and it must stay 0. Protection here comes from numeric.property.spec.ts
+# (17 property-based tests), not from the money-float scan.
+src/common/numeric
