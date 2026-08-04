@@ -28,7 +28,26 @@ export class PlanMechanicValue extends BaseEntity {
   @Column({ name: 'mechanic_id', type: 'uuid' })
   mechanicId!: string;
 
-  // Kullanıcı girişi - % veya $
+  // User input, split by semantics — ADR 0007 Karar 4 (errata E2), migration 1796.
+  //
+  // `entered_value` carried three different meanings depending on the mechanic
+  // (rate / TRY-per-unit / TRY-total). One column could not say which, so every
+  // reader had to re-derive it from the mechanic row. The DB now enforces that
+  // exactly one of these is populated (chk_pmv_exactly_one_entered, `<= 1` so
+  // that "row exists, nothing entered" stays expressible).
+  //
+  // These stay `number` here on purpose: this is an EXISTING Domain A entity and
+  // converting its representation to MoneyMinor/RateMicro is ratchet work
+  // (ADR 0007 K9), not F2. The number-slot rule applies to new modules only.
+
+  /**
+   * LEGACY — kept through the EXPAND phase of ADR 0007 F2 (migration 1796).
+   *
+   * Expand-contract: C1 adds the three semantic columns while this one stays,
+   * so every existing reader still compiles and C1 is independently revertible.
+   * C2 moves the readers onto the new columns and only then drops this one
+   * (migration 1797). Do not add new readers of this column.
+   */
   @Column({
     name: 'entered_value',
     type: 'decimal',
@@ -37,6 +56,36 @@ export class PlanMechanicValue extends BaseEntity {
     nullable: true,
   })
   enteredValue?: number;
+
+  /** Rate in percent notation, 0-100. PERCENT mechanics. */
+  @Column({
+    name: 'entered_rate_pct',
+    type: 'decimal',
+    precision: 9,
+    scale: 4,
+    nullable: true,
+  })
+  enteredRatePct?: number;
+
+  /** TRY per unit. AMOUNT_PER_UNIT mechanics (price scale, not money scale). */
+  @Column({
+    name: 'entered_unit_amount',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
+  enteredUnitAmount?: number;
+
+  /** TRY total. AMOUNT mechanics (lumpsum). */
+  @Column({
+    name: 'entered_total_amount',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
+  enteredTotalAmount?: number;
 
   // Hesaplanan spend değeri
   @Column({
