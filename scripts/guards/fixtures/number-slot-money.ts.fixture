@@ -1,0 +1,18 @@
+/**
+ * FIXTURE: number-slot rule — positive control. Expected: CAUGHT (3 findings)
+ *
+ * PERMANENT RECORD OF: ADR 0007 errata E1. The intuitive claim was that a
+ * branded type stops `MoneyMinor * RateMicro`. Measurement showed it does not —
+ * the brand only gates ASSIGNMENT, so a plain `number` slot reopens the gate
+ * completely. Every field below is the leak E1 identified.
+ *
+ * If this fixture stops firing, branded types have become decoration.
+ */
+export class ClaimEntity {
+  claimedAmount!: number; // money slot — must be MoneyMinor
+  approvedAmount!: number; // money slot — must be MoneyMinor
+}
+
+export interface ClaimDto {
+  settlementRate: number; // rate slot — must be RateMicro
+}

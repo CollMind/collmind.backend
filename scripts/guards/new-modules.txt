@@ -1,0 +1,34 @@
+# NEW MODULES — single declaration (ADR 0007 Karar 8.2, errata E11)
+#
+# Modules born AFTER the numeric contract. They carry exact representation from
+# their first line, so they are never baselined and never get a grace period.
+#
+# TWO CONSUMERS READ THIS FILE. That is the whole point.
+#   1. scripts/guards/money-float.sh   — these paths run in `block`, not report-only
+#   2. .eslintrc.js                    — the number-slot rule applies to these paths
+#
+# WHY ONE FILE
+# If new-module membership were declared in two places it would diverge. That is
+# this repo's single most repeated failure: two allocation implementations with
+# different remainder rules, two submit paths with different buckets, two
+# allowlist readers with different accept rules, two derivations of the same
+# grid column list. Each one was found only after it had already produced a
+# wrong number. A second declaration here would be the eighth.
+#
+# HOW A MODULE JOINS
+# Add its directory in the SAME commit that creates the module. A module that
+# exists but is not listed silently falls back to report-only — i.e. it is born
+# with the grace period the ADR says new code must not get.
+#
+# FORMAT: one repo-relative directory per line. `#` comments and blanks ignored.
+# Paths are matched as prefixes, so `src/modules/modes/actuals-first/claims`
+# covers everything beneath it.
+#
+# CURRENTLY EMPTY — deliberately.
+# `claims`, `recognition_variance` and the settlement extensions do not exist
+# yet (ADR 0007 F1 scope limit: this phase does not create them). The mechanism
+# is built and proven against fixtures now, so that the day one of those modules
+# is created the only remaining step is one line here.
+#
+# Fixture proof that the empty state is not a broken state:
+#   scripts/guards/fixtures/number-slot-*.ts.fixture

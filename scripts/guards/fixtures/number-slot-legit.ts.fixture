@@ -1,0 +1,22 @@
+/**
+ * FIXTURE: number-slot rule — negative control. Expected: NOT caught (0 findings)
+ *
+ * PERMANENT RECORD OF: the over-reporting boundary. Not every `number` is money.
+ * Counts, indices, pagination and versions are legitimately plain numbers, and a
+ * rule that flags them would be turned off within a week.
+ *
+ * The exemption is name-based (NON_MONEY_IDENTIFIERS in .eslintrc.js) — a
+ * documented heuristic, not type inference. If this fixture starts firing, the
+ * exemption list has lost an entry and the rule is about to be disabled by
+ * whoever it annoys.
+ */
+export class ClaimPageRequest {
+  page!: number;
+  pageSize!: number;
+  version!: number;
+}
+
+export interface ClaimListMeta {
+  count: number;
+  offset: number;
+}
