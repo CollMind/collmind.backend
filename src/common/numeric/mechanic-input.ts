@@ -153,3 +153,30 @@ export function readEnteredRaw(
 ): number | null | undefined {
   return pmv[enteredColumnFor(mechanic)];
 }
+
+/**
+ * "Was anything entered for this row?" — scale-independent, mechanic not needed.
+ *
+ * This is the one read that legitimately does NOT go through the derivation
+ * point, and the reason is worth stating rather than leaving as an exception:
+ * the caller does not need to know WHICH scale was entered, only whether an
+ * entry exists. The DB `CHECK` (chk_pmv_at_most_one_entered, errata E12)
+ * guarantees at most one of the three is non-null, so "any of the three is
+ * non-null" is exactly equivalent to the old `entered_value != null`.
+ *
+ * Why it matters that this exists: the approval path loads
+ * `planFus.planMechanicValues` WITHOUT the `mechanic` relation
+ * (plan.repository.ts:70). Forcing that read through `enteredColumnFor` would
+ * have required adding a join to the approval query — a change beyond
+ * representation, on the approval path. Needing LESS than the derivation point
+ * is not the same as bypassing it.
+ */
+export function hasEnteredValue(
+  pmv: Partial<Record<EnteredColumn, number | null | undefined>>,
+): boolean {
+  return (
+    pmv.enteredRatePct != null ||
+    pmv.enteredUnitAmount != null ||
+    pmv.enteredTotalAmount != null
+  );
+}

@@ -1,3 +1,4 @@
+import { hasEnteredValue } from '../../../../common/numeric/mechanic-input';
 import {
   Injectable,
   BadRequestException,
@@ -129,9 +130,8 @@ export class ApprovalWorkflowService {
       for (const planFu of plan.planFus) {
         const hasMechanicValues =
           planFu.planMechanicValues &&
-          planFu.planMechanicValues.some(
-            (pmv: any) =>
-              pmv.enteredValue !== null && pmv.enteredValue !== undefined,
+          planFu.planMechanicValues.some((pmv: any) =>
+            hasEnteredValue(pmv),
           );
         const hasTactics =
           planFu.tactics && Object.keys(planFu.tactics).length > 0;
