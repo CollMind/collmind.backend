@@ -1,3 +1,7 @@
+import {
+  readEnteredRaw,
+  readEnteredValue,
+} from '../../../common/numeric/mechanic-input';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -65,7 +69,10 @@ export class SpendValidationService {
       const mechanic = pmv.mechanic;
       if (!mechanic) continue;
 
-      const enteredValue = pmv.enteredValue;
+      // F2/C2b-2: read from the semantic column via the shared derivation
+      // point. `readEnteredRaw` (not `readEnteredValue`) because the null check
+      // below IS the semantics — an empty entry is skipped, not validated as 0.
+      const enteredValue = readEnteredRaw(pmv, mechanic);
       if (enteredValue === null || enteredValue === undefined) {
         continue; // Skip empty values
       }
@@ -207,12 +214,15 @@ export class SpendValidationService {
 
     // Get all active mechanics for this FU
     const activeMechanics = (planFu.planMechanicValues || [])
-      .filter(
-        (pmv) =>
-          pmv.enteredValue !== null &&
-          pmv.enteredValue !== undefined &&
-          pmv.enteredValue !== 0,
-      )
+      .filter((pmv) => {
+        // This predicate treats null, undefined AND 0 as three distinct states
+        // — "not entered" and "entered as zero" both exclude the mechanic here,
+        // but for different reasons. `readEnteredRaw` preserves that; `?? 0`
+        // would erase the first two.
+        if (!pmv.mechanic) return false;
+        const v = readEnteredRaw(pmv, pmv.mechanic);
+        return v !== null && v !== undefined && v !== 0;
+      })
       .map((pmv) => pmv.mechanic)
       .filter((m) => m !== null) as Mechanic[];
 
@@ -253,11 +263,14 @@ export class SpendValidationService {
 
     for (const pmv of planFu.planMechanicValues || []) {
       const mechanic = pmv.mechanic;
-      if (!mechanic || !pmv.enteredValue) continue;
+      // Truthiness only here (0 and "not entered" both skip), so the
+      // `?? 0` collapse in readEnteredValue preserves behaviour exactly.
+      const entered = readEnteredValue(pmv, mechanic);
+      if (!entered) continue;
 
       if (mechanic.category === MechanicCategory.ON_INVOICE_DISCOUNT) {
         if (mechanic.mechanicType === 'PERCENT') {
-          totalOnInvoiceDiscount += pmv.enteredValue;
+          totalOnInvoiceDiscount += entered;
         } else {
           // Calculate percentage from amount
           const percentage =
@@ -272,7 +285,7 @@ export class SpendValidationService {
         mechanic.category === MechanicCategory.LUMPSUM_SPEND
       ) {
         if (mechanic.mechanicType === 'PERCENT') {
-          totalOffInvoiceDiscount += pmv.enteredValue;
+          totalOffInvoiceDiscount += entered;
         } else {
           const percentage =
             totalPlannedGsv > 0
