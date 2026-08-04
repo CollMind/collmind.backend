@@ -97,3 +97,41 @@ export function rawOf(input: MechanicInput | undefined): number {
       return input.tryTotal;
   }
 }
+
+/**
+ * Which `plan_mechanic_values` column carries this mechanic's entry.
+ *
+ * Derived from the SAME discriminator as `toMechanicInput` — `mechanic_type` —
+ * so the column layer and the JSONB layer cannot disagree about what a mechanic
+ * means. Two independent mappings is the failure this repo has recorded seven
+ * times.
+ */
+export type EnteredColumn =
+  | 'enteredRatePct'
+  | 'enteredUnitAmount'
+  | 'enteredTotalAmount';
+
+export function enteredColumnFor(mechanic: Mechanic): EnteredColumn {
+  switch (toMechanicInput(mechanic, 0).kind) {
+    case 'rate':
+      return 'enteredRatePct';
+    case 'unitAmount':
+      return 'enteredUnitAmount';
+    case 'totalAmount':
+      return 'enteredTotalAmount';
+  }
+}
+
+/**
+ * Read the entry from whichever semantic column this mechanic uses.
+ *
+ * ⚠️ The `?? 0` here is the same collapse `rawOf` makes — see T-078. Preserved
+ * deliberately: C2b ports the reader, it does not decide the "no value vs zero"
+ * question.
+ */
+export function readEnteredValue(
+  pmv: Partial<Record<EnteredColumn, number | null | undefined>>,
+  mechanic: Mechanic,
+): number {
+  return pmv[enteredColumnFor(mechanic)] ?? 0;
+}

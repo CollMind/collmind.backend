@@ -1,4 +1,8 @@
 import {
+  enteredColumnFor,
+  readEnteredValue,
+} from '../../../common/numeric/mechanic-input';
+import {
   Injectable,
   Logger,
   NotFoundException,
@@ -88,7 +92,11 @@ export class SpendDistributionService {
         tenantId,
         planFuId,
         mechanicId,
-        enteredValue: 0,
+        // F2/C2b: the entry now lives in the column that matches this
+        // mechanic's scale. Column choice comes from the same derivation point
+        // the JSONB path uses (enteredColumnFor -> toMechanicInput), so the two
+        // layers cannot disagree about what a mechanic means.
+        [enteredColumnFor(mechanic)]: 0,
         calculatedSpend: 0,
         onInvoiceAmount: 0,
         offInvoiceAmount: 0,
@@ -97,7 +105,7 @@ export class SpendDistributionService {
       await this.planMechanicValueRepository.save(planMechanicValue);
     }
 
-    const enteredValue = planMechanicValue.enteredValue || 0;
+    const enteredValue = readEnteredValue(planMechanicValue, mechanic);
     if (enteredValue === 0) {
       // Clear existing breakdowns
       await this.mechanicSpendBreakdownRepository.delete({
