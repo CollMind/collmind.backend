@@ -40,23 +40,6 @@ export class PlanMechanicValue extends BaseEntity {
   // converting its representation to MoneyMinor/RateMicro is ratchet work
   // (ADR 0007 K9), not F2. The number-slot rule applies to new modules only.
 
-  /**
-   * LEGACY — kept through the EXPAND phase of ADR 0007 F2 (migration 1796).
-   *
-   * Expand-contract: C1 adds the three semantic columns while this one stays,
-   * so every existing reader still compiles and C1 is independently revertible.
-   * C2 moves the readers onto the new columns and only then drops this one
-   * (migration 1797). Do not add new readers of this column.
-   */
-  @Column({
-    name: 'entered_value',
-    type: 'decimal',
-    precision: 18,
-    scale: 4,
-    nullable: true,
-  })
-  enteredValue?: number;
-
   /** Rate in percent notation, 0-100. PERCENT mechanics. */
   @Column({
     name: 'entered_rate_pct',
