@@ -34,11 +34,15 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 # migration-schema `migrations` adlı bir dizin bekler; diğerleri modül ağacı.
-mkdir -p "$TMP/migrations" "$TMP/modules"
+mkdir -p "$TMP/migrations" "$TMP/modules" "$TMP/domainA" "$TMP/domainB"
 for f in "$FIXTURES"/*.ts.fixture; do
   base="$(basename "$f" .ts.fixture)"
   case "$base" in
     ledger-ordering-probe) cp "$f" "$TMP/modules/$base.ts" ;;
+    # money-float: Domain A fixtures go inside the declared domain, the
+    # Domain B fixture deliberately stays OUTSIDE it (boundary control).
+    money-float-domain-b)  cp "$f" "$TMP/domainB/$base.ts" ;;
+    money-float-*)         cp "$f" "$TMP/domainA/$base.ts" ;;
     *)                     cp "$f" "$TMP/migrations/$base.ts" ;;
   esac
 done
@@ -51,6 +55,9 @@ migration-schema|midline-comment|0
 migration-schema|schema-safe|1
 financial-ordering|ledger-ordering-probe|1
 ledger-direction|ledger-ordering-probe|1
+money-float|money-float-positive|4
+money-float|money-float-decorator|0
+money-float|money-float-domain-b|0
 "
 
 # Guard'ları fixture ağacına yönlendirerek bir kez koştur, çıktıyı sakla.
@@ -59,6 +66,25 @@ OUT_MIG="$(GUARD_MODE=report GUARD_MIG_DIR="$TMP/migrations" bash "$DIR/migratio
 OUT_FIN="$(GUARD_MODE=report GUARD_MODULES_DIR="$TMP/modules" bash "$DIR/financial-ordering.sh" 2>&1)"
 OUT_LED="$(GUARD_MODE=report GUARD_SRC_DIR="$TMP/modules" bash "$DIR/ledger-direction.sh" 2>&1)"
 
+# money-float reads its scope from a declared list, not a path regex, so the
+# self-test hands it a temporary list pointing at the fixture tree. The
+# Domain B fixture is intentionally absent from that list.
+echo "$TMP/domainA" > "$TMP/domain-list.txt"
+OUT_MF="$(GUARD_MODE=report MONEY_FLOAT_DOMAIN_LIST="$TMP/domain-list.txt" bash "$DIR/money-float.sh" 2>&1)"
+
+# Ratchet control: baseline claims 3 findings for the positive fixture, current
+# state has 4. --ratchet must exit non-zero. A ratchet that cannot fail is not
+# a ratchet.
+printf '%s 3\n' "$TMP/domainA/money-float-positive.ts" > "$TMP/ratchet-baseline.txt"
+if GUARD_MODE=report MONEY_FLOAT_DOMAIN_LIST="$TMP/domain-list.txt" \
+     MONEY_FLOAT_BASELINE="$TMP/ratchet-baseline.txt" \
+     bash "$DIR/money-float.sh" --ratchet >/dev/null 2>&1; then
+  echo "!! self-test FAILED: money-float --ratchet accepted an increase (3 -> 4)" >&2
+  FAIL_RATCHET=1
+else
+  FAIL_RATCHET=0
+fi
+
 FAIL=0
 while IFS='|' read -r guard fixture want; do
   [ -z "${guard:-}" ] && continue
@@ -66,6 +92,7 @@ while IFS='|' read -r guard fixture want; do
     migration-schema)   out="$OUT_MIG" ;;
     financial-ordering) out="$OUT_FIN" ;;
     ledger-direction)   out="$OUT_LED" ;;
+    money-float)        out="$OUT_MF" ;;
     *) echo "!! self-test: bilinmeyen guard '$guard'" >&2; FAIL=1; continue ;;
   esac
 
@@ -76,6 +103,10 @@ while IFS='|' read -r guard fixture want; do
     FAIL=1
   fi
 done <<< "$EXPECTED"
+
+if [ "${FAIL_RATCHET:-0}" -ne 0 ]; then
+  FAIL=1
+fi
 
 if [ "$FAIL" -ne 0 ]; then
   {

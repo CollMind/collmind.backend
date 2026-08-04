@@ -1,0 +1,18 @@
+/**
+ * FIXTURE: money-float — boundary control. Expected findings: 0
+ *
+ * PERMANENT RECORD OF: ADR 0007 Karar 1's domain boundary. Domain B
+ * (kpi-engine, RAG, finance-reporting, dashboard) legitimately uses floats;
+ * ROI and percentages are analytics, not money.
+ *
+ * This file is NOT in money-float-domain-a.txt, so the guard must never look
+ * at it — even though every line below would fire inside Domain A.
+ * A finding here means the domain list has grown a path it should not have.
+ */
+export class RoiFixture {
+  roi(spend: string, turnover: string) {
+    const s = Number(spend);
+    const t = parseFloat(turnover);
+    return Math.round((t / s) * 100).toFixed(1);
+  }
+}

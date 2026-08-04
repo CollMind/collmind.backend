@@ -24,6 +24,21 @@ source "$DIR/lib.sh"
 # shellcheck disable=SC2206
 GUARDS=($GUARD_NAMES_VALID)
 
+# Guards that are INFORMATIONAL for now: their findings are printed and counted
+# in the summary, but they never turn `npm run guards` red.
+#
+# money-float is F0 of ADR 0007. It reports 119 pre-existing findings across 22
+# Domain A files — that is the measured starting point, not a regression. Making
+# it blocking today would block every commit until the whole conversion lands,
+# which is precisely the "big-bang or never" trap Karar 3b rejects. Enforcement
+# is the RATCHET (`money-float.sh --ratchet`), not this runner: a touched file's
+# count must not increase. When Domain A reaches zero, move it out of this list.
+REPORT_ONLY_GUARDS="money-float"
+
+is_report_only() {
+  case " $REPORT_ONLY_GUARDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
 # Guard'lar ölçüme başlamadan ÖNCE kendi doğruluklarını kanıtlar.
 # Gerekçe: bozuk bir guard sessizce "0 bulgu" döner ve her şey yeşil görünür —
 # iki code review turunda tam olarak bu oldu. Self-test kırmızıysa bulgu
@@ -84,8 +99,13 @@ for g in "${GUARDS[@]}"; do
   else
     LINE="  ${g}: ${COUNT} bulgu"
     [ "$SUP" -gt 0 ] && LINE="${LINE} (${SUP} susturuldu → allowlist)"
-    SUMMARY="${SUMMARY}${LINE}\n"
-    TOTAL=$((TOTAL + COUNT))
+    if is_report_only "$g"; then
+      LINE="${LINE} [BİLGİ AMAÇLI — bloklamaz; kapı: ${g}.sh --ratchet]"
+      SUMMARY="${SUMMARY}${LINE}\n"
+    else
+      SUMMARY="${SUMMARY}${LINE}\n"
+      TOTAL=$((TOTAL + COUNT))
+    fi
     TOTAL_SUP=$((TOTAL_SUP + SUP))
   fi
 done

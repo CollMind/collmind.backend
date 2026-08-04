@@ -1,0 +1,23 @@
+/**
+ * FIXTURE: money-float — negative control. Expected findings: 0
+ *
+ * PERMANENT RECORD OF: a measured false positive found while building F0.
+ * `@IsNumber()` contains the substring `Number(`. Without the
+ * `(^|[^A-Za-z0-9_$])` prefix the guard reported 38 extra hits out of 138 raw
+ * `Number(` matches on the real tree — 28% of the signal would have been
+ * class-validator decorators and the baseline would have been noise.
+ *
+ * If this fixture ever reports > 0, the word-boundary prefix has been lost.
+ */
+import { IsNumber, IsOptional } from 'class-validator';
+
+export class DecoratorFixture {
+  @IsNumber()
+  amount!: number;
+
+  @IsOptional()
+  @IsNumber()
+  cap?: number;
+
+  // Number( inside a comment line must not count either
+}

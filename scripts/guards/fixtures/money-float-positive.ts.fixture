@@ -1,0 +1,19 @@
+/**
+ * FIXTURE: money-float — positive control. Expected findings: 4
+ *
+ * PERMANENT RECORD OF: the failure mode that makes a self-test mandatory.
+ * If money-float.sh's awk program breaks, it returns zero findings and the
+ * whole run looks green. That exact silence happened twice to other guards in
+ * this repo (see self-test.sh header). This fixture fires on purpose.
+ *
+ * One finding per LINE, not per occurrence — the ratchet compares per-file
+ * line counts, so line 26 with two entry points must count once.
+ */
+export class MoneyFixture {
+  reserve(row: { amount: string; rate: string }) {
+    const amount = Number(row.amount);
+    const rate = parseFloat(row.rate);
+    const rounded = Math.round(amount * rate);
+    return { amount, rate, rounded, label: (amount * 1.0).toFixed(2) };
+  }
+}

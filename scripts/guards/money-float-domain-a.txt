@@ -1,0 +1,56 @@
+# Domain A membership list — money-float guard (ADR 0007 Karar 1)
+#
+# WHY AN EXPLICIT LIST, NOT A PATH REGEX
+# `financial-ordering.sh` originally inferred its scope from a path regex. It
+# covered 132 of 273 files while the invariant claimed codebase-wide coverage.
+# Nobody could see the gap, because the scope was implicit in a regex nobody
+# read. That was a review blocker.
+#
+# This file makes membership DECLARED and REVIEWABLE: adding or removing a
+# module is a diff a reviewer can see and argue with.
+#
+# MEMBERSHIP RULE — module-scoped, not file-scoped
+# Every `.ts` file under a listed directory is Domain A (spec files excluded;
+# they are test code, not production money paths).
+#
+# Module scope is deliberate. A file-by-file list cannot answer "how does a new
+# file join?" — a new service dropped into `shared/budget` handles money by
+# construction and must be covered the moment it is created, not when someone
+# remembers to add it here. Under module scope it is covered automatically.
+#
+# HOW A NEW MODULE JOINS
+# When a Domain A module named in ADR 0007 Karar 1 comes into existence
+# (`claims`, `recognition_variance`, settlement extensions), add its directory
+# here in the same commit that creates it. ADR Karar 8.2: new modules run in
+# `block` mode from birth — see `money-float.sh` NEW_MODULES.
+#
+# WHAT IS DELIBERATELY ABSENT
+# `shared/finance-reporting`, `shared/kpi-engine`, `shared/dashboard` are
+# Domain B (ADR Karar 1: "raporlama türevleri", RAG, ROI). Float is legitimate
+# there. A finding in those paths means either the boundary or this list is
+# wrong — the guard treats it as a hard error, not a finding.
+#
+# MEMBERSHIP TEST (canonical — ADR 0007 errata E10)
+# A module is Domain A if it PRODUCES money, PERSISTS money, or COMPARES money
+# against a threshold. Karar 1's enumeration is EXEMPLARY, not definitive; this
+# list is only today's result of applying the test.
+#
+# Format: one directory per line, repo-relative. `#` comments, blank lines ok.
+
+src/modules/shared/budget
+src/modules/shared/spend-calculation
+src/modules/modes/actuals-first/ledger
+src/modules/modes/actuals-first/agreement
+src/modules/modes/actuals-first/agreement-transaction
+src/modules/modes/actuals-first/settlement
+src/modules/modes/actuals-first/on-invoice
+
+# Added by errata E10 (2026-08-04). Karar 1 does not name it, but it passes the
+# behavioural test on all three counts:
+#   produces + persists → spend-calculation -> plans.total_spend (plan.service.ts:2413)
+#   compares to a threshold → plan.service.ts:844 epsilon gate
+#   triggers reservation → reserveForPlan
+# ADR 0005 K3 already made a money decision inside this file ("stale 0/0 spend
+# columns" -> noisy reject), i.e. it was already being treated as Domain A in
+# practice and simply never written down.
+src/modules/modes/planning-first/plan
