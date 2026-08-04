@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import {
@@ -25,6 +29,30 @@ import {
  * no matter what `objid` (planId hash) it happens to compute.
  */
 export const PLAN_RECALC_LOCK_NAMESPACE = 'collmind:plan-recalc';
+
+/**
+ * THE single producer of the PLAN_FU 409 body.
+ *
+ * Two call sites now raise this conflict: the real CAS in
+ * `updatePlanFuVersioned` below, and the cheap pre-check in
+ * `PlanService#updateFuTactic` (C3). A client must not be able to tell which
+ * one fired — same `code`, same `currentVersion`, same body shape — and the
+ * only way to keep that true is for both to build it here. Constructing the
+ * same error by hand in two places is the small-scale form of the divergence
+ * this repo has recorded seven times.
+ */
+export function planFuStaleConflict(
+  current: PlanFu,
+  expectedVersion: number,
+): ConflictException {
+  return staleVersionConflict({
+    entity: 'PLAN_FU',
+    entityId: current.id,
+    expectedVersion,
+    currentVersion: current.version,
+    current: { tactics: current.tactics, updatedBy: current.updatedBy },
+  });
+}
 
 @Injectable()
 export class PlanRepository {
@@ -490,13 +518,7 @@ export class PlanRepository {
       if (!current) {
         throw new NotFoundException(`FU ${planFuId} not found in this plan`);
       }
-      throw staleVersionConflict({
-        entity: 'PLAN_FU',
-        entityId: planFuId,
-        expectedVersion,
-        currentVersion: current.version,
-        current: { tactics: current.tactics, updatedBy: current.updatedBy },
-      });
+      throw planFuStaleConflict(current, expectedVersion);
     }
     const updated = await this.planFuRepo.findOne({
       where: { id: planFuId, tenantId },

@@ -45,6 +45,36 @@ import {
   readEnteredRaw,
 } from '../../../common/numeric/mechanic-input';
 
+/**
+ * THE single producer of the UNKNOWN_MECHANIC_CODE 400.
+ *
+ * Why it names the code, the FU, and the known codes: before this error
+ * existed, `if (val != null)` accepted anything and the value then sat in the
+ * map UNREAD, because the calculation loops iterate over MECHANICS, not over
+ * tactic keys. A typo produced no spend and no message. A planner who mistyped
+ * must be able to read the error and fix it themselves.
+ *
+ * Extracted from `buildMechanicValues` (its original and still primary caller)
+ * when F2/C3 added the second raiser — the write-side gate in
+ * `PlanService#updateFuTactic`. Two call sites, one body: a client must not be
+ * able to tell "rejected at the write" from "rejected during recalc" by the
+ * shape of the error, and the only way to keep that true is to build it here.
+ */
+export function unknownMechanicCodeError(
+  code: string,
+  planFuId: string | undefined,
+  knownByCode: Map<string, Mechanic>,
+): BadRequestException {
+  return new BadRequestException({
+    statusCode: 400,
+    code: 'UNKNOWN_MECHANIC_CODE',
+    message:
+      `Unknown or inactive mechanic code "${code}" on FU ` +
+      `${planFuId ?? '<unknown>'}. It carries no spend and cannot be ` +
+      `interpreted. Known active codes: ${[...knownByCode.keys()].sort().join(', ')}.`,
+  });
+}
+
 @Injectable()
 export class SpendCalculationService {
   private readonly logger = new Logger(SpendCalculationService.name);
@@ -669,19 +699,7 @@ export class SpendCalculationService {
     const put = (code: string, raw: number): void => {
       const mechanic = byCode.get(code);
       if (!mechanic) {
-        // Previously `if (val != null)` accepted anything and the value then sat
-        // in the map UNREAD, because the calculation loops iterate over
-        // MECHANICS, not over tactic keys. A typo produced no spend and no
-        // message. Naming the code and the FU is the point: a planner who
-        // mistyped must be able to read the error and fix it themselves.
-        throw new BadRequestException({
-          statusCode: 400,
-          code: 'UNKNOWN_MECHANIC_CODE',
-          message:
-            `Unknown or inactive mechanic code "${code}" on FU ` +
-            `${planFu.id ?? '<unknown>'}. It carries no spend and cannot be ` +
-            `interpreted. Known active codes: ${[...byCode.keys()].sort().join(', ')}.`,
-        });
+        throw unknownMechanicCodeError(code, planFu.id, byCode);
       }
       values[code] = toMechanicInput(mechanic, raw);
     };

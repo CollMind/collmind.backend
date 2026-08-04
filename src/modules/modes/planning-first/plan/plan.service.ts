@@ -6,7 +6,12 @@ import {
   ForbiddenException,
   ConflictException,
 } from '@nestjs/common';
-import { PlanRepository } from './plan.repository';
+import { PlanRepository, planFuStaleConflict } from './plan.repository';
+import { Mechanic } from '../../../../database/entities/mechanic.entity';
+import {
+  ScaleViolation,
+  checkEnteredScale,
+} from '../../../../common/numeric/mechanic-input';
 import {
   CreatePlanDto,
   UpdatePlanDto,
@@ -40,7 +45,10 @@ import {
   CalculationResult,
   SkuCalculationContext,
 } from '../../../shared/kpi-engine/kpi-engine.service';
-import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
+import {
+  SpendCalculationService,
+  unknownMechanicCodeError,
+} from '../../../shared/spend-calculation/spend-calculation.service';
 import {
   SKUContext,
   CalculationContext,
@@ -555,7 +563,76 @@ export class PlanService {
       throw missingVersionConflict({ entity: 'PLAN_FU', entityId: planFu.id });
     }
 
-    // Update tactics (CAS against plan_fus.version)
+    // C3 step 1: the mechanics this request's tactic keys will be judged
+    // against. Loaded ONCE here and handed to recalc below (step 5) instead
+    // of letting recalc re-query them — `getActiveMechanics` is uncached by
+    // design (tenant leakage / stale-config risk, see
+    // spend-calculation.service.ts), so without threading it through, the
+    // same request would issue the identical query twice.
+    const mechanics = await this.spendCalc.getActiveMechanics(tenantId);
+
+    // C3 step 2: version pre-check.
+    //
+    // ⚠️ THIS IS NOT THE RACE PROTECTION. The real compare-and-swap is the
+    // `updatePlanFuVersioned` call below, and it must stay there: between
+    // this read and that write another request can still land, in which case
+    // the CAS returns affected=0 and raises the same 409. That outcome is
+    // expected, not a hole.
+    //
+    // The only purpose of checking here is ORDERING: a stale request must not
+    // have its body scale-validated. A stale write reaches no column, so
+    // judging its values would report a 400 about numbers that were never
+    // going to be stored — and would mask the 409 the client actually needs.
+    // Do not delete the CAS below on the strength of this check.
+    if (planFu.version !== dto.version) {
+      throw planFuStaleConflict(planFu, dto.version);
+    }
+
+    // C3 step 3: scale validation — only for requests that got past step 2.
+    // Every value written by THIS endpoint passes the gate, for the three
+    // rules that have been decided (rate bound, kuruş on totals, finiteness);
+    // a value failing one is rejected, never rounded (CLAUDE.md §2.5). What is
+    // deliberately NOT judged is listed in checkEnteredScale's SCOPE note —
+    // read it before treating this line as "scale is closed". The scale itself
+    // comes from `toMechanicInput`, the same single derivation point the read
+    // side uses.
+    if (dto.tactics) {
+      const byCode = new Map(mechanics.map((m) => [m.code, m]));
+      const violations: ScaleViolation[] = [];
+      for (const [code, raw] of Object.entries(dto.tactics)) {
+        const mechanic = byCode.get(code);
+        // An unknown code is rejected here, at the write, through the SAME
+        // producer recalc uses (`unknownMechanicCodeError`,
+        // spend-calculation.service.ts) — not a second error source.
+        //
+        // This is not a new decision: it was already made downstream. Skipping
+        // the key here and letting recalc raise it is strictly worse, because
+        // the two are not in one transaction. The write commits on its own
+        // connection; recalc then throws and rolls back only ITS transaction.
+        // The client sees 400 and the bad key stays on disk — after which every
+        // later recalc AND submit for that plan hits the same 400 on the same
+        // key. The plan becomes unopenable by the same error that was supposed
+        // to be a typo message. Rejecting before the write is what keeps the
+        // 400 recoverable.
+        if (!mechanic) {
+          throw unknownMechanicCodeError(code, planFu.id, byCode);
+        }
+        const violation = checkEnteredScale(mechanic, raw);
+        if (violation) violations.push(violation);
+      }
+      if (violations.length > 0) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'INVALID_SCALE',
+          message:
+            'One or more entered values do not fit the scale of their mechanic.',
+          violations,
+        });
+      }
+    }
+
+    // C3 step 4: the write. CAS against plan_fus.version — the real race
+    // protection (see step 2).
     await this.planRepo.updatePlanFuVersioned(
       planFu.id,
       tenantId,
@@ -569,12 +646,15 @@ export class PlanService {
     // plan's FU count, so `plan` (loaded above, already scope-checked) is
     // still an accurate "does this plan have FUs" guard — pass it through
     // to skip recalc's own duplicate pre-transaction `findById`.
+    // C3 step 5: hand recalc the mechanics already loaded at step 1 rather
+    // than making it re-query them.
     await this.recalculatePlanWithKpiEngine(
       planId,
       tenantId,
       actor,
       plan,
       'updateFuTactic',
+      mechanics,
     );
 
     const savedPlanFu = (await this.planRepo.findPlanFu(
@@ -1880,6 +1960,20 @@ export class PlanService {
      * endpoint and any other direct caller that doesn't pass one).
      */
     trigger: RecalcTrigger = 'manual',
+    /**
+     * C3: active mechanics the CALLER already loaded in this same request.
+     *
+     * Only `updateFuTactic` passes it — it must load them anyway to
+     * scale-validate the incoming tactics before writing, and
+     * `getActiveMechanics` is deliberately uncached (see
+     * spend-calculation.service.ts), so without this parameter that one
+     * request would run the identical query twice. The other five callers
+     * have no such prior load and let the recalc fetch its own.
+     *
+     * Must be the ACTIVE mechanics for `tenantId` — this is a pass-through of
+     * work already done, not a way to inject a different mechanic set.
+     */
+    mechanics?: Mechanic[],
   ): Promise<void> {
     // Pre-transaction scope check (mirrors submit()/approve()'s "cheap
     // pre-transaction read" pattern, T-034b): 404/OUT_OF_SCOPE must be
@@ -1963,6 +2057,7 @@ export class PlanService {
         planId,
         tenantId,
         queryRunner.manager,
+        mechanics,
       );
 
       await queryRunner.commitTransaction();
@@ -2070,6 +2165,8 @@ export class PlanService {
     planId: string,
     tenantId: string,
     manager: EntityManager,
+    /** C3: see the same parameter on the public method above. */
+    preloadedMechanics?: Mechanic[],
   ): Promise<void> {
     const allFuResults: Array<Record<string, CalculationResult>> = [];
 
@@ -2079,8 +2176,11 @@ export class PlanService {
     // single method invocation only (local variable, not stored on `this`)
     // so it can never leak across tenants/requests or serve stale data from
     // a previous recalc — see spend-calculation.service.ts doc comment.
+    // C3: `preloadedMechanics` is the caller's copy of exactly this query,
+    // taken moments earlier in the same request; same scoping discipline
+    // applies either way (local to this invocation, never stored on `this`).
     const cachedActiveMechanics =
-      await this.spendCalc.getActiveMechanics(tenantId);
+      preloadedMechanics ?? (await this.spendCalc.getActiveMechanics(tenantId));
 
     // T-046a: LTA context depends only on (cplId, channelCode, categoryCode,
     // planId), all read from `plan` itself below — identical for every SKU
