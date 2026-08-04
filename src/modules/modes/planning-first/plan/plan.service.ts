@@ -504,13 +504,15 @@ export class PlanService {
       throw new ConflictException('FU already added to this plan');
     }
 
-    // Add FU to plan
+    // Add FU to plan. T-079: no `tactics` argument — the field was removed from
+    // AddFuDto because it was an ungated second write path to `plan_fus.tactics`
+    // with zero callers. A new FU is born with no tactics; they are entered
+    // through `PATCH .../tactics`, which is scale-validated (F2/C3).
     const planFu = await this.planRepo.addFu(
       planId,
       dto.fuId,
       tenantId,
       userId,
-      dto.tactics,
     );
 
     // Auto-add all SKUs for this FU

@@ -434,19 +434,26 @@ export class PlanRepository {
   }
 
   // PlanFU methods
+  /**
+   * T-079: the `tactics` parameter was removed along with `AddFuDto.tactics`.
+   * Leaving an unused parameter here would keep the dead write path alive one
+   * layer down — the endpoint would be closed while the repository still
+   * offered the door to any future caller.
+   *
+   * A new FU is born with no tactics. They arrive through
+   * `updatePlanFuVersioned`, the one scale-validated write path (F2/C3).
+   */
   async addFu(
     planId: string,
     fuId: string,
     tenantId: string,
     userId: string,
-    tactics?: Record<string, number>,
   ): Promise<PlanFu> {
     const planFu = this.planFuRepo.create({
       planId,
       fuId,
       tenantId,
       createdBy: userId,
-      tactics,
       totalPlannedVolume: 0,
       totalSpend: 0,
       totalGp: 0,

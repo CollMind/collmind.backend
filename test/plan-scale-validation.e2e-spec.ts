@@ -28,6 +28,16 @@
  *      stale request must not have its body scale-validated") gets its own
  *      named case here, not just an incidental fixture value in
  *      optimistic-locking.e2e-spec.ts.
+ *   7. T-079: `AddFuDto.tactics` was REMOVED (not gated) because it was an
+ *      ungated second write path into `plan_fus.tactics` — `POST
+ *      /plans/:id/fus` used to accept `tactics` and write it with zero
+ *      scale validation, while the identical value on `PATCH .../tactics`
+ *      was rejected by this same file's §0 cases. §3 below proves the
+ *      route now 400s on any `tactics` body (ValidationPipe
+ *      `forbidNonWhitelisted`), that the reject leaves zero `plan_fus`
+ *      rows behind, that the field-less POST still works, and that the
+ *      one remaining write path (PATCH .../tactics) still delivers the
+ *      same capability.
  *
  * Mechanic codes/types verified live against the seed DB (not assumed):
  *   docker exec collmind-tpm-postgres psql -U postgres -d collmind_tpm -c \
@@ -385,6 +395,113 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       const after = await getPlanFu(planId);
       expect(after.version).toBe(fuVersion + 1);
       expect(after.tactics.CPP_ON_PCT).toBe(10);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // §3 — T-079: `AddFuDto.tactics` removed. `POST /plans/:id/fus` used to
+  // accept a `tactics` body and write it straight into `plan_fus.tactics`
+  // with ZERO scale validation — the same JSONB column PATCH .../tactics
+  // gates via checkEnteredScale (F2/C3). `{ CPP_ON_PCT: 999 }` returned 201
+  // through this route while the identical value returned 400 on PATCH.
+  // The field is now GONE, not merely gated: ValidationPipe's
+  // `forbidNonWhitelisted` (main.ts:34 / app-bootstrap.ts:32, mirrored 1:1
+  // in the e2e app) rejects any request that still sends `tactics` here
+  // with 400, before the controller method — and so `addFu` — ever runs.
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('POST /fus rejects a `tactics` body — the ungated second write path to plan_fus.tactics is gone, not merely gated (T-079)', () => {
+    async function createDraftPlan(namePrefix: string): Promise<{
+      planId: string;
+      authHeader: ReturnType<
+        Awaited<ReturnType<typeof loginAs>>['authHeader']
+      >;
+    }> {
+      const planner = await loginAs(app, 'PLANNER');
+      const planRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-SCALE-${namePrefix}-${Date.now()}`,
+          cplId: fixture.cplId,
+          channelId: CHANNEL_NKA,
+          categoryId: CATEGORY_SAC_BOYASI,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      return { planId: planRes.body.id, authHeader: planner.authHeader() };
+    }
+
+    it('POST /plans/:id/fus with `tactics` in the body -> 400, naming `tactics` as the rejected (non-whitelisted) property', async () => {
+      const { planId, authHeader } = await createDraftPlan('ADDFU-TACTICS');
+
+      const res = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(authHeader)
+        .send({
+          fuId: FU_TUP_BOYA,
+          planVersion: 1,
+          tactics: { CPP_ON_PCT: 999 },
+        });
+
+      expect(res.status).toBe(400);
+      // ValidationPipe's forbidNonWhitelisted message shape is
+      // `["property tactics should not exist"]` (class-validator default) —
+      // assert the property name is actually named, not just "some 400".
+      const messages: string[] = Array.isArray(res.body.message)
+        ? res.body.message
+        : [res.body.message];
+      expect(
+        messages.some(
+          (m) => typeof m === 'string' && m.includes('tactics'),
+        ),
+      ).toBe(true);
+    });
+
+    it('no partial write: a rejected `tactics` body on POST /fus leaves the plan with zero FUs — the 400 alone is not proof, a validation-rejected request must never reach addFu()', async () => {
+      const { planId, authHeader } = await createDraftPlan(
+        'ADDFU-TACTICS-NO-WRITE',
+      );
+
+      const rejected = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(authHeader)
+        .send({
+          fuId: FU_TUP_BOYA,
+          planVersion: 1,
+          tactics: { CPP_ON_PCT: 999 },
+        });
+      expect(rejected.status).toBe(400);
+
+      const afterPlan = await request(app.getHttpServer())
+        .get(`/plans/${planId}`)
+        .set(authHeader)
+        .expect(200);
+      expect(afterPlan.body.planFus).toEqual([]);
+    });
+
+    it('POST /plans/:id/fus without `tactics` (fuId + planVersion only) -> still 201, created FU has no tactics, and the same value rejected above now writes through the one remaining route (PATCH .../tactics -> 200) — removal closed a path, not the capability', async () => {
+      const { planId, authHeader } = await createDraftPlan(
+        'ADDFU-CLEAN-THEN-PATCH',
+      );
+
+      const addFuRes = await request(app.getHttpServer())
+        .post(`/plans/${planId}/fus`)
+        .set(authHeader)
+        .send({ fuId: FU_TUP_BOYA, planVersion: 1 })
+        .expect(201);
+
+      expect(addFuRes.body.tactics == null).toBe(true);
+      const fuVersion = addFuRes.body.version;
+
+      const patchRes = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(authHeader)
+        .send({ tactics: { CPP_ON_PCT: 10 }, version: fuVersion });
+
+      expect(patchRes.status).toBe(200);
+      expect(patchRes.body.tactics.CPP_ON_PCT).toBe(10);
     });
   });
 });
