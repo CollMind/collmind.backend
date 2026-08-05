@@ -29,6 +29,10 @@ import {
 import { SpendBreakdown } from '../spend-calculation/dto/spend-breakdown.dto';
 import { Plan } from '../../../database/entities/plan.entity';
 import { BudgetThresholdService } from './budget-threshold.service';
+import {
+  moneyFromNumericString,
+  moneyToMajorUnits,
+} from '../../../common/numeric/money';
 
 @Injectable()
 export class BudgetAllocationService {
@@ -417,11 +421,43 @@ export class BudgetAllocationService {
 
     const allocation = reservation.budgetAllocation;
 
+    // T-091: ONE conversion per amount, shared by the `-=` and the `+=`.
+    //
+    // `allocation.*` carry a DecimalTransformer and arrive as NUMBERS.
+    // `reservation.*` (budget_transaction_logs) carry none and arrive as
+    // STRINGS. That mismatch made the two lines below behave differently
+    // despite looking identical:
+    //
+    //   number - string  ->  numeric coercion   ->  `-=` was CORRECT
+    //   number + string  ->  concatenation      ->  `+=` was BROKEN
+    //
+    //   utilized 500, amount "100.00"  ->  "500100.00"  ->  saved as 500100
+    //                                                        (should be 600)
+    //
+    // And this one is written to disk: the `save()` below persists it, on the
+    // plan-approval path, so every approval corrupted the envelope's utilised
+    // figure and every later threshold check, sufficiency test and report read
+    // the corrupted number. Measured: no rows exist yet, so nothing is damaged
+    // today — the defect was latent, waiting for the first real approval.
+    //
+    // Why it hid so well: `-=` and `+=` sit on adjacent lines with the same
+    // operands. A reader sees "same types, same operation" and moves on. The
+    // asymmetry is invisible without knowing which side has a transformer.
+    //
+    // Converting ONCE and using the result for both operations is what makes
+    // that asymmetry impossible to reintroduce.
+    const committedOnInvoice = moneyToMajorUnits(
+      moneyFromNumericString(String(reservation.onInvoiceAmount)),
+    );
+    const committedOffInvoice = moneyToMajorUnits(
+      moneyFromNumericString(String(reservation.offInvoiceAmount)),
+    );
+
     // Move reserved to utilized
-    allocation.onInvoiceReserved -= reservation.onInvoiceAmount;
-    allocation.onInvoiceUtilized += reservation.onInvoiceAmount;
-    allocation.offInvoiceReserved -= reservation.offInvoiceAmount;
-    allocation.offInvoiceUtilized += reservation.offInvoiceAmount;
+    allocation.onInvoiceReserved -= committedOnInvoice;
+    allocation.onInvoiceUtilized += committedOnInvoice;
+    allocation.offInvoiceReserved -= committedOffInvoice;
+    allocation.offInvoiceUtilized += committedOffInvoice;
 
     await this.budgetAllocationRepository.save(allocation);
 
@@ -468,9 +504,16 @@ export class BudgetAllocationService {
 
     const allocation = reservation.budgetAllocation;
 
-    // Release reserved amounts
-    allocation.onInvoiceReserved -= reservation.onInvoiceAmount;
-    allocation.offInvoiceReserved -= reservation.offInvoiceAmount;
+    // Release reserved amounts. T-091: these two are `-=` and were therefore
+    // already correct (subtraction coerces the string numerically), but they go
+    // through the same conversion so the file has ONE rule rather than two —
+    // "correct by coincidence of the operator" is not a property worth keeping.
+    allocation.onInvoiceReserved -= moneyToMajorUnits(
+      moneyFromNumericString(String(reservation.onInvoiceAmount)),
+    );
+    allocation.offInvoiceReserved -= moneyToMajorUnits(
+      moneyFromNumericString(String(reservation.offInvoiceAmount)),
+    );
 
     await this.budgetAllocationRepository.save(allocation);
 

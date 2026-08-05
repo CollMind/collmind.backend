@@ -142,9 +142,7 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
   describe('PERCENT mechanic out of bound -> 400 INVALID_SCALE', () => {
     it('CPP_ON_PCT: 150 (valid version) -> 400, code INVALID_SCALE, violations non-empty', async () => {
       const planner = await loginAs(app, 'PLANNER');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'PERCENT-OOB',
-      );
+      const { planId, fuVersion } = await createDraftPlanWithFu('PERCENT-OOB');
 
       const res = await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
@@ -163,9 +161,8 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
   describe('AMOUNT mechanic sub-kuruş -> 400 INVALID_SCALE', () => {
     it('VIS_LS (lumpsum): 100.005 (3 decimals, valid version) -> 400 INVALID_SCALE', async () => {
       const planner = await loginAs(app, 'PLANNER');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'AMOUNT-SUBKURUS',
-      );
+      const { planId, fuVersion } =
+        await createDraftPlanWithFu('AMOUNT-SUBKURUS');
 
       const res = await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
@@ -182,9 +179,8 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
   describe('AMOUNT_PER_UNIT exemption proven on the live route', () => {
     it('PRICE_SUP: 0.0125 TRY/unit (4 decimals, valid version) -> 200, NOT rejected', async () => {
       const planner = await loginAs(app, 'PLANNER');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'UNITAMOUNT-EXEMPT',
-      );
+      const { planId, fuVersion } =
+        await createDraftPlanWithFu('UNITAMOUNT-EXEMPT');
 
       const res = await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
@@ -259,9 +255,8 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
   describe('unknown mechanic code — rejected before the write (F2/C3)', () => {
     it('NO_SUCH_MECHANIC: 5 (valid version) -> 400 UNKNOWN_MECHANIC_CODE, naming the bad code and the known active codes', async () => {
       const planner = await loginAs(app, 'PLANNER');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'UNKNOWN-MECHANIC',
-      );
+      const { planId, fuVersion } =
+        await createDraftPlanWithFu('UNKNOWN-MECHANIC');
 
       const res = await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
@@ -309,10 +304,12 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       // a partial write that landed the key with a different/null value
       // would still fail this.
       expect(
-        after.tactics ? Object.prototype.hasOwnProperty.call(
-          after.tactics,
-          'NO_SUCH_MECHANIC',
-        ) : false,
+        after.tactics
+          ? Object.prototype.hasOwnProperty.call(
+              after.tactics,
+              'NO_SUCH_MECHANIC',
+            )
+          : false,
       ).toBe(false);
       expect(after.tactics).toEqual(before.tactics);
     });
@@ -360,9 +357,8 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
   describe('stale version wins over scale validation — a stale request is never scale-judged', () => {
     it('stale version (1) + a scale-invalid value (CPP_ON_PCT: 999, > 100) -> 409 STALE_VERSION, not 400 INVALID_SCALE', async () => {
       const planner = await loginAs(app, 'PLANNER');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'STALE-BEFORE-SCALE',
-      );
+      const { planId, fuVersion } =
+        await createDraftPlanWithFu('STALE-BEFORE-SCALE');
 
       // Advance plan_fus.version once (fuVersion -> fuVersion + 1) with a
       // valid, unrelated write, so `fuVersion` itself is now stale. Uses
@@ -415,9 +411,7 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
   describe('POST /fus rejects a `tactics` body — the ungated second write path to plan_fus.tactics is gone, not merely gated (T-079)', () => {
     async function createDraftPlan(namePrefix: string): Promise<{
       planId: string;
-      authHeader: ReturnType<
-        Awaited<ReturnType<typeof loginAs>>['authHeader']
-      >;
+      authHeader: ReturnType<Awaited<ReturnType<typeof loginAs>>['authHeader']>;
     }> {
       const planner = await loginAs(app, 'PLANNER');
       const planRes = await request(app.getHttpServer())
@@ -455,9 +449,7 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
         ? res.body.message
         : [res.body.message];
       expect(
-        messages.some(
-          (m) => typeof m === 'string' && m.includes('tactics'),
-        ),
+        messages.some((m) => typeof m === 'string' && m.includes('tactics')),
       ).toBe(true);
     });
 
@@ -528,9 +520,8 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
   describe('T-080 — PATCH .../tactics merges across separate requests (grid sends one mechanic key per request)', () => {
     it('two separate single-key requests both survive: CPP_ON_PCT (request 1) then CPP_OFF_PCT (request 2, separate call) -> GET shows both keys', async () => {
       const planner = await loginAs(app, 'PLANNER');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'MERGE-TWO-REQUESTS',
-      );
+      const { planId, fuVersion } =
+        await createDraftPlanWithFu('MERGE-TWO-REQUESTS');
 
       // Request 1: one mechanic only, as the grid sends it.
       const first = await request(app.getHttpServer())
@@ -815,9 +806,8 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       );
       const planner = await loginAs(app, 'PLANNER');
       const admin = await loginAs(app, 'ADMIN');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'DEACT-ISACTIVE',
-      );
+      const { planId, fuVersion } =
+        await createDraftPlanWithFu('DEACT-ISACTIVE');
 
       // Enter a valid value while the mechanic is still active.
       const write = await request(app.getHttpServer())
@@ -860,9 +850,7 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       );
       const planner = await loginAs(app, 'PLANNER');
       const admin = await loginAs(app, 'ADMIN');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'DEACT-DELETE',
-      );
+      const { planId, fuVersion } = await createDraftPlanWithFu('DEACT-DELETE');
 
       const write = await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
@@ -920,9 +908,8 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       );
       const planner = await loginAs(app, 'PLANNER');
       const admin = await loginAs(app, 'ADMIN');
-      const { planId, fuVersion } = await createDraftPlanWithFu(
-        'DEACT-RESUBMIT',
-      );
+      const { planId, fuVersion } =
+        await createDraftPlanWithFu('DEACT-RESUBMIT');
 
       const write = await request(app.getHttpServer())
         .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)

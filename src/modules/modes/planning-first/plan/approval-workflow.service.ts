@@ -130,9 +130,7 @@ export class ApprovalWorkflowService {
       for (const planFu of plan.planFus) {
         const hasMechanicValues =
           planFu.planMechanicValues &&
-          planFu.planMechanicValues.some((pmv: any) =>
-            hasEnteredValue(pmv),
-          );
+          planFu.planMechanicValues.some((pmv: any) => hasEnteredValue(pmv));
         const hasTactics =
           planFu.tactics && Object.keys(planFu.tactics).length > 0;
 

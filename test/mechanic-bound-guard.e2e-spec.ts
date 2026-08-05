@@ -32,7 +32,11 @@ import { DataSource } from 'typeorm';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache } from './helpers/auth';
-import { loadE2EFixture, resolveIdByCode, E2EFixture } from './helpers/seed-e2e';
+import {
+  loadE2EFixture,
+  resolveIdByCode,
+  E2EFixture,
+} from './helpers/seed-e2e';
 
 describe('Mechanic min/max bound guard — live route (T-084, E2E)', () => {
   let app: INestApplication;
@@ -47,14 +51,19 @@ describe('Mechanic min/max bound guard — live route (T-084, E2E)', () => {
     dataSource = app.get<DataSource>(getDataSourceToken());
     // Seeded with minValue=0, maxValue=NULL ("no upper bound") — the exact
     // shape that triggered the E1 defect (`0 >= null` coerced to `true`).
-    mechanicId = await resolveIdByCode(app, fixture.tenantId, 'mechanics', 'VIS_LS');
+    mechanicId = await resolveIdByCode(
+      app,
+      fixture.tenantId,
+      'mechanics',
+      'VIS_LS',
+    );
   });
 
   afterAll(async () => {
     await closeTestApp();
   });
 
-  it('PATCH with max_value=NULL mechanic: {isActive:false} → 200 (regression: old code 400\'d because open upper bound was coerced to 0)', async () => {
+  it("PATCH with max_value=NULL mechanic: {isActive:false} → 200 (regression: old code 400'd because open upper bound was coerced to 0)", async () => {
     const admin = await loginAs(app, 'ADMIN');
 
     const before = await request(app.getHttpServer())

@@ -446,6 +446,209 @@ describe('SpendValidationService', () => {
   });
 
   /* ================================================================ *
+   * T-091 — validateBudgetImpact: `totalOnInvoiceSpend` /
+   * `totalOffInvoiceSpend` accumulator string-concat fix
+   *
+   * `pmv.calculatedSpend` is a `numeric(18,2)` column with NO transformer —
+   * a STRING at runtime despite the TS type on `PlanMechanicValue` saying
+   * `number` (same shape as the T-089 `entered` defect, different field).
+   * Under the old code `totalOnInvoiceSpend += pmv.calculatedSpend` was
+   * string concatenation. A SINGLE mechanic per category hides this
+   * (`0 + "100.00" -> "0100.00" -> Number(...)` reads back as 100 by
+   * accident); these fixtures use TWO+ mechanics per category so the
+   * revealing second `+=` executes.
+   * ================================================================ */
+  describe('validateBudgetImpact — T-091 (accumulator string-concat fix)', () => {
+    let h: ServiceHarness;
+
+    beforeEach(async () => {
+      h = await createHarness();
+    });
+
+    function buildPlan(planFus: PlanFu[]): Partial<Plan> {
+      return {
+        id: PLAN_ID,
+        tenantId: TENANT_ID,
+        cplId: 'cpl-1',
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2026-01-31'),
+        channel: { code: 'NKA' } as any,
+        category: { code: 'DAIRY' } as any,
+        planFus,
+      };
+    }
+
+    it('sums calculatedSpend (STRING, numeric(18,2) shape) into correct NUMBERS for estimatedOnInvoiceSpend / estimatedOffInvoiceSpend — not NaN, not concatenated strings', async () => {
+      const onMechanic = makeMechanic({
+        code: 'ON_SPEND',
+        category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      });
+      const offMechanic = makeMechanic({
+        code: 'OFF_SPEND',
+        category: MechanicCategory.OFF_INVOICE_DISCOUNT,
+      });
+
+      // Two mechanics per category — the shape that reveals `+=`
+      // concatenation (a single mechanic per category would pass by
+      // accident, per the T-089/T-091 lesson documented above).
+      const pmvs = [
+        buildPmv(onMechanic, null, {
+          calculatedSpend: '100.00' as unknown as number,
+        }),
+        buildPmv(onMechanic, null, {
+          calculatedSpend: '50.25' as unknown as number,
+        }),
+        buildPmv(offMechanic, null, {
+          calculatedSpend: '20.00' as unknown as number,
+        }),
+        buildPmv(offMechanic, null, {
+          calculatedSpend: '15.75' as unknown as number,
+        }),
+      ];
+      const planFu = buildPlanFu(pmvs);
+      const plan = buildPlan([planFu]);
+
+      h.planRepo.findOne.mockResolvedValue(plan as Plan);
+      h.budgetAllocationService.checkAvailability.mockResolvedValue({
+        onInvoiceAvailable: 100000,
+        offInvoiceAvailable: 100000,
+        onInvoiceSufficient: true,
+        offInvoiceSufficient: true,
+        onInvoiceShortfall: 0,
+        offInvoiceShortfall: 0,
+        suggestions: [],
+      } as any);
+
+      const result = await h.service.validateBudgetImpact(TENANT_ID, PLAN_ID);
+
+      expect(h.budgetAllocationService.checkAvailability).toHaveBeenCalledTimes(
+        1,
+      );
+      const [, context] =
+        h.budgetAllocationService.checkAvailability.mock.calls[0];
+      expect(typeof context.estimatedOnInvoiceSpend).toBe('number');
+      expect(typeof context.estimatedOffInvoiceSpend).toBe('number');
+      expect(Number.isNaN(context.estimatedOnInvoiceSpend)).toBe(false);
+      expect(Number.isNaN(context.estimatedOffInvoiceSpend)).toBe(false);
+      // Not "0100.0050.25" -> NaN; the real arithmetic sum.
+      expect(context.estimatedOnInvoiceSpend).toBe(150.25);
+      expect(context.estimatedOffInvoiceSpend).toBe(35.75);
+      expect(result.isSufficient).toBe(true);
+    });
+  });
+
+  /* ================================================================ *
+   * T-091 — end-to-end: the literal "Shortfall: NaN" message fix
+   *
+   * The T-091 defect was a CHAIN, not a single-file bug: this service's
+   * broken `totalOnInvoiceSpend` accumulator produced NaN ->
+   * `estimatedOnInvoiceSpend: NaN` -> BudgetAllocationService.checkAvailability
+   * computed `available >= NaN` (always false, so EVERY plan reported
+   * "Insufficient On-Invoice budget" regardless of real budget) and
+   * `Math.max(0, NaN - available)` (NaN shortfall) -> rendered here as the
+   * literal string "Shortfall: NaN". Mocking BudgetAllocationService (as the
+   * harness above does) cannot reproduce that chain — this block wires the
+   * REAL BudgetAllocationService.checkAvailability behind
+   * SpendValidationService instead, both plain classes constructed directly
+   * (no Nest DI needed for either).
+   * ================================================================ */
+  describe('validateBudgetImpact — T-091 end-to-end (real checkAvailability, "Shortfall: NaN" message)', () => {
+    function createEndToEndHarness() {
+      const queryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getOne: jest.fn(),
+      };
+      const allocationRepo = {
+        createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+      };
+      const thresholdService = {
+        getThresholds: jest.fn(),
+        isExceeded: jest.fn(),
+      };
+
+      const realBudgetAllocationService = new BudgetAllocationService(
+        allocationRepo as any,
+        {} as any,
+        {} as any,
+        thresholdService as any,
+      );
+
+      const spendPlanRepo = { findOne: jest.fn() };
+
+      const service = new SpendValidationService(
+        spendPlanRepo as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        realBudgetAllocationService,
+        {} as any,
+      );
+
+      return { service, spendPlanRepo, queryBuilder };
+    }
+
+    it('produces a numeric "Shortfall: X.XX" message — not the literal "Shortfall: NaN" — for a multi-mechanic on-invoice overspend', async () => {
+      const { service, spendPlanRepo, queryBuilder } = createEndToEndHarness();
+
+      const onMechanic1 = makeMechanic({
+        code: 'ON_E2E_1',
+        category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      });
+      const onMechanic2 = makeMechanic({
+        code: 'ON_E2E_2',
+        category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      });
+      // Two on-invoice mechanics: under the old code the second `+=`
+      // concatenated the strings, producing NaN for totalOnInvoiceSpend.
+      const pmvs = [
+        buildPmv(onMechanic1, null, {
+          calculatedSpend: '600.00' as unknown as number,
+        }),
+        buildPmv(onMechanic2, null, {
+          calculatedSpend: '500.00' as unknown as number,
+        }),
+      ];
+      const planFu = buildPlanFu(pmvs);
+      const plan: Partial<Plan> = {
+        id: PLAN_ID,
+        tenantId: TENANT_ID,
+        cplId: 'cpl-1',
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2026-01-31'),
+        channel: { code: 'NKA' } as any,
+        category: { code: 'DAIRY' } as any,
+        planFus: [planFu],
+      };
+      spendPlanRepo.findOne.mockResolvedValue(plan as Plan);
+
+      // Real allocation with only 100 available on-invoice -> real shortfall.
+      queryBuilder.getOne.mockResolvedValue({
+        id: 'alloc-e2e',
+        onInvoiceAvailable: 100,
+        offInvoiceAvailable: 100000,
+      });
+
+      const result = await service.validateBudgetImpact(TENANT_ID, PLAN_ID);
+
+      expect(result.isSufficient).toBe(false);
+      // totalOnInvoiceSpend = 600 + 500 = 1100; available = 100.
+      expect(result.onInvoiceShortfall).toBe(1000);
+      expect(Number.isNaN(result.onInvoiceShortfall)).toBe(false);
+
+      const budgetError = result.errors.find((e) =>
+        e.message.includes('Insufficient On-Invoice budget'),
+      );
+      expect(budgetError).toBeDefined();
+      expect(budgetError!.message).toBe(
+        'Insufficient On-Invoice budget. Shortfall: 1000.00',
+      );
+      expect(budgetError!.message).not.toContain('NaN');
+    });
+  });
+
+  /* ================================================================ *
    * T-085 (not in scope here) will add:
    *   describe('validateInputs — T-085 (minValue/maxValue string compare + Number.isInteger)', ...)
    * reusing `createHarness`, `makeMechanic`, `buildPmv`, `buildPlanFu` above.

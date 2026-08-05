@@ -6,6 +6,10 @@ import {
   rateFromNumericString,
   rateToPercent,
 } from '../../../common/numeric/rate';
+import {
+  moneyFromNumericString,
+  moneyToMajorUnits,
+} from '../../../common/numeric/money';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -418,10 +422,33 @@ export class SpendValidationService {
         const mechanic = pmv.mechanic;
         if (!mechanic || !pmv.calculatedSpend) continue;
 
+        // T-091: ONE conversion point, and it produces a NUMBER.
+        //
+        // `calculatedSpend` is a `numeric(18,2)` column with no transformer, so
+        // it arrives as a STRING and `0 + "100.00"` was concatenation. Two or
+        // more mechanics turned the total into "0100.0050.00", which then went
+        // out as `estimatedOnInvoiceSpend` and reached `checkAvailability`,
+        // where `available >= "0100.0050.00"` is a NaN comparison and therefore
+        // always false: every plan reported "Insufficient On-Invoice budget",
+        // and the shortfall message rendered the literal text "Shortfall: NaN".
+        //
+        // Same shape as T-089: with a SINGLE mechanic it worked by accident
+        // (`Number("0100.00")` is 100) and only broke once a second appeared.
+        //
+        // `moneyFromNumericString` parses the numeric(18,2) text digit-wise
+        // instead of routing it through `Number()`, and throws rather than
+        // yielding a quiet NaN (§2.5). The column is scale 2 — measured — so it
+        // cannot throw on legitimate data. `moneyToMajorUnits` returns TRY,
+        // which is the representation these accumulators already use: this is a
+        // correctness fix, not a representation change (ADR 0007 K9).
+        const spend = moneyToMajorUnits(
+          moneyFromNumericString(String(pmv.calculatedSpend)),
+        );
+
         if (mechanic.category === MechanicCategory.ON_INVOICE_DISCOUNT) {
-          totalOnInvoiceSpend += pmv.calculatedSpend;
+          totalOnInvoiceSpend += spend;
         } else {
-          totalOffInvoiceSpend += pmv.calculatedSpend;
+          totalOffInvoiceSpend += spend;
         }
       }
     }

@@ -139,7 +139,7 @@ describe('MechanicService — min/max bound guard (T-084)', () => {
       await expect(service.create(tenantId, dto)).resolves.toBeDefined();
     });
 
-    it('min=50, max=100 → passes — REGRESSION: old code 400\'d here (both bounds present, min < max, but not 0)', async () => {
+    it("min=50, max=100 → passes — REGRESSION: old code 400'd here (both bounds present, min < max, but not 0)", async () => {
       const dto = baseCreateDto({ minValue: 50, maxValue: 100 });
       await expect(service.create(tenantId, dto)).resolves.toBeDefined();
     });
@@ -198,7 +198,7 @@ describe('MechanicService — min/max bound guard (T-084)', () => {
       ).resolves.toBeDefined();
     });
 
-    it('min=50, max=100 → passes — REGRESSION: old code 400\'d here', async () => {
+    it("min=50, max=100 → passes — REGRESSION: old code 400'd here", async () => {
       mechanicRepository.findOne.mockResolvedValue(
         baseMechanicEntity({ minValue: null, maxValue: null }),
       );
@@ -237,12 +237,12 @@ describe('MechanicService — min/max bound guard (T-084)', () => {
         baseMechanicEntity({ minValue: null, maxValue: null }),
       );
       const dto: UpdateMechanicDto = { minValue: 50, maxValue: 10 };
-      await expect(
-        service.update(tenantId, mechanicId, dto),
-      ).rejects.toThrow(BadRequestException);
-      await expect(
-        service.update(tenantId, mechanicId, dto),
-      ).rejects.toThrow('minValue must be less than maxValue');
+      await expect(service.update(tenantId, mechanicId, dto)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.update(tenantId, mechanicId, dto)).rejects.toThrow(
+        'minValue must be less than maxValue',
+      );
     });
 
     it('min == max → 400 (pinned current behaviour)', async () => {
@@ -250,9 +250,9 @@ describe('MechanicService — min/max bound guard (T-084)', () => {
         baseMechanicEntity({ minValue: null, maxValue: null }),
       );
       const dto: UpdateMechanicDto = { minValue: 50, maxValue: 50 };
-      await expect(
-        service.update(tenantId, mechanicId, dto),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.update(tenantId, mechanicId, dto)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('STRING bounds from a decimal column (the second trap): stored minValue/maxValue as "50.0000"/"100.0000" → passes, not rejected by lexicographic comparison', async () => {
@@ -280,9 +280,9 @@ describe('MechanicService — min/max bound guard (T-084)', () => {
         }),
       );
       const dto: UpdateMechanicDto = { isActive: false };
-      await expect(
-        service.update(tenantId, mechanicId, dto),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.update(tenantId, mechanicId, dto)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });

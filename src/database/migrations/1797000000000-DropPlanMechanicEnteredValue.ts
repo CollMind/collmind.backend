@@ -26,9 +26,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `plan_mechanic_values` holds 0 rows, so nothing is lost. `down()` restores
  * the column as it was — `numeric(18,4)`, nullable.
  */
-export class DropPlanMechanicEnteredValue1797000000000
-  implements MigrationInterface
-{
+export class DropPlanMechanicEnteredValue1797000000000 implements MigrationInterface {
   name = 'DropPlanMechanicEnteredValue1797000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

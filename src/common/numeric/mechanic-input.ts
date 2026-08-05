@@ -20,7 +20,10 @@
  * would carry the EXACTNESS. This phase delivers only the first.
  */
 
-import { Mechanic, MechanicType } from '../../database/entities/mechanic.entity';
+import {
+  Mechanic,
+  MechanicType,
+} from '../../database/entities/mechanic.entity';
 
 export type MechanicInput =
   /** Percentage notation, 0-100. PERCENT mechanics. */
@@ -50,7 +53,10 @@ export type MechanicInput =
  * An unrecognised type throws rather than defaulting: guessing a scale is how a
  * percentage becomes a TRY amount silently (CLAUDE.md §2.5).
  */
-export function toMechanicInput(mechanic: Mechanic, raw: number): MechanicInput {
+export function toMechanicInput(
+  mechanic: Mechanic,
+  raw: number,
+): MechanicInput {
   switch (mechanic.mechanicType) {
     case MechanicType.PERCENT:
       return { kind: 'rate', code: mechanic.code, percent: raw };

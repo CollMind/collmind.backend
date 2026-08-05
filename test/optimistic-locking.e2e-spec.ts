@@ -1163,12 +1163,8 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
            WHERE source_type = 'PLAN' AND source_id = $1 AND tx_type = 'COMMIT'`,
           [planId],
         );
-        const commitBuckets = new Set(
-          commitTx.map((r: any) => r.spend_type),
-        );
-        const commitKeys = new Set(
-          commitTx.map((r: any) => r.idempotency_key),
-        );
+        const commitBuckets = new Set(commitTx.map((r: any) => r.spend_type));
+        const commitKeys = new Set(commitTx.map((r: any) => r.idempotency_key));
         expect(commitBuckets.size).toBe(2); // ON_INVOICE + OFF_INVOICE, fixture-guaranteed
         expect(commitTx.length).toBe(commitBuckets.size); // exactly one COMMIT per bucket — no double-spend
         expect(commitKeys.size).toBe(commitTx.length); // COMMIT keys are distinct
@@ -1220,9 +1216,7 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
           // kaldırılsaydı bu, herhangi bir kovada 2. bir COMMIT (aynı
           // spend_type, farklı/aynı key) olarak görünürdü.
           const raceBuckets = new Set(commitTx.map((r: any) => r.spend_type));
-          const raceKeys = new Set(
-            commitTx.map((r: any) => r.idempotency_key),
-          );
+          const raceKeys = new Set(commitTx.map((r: any) => r.idempotency_key));
           expect(raceBuckets.size).toBe(2); // ON_INVOICE + OFF_INVOICE, fixture-guaranteed
           expect(commitTx.length).toBe(raceBuckets.size); // exactly one COMMIT per bucket — no double-spend
           expect(raceKeys.size).toBe(commitTx.length); // COMMIT keys are distinct

@@ -7,7 +7,10 @@
  * `unitAmount` exemption are argued there, not repeated here).
  */
 
-import { Mechanic, MechanicType } from '../../database/entities/mechanic.entity';
+import {
+  Mechanic,
+  MechanicType,
+} from '../../database/entities/mechanic.entity';
 import { checkEnteredScale, decimalPlaces } from './mechanic-input';
 
 function makeMechanic(code: string, mechanicType: MechanicType): Mechanic {
@@ -96,12 +99,15 @@ describe('checkEnteredScale', () => {
   describe('AMOUNT_PER_UNIT mechanics (kind: unitAmount) — deliberately exempt from the sub-kuruş rule', () => {
     const mechanic = makeMechanic('PRICE_SUP', MechanicType.AMOUNT_PER_UNIT);
 
-    it('0.0125 TRY/unit -> null — the deliberate exemption (see the ⚠️ block on checkEnteredScale). ' +
-      'This is a POSITIVE test of the exemption itself, not just "no violation": if a kuruş rule is ' +
-      'ever added to this branch by mistake, this is the assertion that must go red.', () => {
-      const violation = checkEnteredScale(mechanic, 0.0125);
-      expect(violation).toBeNull();
-    });
+    it(
+      '0.0125 TRY/unit -> null — the deliberate exemption (see the ⚠️ block on checkEnteredScale). ' +
+        'This is a POSITIVE test of the exemption itself, not just "no violation": if a kuruş rule is ' +
+        'ever added to this branch by mistake, this is the assertion that must go red.',
+      () => {
+        const violation = checkEnteredScale(mechanic, 0.0125);
+        expect(violation).toBeNull();
+      },
+    );
 
     it('NaN -> violation (finite-number precondition applies even to the exempt branch)', () => {
       const violation = checkEnteredScale(mechanic, NaN);

@@ -354,4 +354,116 @@ describe('BudgetAllocationService', () => {
       expect(budgetTransactionLogRepo.save).toHaveBeenCalled();
     });
   });
+
+  /* ================================================================ *
+   * T-091 — commitBudget: `+=` string-concatenation fix
+   *
+   * `allocation.onInvoiceUtilized` / `offInvoiceUtilized` load through
+   * DecimalTransformer as NUMBERS. `reservation.onInvoiceAmount` /
+   * `offInvoiceAmount` (budget_transaction_logs, no transformer) load as
+   * STRINGS. Under the old code `allocation.onInvoiceUtilized +=
+   * reservation.onInvoiceAmount` was string concatenation, not addition.
+   *
+   * A SINGLE commit against a zero baseline hides this
+   * (`0 + "100.00" -> "0100.00" -> Number(...)` happens to read back as 100).
+   * These tests start from a NON-ZERO baseline and run TWO CONSECUTIVE
+   * commits — the shape in which the defect cannot hide — and assert on
+   * what was actually handed to `budgetAllocationRepository.save()` on each
+   * call (a snapshot captured at save time), i.e. what would have been
+   * persisted, not a value read later off the mutated live object.
+   * ================================================================ */
+  describe('commitBudget — T-091 (accumulator string-concat fix)', () => {
+    function makeAllocation(): BudgetAllocation {
+      return {
+        id: mockAllocationId,
+        onInvoiceUtilized: 500,
+        onInvoiceReserved: 300,
+        offInvoiceUtilized: 200,
+        offInvoiceReserved: 150,
+      } as BudgetAllocation;
+    }
+
+    /**
+     * `onInvoiceAmount`/`offInvoiceAmount` are typed `number` on
+     * `BudgetTransactionLog`, but the column carries no transformer, so the
+     * pg driver returns STRINGS at runtime. Passing a JS number here would
+     * not exercise the defect this test exists to catch (T-091 task note;
+     * mirrors the T-089/T-080 lesson already documented in
+     * spend-validation.service.spec.ts).
+     */
+    function mockReservation(
+      planId: string,
+      allocation: BudgetAllocation,
+      onInvoiceAmount: string,
+      offInvoiceAmount: string,
+    ): BudgetTransactionLog {
+      return {
+        id: `tx-${planId}`,
+        planId,
+        onInvoiceAmount: onInvoiceAmount as unknown as number,
+        offInvoiceAmount: offInvoiceAmount as unknown as number,
+        budgetAllocation: allocation,
+      } as unknown as BudgetTransactionLog;
+    }
+
+    async function runTwoConsecutiveCommits(): Promise<BudgetAllocation[]> {
+      const allocation = makeAllocation();
+      const savedSnapshots: BudgetAllocation[] = [];
+      budgetAllocationRepo.save.mockImplementation(async (a: any) => {
+        savedSnapshots.push({ ...a });
+        return a;
+      });
+      budgetTransactionLogRepo.create.mockReturnValue({} as any);
+      budgetTransactionLogRepo.save.mockResolvedValue({} as any);
+
+      budgetTransactionLogRepo.findOne.mockResolvedValueOnce(
+        mockReservation('plan-a', allocation, '100.00', '40.00'),
+      );
+      await service.commitBudget(mockTenantId, mockUserId, 'plan-a');
+
+      budgetTransactionLogRepo.findOne.mockResolvedValueOnce(
+        mockReservation('plan-b', allocation, '75.50', '10.25'),
+      );
+      await service.commitBudget(mockTenantId, mockUserId, 'plan-b');
+
+      return savedSnapshots;
+    }
+
+    it('onInvoiceUtilized: accumulates correctly (as a NUMBER) across two consecutive commits, on the saved snapshot', async () => {
+      const savedSnapshots = await runTwoConsecutiveCommits();
+
+      expect(savedSnapshots).toHaveLength(2);
+      // After commit 1: 500 + 100.00 = 600
+      expect(savedSnapshots[0].onInvoiceUtilized).toBe(600);
+      expect(typeof savedSnapshots[0].onInvoiceUtilized).toBe('number');
+      // After commit 2: 600 + 75.50 = 675.5 — not "6000100.0075.50" -> NaN.
+      expect(savedSnapshots[1].onInvoiceUtilized).toBe(675.5);
+      expect(typeof savedSnapshots[1].onInvoiceUtilized).toBe('number');
+      expect(Number.isNaN(savedSnapshots[1].onInvoiceUtilized)).toBe(false);
+    });
+
+    it('offInvoiceUtilized: accumulates correctly (as a NUMBER) across two consecutive commits, on the saved snapshot', async () => {
+      const savedSnapshots = await runTwoConsecutiveCommits();
+
+      expect(savedSnapshots).toHaveLength(2);
+      // After commit 1: 200 + 40.00 = 240
+      expect(savedSnapshots[0].offInvoiceUtilized).toBe(240);
+      expect(typeof savedSnapshots[0].offInvoiceUtilized).toBe('number');
+      // After commit 2: 240 + 10.25 = 250.25 — not a concatenated string.
+      expect(savedSnapshots[1].offInvoiceUtilized).toBe(250.25);
+      expect(typeof savedSnapshots[1].offInvoiceUtilized).toBe('number');
+      expect(Number.isNaN(savedSnapshots[1].offInvoiceUtilized)).toBe(false);
+    });
+
+    it('onInvoiceReserved / offInvoiceReserved: the `-=` side (already correct pre-fix) still moves in lockstep with the shared conversion', async () => {
+      const savedSnapshots = await runTwoConsecutiveCommits();
+
+      // After commit 1: reserved 300 - 100.00 = 200; 150 - 40.00 = 110
+      expect(savedSnapshots[0].onInvoiceReserved).toBe(200);
+      expect(savedSnapshots[0].offInvoiceReserved).toBe(110);
+      // After commit 2: 200 - 75.50 = 124.5; 110 - 10.25 = 99.75
+      expect(savedSnapshots[1].onInvoiceReserved).toBe(124.5);
+      expect(savedSnapshots[1].offInvoiceReserved).toBe(99.75);
+    });
+  });
 });

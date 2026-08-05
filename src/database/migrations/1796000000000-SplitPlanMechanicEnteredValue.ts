@@ -36,9 +36,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `migration:run` on a reset database, not an in-place production migration —
  * CTPM has no deployed environment (CLAUDE.md §1).
  */
-export class SplitPlanMechanicEnteredValue1796000000000
-  implements MigrationInterface
-{
+export class SplitPlanMechanicEnteredValue1796000000000 implements MigrationInterface {
   name = 'SplitPlanMechanicEnteredValue1796000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

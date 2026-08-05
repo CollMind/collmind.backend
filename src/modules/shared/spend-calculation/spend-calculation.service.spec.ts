@@ -120,7 +120,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-1',
         code: 'CPP_ON',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
-      mechanicType: MechanicType.PERCENT,
+        mechanicType: MechanicType.PERCENT,
         spendingType: SpendingType.ON_INVOICE,
         isActive: true,
       };
@@ -166,7 +166,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-2',
         code: 'PRICE_SUPPORT',
         category: MechanicCategory.PER_UNIT_SUPPORT,
-      mechanicType: MechanicType.AMOUNT_PER_UNIT,
+        mechanicType: MechanicType.AMOUNT_PER_UNIT,
         spendingType: SpendingType.OFF_INVOICE,
         isActive: true,
       };
@@ -234,7 +234,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-1',
         code: 'CPP_ON',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
-      mechanicType: MechanicType.PERCENT,
+        mechanicType: MechanicType.PERCENT,
         spendingType: SpendingType.ON_INVOICE,
         isActive: true,
       };
@@ -243,7 +243,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-2',
         code: 'PRICE_SUPPORT',
         category: MechanicCategory.PER_UNIT_SUPPORT,
-      mechanicType: MechanicType.AMOUNT_PER_UNIT,
+        mechanicType: MechanicType.AMOUNT_PER_UNIT,
         spendingType: SpendingType.OFF_INVOICE,
         isActive: true,
       };
@@ -292,7 +292,7 @@ describe('SpendCalculationService', () => {
           {
             code: 'mech-1',
             category: MechanicCategory.LUMPSUM_SPEND,
-      mechanicType: MechanicType.AMOUNT,
+            mechanicType: MechanicType.AMOUNT,
           } as Mechanic,
         ],
         [
@@ -317,7 +317,7 @@ describe('SpendCalculationService', () => {
             {
               code: 'mech-1',
               category: MechanicCategory.LUMPSUM_SPEND,
-      mechanicType: MechanicType.AMOUNT,
+              mechanicType: MechanicType.AMOUNT,
             } as Mechanic,
           ],
           [],
@@ -542,7 +542,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-1',
         code: 'CPP_ON',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
-      mechanicType: MechanicType.PERCENT,
+        mechanicType: MechanicType.PERCENT,
         spendingType: SpendingType.ON_INVOICE,
         isActive: true,
       };
@@ -771,12 +771,16 @@ describe('SpendCalculationService', () => {
     ] as unknown as Mechanic[];
 
     it('should merge plan_mechanic_values and tactics into one map', async () => {
-      const result = await service.buildMechanicValues({
-        tactics: { VIS_LS: 2000 },
-        planMechanicValues: [
-          { mechanic: { code: 'CPP_ON_PCT' }, enteredRatePct: 10 },
-        ],
-      }, mechs, mockTenantId);
+      const result = await service.buildMechanicValues(
+        {
+          tactics: { VIS_LS: 2000 },
+          planMechanicValues: [
+            { mechanic: { code: 'CPP_ON_PCT' }, enteredRatePct: 10 },
+          ],
+        },
+        mechs,
+        mockTenantId,
+      );
 
       expect(result).toEqual({
         CPP_ON_PCT: rateIn('CPP_ON_PCT', 10),
@@ -785,18 +789,24 @@ describe('SpendCalculationService', () => {
     });
 
     it('tactics should win over plan_mechanic_values on the same mechanic code (no summing / no double-count)', async () => {
-      const result = await service.buildMechanicValues({
-        tactics: { 'MEC-DISCOUNT': 7 },
-        planMechanicValues: [
-          { mechanic: { code: 'MEC-DISCOUNT' }, enteredRatePct: 10 },
-        ],
-      }, mechs, mockTenantId);
+      const result = await service.buildMechanicValues(
+        {
+          tactics: { 'MEC-DISCOUNT': 7 },
+          planMechanicValues: [
+            { mechanic: { code: 'MEC-DISCOUNT' }, enteredRatePct: 10 },
+          ],
+        },
+        mechs,
+        mockTenantId,
+      );
 
       expect(result).toEqual({ 'MEC-DISCOUNT': rateIn('MEC-DISCOUNT', 7) });
     });
 
     it('should return an empty map when both sources are absent', async () => {
-      await expect(service.buildMechanicValues({}, mechs, mockTenantId)).resolves.toEqual({});
+      await expect(
+        service.buildMechanicValues({}, mechs, mockTenantId),
+      ).resolves.toEqual({});
     });
 
     /**
@@ -897,7 +907,7 @@ describe('SpendCalculationService', () => {
         id: 'mech-both-on',
         code: 'CPP_BOTH',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
-      mechanicType: MechanicType.PERCENT,
+        mechanicType: MechanicType.PERCENT,
         spendingType: SpendingType.BOTH,
         isActive: true,
       };
