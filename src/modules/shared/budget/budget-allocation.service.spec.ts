@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { NotFoundException } from '@nestjs/common';
 import { BudgetAllocationService } from './budget-allocation.service';
 import {
   BudgetAllocation,
@@ -464,6 +465,274 @@ describe('BudgetAllocationService', () => {
       // After commit 2: 200 - 75.50 = 124.5; 110 - 10.25 = 99.75
       expect(savedSnapshots[1].onInvoiceReserved).toBe(124.5);
       expect(savedSnapshots[1].offInvoiceReserved).toBe(99.75);
+    });
+  });
+
+  /* ================================================================ *
+   * T-094 — tenant isolation (INV-T-001)
+   *
+   * `commitBudget`, `releaseBudget`, `adjustUtilization` all received
+   * `tenantId` as their first parameter but never put it in the
+   * `budgetTransactionLogRepository.findOne` `where` clause — only
+   * `planId` (+ `transactionType`) scoped the lookup. A caller passing
+   * tenant B's id with tenant A's planId could still find and mutate
+   * tenant A's reservation/commit row and its linked allocation.
+   *
+   * These tests do NOT use `mockResolvedValue`/`mockResolvedValueOnce`
+   * (which return the fixture unconditionally, regardless of `where`).
+   * Instead `findOne` is mocked to inspect `options.where` and return
+   * `null` unless `tenantId` (and `planId`/`transactionType`) match the
+   * fixture — i.e. the mock behaves like a real, tenant-scoped SQL
+   * WHERE clause. Without this, the test would still pass after
+   * reverting the `tenantId` predicate in the service, and prove
+   * nothing (see task note: "bu testin can damarı budur").
+   * ================================================================ */
+  describe('tenant isolation — commitBudget / releaseBudget / adjustUtilization (T-094, INV-T-001)', () => {
+    const tenantA = 'tenant-A';
+    const tenantB = 'tenant-B';
+    const crossTenantPlanId = 'plan-cross-tenant';
+
+    function makeAllocationA(): BudgetAllocation {
+      return {
+        id: 'allocation-A',
+        onInvoiceReserved: 300,
+        onInvoiceUtilized: 500,
+        offInvoiceReserved: 150,
+        offInvoiceUtilized: 200,
+      } as BudgetAllocation;
+    }
+
+    /**
+     * Simulates a tenant-scoped repository: only returns the row when the
+     * `where` clause passed by the service actually matches the fixture's
+     * tenant (and the other predicates). This is what makes these tests
+     * capable of failing if the `tenantId` predicate is removed from the
+     * service query.
+     */
+    function mockTenantScopedFindOne(
+      repo: any,
+      row: any,
+      expectedWhere: Record<string, unknown>,
+    ) {
+      repo.findOne.mockImplementation(async (options: any) => {
+        const where = options?.where ?? {};
+        const matches = Object.entries(expectedWhere).every(
+          ([key, value]) => where[key] === value,
+        );
+        return matches ? row : null;
+      });
+    }
+
+    describe('commitBudget', () => {
+      it('does not commit tenant A budget when called with tenant B tenantId (row not found)', async () => {
+        const allocationA = makeAllocationA();
+        const reservationA = {
+          id: 'tx-A',
+          planId: crossTenantPlanId,
+          onInvoiceAmount: '100.00' as unknown as number,
+          offInvoiceAmount: '40.00' as unknown as number,
+          budgetAllocation: allocationA,
+        } as unknown as BudgetTransactionLog;
+
+        mockTenantScopedFindOne(budgetTransactionLogRepo, reservationA, {
+          tenantId: tenantA,
+          planId: crossTenantPlanId,
+          transactionType: BudgetTransactionType.RESERVATION,
+        });
+
+        await expect(
+          service.commitBudget(tenantB, mockUserId, crossTenantPlanId),
+        ).rejects.toThrow(NotFoundException);
+
+        expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+        // A's allocation must be untouched.
+        expect(allocationA.onInvoiceReserved).toBe(300);
+        expect(allocationA.onInvoiceUtilized).toBe(500);
+        expect(allocationA.offInvoiceReserved).toBe(150);
+        expect(allocationA.offInvoiceUtilized).toBe(200);
+      });
+
+      it('commits normally when called with the correct (owning) tenantId', async () => {
+        const allocationA = makeAllocationA();
+        const reservationA = {
+          id: 'tx-A',
+          planId: crossTenantPlanId,
+          onInvoiceAmount: '100.00' as unknown as number,
+          offInvoiceAmount: '40.00' as unknown as number,
+          budgetAllocation: allocationA,
+        } as unknown as BudgetTransactionLog;
+
+        mockTenantScopedFindOne(budgetTransactionLogRepo, reservationA, {
+          tenantId: tenantA,
+          planId: crossTenantPlanId,
+          transactionType: BudgetTransactionType.RESERVATION,
+        });
+        budgetAllocationRepo.save.mockResolvedValue({} as BudgetAllocation);
+        budgetTransactionLogRepo.create.mockReturnValue({} as any);
+        budgetTransactionLogRepo.save.mockResolvedValue({} as any);
+
+        await service.commitBudget(tenantA, mockUserId, crossTenantPlanId);
+
+        expect(budgetAllocationRepo.save).toHaveBeenCalled();
+        expect(allocationA.onInvoiceReserved).toBe(200);
+        expect(allocationA.onInvoiceUtilized).toBe(600);
+        expect(allocationA.offInvoiceReserved).toBe(110);
+        expect(allocationA.offInvoiceUtilized).toBe(240);
+      });
+    });
+
+    describe('releaseBudget', () => {
+      it('does not release tenant A budget when called with tenant B tenantId (row not found, logs warning and returns)', async () => {
+        const allocationA = makeAllocationA();
+        const reservationA = {
+          id: 'tx-A',
+          planId: crossTenantPlanId,
+          onInvoiceAmount: '100.00' as unknown as number,
+          offInvoiceAmount: '40.00' as unknown as number,
+          budgetAllocation: allocationA,
+        } as unknown as BudgetTransactionLog;
+
+        mockTenantScopedFindOne(budgetTransactionLogRepo, reservationA, {
+          tenantId: tenantA,
+          planId: crossTenantPlanId,
+          transactionType: BudgetTransactionType.RESERVATION,
+        });
+        const warnSpy = jest
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+
+        await expect(
+          service.releaseBudget(tenantB, mockUserId, crossTenantPlanId),
+        ).resolves.toBeUndefined();
+
+        expect(warnSpy).toHaveBeenCalled();
+        expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+        expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
+        // A's allocation must be untouched.
+        expect(allocationA.onInvoiceReserved).toBe(300);
+        expect(allocationA.offInvoiceReserved).toBe(150);
+      });
+
+      it('releases normally when called with the correct (owning) tenantId', async () => {
+        const allocationA = makeAllocationA();
+        const reservationA = {
+          id: 'tx-A',
+          planId: crossTenantPlanId,
+          onInvoiceAmount: '100.00' as unknown as number,
+          offInvoiceAmount: '40.00' as unknown as number,
+          budgetAllocation: allocationA,
+        } as unknown as BudgetTransactionLog;
+
+        mockTenantScopedFindOne(budgetTransactionLogRepo, reservationA, {
+          tenantId: tenantA,
+          planId: crossTenantPlanId,
+          transactionType: BudgetTransactionType.RESERVATION,
+        });
+        budgetAllocationRepo.save.mockResolvedValue({} as BudgetAllocation);
+        budgetTransactionLogRepo.create.mockReturnValue({} as any);
+        budgetTransactionLogRepo.save.mockResolvedValue({} as any);
+
+        await service.releaseBudget(tenantA, mockUserId, crossTenantPlanId);
+
+        expect(budgetAllocationRepo.save).toHaveBeenCalled();
+        expect(allocationA.onInvoiceReserved).toBe(200);
+        expect(allocationA.offInvoiceReserved).toBe(110);
+      });
+    });
+
+    describe('adjustUtilization', () => {
+      const newAmounts: SpendBreakdown = {
+        skuId: 'sku-1',
+        base: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        planned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 0,
+          totalPromoOffInvoice: 0,
+          totalOnInvoice: 120,
+          totalOffInvoice: 45,
+          totalSpend: 165,
+        },
+        incremental: {
+          onInvoice: 120,
+          offInvoice: 45,
+          total: 165,
+        },
+      } as SpendBreakdown;
+
+      it('does not adjust tenant A budget when called with tenant B tenantId (row not found)', async () => {
+        const allocationA = makeAllocationA();
+        const commitA = {
+          id: 'tx-commit-A',
+          planId: crossTenantPlanId,
+          onInvoiceAmount: '100.00' as unknown as number,
+          offInvoiceAmount: '40.00' as unknown as number,
+          budgetAllocation: allocationA,
+        } as unknown as BudgetTransactionLog;
+
+        mockTenantScopedFindOne(budgetTransactionLogRepo, commitA, {
+          tenantId: tenantA,
+          planId: crossTenantPlanId,
+          transactionType: BudgetTransactionType.COMMIT,
+        });
+
+        await expect(
+          service.adjustUtilization(
+            tenantB,
+            mockUserId,
+            crossTenantPlanId,
+            newAmounts,
+            'revision',
+          ),
+        ).rejects.toThrow(NotFoundException);
+
+        expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+        // A's allocation must be untouched.
+        expect(allocationA.onInvoiceUtilized).toBe(500);
+        expect(allocationA.offInvoiceUtilized).toBe(200);
+      });
+
+      it('adjusts normally when called with the correct (owning) tenantId', async () => {
+        const allocationA = makeAllocationA();
+        const commitA = {
+          id: 'tx-commit-A',
+          planId: crossTenantPlanId,
+          onInvoiceAmount: '100.00' as unknown as number,
+          offInvoiceAmount: '40.00' as unknown as number,
+          budgetAllocation: allocationA,
+        } as unknown as BudgetTransactionLog;
+
+        mockTenantScopedFindOne(budgetTransactionLogRepo, commitA, {
+          tenantId: tenantA,
+          planId: crossTenantPlanId,
+          transactionType: BudgetTransactionType.COMMIT,
+        });
+        budgetAllocationRepo.save.mockResolvedValue({} as BudgetAllocation);
+        budgetTransactionLogRepo.create.mockReturnValue({} as any);
+        budgetTransactionLogRepo.save.mockResolvedValue({} as any);
+
+        await service.adjustUtilization(
+          tenantA,
+          mockUserId,
+          crossTenantPlanId,
+          newAmounts,
+          'revision',
+        );
+
+        expect(budgetAllocationRepo.save).toHaveBeenCalled();
+        // onInvoiceDiff = 120 - 100 = 20 -> 500 + 20 = 520
+        expect(allocationA.onInvoiceUtilized).toBe(520);
+        // offInvoiceDiff = 45 - 40 = 5 -> 200 + 5 = 205
+        expect(allocationA.offInvoiceUtilized).toBe(205);
+      });
     });
   });
 });

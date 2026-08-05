@@ -404,9 +404,18 @@ export class BudgetAllocationService {
     userId: string,
     planId: string,
   ): Promise<void> {
-    // Find reservation transaction
+    // T-094: `tenantId` predicate. It was missing while the method HAD the
+    // tenantId in hand and used it only when writing the audit row — the data
+    // was there, the query just did not use it. SYSTEM_INVARIANTS INV-T-001
+    // ("no financial query runs without a tenant_id predicate") was being
+    // violated on a path that MOVES MONEY.
+    //
+    // Not defence in depth for its own sake: relying on the caller having
+    // scoped `planId` is exactly the reasoning T-034 §1.5 rejected in
+    // plan.repository.ts ("not a real defense layer on its own").
     const reservation = await this.budgetTransactionLogRepository.findOne({
       where: {
+        tenantId,
         planId,
         transactionType: BudgetTransactionType.RESERVATION,
       },
@@ -487,8 +496,10 @@ export class BudgetAllocationService {
     userId: string,
     planId: string,
   ): Promise<void> {
+    // T-094: see commitBudget above for why this predicate is required.
     const reservation = await this.budgetTransactionLogRepository.findOne({
       where: {
+        tenantId,
         planId,
         transactionType: BudgetTransactionType.RESERVATION,
       },
@@ -543,8 +554,11 @@ export class BudgetAllocationService {
     reason: string,
   ): Promise<void> {
     // Find existing commit transaction
+    // T-094: see commitBudget above. This one was NOT in the original report —
+    // the review named commitBudget and releaseBudget; the sweep found a third.
     const existingCommit = await this.budgetTransactionLogRepository.findOne({
       where: {
+        tenantId,
         planId,
         transactionType: BudgetTransactionType.COMMIT,
       },
