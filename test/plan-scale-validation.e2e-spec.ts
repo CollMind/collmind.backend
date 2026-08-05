@@ -58,6 +58,8 @@
 
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import { getDataSourceToken } from '@nestjs/typeorm';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache } from './helpers/auth';
 import {
@@ -682,6 +684,273 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       expect(
         Object.prototype.hasOwnProperty.call(after.tactics, 'CPP_ON_PCT'),
       ).toBe(false);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // T-083a — a mechanic that a plan already carries a value for gets
+  // deactivated (or soft-deleted) out from under it. The plan must be told
+  // "this mechanic is gone, contact support" (MECHANIC_DEACTIVATED), not
+  // "you mistyped a code" (UNKNOWN_MECHANIC_CODE) — see
+  // spend-calculation.service.ts's `orphanedMechanicCodeError` /
+  // `describeUnresolvedMechanicCode` doc comments.
+  //
+  // No seeded mechanic is ever inactive/deleted (verified live, 6/6 active
+  // — see this file's header), so both fixtures are built and torn down
+  // entirely inside this block: a fresh mechanic is created via the ADMIN
+  // API per case, exercised, then hard-deleted (mechanics row + the
+  // admin_audit_logs rows CREATE/UPDATE/DELETE on it produced) in afterAll.
+  // `main.mechanics` itself is not part of the T-047 row-count invariant
+  // (test/helpers/e2e-row-count.js), but `main.admin_audit_logs` IS, and
+  // e2e-row-count.js's own comment notes mechanic.service.ts's audit writes
+  // were never covered because "no e2e spec calls those endpoints" — this
+  // file now does, so its audit rows must be cleaned up explicitly or the
+  // invariant goes red for a reason unrelated to what this suite tests.
+  //
+  // TWO TRIGGER SHAPES, verified against the code (not assumed). Both reach
+  // MECHANIC_DEACTIVATED, and they arrive by different routes — which is why
+  // the cases below cover both rather than picking one:
+  //
+  //   step 3, the WRITE gate (plan.service.ts). `byCode` is built from
+  //   `getActiveMechanics` (fresh per request), so a deactivated code named IN
+  //   THE REQUEST BODY is unresolvable here. It goes through
+  //   `describeUnresolvedMechanicCode`, the same resolver recalc uses.
+  //
+  //   step 5, the RECALC path. Reads the FU's full *stored* `tactics` (merged
+  //   across past requests, including the now-orphaned key) via
+  //   `buildMechanicValues`. This fires even when the request does NOT name the
+  //   deactivated code — omitting `tactics` entirely is enough, because that is
+  //   a no-op merge (T-080 / ADR 0008) and the step-5 recalc still runs.
+  //
+  // An earlier revision of this comment said step 3 called
+  // `unknownMechanicCodeError` directly and therefore still reported a typo.
+  // That WAS true and was a real half-fix: T-083a had corrected only the read
+  // side. The QA pass caught it, the write gate was routed through the same
+  // resolver, and the case below now pins the corrected behaviour.
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('mechanic deactivated/deleted after a plan already entered a value — MECHANIC_DEACTIVATED (T-083a)', () => {
+    let dataSource: DataSource;
+    const createdMechanicIds: string[] = [];
+
+    beforeAll(() => {
+      dataSource = app.get<DataSource>(getDataSourceToken());
+    });
+
+    afterAll(async () => {
+      if (createdMechanicIds.length === 0) return;
+      // admin_audit_logs first (no FK to mechanics — polymorphic entity_id,
+      // same pattern as cleanupTestPlans/cleanupTestAgreements) so a partial
+      // failure never leaves the mechanics row deleted but its audit trail
+      // dangling with no way to re-target it.
+      await dataSource.query(
+        `DELETE FROM main.admin_audit_logs
+          WHERE tenant_id = $1 AND entity_type = 'mechanic'
+            AND entity_id = ANY($2::uuid[])`,
+        [fixture.tenantId, createdMechanicIds],
+      );
+      // Hard delete (not soft): bypasses TypeORM's default withDeleted:false
+      // scope, needed because the DELETE-path case leaves the row
+      // soft-deleted (deleted_at set), and a hard DELETE ... WHERE id = ANY
+      // still reaches it regardless of that column's value.
+      await dataSource.query(
+        `DELETE FROM main.mechanics WHERE id = ANY($1::uuid[])`,
+        [createdMechanicIds],
+      );
+    });
+
+    /**
+     * Admin-created, tenant-scoped, PERCENT mechanic — isolated per case.
+     *
+     * `minValue`/`maxValue` are set explicitly (0/100) even though
+     * `CreateMechanicDto` marks both optional — this is a WORKAROUND, not a
+     * style choice, for a defect this QA pass found and is reporting
+     * separately (see the run's QA report): `MechanicService#update`
+     * (mechanic.service.ts, the min<max guard) compares
+     * `updateDto.minValue ?? mechanic.minValue` against
+     * `updateDto.maxValue ?? mechanic.maxValue` with `!== undefined` checks —
+     * but a persisted-then-reloaded `null` is `!== undefined` too, so a
+     * mechanic with either bound left `null` (this fixture, if created
+     * without both; also true TODAY for the seeded VIS_LS/DISPLAY_FEE/
+     * PRICE_SUP rows, which have `max_value IS NULL`) fails `null >= null` /
+     * `0 >= null` (both coerce to `0 >= 0`, true) and 400s
+     * "minValue must be less than maxValue" on ANY `PATCH
+     * /master-data/mechanics/:id` — including one that only touches
+     * `isActive`. Live-reproduced 2026-08-05 against this exact fixture
+     * (before this workaround was added) and separately confirmed the same
+     * PATCH would 400 for VIS_LS/DISPLAY_FEE/PRICE_SUP too. Not fixed here —
+     * out of scope for T-083a and this task is test-only.
+     */
+    async function createTestMechanic(
+      code: string,
+      name: string,
+    ): Promise<{ id: string; code: string; name: string }> {
+      const admin = await loginAs(app, 'ADMIN');
+      const tacticId = await resolveIdByCode(
+        app,
+        fixture.tenantId,
+        'tactics',
+        'TAC-ON-DISCOUNT',
+      );
+      const res = await request(app.getHttpServer())
+        .post('/master-data/mechanics')
+        .set(admin.authHeader())
+        .send({
+          code,
+          name,
+          tacticId,
+          mechanicType: 'PERCENT',
+          minValue: 0,
+          maxValue: 100,
+        })
+        .expect(201);
+      createdMechanicIds.push(res.body.id);
+      return { id: res.body.id, code: res.body.code, name: res.body.name };
+    }
+
+    it('isActive:false path: PATCH /master-data/mechanics/:id deactivates (row stays, is_active=false) -> a later tactics PATCH on the same FU 400s MECHANIC_DEACTIVATED, names the mechanic, and does NOT list known/valid codes', async () => {
+      const mech = await createTestMechanic(
+        'E2E_DEACT_PATCH',
+        'E2E Deactivation via PATCH isActive',
+      );
+      const planner = await loginAs(app, 'PLANNER');
+      const admin = await loginAs(app, 'ADMIN');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'DEACT-ISACTIVE',
+      );
+
+      // Enter a valid value while the mechanic is still active.
+      const write = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { [mech.code]: 10 }, version: fuVersion });
+      expect(write.status).toBe(200);
+      expect(write.body.tactics[mech.code]).toBe(10);
+
+      // Admin deactivates — soft, row survives with is_active=false.
+      await request(app.getHttpServer())
+        .patch(`/master-data/mechanics/${mech.id}`)
+        .set(admin.authHeader())
+        .send({ isActive: false })
+        .expect(200);
+
+      // A further PATCH on the same FU, `tactics` omitted: still a valid,
+      // versioned request (T-080 no-op merge) that still runs step 5's
+      // recalc — which is where the orphaned E2E_DEACT_PATCH entry left by
+      // the write above is discovered.
+      const rejected = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ version: write.body.version });
+
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.code).toBe('MECHANIC_DEACTIVATED');
+      expect(rejected.body.message).toContain(mech.code);
+      expect(rejected.body.message).toContain(mech.name);
+      // The negative half of the distinction this task exists for: this
+      // must not read like the typo message — no "known codes" list, the
+      // planner has nothing to fix here.
+      expect(rejected.body.message).not.toContain('Known active codes');
+    });
+
+    it('DELETE (softRemove) path: DELETE /master-data/mechanics/:id soft-deletes (deleted_at set) -> a later tactics PATCH on the same FU 400s MECHANIC_DEACTIVATED the same way — proves withDeleted:true is load-bearing (a plain find() would not see this row at all and would misreport it as a typo)', async () => {
+      const mech = await createTestMechanic(
+        'E2E_DEACT_DELETE',
+        'E2E Deactivation via DELETE softRemove',
+      );
+      const planner = await loginAs(app, 'PLANNER');
+      const admin = await loginAs(app, 'ADMIN');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'DEACT-DELETE',
+      );
+
+      const write = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { [mech.code]: 10 }, version: fuVersion });
+      expect(write.status).toBe(200);
+      expect(write.body.tactics[mech.code]).toBe(10);
+
+      await request(app.getHttpServer())
+        .delete(`/master-data/mechanics/${mech.id}`)
+        .set(admin.authHeader())
+        .expect(204);
+
+      const rejected = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ version: write.body.version });
+
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.code).toBe('MECHANIC_DEACTIVATED');
+      expect(rejected.body.message).toContain(mech.code);
+      expect(rejected.body.message).toContain(mech.name);
+      expect(rejected.body.message).not.toContain('Known active codes');
+    });
+
+    it('typo case is unaffected: an unknown code still 400s UNKNOWN_MECHANIC_CODE, listing known active codes (regression pin for the pre-existing case at "unknown mechanic code — rejected before the write (F2/C3)" above — not duplicated, just referenced)', async () => {
+      const planner = await loginAs(app, 'PLANNER');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'DEACT-TYPO-REGRESSION',
+      );
+
+      const res = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { TOTALLY_MADE_UP_CODE: 5 }, version: fuVersion });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('UNKNOWN_MECHANIC_CODE');
+      expect(res.body.message).toContain('TOTALLY_MADE_UP_CODE');
+    });
+
+    // ────────────────────────────────────────────────────────────────────
+    // This case was found by the QA pass and originally pinned the DEFECT:
+    // T-083a had fixed only the read/recalc side, so a planner re-entering a
+    // value for a just-deactivated mechanic still got the typo message. The
+    // write gate is the MORE important of the two — it is the request the
+    // planner is actually making, so it is the message they actually read.
+    // The gate now routes through the same `describeUnresolvedMechanicCode`,
+    // and this test pins the corrected behaviour.
+    // ────────────────────────────────────────────────────────────────────
+    it('the WRITE gate also tells deactivated from typo: re-entering a value for an already-deactivated code in the request body -> MECHANIC_DEACTIVATED, not UNKNOWN_MECHANIC_CODE', async () => {
+      const mech = await createTestMechanic(
+        'E2E_DEACT_RESUBMIT',
+        'E2E Deactivation resubmit-same-code',
+      );
+      const planner = await loginAs(app, 'PLANNER');
+      const admin = await loginAs(app, 'ADMIN');
+      const { planId, fuVersion } = await createDraftPlanWithFu(
+        'DEACT-RESUBMIT',
+      );
+
+      const write = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { [mech.code]: 10 }, version: fuVersion });
+      expect(write.status).toBe(200);
+
+      await request(app.getHttpServer())
+        .patch(`/master-data/mechanics/${mech.id}`)
+        .set(admin.authHeader())
+        .send({ isActive: false })
+        .expect(200);
+
+      // Unlike the two cases above, THIS request re-names the deactivated
+      // code in its own body — which routes it through step 3's `byCode`
+      // gate (built from the now-refreshed active-only mechanics list)
+      // instead of letting it survive to step 5's recalc. Both branches must
+      // reach the same answer.
+      const rejected = await request(app.getHttpServer())
+        .patch(`/plans/${planId}/fus/${FU_TUP_BOYA}/tactics`)
+        .set(planner.authHeader())
+        .send({ tactics: { [mech.code]: 20 }, version: write.body.version });
+
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.code).toBe('MECHANIC_DEACTIVATED');
+      // The planner did nothing wrong here, so the message must not read like
+      // a typo report: no "known active codes" list.
+      expect(rejected.body.message).not.toContain('Known active codes');
     });
   });
 });

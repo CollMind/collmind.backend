@@ -45,10 +45,7 @@ import {
   CalculationResult,
   SkuCalculationContext,
 } from '../../../shared/kpi-engine/kpi-engine.service';
-import {
-  SpendCalculationService,
-  unknownMechanicCodeError,
-} from '../../../shared/spend-calculation/spend-calculation.service';
+import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
 import {
   SKUContext,
   CalculationContext,
@@ -603,9 +600,9 @@ export class PlanService {
       const violations: ScaleViolation[] = [];
       for (const [code, raw] of Object.entries(dto.tactics)) {
         const mechanic = byCode.get(code);
-        // An unknown code is rejected here, at the write, through the SAME
-        // producer recalc uses (`unknownMechanicCodeError`,
-        // spend-calculation.service.ts) — not a second error source.
+        // An unresolvable code is rejected here, at the write, through the SAME
+        // producers recalc uses (spend-calculation.service.ts) — not a second
+        // error source.
         //
         // This is not a new decision: it was already made downstream. Skipping
         // the key here and letting recalc raise it is strictly worse, because
@@ -616,8 +613,28 @@ export class PlanService {
         // key. The plan becomes unopenable by the same error that was supposed
         // to be a typo message. Rejecting before the write is what keeps the
         // 400 recoverable.
+        //
+        // T-083a: which of the two failures this is — a typo, or a mechanic an
+        // admin deactivated while the plan already carried it — is resolved by
+        // the SAME helper the recalc path uses. Resolving it here too matters
+        // more than on the read side: this is the request the planner is
+        // actually making, so this is the message they actually read.
+        //
+        // This read goes through the injected repository, i.e. the DEFAULT
+        // connection. That is deliberate and is NOT the recalc method's "every
+        // read/write must go through the given manager" rule (see
+        // `recalculatePlanWithKpiEngineLocked`): this call site holds no
+        // transaction, and the row it reads is master data whose only effect is
+        // which message the 400 carries. The same helper is also called from
+        // inside the locked recalc, where the exception is narrower but real —
+        // documented at that call site.
         if (!mechanic) {
-          throw unknownMechanicCodeError(code, planFu.id, byCode);
+          throw await this.spendCalc.describeUnresolvedMechanicCode(
+            code,
+            planFu.id,
+            byCode,
+            tenantId,
+          );
         }
         const violation = checkEnteredScale(mechanic, raw);
         if (violation) violations.push(violation);
@@ -2273,7 +2290,11 @@ export class PlanService {
       // path, used by `ApprovalWorkflowService#submitForApproval`) now
       // calls the exact same method, so the two can never diverge again
       // (T-049 postmortem: duplicate derivations of the same fact drift).
-      const mechanicValues = this.spendCalc.buildMechanicValues(planFu, cachedActiveMechanics);
+      const mechanicValues = await this.spendCalc.buildMechanicValues(
+        planFu,
+        cachedActiveMechanics,
+        tenantId,
+      );
 
       // T-062: FU-level LUMPSUM_SPEND distribution, computed ONCE per FU
       // (needs every sibling SKU's base volume — see

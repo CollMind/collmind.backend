@@ -770,13 +770,13 @@ describe('SpendCalculationService', () => {
       { code: 'VIS_LS', mechanicType: 'AMOUNT' },
     ] as unknown as Mechanic[];
 
-    it('should merge plan_mechanic_values and tactics into one map', () => {
-      const result = service.buildMechanicValues({
+    it('should merge plan_mechanic_values and tactics into one map', async () => {
+      const result = await service.buildMechanicValues({
         tactics: { VIS_LS: 2000 },
         planMechanicValues: [
           { mechanic: { code: 'CPP_ON_PCT' }, enteredRatePct: 10 },
         ],
-      }, mechs);
+      }, mechs, mockTenantId);
 
       expect(result).toEqual({
         CPP_ON_PCT: rateIn('CPP_ON_PCT', 10),
@@ -784,19 +784,47 @@ describe('SpendCalculationService', () => {
       });
     });
 
-    it('tactics should win over plan_mechanic_values on the same mechanic code (no summing / no double-count)', () => {
-      const result = service.buildMechanicValues({
+    it('tactics should win over plan_mechanic_values on the same mechanic code (no summing / no double-count)', async () => {
+      const result = await service.buildMechanicValues({
         tactics: { 'MEC-DISCOUNT': 7 },
         planMechanicValues: [
           { mechanic: { code: 'MEC-DISCOUNT' }, enteredRatePct: 10 },
         ],
-      }, mechs);
+      }, mechs, mockTenantId);
 
       expect(result).toEqual({ 'MEC-DISCOUNT': rateIn('MEC-DISCOUNT', 7) });
     });
 
-    it('should return an empty map when both sources are absent', () => {
-      expect(service.buildMechanicValues({}, mechs)).toEqual({});
+    it('should return an empty map when both sources are absent', async () => {
+      await expect(service.buildMechanicValues({}, mechs, mockTenantId)).resolves.toEqual({});
+    });
+
+    /**
+     * T-083a: `describeUnresolvedMechanicCode` does a DB round trip
+     * (`mechanicRepository.findOne` with `withDeleted: true`) and must run
+     * ONLY on the error path — never on a happy-path call, or the BRD
+     * <500ms recalc budget pays for a query on every single request. This
+     * is the one place that claim can actually be falsified: an e2e assertion
+     * can't observe "zero extra queries" without instrumenting the DB
+     * connection, so this is a unit-level mock-call assertion instead.
+     */
+    it('does not touch the mechanic repository when every code resolves (hot-path cost claim, T-083a)', async () => {
+      const result = await service.buildMechanicValues(
+        {
+          tactics: { VIS_LS: 2000 },
+          planMechanicValues: [
+            { mechanic: { code: 'CPP_ON_PCT' }, enteredRatePct: 10 },
+          ],
+        },
+        mechs,
+        mockTenantId,
+      );
+
+      expect(result).toEqual({
+        CPP_ON_PCT: rateIn('CPP_ON_PCT', 10),
+        VIS_LS: totalIn('VIS_LS', 2000),
+      });
+      expect(mechanicRepo.findOne).not.toHaveBeenCalled();
     });
   });
 

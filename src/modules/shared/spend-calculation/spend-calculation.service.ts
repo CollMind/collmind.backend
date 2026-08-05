@@ -75,6 +75,40 @@ export function unknownMechanicCodeError(
   });
 }
 
+/**
+ * THE single producer of the MECHANIC_DEACTIVATED 400 — T-083a.
+ *
+ * Distinct from UNKNOWN_MECHANIC_CODE because it is a DIFFERENT PROBLEM with a
+ * different actor and a different remedy:
+ *
+ *   UNKNOWN_MECHANIC_CODE  the planner mistyped a code. They can fix it, so the
+ *                          message names the code and lists the valid ones.
+ *   MECHANIC_DEACTIVATED   an admin deactivated or deleted a mechanic that a
+ *                          plan already carried a value for. The planner did
+ *                          nothing wrong and can do nothing about it. Listing
+ *                          "valid codes" here would be actively misleading.
+ *
+ * Before this existed, the second case produced the first case's message and the
+ * plan was simply stuck: every edit and every submit returned a 400 about a
+ * "typo" the planner had never made.
+ */
+export function orphanedMechanicCodeError(
+  code: string,
+  planFuId: string | undefined,
+  mechanic: Mechanic,
+): BadRequestException {
+  return new BadRequestException({
+    statusCode: 400,
+    code: 'MECHANIC_DEACTIVATED',
+    message:
+      `Mechanic "${code}" (${mechanic.name}) has been deactivated or removed, ` +
+      `but FU ${planFuId ?? '<unknown>'} still carries a value for it. That ` +
+      `value can no longer be interpreted. This is not something you can fix ` +
+      `from the plan — please contact support.`,
+    mechanicCode: code,
+  });
+}
+
 @Injectable()
 export class SpendCalculationService {
   private readonly logger = new Logger(SpendCalculationService.name);
@@ -679,7 +713,7 @@ export class SpendCalculationService {
    * distribute endpoint) — values are never summed for a colliding code, so
    * this cannot double-count, only pick one source over the other.
    */
-  buildMechanicValues(
+  async buildMechanicValues(
     planFu: {
       id?: string;
       tactics?: Record<string, number> | null;
@@ -692,14 +726,28 @@ export class SpendCalculationService {
       }>;
     },
     mechanics: Mechanic[],
-  ): Record<string, MechanicInput> {
+    /**
+     * T-083a: required, NOT optional. An optional tenantId would silently fall
+     * back to the typo message whenever a caller forgot it — i.e. the exact
+     * defect this parameter exists to fix, reintroduced as a quiet default.
+     */
+    tenantId: string,
+  ): Promise<Record<string, MechanicInput>> {
     const byCode = new Map(mechanics.map((m) => [m.code, m]));
     const values: Record<string, MechanicInput> = {};
+
+    // T-083a: the first unresolvable code is remembered rather than thrown on
+    // the spot, because telling "typo" from "deactivated" needs a DB round trip
+    // and this function must not become async on its happy path. The lookup runs
+    // once, after the loops, and ONLY when something was already going to fail —
+    // so the recalc hot path (BRD <500ms) pays nothing.
+    let unresolvedCode: string | undefined;
 
     const put = (code: string, raw: number): void => {
       const mechanic = byCode.get(code);
       if (!mechanic) {
-        throw unknownMechanicCodeError(code, planFu.id, byCode);
+        unresolvedCode ??= code;
+        return;
       }
       values[code] = toMechanicInput(mechanic, raw);
     };
@@ -719,7 +767,69 @@ export class SpendCalculationService {
       if (val != null) put(code, val as number);
     }
 
+    if (unresolvedCode !== undefined) {
+      // ⚠️ TRANSACTION DISCIPLINE EXCEPTION, stated rather than left silent.
+      // When this runs inside `recalculatePlanWithKpiEngineLocked`, that method's
+      // rule is "every read/write goes through the given `manager`". This read
+      // does not: it uses the injected repository, i.e. a second connection,
+      // while the caller's transaction holds the first.
+      //
+      // Correctness is unaffected — master data is read, the result only picks
+      // which message the 400 carries, and a rollback follows immediately. The
+      // real risk is pool pressure: an admin deactivating a mechanic that many
+      // plans use can push several concurrent recalcs into this branch at once,
+      // each asking for a second connection while holding one.
+      //
+      // Accepted for now because the branch is a failure path and the alternative
+      // (threading `manager` down through `buildMechanicValues` for the error
+      // case only) would put transaction plumbing into a function whose happy
+      // path needs none. If concurrent deactivation ever becomes a real load
+      // shape, thread the manager — do not silently widen this exception.
+      throw await this.describeUnresolvedMechanicCode(
+        unresolvedCode,
+        planFu.id,
+        byCode,
+        tenantId,
+      );
+    }
+
     return values;
+  }
+
+  /**
+   * Which of the two failures is this? T-083a.
+   *
+   * PUBLIC because BOTH error branches need it — the read side
+   * (`buildMechanicValues`, above) and the write side
+   * (`PlanService#updateFuTactic`'s scale gate). Fixing only the read side
+   * would have left the more visible half wrong: a planner re-entering a value
+   * for a mechanic an admin just deactivated would still be told they made a
+   * typo, on the very request they are trying to make. Two branches, one
+   * resolver — the same discipline as the two error producers themselves.
+   *
+   * `getActiveMechanics` returns only `isActive: true` rows, so an absent code
+   * means one of two very different things and the caller cannot tell them
+   * apart. This resolves it — on the error path only.
+   *
+   * `withDeleted: true` is load-bearing: `MechanicService#remove` uses
+   * `softRemove`, and `Mechanic extends BaseEntity` carries `@DeleteDateColumn`,
+   * so TypeORM's default `find` does not see a deleted mechanic AT ALL. Without
+   * `withDeleted` the `DELETE /mechanics/:id` half of this defect would still
+   * report a typo — one of the two deactivation routes silently uncovered.
+   */
+  async describeUnresolvedMechanicCode(
+    code: string,
+    planFuId: string | undefined,
+    knownByCode: Map<string, Mechanic>,
+    tenantId: string,
+  ): Promise<BadRequestException> {
+    const deactivated = await this.mechanicRepository.findOne({
+      where: { tenantId, code },
+      withDeleted: true,
+    });
+    return deactivated
+      ? orphanedMechanicCodeError(code, planFuId, deactivated)
+      : unknownMechanicCodeError(code, planFuId, knownByCode);
   }
 
   /**
@@ -759,7 +869,11 @@ export class SpendCalculationService {
     // derived from the mechanic row, in one place. Same call, moved earlier —
     // no extra round-trip (it was already fetched a few lines below).
     const activeMechanics = await this.getActiveMechanics(tenantId);
-    const mechanicValues = this.buildMechanicValues(planFu, activeMechanics);
+    const mechanicValues = await this.buildMechanicValues(
+      planFu,
+      activeMechanics,
+      tenantId,
+    );
 
     // Get plan context for LTA
     const planContext: PlanContextDto = {
