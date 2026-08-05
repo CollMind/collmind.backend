@@ -43,8 +43,8 @@ export class CalculationContext {
    * (ADR 0007 F2/C2a). Was `Record<string, number>`, which forced every reader
    * to re-derive "is this a percentage or TRY?" from the mechanic row. The
    * scale is now resolved once, in `toMechanicInput`.
-   * Collapse to a raw number with `rawOf()` — and see T-078 for what that
-   * collapse still loses.
+   * Collapse to a raw number with `rawOf()`. That collapse maps an absent entry
+   * onto zero on purpose — ADR 0008: no meaning difference between the two.
    */
   mechanicValues!: Record<string, MechanicInput>;
 

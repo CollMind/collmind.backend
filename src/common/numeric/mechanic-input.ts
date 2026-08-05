@@ -70,21 +70,23 @@ export function toMechanicInput(mechanic: Mechanic, raw: number): MechanicInput 
 /**
  * Collapse the union back to the raw number the existing arithmetic expects.
  *
- * ⚠️ THIS IS WHERE THE DISTINCTION IS DELIBERATELY LOST — see T-078.
+ * `?? 0` maps "no value entered" onto zero. **This is a decision, not debt** —
+ * ADR 0008: for a planner's mechanic entry there is NO meaning difference
+ * between `null` and `0`. In trade promotion a 0% discount and no discount are
+ * economically identical: zero spend, zero accrual, zero budget effect. Keeping
+ * them apart would carry information that nothing consumes.
  *
- * `?? 0` folds two different states into one: "no value entered for this
- * mechanic" and "the planner entered zero". Those are not the same thing —
- * in lumpsum distribution, receiving a zero share and receiving no share are
- * different outcomes, and ADR 0006 Karar 2 ("a null-base SKU gets no share")
- * lives in exactly that family.
+ * The measurement behind that (ADR 0008, 2026-08-05): all 15 call sites of this
+ * function and `readEnteredValue` immediately follow it with a truthiness check
+ * (`if (!enteredValue) return 0 / continue`), which treats an entered zero and
+ * an absent value identically anyway. The collapse has no observable effect.
+ * The most plausible place for a difference — lumpsum distribution — does not
+ * distinguish them either (spend-calculation.service.ts:323).
  *
- * It is kept for now because the BUSINESS consequence has not been measured.
- * Making it visible before measuring risks surfacing the right error in the
- * wrong place. T-078 carries that measurement.
- *
- * The union above means the distinction is now CARRIED IN THE TYPE and only
- * collapsed here — so T-078 reduces to applying a decision at the four unwrap
- * sites, not to building a new data path.
+ * NOT IN CONFLICT WITH ADR 0006 Karar 2 ("a null-base SKU gets no share").
+ * That rule is about a SKU's baseline VOLUME — a data-quality question (the
+ * volume is unknown, so it cannot take part in a split). This is about the
+ * planner's ENTERED VALUE — a question of intent. Different axes; both hold.
  */
 export function rawOf(input: MechanicInput | undefined): number {
   if (!input) return 0;
@@ -261,9 +263,8 @@ export function enteredColumnFor(mechanic: Mechanic): EnteredColumn {
 /**
  * Read the entry from whichever semantic column this mechanic uses.
  *
- * ⚠️ The `?? 0` here is the same collapse `rawOf` makes — see T-078. Preserved
- * deliberately: C2b ports the reader, it does not decide the "no value vs zero"
- * question.
+ * The `?? 0` here is the same collapse `rawOf` makes, and the same decision:
+ * ADR 0008, no meaning difference between an absent entry and a zero one.
  */
 export function readEnteredValue(
   pmv: Partial<Record<EnteredColumn, number | null | undefined>>,
@@ -276,12 +277,18 @@ export function readEnteredValue(
  * Null-preserving read — "no value entered" stays distinguishable from "zero
  * entered".
  *
- * Some callers depend on that distinction and must NOT go through
- * `readEnteredValue`: the min/max validation skips entirely when nothing was
- * entered, and collapsing null to 0 there would make it validate a value the
- * planner never typed. This is the same distinction T-078 will decide for the
- * arithmetic path; here it is already load-bearing, so it is preserved rather
- * than deferred.
+ * THIS IS NOT AN EXCEPTION TO ADR 0008 — it answers a different question.
+ *
+ * ADR 0008 says an entered zero and an absent entry mean the same thing for
+ * SPEND. It does not say "was anything entered at all?" is a meaningless
+ * question. The min/max validation asks exactly that one: it skips a row with
+ * no entry, and collapsing null to 0 there would make it validate a value the
+ * planner never typed and reject a row they never touched.
+ *
+ *   spend-validation.service.ts:75   "is there an entry on this row?"      → readEnteredRaw
+ *   spend-validation.service.ts:268  "does this entry move any spend?"     → readEnteredValue
+ *
+ * Both are correct. Picking by which question is being asked is the rule.
  */
 export function readEnteredRaw(
   pmv: Partial<Record<EnteredColumn, number | null | undefined>>,
