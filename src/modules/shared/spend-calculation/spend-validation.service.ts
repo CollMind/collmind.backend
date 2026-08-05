@@ -2,6 +2,10 @@ import {
   readEnteredRaw,
   readEnteredValue,
 } from '../../../common/numeric/mechanic-input';
+import {
+  rateFromNumericString,
+  rateToPercent,
+} from '../../../common/numeric/rate';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -268,31 +272,54 @@ export class SpendValidationService {
       const entered = readEnteredValue(pmv, mechanic);
       if (!entered) continue;
 
+      // T-089: ONE conversion point, and it produces a NUMBER.
+      //
+      // This used to be `totalOnInvoiceDiscount += entered` inside each branch.
+      // `entered` comes off a transformer-less `decimal` column, i.e. it is a
+      // STRING, so `0 + "10.0000"` was concatenation, not addition. The
+      // accumulator turned into a string on the first PERCENT mechanic:
+      //
+      //   %10 then %5  ->  "010.00005.0000"
+      //   combined     ->  "010.00005.00000"   ->  Number(...) is NaN
+      //   NaN > 60     ->  false
+      //
+      // Every one of the four ceilings below (`MAX_ON_INVOICE`,
+      // `MAX_OFF_INVOICE`, `MAX_COMBINED = 60`, and the per-mechanic
+      // `maxCombinedDiscountPercentage`) was therefore SILENTLY DEAD for
+      // PERCENT mechanics — no error, no wrong number, simply never firing. A
+      // planner could enter 10% + 5% + 90% and pass.
+      //
+      // The non-PERCENT branch was always fine: `spend / gsv * 100` coerces
+      // numerically. So the defect was mechanic-type dependent, which is part
+      // of why it survived — and the plan-level rollup made it worse to spot,
+      // returning a correct-looking 10 for a single-mechanic FU (`Number(
+      // "010.0000")` is 10) and NaN only once a second mechanic appeared.
+      //
+      // WHY THE CONVERSION LIVES HERE AND NOT IN THE BRANCHES
+      // There are four accumulation sites. Converting at each would be four
+      // conversion points that drift apart. Collapsing them into one
+      // `contribution` means the value is a number BEFORE it can reach any
+      // accumulator, and a new accumulator cannot reintroduce the bug.
+      //
+      // `rateFromNumericString` (not `Number()`) parses the numeric(9,4) text
+      // exactly and throws on anything it cannot represent, instead of
+      // producing a quiet NaN (CLAUDE.md §2.5). It also keeps this file off the
+      // ratchet: the parsing lives in `src/common/numeric/`.
+      const contribution =
+        mechanic.mechanicType === 'PERCENT'
+          ? rateToPercent(rateFromNumericString(String(entered)))
+          : totalPlannedGsv > 0
+            ? (pmv.calculatedSpend / totalPlannedGsv) * 100
+            : 0;
+
       if (mechanic.category === MechanicCategory.ON_INVOICE_DISCOUNT) {
-        if (mechanic.mechanicType === 'PERCENT') {
-          totalOnInvoiceDiscount += entered;
-        } else {
-          // Calculate percentage from amount
-          const percentage =
-            totalPlannedGsv > 0
-              ? (pmv.calculatedSpend / totalPlannedGsv) * 100
-              : 0;
-          totalOnInvoiceDiscount += percentage;
-        }
+        totalOnInvoiceDiscount += contribution;
       } else if (
         mechanic.category === MechanicCategory.OFF_INVOICE_DISCOUNT ||
         mechanic.category === MechanicCategory.PER_UNIT_SUPPORT ||
         mechanic.category === MechanicCategory.LUMPSUM_SPEND
       ) {
-        if (mechanic.mechanicType === 'PERCENT') {
-          totalOffInvoiceDiscount += entered;
-        } else {
-          const percentage =
-            totalPlannedGsv > 0
-              ? (pmv.calculatedSpend / totalPlannedGsv) * 100
-              : 0;
-          totalOffInvoiceDiscount += percentage;
-        }
+        totalOffInvoiceDiscount += contribution;
       }
     }
 
