@@ -51,6 +51,40 @@ import {
   BudgetVarianceGroup,
   BudgetVarianceQueryDto,
 } from './dto/budget-variance-report.dto';
+import {
+  moneyFromNumericString,
+  moneyToMajorUnits,
+} from '../../../common/numeric/money';
+
+/**
+ * A `numeric(18,2)` column value as a number in TRY — T-093.
+ *
+ * These columns declare no transformer, so TypeORM hands back a STRING even
+ * though TypeScript types them `number`. `0 + "100.00"` is concatenation, and
+ * with two rows an accumulator became `"0100.0050.00"` — a string in a numeric
+ * DTO field, on two live GET routes (`/finance-reporting/spend-trend` and
+ * `/finance-reporting/budget-at-risk`). With a SINGLE row it worked by accident,
+ * because `Number("0100.00")` is 100; the corruption needed a second row. Same
+ * shape as T-089 and T-091.
+ *
+ * "This is Domain B so float is fine" does NOT excuse it. The Domain A/B split
+ * is about representation PRECISION — `10.1799` where `10.18` was meant. A
+ * concatenated string is not an imprecise number, it is not a number at all, and
+ * Domain B expects numbers just as much as Domain A does.
+ *
+ * The `|| 0` that used to sit at each of these call sites is gone rather than
+ * ported: all three columns are NOT NULL (measured), so it could never fire —
+ * it was dead code in the shape CLAUDE.md §2.5 forbids, quietly promising a
+ * default that no path could reach.
+ *
+ * Parsed via `moneyFromNumericString` rather than `Number()`: it reads the
+ * decimal text digit-wise and throws on anything it cannot represent instead of
+ * yielding a silent NaN. All three columns are scale 2 (measured), so it cannot
+ * throw on legitimate data.
+ */
+function spendOf(raw: number | string): number {
+  return moneyToMajorUnits(moneyFromNumericString(String(raw)));
+}
 
 @Injectable()
 export class FinanceReportingService {
@@ -281,21 +315,24 @@ export class FinanceReportingService {
             const mechanic = pmv.mechanic;
             if (!mechanic) continue;
 
+            const spend = spendOf(pmv.calculatedSpend);
             if (mechanic.category === 'on_invoice_discount') {
-              onInvoice += pmv.calculatedSpend || 0;
-              promoOnInvoice += pmv.calculatedSpend || 0;
+              onInvoice += spend;
+              promoOnInvoice += spend;
             } else {
-              offInvoice += pmv.calculatedSpend || 0;
-              promoOffInvoice += pmv.calculatedSpend || 0;
+              offInvoice += spend;
+              promoOffInvoice += spend;
             }
           }
 
           // Add LTA spends from SKUs
           for (const planSku of planFu.planSkus || []) {
-            ltaOnInvoice += planSku.plannedLtaOnInvoiceSpend || 0;
-            ltaOffInvoice += planSku.plannedLtaOffInvoiceSpend || 0;
-            onInvoice += planSku.plannedLtaOnInvoiceSpend || 0;
-            offInvoice += planSku.plannedLtaOffInvoiceSpend || 0;
+            const ltaOn = spendOf(planSku.plannedLtaOnInvoiceSpend);
+            const ltaOff = spendOf(planSku.plannedLtaOffInvoiceSpend);
+            ltaOnInvoice += ltaOn;
+            ltaOffInvoice += ltaOff;
+            onInvoice += ltaOn;
+            offInvoice += ltaOff;
           }
         }
       }
@@ -365,7 +402,7 @@ export class FinanceReportingService {
           const mechanic = pmv.mechanic;
           if (!mechanic) continue;
 
-          const spend = pmv.calculatedSpend || 0;
+          const spend = spendOf(pmv.calculatedSpend);
           const map =
             mechanic.category === 'on_invoice_discount'
               ? onInvoiceMap
@@ -515,7 +552,7 @@ export class FinanceReportingService {
 
         for (const planFu of planFus) {
           for (const pmv of planFu.planMechanicValues || []) {
-            const spend = pmv.calculatedSpend || 0;
+            const spend = spendOf(pmv.calculatedSpend);
             totalSpend += spend;
             if (pmv.mechanic?.category === 'on_invoice_discount') {
               onInvoiceSpend += spend;
@@ -586,7 +623,7 @@ export class FinanceReportingService {
       let totalSpend = 0;
       for (const planFu of planFus) {
         for (const pmv of planFu.planMechanicValues || []) {
-          totalSpend += pmv.calculatedSpend || 0;
+          totalSpend += spendOf(pmv.calculatedSpend);
         }
       }
 
@@ -822,7 +859,7 @@ export class FinanceReportingService {
 
       for (const planFu of planFus) {
         for (const pmv of planFu.planMechanicValues || []) {
-          const spend = pmv.calculatedSpend || 0;
+          const spend = spendOf(pmv.calculatedSpend);
           if (pmv.mechanic?.category === 'on_invoice_discount') {
             onInvoiceSpend += spend;
           } else {
