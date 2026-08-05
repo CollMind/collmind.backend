@@ -113,6 +113,14 @@ export type PlanSkuWithVersion = PlanSku & { planVersion: number };
  * absent" master/user data (null/undefined/NaN) from a legitimately entered
  * 0, which callers must NOT coalesce together — BRD requires missing data to
  * propagate as null through the KPI engine, never silently become 0.
+ *
+ * ⚠️ HAS A TWIN: `boundOf` in `mechanic.service.ts`. Do NOT merge them yet, and
+ * read that function's comment before trying — the obvious move launders ratchet
+ * debt (line 119 below is one of this file's 36 findings, and the destination
+ * `src/common/numeric/` is exempt from the detector, so the finding would vanish
+ * rather than move). T-086 makes the exemption per-file; T-087 then does the
+ * merge honestly. This note lives here too because whoever attempts the merge
+ * will most likely start from THIS file — it is the one under ratchet pressure.
  */
 function toNullableNumber(raw: unknown): number | null {
   if (raw === null || raw === undefined) return null;

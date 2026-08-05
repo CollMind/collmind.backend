@@ -23,6 +23,90 @@ import { PlanContextDto } from './dto/plan-context.dto';
 import { ValidationResult } from './dto/validation-result.dto';
 import { CombinationCheckResult } from './dto/combination-check-result.dto';
 
+/**
+ * A mechanic bound as a comparable number, or `null` for "no bound" — T-084.
+ *
+ * TWO TRAPS LIVE HERE, AND THE GUARD THAT USED THESE VALUES FELL INTO BOTH.
+ *
+ * 1. `null` is not `undefined`. `min_value`/`max_value` are nullable, and a row
+ *    read from Postgres carries `null`, never `undefined`. A guard written as
+ *    `value !== undefined` therefore treats "no bound" as a real bound, and JS
+ *    then coerces it: `0 >= null` is `0 >= 0`, i.e. `true`. Every mechanic with
+ *    an open UPPER bound became un-editable — measured live at 3 of 6. (An open
+ *    LOWER bound was never rejected: `null >= "100.0000"` is `0 >= 100`, false.
+ *    The asymmetry is itself a symptom.)
+ *
+ * 2. These are `decimal` columns with no transformer, so TypeORM hands back
+ *    STRINGS. `"50.0000" >= "100.0000"` is a lexicographic comparison and is
+ *    `true`, so a perfectly ordinary range (min 50, max 100) was rejected too.
+ *    The seeded 0/100 mechanics only passed by accident: `"0" < "1"`.
+ *
+ * Both traps are invisible to TypeScript, which types these as `number`.
+ *
+ * ⚠️ THE SIBLING COMPARISONS ARE **ALSO** BROKEN — see T-085.
+ *
+ * An earlier revision of this comment claimed they were safe, reasoning that
+ * `spend-validation.service.ts:150` compares "a real number" against these
+ * values and that `number < string` coerces numerically. **That was wrong, and
+ * it was wrong because it was asserted instead of measured.** `enteredValue`
+ * there comes from `readEnteredRaw`, i.e. straight off `plan_mechanic_values`,
+ * whose `entered_*` columns are ALSO `decimal` with no transformer. Both sides
+ * are strings, so it is the same lexicographic comparison — on a production
+ * route (`GET /spend-calculation/validate-inputs/:planFuId`), where it silently
+ * misses real min violations and reports max violations that do not exist.
+ *
+ * The wrong claim is left visible rather than quietly deleted: it had been
+ * written into the code as a normative "must not be fixed to match", which
+ * would have protected a live defect from repair. T-085 carries the fix.
+ *
+ * The rule this file follows: a decimal column reaches JS as a string unless a
+ * transformer says otherwise — and whether one does is a PER-COLUMN question,
+ * not a per-repo one. The repo DOES have `DecimalTransformer`
+ * (`src/database/transformers/decimal.transformer.ts`), applied to the budget
+ * and sales-actual entities. It is simply not declared on `mechanics.min_value`
+ * / `max_value` (this file's entity, lines 88-105) or on
+ * `plan_mechanic_values.entered_*`. So: check the column, then normalise.
+ *
+ * (An earlier revision of this paragraph said "this repo has no transformers".
+ * That was measured on the two entities in front of me and generalised to the
+ * repo — the exact failure CLAUDE.md §7.1 was written about, committed in the
+ * same change that added the rule. Left visible.)
+ *
+ * ⚠️ THIS FUNCTION IS A KNOWN DUPLICATE, AND THAT IS A DECISION — see T-087.
+ *
+ * (ADVISORY, not guard-enforced — CLAUDE.md §4.2. The guard that would enforce
+ * it is exactly what T-086 builds; until then this comment is the only defence,
+ * and a weak one.)
+ *
+ * `toNullableNumber` in `plan.service.ts` is semantically identical. Normally
+ * §7 would require extracting one shared version into `src/common/numeric/`.
+ * That is deliberately NOT done yet, because the obvious move would be
+ * dishonest twice over:
+ *
+ *   - `plan.service.ts:119` (`Number(raw)`) is one of that file's 36 ratchet
+ *     findings. Moving the function out drops it to 35 — but nothing was fixed.
+ *   - `src/common/numeric/` is where the money-float detector does not fire
+ *     (ADR 0007 E15). The finding would not reappear at the destination. The
+ *     ratchet would record a repayment that never happened, and the pattern
+ *     would generalise: anyone under ratchet pressure could relocate into that
+ *     directory. Measured: the exempt directory is filtered out of the scan
+ *     entirely, so the ratchet's own "NEW Domain A file" check never even fires
+ *     on it — the move exits 0 and looks like an improvement.
+ *
+ * A visible duplicate is a debt you can see. Laundered ratchet debt is one you
+ * cannot. So the duplicate stays until T-086 makes the E15 exemption per-FILE
+ * instead of per-directory; after that a move is honest, because a relocated
+ * file is not on the exempt list and its findings are counted at the
+ * destination. T-087 then does the extraction.
+ *
+ * Do not "clean this up" before T-086 lands.
+ */
+function boundOf(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 @Injectable()
 export class MechanicService {
   constructor(
@@ -55,14 +139,14 @@ export class MechanicService {
       throw new NotFoundException('Tactic not found');
     }
 
-    // Validate min < max
-    if (
-      createMechanicDto.minValue !== undefined &&
-      createMechanicDto.maxValue !== undefined
-    ) {
-      if (createMechanicDto.minValue >= createMechanicDto.maxValue) {
-        throw new BadRequestException('minValue must be less than maxValue');
-      }
+    // Validate min < max. T-084: both sides through `boundOf`, so an absent
+    // bound is a non-bound rather than a zero. `>=` is preserved deliberately —
+    // min == max has always been rejected, and whether an equal pair should be
+    // legal is a product question nobody has answered (CLAUDE.md §2.4).
+    const createMin = boundOf(createMechanicDto.minValue);
+    const createMax = boundOf(createMechanicDto.maxValue);
+    if (createMin !== null && createMax !== null && createMin >= createMax) {
+      throw new BadRequestException('minValue must be less than maxValue');
     }
 
     // Validate applicability rules
@@ -178,14 +262,20 @@ export class MechanicService {
       }
     }
 
-    // Validate min < max
-    const minValue = updateMechanicDto.minValue ?? mechanic.minValue;
-    const maxValue = updateMechanicDto.maxValue ?? mechanic.maxValue;
-    if (
-      minValue !== undefined &&
-      maxValue !== undefined &&
-      minValue >= maxValue
-    ) {
+    // Validate min < max. T-084: the incoming DTO value wins, otherwise the
+    // stored one — and BOTH go through `boundOf`, which is what makes this
+    // correct for the two traps `boundOf` documents. The stored value is a string
+    // from a `decimal` column and may be `null`; the DTO value is a real number.
+    //
+    // ⚠️ A THIRD gap is still open here and `boundOf` does not close it — T-088.
+    // `??` treats an EXPLICIT `null` in the body as "not supplied", so
+    // `PATCH {minValue: null}` is validated against the STORED min while
+    // `Object.assign` below persists the null. The state validated is not the
+    // state written, and a legitimate "drop the floor, set the ceiling to 10"
+    // is rejected. Pre-existing, not introduced here.
+    const minValue = boundOf(updateMechanicDto.minValue ?? mechanic.minValue);
+    const maxValue = boundOf(updateMechanicDto.maxValue ?? mechanic.maxValue);
+    if (minValue !== null && maxValue !== null && minValue >= maxValue) {
       throw new BadRequestException('minValue must be less than maxValue');
     }
 
