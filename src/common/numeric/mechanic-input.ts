@@ -106,6 +106,48 @@ export function rawOf(input: MechanicInput | undefined): number {
   }
 }
 
+/**
+ * A `numeric(p,s)` column's text as a number — T-085.
+ *
+ * WHY THIS EXISTS RATHER THAN `Number(x)` AT THE CALL SITE
+ * TypeORM hands back a STRING for every `decimal`/`numeric` column that declares
+ * no transformer, while TypeScript types the property `number`. Code that
+ * compares two such values therefore compares STRINGS: `"5.0000" < "10.0000"` is
+ * `false` because "5" sorts after "1". A real min violation goes unreported and
+ * a valid value gets flagged — both silently, both on a live route.
+ *
+ * The comparison sites cannot each call `Number()`: this repo's money-float
+ * ratchet counts those, and more importantly a per-site conversion is the shape
+ * that drifts. One function, in the module that owns numeric semantics.
+ *
+ * NOT `moneyFromNumericString` OR `rateFromNumericString`
+ * Those two are scale-committed by design — money throws below kuruş, rate below
+ * four places — because they build EXACT values that will be stored or used in
+ * arithmetic. This one only produces a value to COMPARE, and the columns it
+ * reads span two scales (`numeric(18,2)` and `numeric(9,4)`/`numeric(18,4)`).
+ * Committing to either scale here would reject legitimate data from the other.
+ *
+ * Parsing is digit-wise for the same reason those two are: an exact decimal
+ * string should not take a detour through IEEE-754 on its way to a comparison.
+ * A value that cannot be parsed throws rather than becoming a quiet `NaN`, which
+ * would make every comparison against it silently false (CLAUDE.md §2.5).
+ */
+export function numericTextToNumber(value: number | string): number {
+  if (typeof value === 'number') return value;
+  const trimmed = String(value).trim();
+  const match = /^(-)?(\d+)(?:\.(\d*))?$/.exec(trimmed);
+  if (!match) {
+    throw new Error(
+      `Not a valid numeric literal: "${value}". Refusing to compare against NaN.`,
+    );
+  }
+  const [, sign, whole, frac = ''] = match;
+  const magnitude = frac.length
+    ? Number(whole) + Number(frac) / 10 ** frac.length
+    : Number(whole);
+  return sign ? -magnitude : magnitude;
+}
+
 /* ------------------------------------------------------------------ *
  * C3 — WRITE-SIDE SCALE VALIDATION
  * ------------------------------------------------------------------ */

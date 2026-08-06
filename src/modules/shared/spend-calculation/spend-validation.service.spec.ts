@@ -21,13 +21,11 @@ import { ErrorSeverity, ErrorCategory } from './dto/validation-result.dto';
  * header, T-089 comment block at :275-307):
  *   - T-089 (this file): accumulator concatenation in `validateCombinations`
  *     — every threshold silently dead for PERCENT mechanics.
- *   - T-085 (not yet written): string comparison at minValue/maxValue
- *     (`validateInputs` ~:154/:167) + `Number.isInteger` on a string (~:138).
+ *   - T-085 (below): string comparison at minValue/maxValue (`validateInputs`
+ *     min/max block) + the decimal-place gate that measured column scale
+ *     instead of planner intent + the `activeMechanics` zero-string filter
+ *     in `validateCombinations`.
  *   - T-088 (unrelated service, similar pattern).
- *
- * T-085 should add its own top-level `describe('validateInputs — T-085 ...')`
- * block below and MAY reuse `createHarness`/`buildMechanic`/`buildPmv` rather
- * than duplicating the module wiring.
  * ------------------------------------------------------------------ */
 
 const TENANT_ID = 'tenant-1';
@@ -652,8 +650,212 @@ describe('SpendValidationService', () => {
   });
 
   /* ================================================================ *
-   * T-085 (not in scope here) will add:
-   *   describe('validateInputs — T-085 (minValue/maxValue string compare + Number.isInteger)', ...)
-   * reusing `createHarness`, `makeMechanic`, `buildPmv`, `buildPlanFu` above.
+   * T-085 — validateInputs: min/max STRING comparison fix
+   *
+   * `enteredValue` (off a transformer-less `numeric` column) and
+   * `mechanic.minValue`/`maxValue` (also transformer-less `numeric(18,4)`)
+   * were compared directly, i.e. as STRINGS: lexicographic order, not
+   * numeric order. "5.0000" < "10.0000" is false (a real min violation went
+   * unreported); "50.0000" > "100.0000" is true (a valid value was flagged).
+   * All fixtures below pass min/max as STRINGS — passing numbers here would
+   * not exercise the bug (per the FIXTURE KURALI note in the task).
    * ================================================================ */
+  describe('validateInputs — T-085 (min/max string-comparison fix)', () => {
+    let h: ServiceHarness;
+
+    beforeEach(async () => {
+      h = await createHarness();
+    });
+
+    it('reports a min violation that lexicographic string comparison used to miss ("5.0000" < "10.0000" is false as strings)', async () => {
+      const mechanic = makeMechanic({
+        code: 'MIN_MISS',
+        inputType: InputType.PERCENTAGE,
+        minValue: '10.0000' as unknown as number,
+      });
+      const pmv = buildPmv(mechanic, '5.0000');
+      h.planFuRepo.findOne.mockResolvedValue(buildPlanFu([pmv]));
+
+      const result = await h.service.validateInputs(TENANT_ID, FU_ID);
+
+      expect(result.isValid).toBe(false);
+      expect(result.errorCount).toBe(1);
+      expect(result.errors).toHaveLength(1);
+      const [err] = result.errors;
+      expect(err.severity).toBe(ErrorSeverity.ERROR);
+      expect(err.category).toBe(ErrorCategory.INPUT_ERROR);
+      expect(err.field).toBe('MIN_MISS');
+      expect(err.message).toContain('Value must be at least 10.0000');
+    });
+
+    it('does not report a max violation for a genuinely valid value ("50.0000" > "100.0000" was true as strings)', async () => {
+      const mechanic = makeMechanic({
+        code: 'MINMAX_OK',
+        inputType: InputType.PERCENTAGE,
+        minValue: '0.0000' as unknown as number,
+        maxValue: '100.0000' as unknown as number,
+      });
+      const pmv = buildPmv(mechanic, '50.0000');
+      h.planFuRepo.findOne.mockResolvedValue(buildPlanFu([pmv]));
+
+      const result = await h.service.validateInputs(TENANT_ID, FU_ID);
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.errorCount).toBe(0);
+      expect(result.isValid).toBe(true);
+    });
+
+    it('still reports a genuine max violation once compared numerically', async () => {
+      // AMOUNT/currency here (not percentage) so the assertion isolates the
+      // min/max gate from the separate 0-100 range check on percentages.
+      const mechanic = makeMechanic({
+        code: 'MAX_REAL',
+        inputType: InputType.CURRENCY,
+        mechanicType: MechanicType.AMOUNT,
+        category: MechanicCategory.LUMPSUM_SPEND,
+        maxValue: '100.0000' as unknown as number,
+      });
+      const pmv = buildPmv(mechanic, '150.0000');
+      h.planFuRepo.findOne.mockResolvedValue(buildPlanFu([pmv]));
+
+      const result = await h.service.validateInputs(TENANT_ID, FU_ID);
+
+      expect(result.isValid).toBe(false);
+      expect(result.errorCount).toBe(1);
+      const [err] = result.errors;
+      expect(err.severity).toBe(ErrorSeverity.ERROR);
+      expect(err.field).toBe('MAX_REAL');
+      expect(err.message).toContain('Value must be at most 100.0000');
+    });
+  });
+
+  /* ================================================================ *
+   * T-085 — validateInputs: decimal-place gate removed
+   *
+   * The removed check measured the COLUMN'S scale (`numeric(9,4)` always
+   * renders 4 fraction digits, e.g. "10.0000"), not what the planner typed.
+   * It fired "Maximum 2 decimal places allowed" for every percentage
+   * mechanic. C3 (write-side `checkEnteredScale`) is the real gate and
+   * exempts unit amounts on purpose (4-decimal per-unit prices are legit).
+   * ================================================================ */
+  describe('validateInputs — T-085 (decimal-place gate removed)', () => {
+    let h: ServiceHarness;
+
+    beforeEach(async () => {
+      h = await createHarness();
+    });
+
+    it('does not produce "Maximum 2 decimal places" for a plain percentage entry (used to fire for every percentage mechanic, e.g. a plain 10%)', async () => {
+      const mechanic = makeMechanic({
+        code: 'PCT_NODEC',
+        inputType: InputType.PERCENTAGE,
+      });
+      const pmv = buildPmv(mechanic, '10.0000');
+      h.planFuRepo.findOne.mockResolvedValue(buildPlanFu([pmv]));
+
+      const result = await h.service.validateInputs(TENANT_ID, FU_ID);
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.isValid).toBe(true);
+      expect(
+        result.errors.some((e) => e.message.toLowerCase().includes('decimal')),
+      ).toBe(false);
+    });
+
+    it('does not produce a decimal-place error for a PRICE_SUP-shaped units/AMOUNT_PER_UNIT mechanic with a 4-decimal entry (consistent with C3\'s unit-amount exemption)', async () => {
+      const mechanic = makeMechanic({
+        code: 'PRICE_SUP',
+        inputType: InputType.UNITS,
+        mechanicType: MechanicType.AMOUNT_PER_UNIT,
+        category: MechanicCategory.PER_UNIT_SUPPORT,
+      });
+      const pmv = buildPmv(mechanic, '0.0125');
+      h.planFuRepo.findOne.mockResolvedValue(buildPlanFu([pmv]));
+
+      const result = await h.service.validateInputs(TENANT_ID, FU_ID);
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.isValid).toBe(true);
+      expect(
+        result.errors.some((e) => e.message.toLowerCase().includes('decimal')),
+      ).toBe(false);
+    });
+  });
+
+  /* ================================================================ *
+   * T-085 — validateCombinations: `activeMechanics` filter STRING bug
+   *
+   * The predicate read `v !== 0` against a transformer-less `numeric`
+   * column, i.e. a STRING: `"0.0000" !== 0` is always true (strict
+   * inequality never coerces across types), so a zero-valued mechanic never
+   * left `activeMechanics`. Downstream: two mutually-exclusive mechanics
+   * both entered as 0% were reported as a CONFLICT even though neither is
+   * actually in play (ADR 0008: absent and zero both mean "not entered").
+   * ================================================================ */
+  describe('validateCombinations — T-085 (activeMechanics zero-string filter fix)', () => {
+    let h: ServiceHarness;
+
+    beforeEach(async () => {
+      h = await createHarness();
+    });
+
+    it('does not report a mutual-exclusion conflict when both mutually exclusive mechanics are entered as "0.0000" (both inactive)', async () => {
+      const mechA = makeMechanic({
+        code: 'MX_A',
+        category: MechanicCategory.ON_INVOICE_DISCOUNT,
+        mutuallyExclusiveWith: ['MX_B'],
+      });
+      const mechB = makeMechanic({
+        code: 'MX_B',
+        category: MechanicCategory.OFF_INVOICE_DISCOUNT,
+        mutuallyExclusiveWith: ['MX_A'],
+      });
+      const pmvs = [buildPmv(mechA, '0.0000'), buildPmv(mechB, '0.0000')];
+      h.planFuRepo.findOne.mockResolvedValue(buildPlanFu(pmvs));
+
+      const result = await h.service.validateCombinations(TENANT_ID, FU_ID);
+
+      expect(result.conflicts).toHaveLength(0);
+      expect(
+        result.errors.some(
+          (e) =>
+            e.category === ErrorCategory.COMBINATION_ERROR &&
+            e.message.includes('cannot be used with'),
+        ),
+      ).toBe(false);
+    });
+
+    it('treats only the non-zero mechanic as active: the "0.0000" one is excluded from mutual-exclusion checking even though the old string comparison ("0.0000" !== 0) always kept it', async () => {
+      const mechZero = makeMechanic({
+        code: 'MX_ZERO',
+        category: MechanicCategory.ON_INVOICE_DISCOUNT,
+        mutuallyExclusiveWith: ['MX_ACTIVE'],
+      });
+      const mechActive = makeMechanic({
+        code: 'MX_ACTIVE',
+        category: MechanicCategory.OFF_INVOICE_DISCOUNT,
+        mutuallyExclusiveWith: ['MX_ZERO'],
+      });
+      const pmvs = [
+        buildPmv(mechZero, '0.0000'),
+        buildPmv(mechActive, '10.0000'),
+      ];
+      h.planFuRepo.findOne.mockResolvedValue(buildPlanFu(pmvs));
+
+      const result = await h.service.validateCombinations(TENANT_ID, FU_ID);
+
+      // Old (buggy) code: "0.0000" !== 0 is always true -> MX_ZERO stayed in
+      // activeMechanics -> a conflict with MX_ACTIVE was reported even
+      // though MX_ZERO contributes nothing. Fixed code: MX_ZERO is excluded,
+      // so there is no conflict to find.
+      expect(result.conflicts).toHaveLength(0);
+      expect(
+        result.errors.some(
+          (e) =>
+            e.category === ErrorCategory.COMBINATION_ERROR &&
+            e.message.includes('cannot be used with'),
+        ),
+      ).toBe(false);
+    });
+  });
 });

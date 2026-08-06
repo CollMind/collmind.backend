@@ -1,6 +1,7 @@
 import {
   readEnteredRaw,
   readEnteredValue,
+  numericTextToNumber,
 } from '../../../common/numeric/mechanic-input';
 import {
   rateFromNumericString,
@@ -97,17 +98,35 @@ export class SpendValidationService {
             suggestion: `Enter a value between 0 and 100`,
           });
         }
-        // Decimal places check
-        const decimals = enteredValue.toString().split('.')[1]?.length || 0;
-        if (decimals > 2) {
-          errors.push({
-            severity: ErrorSeverity.ERROR,
-            category: ErrorCategory.INPUT_ERROR,
-            message: `${mechanic.name}: Maximum 2 decimal places allowed`,
-            field: mechanic.code,
-            fuId: planFuId,
-          });
-        }
+        // T-085: the decimal-places check that used to sit here is GONE, and it
+        // could not have been repaired in place.
+        //
+        // It read `enteredValue.toString().split('.')[1].length`. The value is a
+        // transformer-less `numeric` column, so it is already a string padded to
+        // the column's scale: `entered_rate_pct` is `numeric(9,4)` and hands back
+        // "5.0000" whatever the planner typed. The check therefore measured the
+        // COLUMN SCALE, not the entry — it answered 4 every time and reported
+        // "Maximum 2 decimal places allowed" for every percentage mechanic,
+        // including a plain 10%. Four of the six seeded mechanics tripped it.
+        //
+        // It cannot be fixed by parsing better: the information it wants is gone
+        // by the time this code runs. `numeric(9,4)` pads on write, and how many
+        // places the planner actually typed is not recoverable from storage.
+        //
+        // The rule belongs at the write boundary, where the input still exists —
+        // and that is where it already is: `checkEnteredScale` (F2/C3) rejects
+        // sub-kuruş values on the one column whose scale makes that meaningful,
+        // before anything is stored. Verified before removing this: the write
+        // path is closed — `AddFuDto.tactics` was removed in T-079, so
+        // `updateFuTactic` is the only route to `plan_fus.tactics` and the gate
+        // runs ahead of its write.
+        //
+        // ⚠️ CONSEQUENCE, RECORDED SO IT IS NOT REDISCOVERED AS A BUG:
+        // `PRICE_SUP` (AMOUNT_PER_UNIT, `numeric(18,4)`) now has NO decimal
+        // limit. That is correct. C3 exempts unit amounts from the kuruş rule on
+        // purpose — a per-unit price legitimately carries four decimals, and
+        // 0.0125 TRY/unit over 800 000 units is an ordinary figure. A two-decimal
+        // limit on a four-decimal column was the wrong rule, not a missing one.
       } else if (mechanic.inputType === 'currency') {
         if (enteredValue < 0) {
           errors.push({
@@ -118,16 +137,7 @@ export class SpendValidationService {
             fuId: planFuId,
           });
         }
-        const decimals = enteredValue.toString().split('.')[1]?.length || 0;
-        if (decimals > 2) {
-          errors.push({
-            severity: ErrorSeverity.ERROR,
-            category: ErrorCategory.INPUT_ERROR,
-            message: `${mechanic.name}: Maximum 2 decimal places allowed`,
-            field: mechanic.code,
-            fuId: planFuId,
-          });
-        }
+        // T-085: decimal-places check removed — see the percentage branch above.
       } else if (mechanic.inputType === 'units') {
         if (enteredValue < 0) {
           errors.push({
@@ -138,24 +148,34 @@ export class SpendValidationService {
             fuId: planFuId,
           });
         }
-        // Check if integer or max 2 decimals
-        if (!Number.isInteger(enteredValue)) {
-          const decimals = enteredValue.toString().split('.')[1]?.length || 0;
-          if (decimals > 2) {
-            errors.push({
-              severity: ErrorSeverity.ERROR,
-              category: ErrorCategory.INPUT_ERROR,
-              message: `${mechanic.name}: Maximum 2 decimal places allowed`,
-              field: mechanic.code,
-              fuId: planFuId,
-            });
-          }
-        }
+        // T-085: `Number.isInteger(enteredValue)` and the decimal count that sat
+        // behind it are both gone. The gate was broken in its own right —
+        // `Number.isInteger("1.0000")` is ALWAYS false for a string, so every
+        // units entry fell through to the count — and the count itself measured
+        // the column scale rather than the entry. See the percentage branch.
       }
 
-      // Min/Max validation
+      // Min/Max validation.
+      //
+      // T-085: BOTH SIDES are normalised before comparing. `enteredValue` comes
+      // straight off a transformer-less `numeric` column and `mechanic.minValue`
+      // / `maxValue` are `numeric(18,4)` with no transformer either — so this
+      // used to be a STRING comparison, and it was wrong in both directions:
+      //
+      //   "5.0000"  < "10.0000"   ->  false   a real min violation, MISSED
+      //   "50.0000" > "100.0000"  ->  true    a valid value, REPORTED
+      //
+      // Lexicographic order, on a live route (GET /spend-calculation/
+      // validate-inputs/:planFuId). The missed violation is the worse half: it
+      // is silent, on a financial validation path (CLAUDE.md §2.5).
+      //
+      // The sibling comparisons in this method are NOT affected and were checked
+      // rather than assumed: `enteredValue < 0`, `> 100` and the combined-discount
+      // ceiling each have a real number on one side, and `number < string`
+      // coerces the string numerically. Only string-versus-string is broken.
+      const entered = numericTextToNumber(enteredValue);
       if (mechanic.minValue !== null && mechanic.minValue !== undefined) {
-        if (enteredValue < mechanic.minValue) {
+        if (entered < numericTextToNumber(mechanic.minValue)) {
           errors.push({
             severity: ErrorSeverity.ERROR,
             category: ErrorCategory.INPUT_ERROR,
@@ -168,7 +188,7 @@ export class SpendValidationService {
       }
 
       if (mechanic.maxValue !== null && mechanic.maxValue !== undefined) {
-        if (enteredValue > mechanic.maxValue) {
+        if (entered > numericTextToNumber(mechanic.maxValue)) {
           errors.push({
             severity: ErrorSeverity.ERROR,
             category: ErrorCategory.INPUT_ERROR,
@@ -223,13 +243,31 @@ export class SpendValidationService {
     // Get all active mechanics for this FU
     const activeMechanics = (planFu.planMechanicValues || [])
       .filter((pmv) => {
-        // This predicate treats null, undefined AND 0 as three distinct states
-        // — "not entered" and "entered as zero" both exclude the mechanic here,
-        // but for different reasons. `readEnteredRaw` preserves that; `?? 0`
-        // would erase the first two.
+        // "Is this mechanic actually in play?" — absent and zero both mean no,
+        // which is ADR 0008 ("for a planner's entry there is no meaning
+        // difference between null and 0") applied at a filter rather than in
+        // arithmetic.
+        //
+        // T-085: the zero half of that never worked. The predicate read
+        // `v !== 0`, and `v` is a transformer-less `numeric` column, so it is
+        // the STRING "0.0000" — and `"0.0000" !== 0` is always true because
+        // strict inequality never coerces across types. Every zero-valued
+        // mechanic stayed in `activeMechanics`.
+        //
+        // What that produced downstream: two mutually-exclusive mechanics both
+        // entered as 0% were reported as a CONFLICT, and the per-mechanic
+        // combined-discount ceiling counted mechanics contributing nothing. The
+        // decision ADR 0008 records was correct and the code was written to
+        // apply it — a type mismatch simply meant it never did.
+        //
+        // `readEnteredRaw` (not `readEnteredValue`) is still the right read: the
+        // null check below is the semantics here, and `?? 0` would erase the
+        // difference between "no row value" and "a zero the planner typed"
+        // before this predicate could see either.
         if (!pmv.mechanic) return false;
         const v = readEnteredRaw(pmv, pmv.mechanic);
-        return v !== null && v !== undefined && v !== 0;
+        if (v === null || v === undefined) return false;
+        return numericTextToNumber(v) !== 0;
       })
       .map((pmv) => pmv.mechanic)
       .filter((m) => m !== null) as Mechanic[];
