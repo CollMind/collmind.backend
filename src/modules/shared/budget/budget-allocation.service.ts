@@ -930,7 +930,7 @@ export class BudgetAllocationService {
       planId: planId || undefined,
       description,
       idempotencyKey,
-      createdById: userId,
+      createdBy: userId,
     });
 
     return this.budgetTransactionLogRepository.save(transaction);
