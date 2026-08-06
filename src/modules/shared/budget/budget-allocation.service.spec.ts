@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { Repository } from 'typeorm';
 import { NotFoundException } from '@nestjs/common';
 import { BudgetAllocationService } from './budget-allocation.service';
@@ -39,6 +40,7 @@ describe('BudgetAllocationService', () => {
   let budgetAllocationRepo: jest.Mocked<Repository<BudgetAllocation>>;
   let budgetTransactionLogRepo: jest.Mocked<Repository<BudgetTransactionLog>>;
   let planRepo: jest.Mocked<Repository<Plan>>;
+  let dataSource: DataSource;
 
   const mockTenantId = 'tenant-1';
   const mockUserId = 'user-1';
@@ -74,6 +76,23 @@ describe('BudgetAllocationService', () => {
           },
         },
         {
+          // T-096/2: the service now writes the balance and its transaction log
+          // inside one `dataSource.transaction`. The mock runs the callback with
+          // a manager whose `getRepository` hands back the SAME mocked repos, so
+          // existing assertions on `budgetAllocationRepo.save` keep working and
+          // the transactional path is exercised rather than stubbed away.
+          provide: DataSource,
+          useValue: {
+            transaction: (cb: any) =>
+              cb({
+                getRepository: (entity: any) =>
+                  entity === BudgetAllocation
+                    ? budgetAllocationRepo
+                    : budgetTransactionLogRepo,
+              }),
+          },
+        },
+        {
           provide: BudgetThresholdService,
           useValue: mockBudgetThresholdService,
         },
@@ -86,6 +105,7 @@ describe('BudgetAllocationService', () => {
       getRepositoryToken(BudgetTransactionLog),
     );
     planRepo = module.get(getRepositoryToken(Plan));
+    dataSource = module.get<DataSource>(DataSource);
   });
 
   afterEach(() => {
@@ -733,6 +753,555 @@ describe('BudgetAllocationService', () => {
         // offInvoiceDiff = 45 - 40 = 5 -> 200 + 5 = 205
         expect(allocationA.offInvoiceUtilized).toBe(205);
       });
+    });
+  });
+
+  /* ================================================================ *
+   * T-096/2 — fault injection: the transaction wrap must actually carry
+   * the failure, not just look like it does.
+   *
+   * A green suite without this proves nothing on its own ("it never
+   * throws" and "it's correctly wrapped" look identical from outside).
+   * These tests make the log write inside `createTransaction` fail and
+   * check two things per method:
+   *   1. the error is NOT swallowed — it propagates out of the service
+   *      method to the caller (a mocked `DataSource.transaction` cannot
+   *      demonstrate a real ROLLBACK, but it CAN demonstrate that the
+   *      exception is not caught anywhere between the failing write and
+   *      the caller — which is the precondition for a real transaction
+   *      to roll back at all);
+   *   2. which repo.save calls were actually reached before the throw —
+   *      this differs by write order and is the part worth asserting,
+   *      because it is the part that regresses silently if someone
+   *      "simplifies" the transaction wrapper back into two calls.
+   *
+   * The injected error mirrors a real one: T-096/1 fixed a duplicate
+   * column mapping (Postgres 42701) that could surface exactly as a log
+   * write failing after the balance write had already gone through.
+   * ================================================================ */
+  describe('T-096/2 — transaction wrap: fault injection proves rollback boundary, not just green tests', () => {
+    const simulatedDbError = () =>
+      new Error('duplicate column mapping for "amount" (42701)');
+
+    it('reserveBudget (save -> log order): log write fails inside the transaction -> the balance save has ALREADY been issued (it would be rolled back by a real DB transaction; the mock cannot show the rollback itself, only that save was reached before the throw) and the error is not swallowed', async () => {
+      const amounts: SpendBreakdown = {
+        skuId: 'sku-1',
+        base: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        planned: {
+          ltaOnInvoice: 10000,
+          ltaOffInvoice: 5000,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 0,
+          totalPromoOffInvoice: 0,
+          totalOnInvoice: 10000,
+          totalOffInvoice: 5000,
+          totalSpend: 15000,
+        },
+        incremental: {
+          onInvoice: 10000,
+          offInvoice: 5000,
+          total: 15000,
+        },
+      };
+
+      const mockPlan: Partial<Plan> = {
+        id: mockPlanId,
+        cplId: 'cpl-1',
+        channel: { code: 'NKA' } as any,
+        category: { code: 'Dairy' } as any,
+        periodMonth: '2025-01',
+      };
+
+      const mockAllocation: Partial<BudgetAllocation> = {
+        id: mockAllocationId,
+        onInvoiceAvailable: 100000,
+        offInvoiceAvailable: 50000,
+        hardLimitMode: false,
+        onInvoiceReserved: 0,
+        offInvoiceReserved: 0,
+      };
+
+      planRepo.findOne.mockResolvedValue(mockPlan as Plan);
+
+      const mockQueryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(mockAllocation),
+      };
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
+      budgetAllocationRepo.save.mockResolvedValue(
+        mockAllocation as BudgetAllocation,
+      );
+      budgetTransactionLogRepo.create.mockReturnValue({} as any);
+      // The fault: the log write inside the SAME transaction fails.
+      budgetTransactionLogRepo.save.mockRejectedValue(simulatedDbError());
+
+      await expect(
+        service.reserveBudget(mockTenantId, mockUserId, mockPlanId, amounts),
+      ).rejects.toThrow(/42701/);
+
+      // Failure signature for save -> log: balance save WAS called before
+      // the throw escaped the transaction callback.
+      expect(budgetAllocationRepo.save).toHaveBeenCalledTimes(1);
+      expect(budgetTransactionLogRepo.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('updateAllocation (log -> save order): ADJUSTMENT log write fails inside the transaction -> the balance save is NEVER reached (different failure signature from save -> log methods) and the error is not swallowed', async () => {
+      const allocation: Partial<BudgetAllocation> = {
+        id: mockAllocationId,
+        tenantId: mockTenantId,
+        onInvoiceBudget: 100000,
+        offInvoiceBudget: 50000,
+        onInvoiceUtilized: 0,
+        onInvoiceReserved: 0,
+        offInvoiceUtilized: 0,
+        offInvoiceReserved: 0,
+      };
+
+      budgetAllocationRepo.findOne.mockResolvedValue(
+        allocation as BudgetAllocation,
+      );
+      budgetTransactionLogRepo.create.mockReturnValue({} as any);
+      // The fault: the ADJUSTMENT log write, which in this method runs
+      // BEFORE the allocation save, fails.
+      budgetTransactionLogRepo.save.mockRejectedValue(simulatedDbError());
+
+      await expect(
+        service.updateAllocation(mockTenantId, mockUserId, mockAllocationId, {
+          onInvoiceBudget: 150000, // adjustment = 150000 - 100000 = 50000 !== 0
+        }),
+      ).rejects.toThrow(/42701/);
+
+      // Failure signature for log -> save: the log write throws before
+      // `applyAllocationSettings` ever calls save on the allocation.
+      expect(budgetTransactionLogRepo.save).toHaveBeenCalledTimes(1);
+      expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  /* ================================================================ *
+   * T-096/2 — manager routing: proves the wrap is not a no-op.
+   *
+   * The default mock in this file routes `m.getRepository(...)` to the
+   * SAME injected repo mocks the service also holds directly, which is
+   * correct for exercising the transactional code path but, by itself,
+   * cannot distinguish "the manager was used" from "the manager was
+   * ignored and the default-connection repo was used instead" — both
+   * would show the same calls on the same mock objects.
+   *
+   * This test swaps in a `DataSource.transaction` implementation that
+   * hands the callback a manager with its OWN distinct repo doubles, then
+   * asserts writes landed on those doubles and NOT on the service's
+   * directly-injected repos. That is the only way to show `manager` is
+   * actually threaded through `createTransaction` rather than merely
+   * accepted and dropped.
+   * ================================================================ */
+  describe('T-096/2 — manager routing: transaction writes go through the callback manager, not the default-connection repository', () => {
+    it('createAllocation: log write uses manager.getRepository(BudgetTransactionLog) / manager.getRepository(BudgetAllocation), never the directly-injected default repos', async () => {
+      const dto = {
+        periodType: PeriodType.MONTHLY,
+        periodStart: '2025-01-01',
+        periodEnd: '2025-01-31',
+        fiscalYear: 2025,
+        cplId: 'cpl-1',
+        onInvoiceBudget: 100000,
+        offInvoiceBudget: 50000,
+      };
+
+      const mockQueryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([]),
+      };
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
+      budgetAllocationRepo.create.mockReturnValue({
+        id: mockAllocationId,
+      } as any);
+
+      const distinctAllocationRepo = {
+        save: jest.fn().mockResolvedValue({ id: mockAllocationId }),
+      };
+      const distinctLogRepo = {
+        create: jest.fn().mockReturnValue({}),
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const mockManager = {
+        getRepository: jest.fn((entity: any) =>
+          entity === BudgetAllocation ? distinctAllocationRepo : distinctLogRepo,
+        ),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation((cb: any) => cb(mockManager));
+
+      await service.createAllocation(mockTenantId, mockUserId, dto);
+
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetAllocation,
+      );
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetTransactionLog,
+      );
+      expect(distinctAllocationRepo.save).toHaveBeenCalledTimes(1);
+      expect(distinctLogRepo.save).toHaveBeenCalledTimes(1);
+
+      // Proof the wrap is not a no-op: the directly-injected default repos
+      // (what the pre-fix code would have used) were NOT touched.
+      expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+      expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('reserveBudget: balance save + RESERVATION log use manager.getRepository(...), never the directly-injected default repos — proves it writes through the manager, not the default connection', async () => {
+      const amounts: SpendBreakdown = {
+        skuId: 'sku-1',
+        base: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        planned: {
+          ltaOnInvoice: 10000,
+          ltaOffInvoice: 5000,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 0,
+          totalPromoOffInvoice: 0,
+          totalOnInvoice: 10000,
+          totalOffInvoice: 5000,
+          totalSpend: 15000,
+        },
+        incremental: {
+          onInvoice: 10000,
+          offInvoice: 5000,
+          total: 15000,
+        },
+      };
+
+      const mockPlan: Partial<Plan> = {
+        id: mockPlanId,
+        cplId: 'cpl-1',
+        channel: { code: 'NKA' } as any,
+        category: { code: 'Dairy' } as any,
+        periodMonth: '2025-01',
+      };
+
+      const mockAllocation: Partial<BudgetAllocation> = {
+        id: mockAllocationId,
+        onInvoiceAvailable: 100000,
+        offInvoiceAvailable: 50000,
+        hardLimitMode: false,
+        onInvoiceReserved: 0,
+        offInvoiceReserved: 0,
+      };
+
+      planRepo.findOne.mockResolvedValue(mockPlan as Plan);
+
+      // findMatchingAllocation is called twice on this path (once directly,
+      // once inside checkAvailability) — both are reads and go through the
+      // default-connection query builder regardless of the transaction wrap;
+      // that is expected and not what this test is checking.
+      const mockQueryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(mockAllocation),
+      };
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
+
+      const distinctAllocationRepo = {
+        save: jest.fn().mockResolvedValue(mockAllocation),
+      };
+      const distinctLogRepo = {
+        create: jest.fn().mockReturnValue({}),
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const mockManager = {
+        getRepository: jest.fn((entity: any) =>
+          entity === BudgetAllocation ? distinctAllocationRepo : distinctLogRepo,
+        ),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation((cb: any) => cb(mockManager));
+
+      await service.reserveBudget(
+        mockTenantId,
+        mockUserId,
+        mockPlanId,
+        amounts,
+      );
+
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetAllocation,
+      );
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetTransactionLog,
+      );
+      expect(distinctAllocationRepo.save).toHaveBeenCalledTimes(1);
+      expect(distinctLogRepo.save).toHaveBeenCalledTimes(1);
+
+      // Proof the wrap is not a no-op: the directly-injected default repos'
+      // save() (what the pre-fix code would have used) were NOT touched.
+      expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+      expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('commitBudget: balance save + COMMIT log use manager.getRepository(...), never the directly-injected default repos — proves it writes through the manager, not the default connection', async () => {
+      const mockReservation: Partial<BudgetTransactionLog> = {
+        id: 'tx-1',
+        planId: mockPlanId,
+        onInvoiceAmount: 10000,
+        offInvoiceAmount: 5000,
+        budgetAllocation: {
+          id: mockAllocationId,
+          onInvoiceReserved: 10000,
+          onInvoiceUtilized: 0,
+          offInvoiceReserved: 5000,
+          offInvoiceUtilized: 0,
+        } as BudgetAllocation,
+      };
+
+      // This findOne is a read and stays on the default-connection repo
+      // regardless of the transaction wrap — expected, not under test here.
+      budgetTransactionLogRepo.findOne.mockResolvedValue(
+        mockReservation as BudgetTransactionLog,
+      );
+
+      const distinctAllocationRepo = {
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const distinctLogRepo = {
+        create: jest.fn().mockReturnValue({}),
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const mockManager = {
+        getRepository: jest.fn((entity: any) =>
+          entity === BudgetAllocation ? distinctAllocationRepo : distinctLogRepo,
+        ),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation((cb: any) => cb(mockManager));
+
+      await service.commitBudget(mockTenantId, mockUserId, mockPlanId);
+
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetAllocation,
+      );
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetTransactionLog,
+      );
+      expect(distinctAllocationRepo.save).toHaveBeenCalledTimes(1);
+      expect(distinctLogRepo.save).toHaveBeenCalledTimes(1);
+
+      expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+      expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('releaseBudget: balance save + RELEASE log use manager.getRepository(...), never the directly-injected default repos — proves it writes through the manager, not the default connection', async () => {
+      const mockReservation: Partial<BudgetTransactionLog> = {
+        id: 'tx-1',
+        planId: mockPlanId,
+        onInvoiceAmount: 10000,
+        offInvoiceAmount: 5000,
+        budgetAllocation: {
+          id: mockAllocationId,
+          onInvoiceReserved: 10000,
+          offInvoiceReserved: 5000,
+        } as BudgetAllocation,
+      };
+
+      budgetTransactionLogRepo.findOne.mockResolvedValue(
+        mockReservation as BudgetTransactionLog,
+      );
+
+      const distinctAllocationRepo = {
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const distinctLogRepo = {
+        create: jest.fn().mockReturnValue({}),
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const mockManager = {
+        getRepository: jest.fn((entity: any) =>
+          entity === BudgetAllocation ? distinctAllocationRepo : distinctLogRepo,
+        ),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation((cb: any) => cb(mockManager));
+
+      await service.releaseBudget(mockTenantId, mockUserId, mockPlanId);
+
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetAllocation,
+      );
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetTransactionLog,
+      );
+      expect(distinctAllocationRepo.save).toHaveBeenCalledTimes(1);
+      expect(distinctLogRepo.save).toHaveBeenCalledTimes(1);
+
+      expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+      expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('adjustUtilization: balance save + ADJUSTMENT log use manager.getRepository(...), never the directly-injected default repos — proves it writes through the manager, not the default connection', async () => {
+      const newAmounts: SpendBreakdown = {
+        skuId: 'sku-1',
+        base: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        planned: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 0,
+          totalPromoOffInvoice: 0,
+          totalOnInvoice: 120,
+          totalOffInvoice: 45,
+          totalSpend: 165,
+        },
+        incremental: {
+          onInvoice: 120,
+          offInvoice: 45,
+          total: 165,
+        },
+      } as SpendBreakdown;
+
+      const existingCommit: Partial<BudgetTransactionLog> = {
+        id: 'tx-commit-1',
+        planId: mockPlanId,
+        onInvoiceAmount: 100,
+        offInvoiceAmount: 40,
+        budgetAllocation: {
+          id: mockAllocationId,
+          onInvoiceUtilized: 500,
+          offInvoiceUtilized: 200,
+        } as BudgetAllocation,
+      };
+
+      // This findOne is a read and stays on the default-connection repo
+      // regardless of the transaction wrap — expected (T-094), not under
+      // test here.
+      budgetTransactionLogRepo.findOne.mockResolvedValue(
+        existingCommit as BudgetTransactionLog,
+      );
+
+      const distinctAllocationRepo = {
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const distinctLogRepo = {
+        create: jest.fn().mockReturnValue({}),
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const mockManager = {
+        getRepository: jest.fn((entity: any) =>
+          entity === BudgetAllocation ? distinctAllocationRepo : distinctLogRepo,
+        ),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation((cb: any) => cb(mockManager));
+
+      await service.adjustUtilization(
+        mockTenantId,
+        mockUserId,
+        mockPlanId,
+        newAmounts,
+        'revision',
+      );
+
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetAllocation,
+      );
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetTransactionLog,
+      );
+      expect(distinctAllocationRepo.save).toHaveBeenCalledTimes(1);
+      expect(distinctLogRepo.save).toHaveBeenCalledTimes(1);
+
+      expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+      expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('updateAllocation: BOTH ADJUSTMENT logs (on-invoice + off-invoice) and the final balance save use manager.getRepository(...), never the directly-injected default repos — proves it writes through the manager, not the default connection', async () => {
+      const allocation: Partial<BudgetAllocation> = {
+        id: mockAllocationId,
+        tenantId: mockTenantId,
+        onInvoiceBudget: 100000,
+        offInvoiceBudget: 50000,
+        onInvoiceUtilized: 0,
+        onInvoiceReserved: 0,
+        offInvoiceUtilized: 0,
+        offInvoiceReserved: 0,
+      };
+
+      // This findOne is a read and stays on the default-connection repo
+      // regardless of the transaction wrap — expected, not under test here.
+      budgetAllocationRepo.findOne.mockResolvedValue(
+        allocation as BudgetAllocation,
+      );
+
+      const distinctAllocationRepo = {
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const distinctLogRepo = {
+        create: jest.fn().mockReturnValue({}),
+        save: jest.fn().mockResolvedValue({}),
+      };
+      const mockManager = {
+        getRepository: jest.fn((entity: any) =>
+          entity === BudgetAllocation ? distinctAllocationRepo : distinctLogRepo,
+        ),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation((cb: any) => cb(mockManager));
+
+      // Both dimensions change (both non-zero adjustments) so BOTH
+      // ADJUSTMENT logs are written, in addition to the final allocation
+      // save — three writes in total, all of which must go through the
+      // manager.
+      await service.updateAllocation(mockTenantId, mockUserId, mockAllocationId, {
+        onInvoiceBudget: 150000, // adjustment = 150000 - 100000 = 50000 !== 0
+        offInvoiceBudget: 80000, // adjustment = 80000 - 50000 = 30000 !== 0
+      });
+
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetAllocation,
+      );
+      expect(mockManager.getRepository).toHaveBeenCalledWith(
+        BudgetTransactionLog,
+      );
+      // Two ADJUSTMENT logs (on-invoice + off-invoice) + one final
+      // allocation save.
+      expect(distinctLogRepo.save).toHaveBeenCalledTimes(2);
+      expect(distinctAllocationRepo.save).toHaveBeenCalledTimes(1);
+
+      expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+      expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
     });
   });
 });

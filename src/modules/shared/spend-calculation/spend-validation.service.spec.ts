@@ -572,6 +572,9 @@ describe('SpendValidationService', () => {
         allocationRepo as any,
         {} as any,
         {} as any,
+        // T-096/2: DataSource, injected so balance writes and their transaction
+        // logs share one transaction. Unused on this path.
+        {} as any,
         thresholdService as any,
       );
 

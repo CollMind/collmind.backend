@@ -6,7 +6,12 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import {
+  Repository,
+  Between,
+  DataSource,
+  EntityManager,
+} from 'typeorm';
 import {
   BudgetAllocation,
   PeriodType,
@@ -45,6 +50,9 @@ export class BudgetAllocationService {
     private readonly budgetTransactionLogRepository: Repository<BudgetTransactionLog>,
     @InjectRepository(Plan)
     private readonly planRepository: Repository<Plan>,
+    // T-096/2: needed to put a balance write and its transaction log inside ONE
+    // transaction. See the block comment on `createTransaction`.
+    private readonly dataSource: DataSource,
     private readonly budgetThresholdService: BudgetThresholdService,
   ) {}
 
@@ -135,19 +143,23 @@ export class BudgetAllocationService {
       createdBy: userId,
     });
 
-    const saved = await this.budgetAllocationRepository.save(allocation);
-
-    // Create initial ALLOCATION transaction
-    await this.createTransaction(
-      tenantId,
-      userId,
-      saved.id,
-      BudgetTransactionType.ALLOCATION,
-      dto.onInvoiceBudget,
-      dto.offInvoiceBudget,
-      null,
-      'Initial budget allocation',
-    );
+    // T-096/2: balance write + log in ONE transaction — see reserveBudget.
+    const saved = await this.dataSource.transaction(async (m) => {
+      const row = await m.getRepository(BudgetAllocation).save(allocation);
+      await this.createTransaction(
+        tenantId,
+        userId,
+        row.id,
+        BudgetTransactionType.ALLOCATION,
+        dto.onInvoiceBudget,
+        dto.offInvoiceBudget,
+        null,
+        'Initial budget allocation',
+        undefined,
+        m,
+      );
+      return row;
+    });
 
     return saved;
   }
@@ -192,41 +204,65 @@ export class BudgetAllocationService {
       }
     }
 
-    // Update fields
-    if (dto.onInvoiceBudget !== undefined) {
-      const adjustment = dto.onInvoiceBudget - allocation.onInvoiceBudget;
-      allocation.onInvoiceBudget = dto.onInvoiceBudget;
-      if (adjustment !== 0) {
-        await this.createTransaction(
-          tenantId,
-          userId,
-          allocation.id,
-          BudgetTransactionType.ADJUSTMENT,
-          adjustment,
-          0,
-          null,
-          `On-invoice budget adjustment: ${adjustment > 0 ? '+' : ''}${adjustment}`,
-        );
+    // T-096/2: balance write + logs in ONE transaction — see reserveBudget.
+    //
+    // ⚠️ THIS METHOD RUNS THE PAIR IN THE OPPOSITE ORDER to the other five: the
+    // ADJUSTMENT logs are written first and the allocation is saved last. Inside
+    // one transaction that is now consistent — either both land or neither does.
+    // The ordering itself is still backwards (a log records something that has
+    // happened, not something about to) and is corrected in a separate commit,
+    // so that the correction can be shown to change no behaviour at all.
+    return this.dataSource.transaction(async (m) => {
+      // Update fields
+      if (dto.onInvoiceBudget !== undefined) {
+        const adjustment = dto.onInvoiceBudget - allocation.onInvoiceBudget;
+        allocation.onInvoiceBudget = dto.onInvoiceBudget;
+        if (adjustment !== 0) {
+          await this.createTransaction(
+            tenantId,
+            userId,
+            allocation.id,
+            BudgetTransactionType.ADJUSTMENT,
+            adjustment,
+            0,
+            null,
+            `On-invoice budget adjustment: ${adjustment > 0 ? '+' : ''}${adjustment}`,
+            undefined,
+            m,
+          );
+        }
       }
-    }
 
-    if (dto.offInvoiceBudget !== undefined) {
-      const adjustment = dto.offInvoiceBudget - allocation.offInvoiceBudget;
-      allocation.offInvoiceBudget = dto.offInvoiceBudget;
-      if (adjustment !== 0) {
-        await this.createTransaction(
-          tenantId,
-          userId,
-          allocation.id,
-          BudgetTransactionType.ADJUSTMENT,
-          0,
-          adjustment,
-          null,
-          `Off-invoice budget adjustment: ${adjustment > 0 ? '+' : ''}${adjustment}`,
-        );
+      if (dto.offInvoiceBudget !== undefined) {
+        const adjustment = dto.offInvoiceBudget - allocation.offInvoiceBudget;
+        allocation.offInvoiceBudget = dto.offInvoiceBudget;
+        if (adjustment !== 0) {
+          await this.createTransaction(
+            tenantId,
+            userId,
+            allocation.id,
+            BudgetTransactionType.ADJUSTMENT,
+            0,
+            adjustment,
+            null,
+            `Off-invoice budget adjustment: ${adjustment > 0 ? '+' : ''}${adjustment}`,
+            undefined,
+            m,
+          );
+        }
       }
-    }
 
+      return this.applyAllocationSettings(allocation, dto, userId, m);
+    });
+  }
+
+  /** T-096/2: tail of `updateAllocation`, extracted so the transaction body stays readable. */
+  private async applyAllocationSettings(
+    allocation: BudgetAllocation,
+    dto: Partial<CreateBudgetAllocationDto>,
+    userId: string,
+    m: EntityManager,
+  ): Promise<BudgetAllocation> {
     if (dto.alertThreshold80 !== undefined)
       allocation.alertThreshold80 = dto.alertThreshold80;
     if (dto.alertThreshold95 !== undefined)
@@ -241,7 +277,7 @@ export class BudgetAllocationService {
       allocation.allowCarryForward = dto.allowCarryForward;
 
     allocation.updatedBy = userId;
-    return this.budgetAllocationRepository.save(allocation);
+    return m.getRepository(BudgetAllocation).save(allocation);
   }
 
   /**
@@ -374,23 +410,28 @@ export class BudgetAllocationService {
     }
 
     // Update reserved amounts
+    // T-096/2: the balance write and its log are ONE transaction. Before this,
+    // the balance persisted and the log write could still fail — money moved,
+    // nothing recorded it, and the caller got a 500 saying nothing happened.
+    // ADR 0003 settled the same question for agreement reservations.
     allocation.onInvoiceReserved += amounts.planned.totalOnInvoice;
     allocation.offInvoiceReserved += amounts.planned.totalOffInvoice;
-    await this.budgetAllocationRepository.save(allocation);
-
-    // Create RESERVATION transaction
     const idempotencyKey = `RESERVE|PLAN|${planId}|${allocation.id}`;
-    await this.createTransaction(
-      tenantId,
-      userId,
-      allocation.id,
-      BudgetTransactionType.RESERVATION,
-      amounts.planned.totalOnInvoice,
-      amounts.planned.totalOffInvoice,
-      planId,
-      `Budget reservation for plan ${planId}`,
-      idempotencyKey,
-    );
+    await this.dataSource.transaction(async (m) => {
+      await m.getRepository(BudgetAllocation).save(allocation);
+      await this.createTransaction(
+        tenantId,
+        userId,
+        allocation.id,
+        BudgetTransactionType.RESERVATION,
+        amounts.planned.totalOnInvoice,
+        amounts.planned.totalOffInvoice,
+        planId,
+        `Budget reservation for plan ${planId}`,
+        idempotencyKey,
+        m,
+      );
+    });
 
     // Schedule auto-release after 7 days (configurable)
     // This would be handled by a scheduled job/cron
@@ -468,21 +509,23 @@ export class BudgetAllocationService {
     allocation.offInvoiceReserved -= committedOffInvoice;
     allocation.offInvoiceUtilized += committedOffInvoice;
 
-    await this.budgetAllocationRepository.save(allocation);
-
-    // Create COMMIT transaction
+    // T-096/2: balance write + log in ONE transaction — see reserveBudget.
     const idempotencyKey = `COMMIT|PLAN|${planId}|${allocation.id}`;
-    await this.createTransaction(
-      tenantId,
-      userId,
-      allocation.id,
-      BudgetTransactionType.COMMIT,
-      reservation.onInvoiceAmount,
-      reservation.offInvoiceAmount,
-      planId,
-      `Budget commit for approved plan ${planId}`,
-      idempotencyKey,
-    );
+    await this.dataSource.transaction(async (m) => {
+      await m.getRepository(BudgetAllocation).save(allocation);
+      await this.createTransaction(
+        tenantId,
+        userId,
+        allocation.id,
+        BudgetTransactionType.COMMIT,
+        reservation.onInvoiceAmount,
+        reservation.offInvoiceAmount,
+        planId,
+        `Budget commit for approved plan ${planId}`,
+        idempotencyKey,
+        m,
+      );
+    });
 
     // Check alert thresholds
     await this.checkAndSendAlerts(tenantId, allocation);
@@ -526,21 +569,23 @@ export class BudgetAllocationService {
       moneyFromNumericString(String(reservation.offInvoiceAmount)),
     );
 
-    await this.budgetAllocationRepository.save(allocation);
-
-    // Create RELEASE transaction
+    // T-096/2: balance write + log in ONE transaction — see reserveBudget.
     const idempotencyKey = `RELEASE|PLAN|${planId}|${allocation.id}`;
-    await this.createTransaction(
-      tenantId,
-      userId,
-      allocation.id,
-      BudgetTransactionType.RELEASE,
-      -reservation.onInvoiceAmount,
-      -reservation.offInvoiceAmount,
-      planId,
-      `Budget release for plan ${planId}`,
-      idempotencyKey,
-    );
+    await this.dataSource.transaction(async (m) => {
+      await m.getRepository(BudgetAllocation).save(allocation);
+      await this.createTransaction(
+        tenantId,
+        userId,
+        allocation.id,
+        BudgetTransactionType.RELEASE,
+        -reservation.onInvoiceAmount,
+        -reservation.offInvoiceAmount,
+        planId,
+        `Budget release for plan ${planId}`,
+        idempotencyKey,
+        m,
+      );
+    });
   }
 
   /**
@@ -583,19 +628,22 @@ export class BudgetAllocationService {
     allocation.onInvoiceUtilized += onInvoiceDiff;
     allocation.offInvoiceUtilized += offInvoiceDiff;
 
-    await this.budgetAllocationRepository.save(allocation);
-
-    // Create ADJUSTMENT transaction
-    await this.createTransaction(
-      tenantId,
-      userId,
-      allocation.id,
-      BudgetTransactionType.ADJUSTMENT,
-      onInvoiceDiff,
-      offInvoiceDiff,
-      planId,
-      `Budget adjustment for plan ${planId}: ${reason}`,
-    );
+    // T-096/2: balance write + log in ONE transaction — see reserveBudget.
+    await this.dataSource.transaction(async (m) => {
+      await m.getRepository(BudgetAllocation).save(allocation);
+      await this.createTransaction(
+        tenantId,
+        userId,
+        allocation.id,
+        BudgetTransactionType.ADJUSTMENT,
+        onInvoiceDiff,
+        offInvoiceDiff,
+        planId,
+        `Budget adjustment for plan ${planId}: ${reason}`,
+        undefined,
+        m,
+      );
+    });
   }
 
   /**
@@ -920,8 +968,31 @@ export class BudgetAllocationService {
     planId: string | null,
     description: string,
     idempotencyKey?: string,
+    /**
+     * T-096/2: when supplied, the log row is written through the caller's open
+     * transaction instead of the default connection.
+     *
+     * WHY THIS PARAMETER EXISTS AT ALL
+     * Every caller here does the same two things: move money on the allocation,
+     * then record what it did. Those were two independent writes. If the second
+     * failed, the first stayed — the balance had moved and nothing recorded it,
+     * while the caller received a 500 saying nothing had happened. That is
+     * worse than a wrong number: the error message told the opposite of the
+     * truth.
+     *
+     * ADR 0003 settled this exact question for agreement reservations ("RELEASE
+     * must be written inside close()'s QueryRunner transaction — outside, it
+     * would commit even when close rolled back"). The lesson had simply never
+     * been applied here. `BudgetRepository` already takes `manager?` on five
+     * methods for the same reason; this service just never used it.
+     */
+    manager?: EntityManager,
   ): Promise<BudgetTransactionLog> {
-    const transaction = this.budgetTransactionLogRepository.create({
+    const repo = manager
+      ? manager.getRepository(BudgetTransactionLog)
+      : this.budgetTransactionLogRepository;
+
+    const transaction = repo.create({
       tenantId,
       budgetAllocationId: allocationId,
       transactionType: type,
@@ -933,7 +1004,7 @@ export class BudgetAllocationService {
       createdBy: userId,
     });
 
-    return this.budgetTransactionLogRepository.save(transaction);
+    return repo.save(transaction);
   }
 
   /**
