@@ -1,0 +1,45 @@
+# EXACTNESS PRIMITIVES — single declaration (ADR 0007 errata E15, made per-file by E16)
+#
+# `money-float` does not fire inside these files. Not an exemption in the usual
+# sense: the guard looks for `Number(`, `parseFloat`, `toFixed` and `Math.round`
+# because those are the patterns by which exactness is LOST, and in the module
+# that BUILDS exactness the same patterns produce it. `money.ts` parses a decimal
+# string into minor units — calling `Number()` on a digit substring is exactly how
+# an exact integer is obtained. `rounding.ts`'s `Math.round` is not a call to be
+# banned; it is the one sanctioned rounding primitive the ban funnels into.
+#
+# WHY PER-FILE AND NOT PER-DIRECTORY (E16, T-086)
+# E15 declared the whole `src/common/numeric/` directory. It also wrote a rule:
+# "putting a file in this directory ASSERTS that it is an exactness primitive
+# covered by property-based tests; business logic does not go here." That rule
+# lived only in a JSDoc comment — every file dropped into the directory became
+# exempt automatically, whether or not anyone had made that claim.
+#
+# The concrete risk was measured while writing T-087: `plan.service.ts:119`
+# (`Number(raw)`) is one of that file's 36 ratchet findings, and moving the
+# function into an exempt directory would have dropped the count to 35 while
+# repaying nothing — the finding would simply stop being counted. Under a
+# per-directory rule the ratchet cannot tell repayment from relocation.
+#
+# Listing files makes the assertion explicit and reviewable: a new file in the
+# directory is SCANNED until someone adds it here, in a diff a reviewer sees.
+#
+# WHAT REPLACES THE DETECTOR HERE
+# `numeric.property.spec.ts` — F1's property-based tests. Silencing a detector
+# without replacing the protection would be the real defect; these files are not
+# unprotected, they are protected by a stronger instrument.
+#
+# BEFORE ADDING A LINE, ask whether the file is genuinely a primitive: does it
+# construct or convert exact values, and is it covered by those property tests?
+# If it holds business logic, it belongs in its module, where the detector fires.
+#
+# FORMAT: one repo-relative FILE path per line. `#` comments and blanks ignored.
+# `*.spec.ts` files are already outside the scan and need no entry.
+src/common/numeric/allocation.ts
+src/common/numeric/brands.ts
+src/common/numeric/index.ts
+src/common/numeric/limits.ts
+src/common/numeric/mechanic-input.ts
+src/common/numeric/money.ts
+src/common/numeric/rate.ts
+src/common/numeric/rounding.ts

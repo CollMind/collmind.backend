@@ -90,7 +90,36 @@ fi
 # and is covered by property-based tests. Business logic does not go here. A
 # file that does not meet that description belongs in its module, where the
 # detector does fire.
-EXACTNESS_PRIMITIVES='src/common/numeric/'
+# E16 (T-086): the exemption is declared PER FILE, not per directory. See
+# scripts/guards/exactness-primitives.txt for why — in short, a per-directory
+# rule cannot tell a repaid finding from one relocated into the exempt path, and
+# E15's "putting a file here asserts it is a primitive" lived only in a comment.
+PRIMITIVES_LIST="${MONEY_FLOAT_PRIMITIVES:-$ROOT/scripts/guards/exactness-primitives.txt}"
+
+# The declared set, comments and blanks stripped. Empty is a legitimate state
+# (nothing exempt) and must NOT become "exempt everything" — `grep -F -f` with an
+# empty pattern file matches nothing, which is the safe direction, and the
+# self-test below pins it either way.
+primitives() {
+  [ -f "$PRIMITIVES_LIST" ] || return 0
+  grep -vE '^[[:space:]]*(#|$)' "$PRIMITIVES_LIST"
+}
+
+# THE filter. Both the scan and the self-test go through this one function, and
+# that is not tidiness — it is the whole reason the self-test means anything.
+#
+# An earlier version had the self-test build its own copy of the same `grep`.
+# Mutation testing showed what that bought: replacing the SCAN's filter with a
+# per-directory prefix match — precisely the regression E16 exists to prevent —
+# left the self-test green and the guard exited 0. The test was checking a
+# private replica of the thing under test.
+#
+# `-F -x -v -f`: fixed strings, WHOLE LINE, inverted, from a file. Whole-line is
+# what makes this per-file; a prefix match would exempt everything beneath a
+# declared path and put us back at E15.
+apply_primitive_filter() {
+  grep -Fxv -f <(primitives)
+}
 
 # Resolve the declared modules to a concrete, deterministically sorted file set.
 domain_files() {
@@ -99,11 +128,7 @@ domain_files() {
     case "$d" in ''|\#*) continue ;; esac
     [ -d "$d" ] || continue
     find "$d" -type f -name "*.ts" ! -name "*.spec.ts" 2>/dev/null
-  # `grep -E`, not plain `grep`: BSD grep's BRE does not support `\?`, so a
-  # `^\./\?<dir>` pattern silently matches nothing on macOS — the filter looks
-  # applied and filters zero files. Caught here only because the baseline was
-  # measured instead of assumed; a self-test below pins it.
-  done < "$DOMAIN_LIST" | grep -Ev "^(\./)?$EXACTNESS_PRIMITIVES" | sort -u
+  done < "$DOMAIN_LIST" | apply_primitive_filter | sort -u
 }
 
 # E15 self-test — the filter above must EXCLUDE the primitives and INCLUDE
@@ -112,17 +137,37 @@ domain_files() {
 # grep's unsupported `\?` actually did when E15 was written, caught only by
 # measuring the baseline), and a pattern that matches too much would empty the
 # whole scan while still exiting 0.
+# Three directions, because a filter can fail in three ways and two of them look
+# like success: it can stop excluding what it should (findings reappear — loud),
+# it can start excluding what it should not (findings vanish — silent), or it can
+# do nothing at all while appearing to run (E15's `\?` bug — also silent).
 self_test() {
   local out rc=0
-  out="$(printf 'src/common/numeric/money.ts\nsrc/modules/shared/budget/budget.service.ts\n' \
-    | grep -Ev "^(\./)?$EXACTNESS_PRIMITIVES")"
+  out="$(printf '%s\n' \
+      'src/common/numeric/money.ts' \
+      'src/common/numeric/NOT_DECLARED.ts' \
+      'src/modules/shared/budget/budget.service.ts' \
+    | apply_primitive_filter)"
+
   case "$out" in
-    *src/common/numeric/*)
-      echo "-- [$GUARD_NAME] SELF-TEST FAIL: primitives not excluded"; rc=1 ;;
+    *'src/common/numeric/money.ts'*)
+      echo "-- [$GUARD_NAME] SELF-TEST FAIL: a declared primitive was not excluded"
+      rc=1 ;;
+  esac
+  # THE POINT OF E16. Under the old per-directory rule this file was exempt
+  # merely for sitting in the directory; now it must be scanned until someone
+  # declares it in a reviewable diff.
+  case "$out" in
+    *'src/common/numeric/NOT_DECLARED.ts'*) ;;
+    *)
+      echo "-- [$GUARD_NAME] SELF-TEST FAIL: an UNDECLARED file under src/common/numeric was exempted — the exemption is per-file (E16), not per-directory"
+      rc=1 ;;
   esac
   case "$out" in
     *budget.service.ts*) ;;
-    *) echo "-- [$GUARD_NAME] SELF-TEST FAIL: filter excluded a normal Domain A file"; rc=1 ;;
+    *)
+      echo "-- [$GUARD_NAME] SELF-TEST FAIL: filter excluded a normal Domain A file"
+      rc=1 ;;
   esac
   return $rc
 }
