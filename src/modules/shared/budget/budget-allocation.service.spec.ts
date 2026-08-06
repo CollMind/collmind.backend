@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull } from 'typeorm';
 import { Repository } from 'typeorm';
 import { NotFoundException } from '@nestjs/common';
 import { BudgetAllocationService } from './budget-allocation.service';
@@ -362,8 +362,21 @@ describe('BudgetAllocationService', () => {
         } as BudgetAllocation,
       };
 
-      budgetTransactionLogRepo.findOne.mockResolvedValue(
-        mockReservation as BudgetTransactionLog,
+      // T-095: `commitBudget` issues TWO different `findOne` calls now — the
+      // RESERVATION lookup (`{ tenantId, planId, transactionType }`) and the
+      // idempotency read inside `createTransaction`
+      // (`{ idempotencyKey, tenantId, deletedAt }`). One unconditional mock
+      // answers both with the reservation row, so the second read sees "this
+      // COMMIT already exists" and the write is skipped — the test fails against
+      // correct production code. The two `where` shapes share no predicate and
+      // cannot collide in production, so the mock has to look at what it is
+      // handed.
+      budgetTransactionLogRepo.findOne.mockImplementation((opts: any) =>
+        Promise.resolve(
+          opts?.where?.idempotencyKey
+            ? null
+            : (mockReservation as BudgetTransactionLog),
+        ),
       );
       budgetAllocationRepo.save.mockResolvedValue({} as BudgetAllocation);
       budgetTransactionLogRepo.create.mockReturnValue({} as any);
@@ -944,6 +957,12 @@ describe('BudgetAllocationService', () => {
       const distinctLogRepo = {
         create: jest.fn().mockReturnValue({}),
         save: jest.fn().mockResolvedValue({}),
+        // T-095: `createTransaction` now reads by idempotency key before
+        // writing. A stub without `findOne` throws `not a function` — the
+        // routing assertion would fail for a reason unrelated to routing.
+        // `null` = "no row yet", so the write proceeds and routing is what the
+        // test actually observes.
+        findOne: jest.fn().mockResolvedValue(null),
       };
       const mockManager = {
         getRepository: jest.fn((entity: any) =>
@@ -1038,6 +1057,12 @@ describe('BudgetAllocationService', () => {
       const distinctLogRepo = {
         create: jest.fn().mockReturnValue({}),
         save: jest.fn().mockResolvedValue({}),
+        // T-095: `createTransaction` now reads by idempotency key before
+        // writing. A stub without `findOne` throws `not a function` — the
+        // routing assertion would fail for a reason unrelated to routing.
+        // `null` = "no row yet", so the write proceeds and routing is what the
+        // test actually observes.
+        findOne: jest.fn().mockResolvedValue(null),
       };
       const mockManager = {
         getRepository: jest.fn((entity: any) =>
@@ -1097,6 +1122,12 @@ describe('BudgetAllocationService', () => {
       const distinctLogRepo = {
         create: jest.fn().mockReturnValue({}),
         save: jest.fn().mockResolvedValue({}),
+        // T-095: `createTransaction` now reads by idempotency key before
+        // writing. A stub without `findOne` throws `not a function` — the
+        // routing assertion would fail for a reason unrelated to routing.
+        // `null` = "no row yet", so the write proceeds and routing is what the
+        // test actually observes.
+        findOne: jest.fn().mockResolvedValue(null),
       };
       const mockManager = {
         getRepository: jest.fn((entity: any) =>
@@ -1145,6 +1176,12 @@ describe('BudgetAllocationService', () => {
       const distinctLogRepo = {
         create: jest.fn().mockReturnValue({}),
         save: jest.fn().mockResolvedValue({}),
+        // T-095: `createTransaction` now reads by idempotency key before
+        // writing. A stub without `findOne` throws `not a function` — the
+        // routing assertion would fail for a reason unrelated to routing.
+        // `null` = "no row yet", so the write proceeds and routing is what the
+        // test actually observes.
+        findOne: jest.fn().mockResolvedValue(null),
       };
       const mockManager = {
         getRepository: jest.fn((entity: any) =>
@@ -1223,6 +1260,12 @@ describe('BudgetAllocationService', () => {
       const distinctLogRepo = {
         create: jest.fn().mockReturnValue({}),
         save: jest.fn().mockResolvedValue({}),
+        // T-095: `createTransaction` now reads by idempotency key before
+        // writing. A stub without `findOne` throws `not a function` — the
+        // routing assertion would fail for a reason unrelated to routing.
+        // `null` = "no row yet", so the write proceeds and routing is what the
+        // test actually observes.
+        findOne: jest.fn().mockResolvedValue(null),
       };
       const mockManager = {
         getRepository: jest.fn((entity: any) =>
@@ -1278,6 +1321,12 @@ describe('BudgetAllocationService', () => {
       const distinctLogRepo = {
         create: jest.fn().mockReturnValue({}),
         save: jest.fn().mockResolvedValue({}),
+        // T-095: `createTransaction` now reads by idempotency key before
+        // writing. A stub without `findOne` throws `not a function` — the
+        // routing assertion would fail for a reason unrelated to routing.
+        // `null` = "no row yet", so the write proceeds and routing is what the
+        // test actually observes.
+        findOne: jest.fn().mockResolvedValue(null),
       };
       const mockManager = {
         getRepository: jest.fn((entity: any) =>
@@ -1310,6 +1359,261 @@ describe('BudgetAllocationService', () => {
 
       expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
       expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  /* ================================================================ *
+   * T-095 — `createTransaction`'s read-before-write on the idempotency key
+   * (budget-allocation.service.ts, `private createTransaction`, guarded by
+   * `if (idempotencyKey)`). Partial UNIQUE index: migration
+   * `1798000000000-AddPartialIdempotencyIndexToBudgetTransactionLogs.ts`
+   * (`UNIQUE (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL`)
+   * is the DB-level backstop for the race this read cannot see; it has its
+   * own, separate e2e proof against a real database
+   * (test/budget-transaction-logs-idempotency.e2e-spec.ts) and is
+   * deliberately NOT re-proven here.
+   *
+   * `createTransaction` is private and its return value is discarded by
+   * every real caller (`reserveBudget`/`commitBudget`/`releaseBudget`/
+   * `createAllocation`/`updateAllocation`/`adjustUtilization` all just
+   * `await` it). These tests go through a PUBLIC method
+   * (`reserveBudget`/`createAllocation`) as the task requires, and use
+   * `jest.spyOn(service as any, 'createTransaction')` WITHOUT a mock
+   * implementation (pass-through) purely to observe what the private
+   * method actually returned on that call — the spy does not change
+   * behaviour, it only makes an otherwise-discarded return value visible.
+   *
+   * MOCK SHAPE WARNING (from the task brief, repeated here because it is
+   * the whole point of this block): `budgetTransactionLogRepo.findOne`
+   * must genuinely inspect `where.idempotencyKey` / `where.tenantId`
+   * against the fixture and return `null` on mismatch — the same shape as
+   * the T-094 `mockTenantScopedFindOne` helper above. A mock that returns
+   * the fixture row unconditionally would keep this whole block GREEN even
+   * if the `if (idempotencyKey)` guard, or the read itself, were deleted
+   * from the service — proving nothing (this is exactly the trap the T-096
+   * fault-injection block above was written to avoid falling into again).
+   * ================================================================ */
+  describe('createTransaction — idempotency read-before-write (T-095)', () => {
+    function mockIdempotencyScopedFindOne(
+      repo: jest.Mocked<Repository<BudgetTransactionLog>>,
+      row: BudgetTransactionLog,
+      expectedKey: string,
+      expectedTenantId: string,
+    ) {
+      repo.findOne.mockImplementation(async (options: any) => {
+        const where = options?.where ?? {};
+        if (
+          where.idempotencyKey === expectedKey &&
+          where.tenantId === expectedTenantId
+        ) {
+          return row;
+        }
+        return null;
+      });
+    }
+
+    function reserveBudgetAmounts(): SpendBreakdown {
+      return {
+        skuId: 'sku-1',
+        base: {
+          ltaOnInvoice: 0,
+          ltaOffInvoice: 0,
+          totalOnInvoice: 0,
+          totalOffInvoice: 0,
+          totalSpend: 0,
+        },
+        planned: {
+          ltaOnInvoice: 10000,
+          ltaOffInvoice: 5000,
+          promoOnInvoice: {},
+          promoOffInvoice: {},
+          totalPromoOnInvoice: 0,
+          totalPromoOffInvoice: 0,
+          totalOnInvoice: 10000,
+          totalOffInvoice: 5000,
+          totalSpend: 15000,
+        },
+        incremental: {
+          onInvoice: 10000,
+          offInvoice: 5000,
+          total: 15000,
+        },
+      };
+    }
+
+    function stubReserveBudgetReads() {
+      const mockPlan: Partial<Plan> = {
+        id: mockPlanId,
+        cplId: 'cpl-1',
+        channel: { code: 'NKA' } as any,
+        category: { code: 'Dairy' } as any,
+        periodMonth: '2025-01',
+      };
+      const mockAllocation: Partial<BudgetAllocation> = {
+        id: mockAllocationId,
+        onInvoiceAvailable: 100000,
+        offInvoiceAvailable: 50000,
+        hardLimitMode: false,
+        onInvoiceReserved: 0,
+        offInvoiceReserved: 0,
+      };
+
+      planRepo.findOne.mockResolvedValue(mockPlan as Plan);
+      const mockQueryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(mockAllocation),
+      };
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
+      budgetAllocationRepo.save.mockResolvedValue(
+        mockAllocation as BudgetAllocation,
+      );
+    }
+
+    it('reserveBudget: existing row for (tenantId, idempotencyKey) short-circuits — the log repo\'s create/save are NEVER called, and the private write resolves to the EXISTING row (not a newly-created one)', async () => {
+      stubReserveBudgetReads();
+
+      const expectedKey = `RESERVE|PLAN|${mockPlanId}|${mockAllocationId}`;
+      const existingRow = {
+        id: 'existing-tx-1',
+        idempotencyKey: expectedKey,
+        tenantId: mockTenantId,
+        budgetAllocationId: mockAllocationId,
+        transactionType: BudgetTransactionType.RESERVATION,
+        onInvoiceAmount: 10000,
+        offInvoiceAmount: 5000,
+      } as unknown as BudgetTransactionLog;
+
+      mockIdempotencyScopedFindOne(
+        budgetTransactionLogRepo,
+        existingRow,
+        expectedKey,
+        mockTenantId,
+      );
+
+      const createTransactionSpy = jest.spyOn(
+        service as any,
+        'createTransaction',
+      );
+
+      await service.reserveBudget(
+        mockTenantId,
+        mockUserId,
+        mockPlanId,
+        reserveBudgetAmounts(),
+      );
+
+      // The read genuinely happened, scoped to (tenantId, idempotencyKey) — not
+      // an unconditional stub that would pass even if the guard were removed.
+      expect(budgetTransactionLogRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            idempotencyKey: expectedKey,
+            tenantId: mockTenantId,
+            deletedAt: IsNull(),
+          }),
+        }),
+      );
+
+      // The short-circuit: no new log row is created or saved.
+      expect(budgetTransactionLogRepo.create).not.toHaveBeenCalled();
+      expect(budgetTransactionLogRepo.save).not.toHaveBeenCalled();
+
+      // What the private write actually returned to its caller — the existing
+      // row, not a fresh one. (The balance save itself is unconditional and
+      // runs before this guard in reserveBudget — see the task's own note on
+      // createTransaction; not this block's concern.)
+      expect(createTransactionSpy).toHaveBeenCalledTimes(1);
+      await expect(createTransactionSpy.mock.results[0].value).resolves.toBe(
+        existingRow,
+      );
+    });
+
+    it('reserveBudget: no existing row for (tenantId, idempotencyKey) — normal write path runs, log repo create+save ARE called, and the private write resolves to the newly-created row', async () => {
+      stubReserveBudgetReads();
+
+      const expectedKey = `RESERVE|PLAN|${mockPlanId}|${mockAllocationId}`;
+
+      // Genuinely inspects the where clause (fails loudly if the service ever
+      // stops passing idempotencyKey/tenantId here) and always returns null —
+      // there is no existing row in this scenario.
+      budgetTransactionLogRepo.findOne.mockImplementation(
+        async (options: any) => {
+          const where = options?.where ?? {};
+          expect(where.idempotencyKey).toBe(expectedKey);
+          expect(where.tenantId).toBe(mockTenantId);
+          return null;
+        },
+      );
+
+      const createdRow = { id: 'new-tx-1' } as unknown as BudgetTransactionLog;
+      budgetTransactionLogRepo.create.mockReturnValue(createdRow as any);
+      budgetTransactionLogRepo.save.mockResolvedValue(createdRow as any);
+
+      const createTransactionSpy = jest.spyOn(
+        service as any,
+        'createTransaction',
+      );
+
+      await service.reserveBudget(
+        mockTenantId,
+        mockUserId,
+        mockPlanId,
+        reserveBudgetAmounts(),
+      );
+
+      expect(budgetTransactionLogRepo.findOne).toHaveBeenCalledTimes(1);
+      expect(budgetTransactionLogRepo.create).toHaveBeenCalledTimes(1);
+      expect(budgetTransactionLogRepo.save).toHaveBeenCalledTimes(1);
+
+      expect(createTransactionSpy).toHaveBeenCalledTimes(1);
+      await expect(createTransactionSpy.mock.results[0].value).resolves.toBe(
+        createdRow,
+      );
+    });
+
+    it('createAllocation (ALLOCATION type, no idempotency key passed): the idempotency read is skipped entirely — `if (idempotencyKey)` guard, same reason the partial index exists (ALLOCATION/ADJUSTMENT rows legitimately carry no key)', async () => {
+      const dto = {
+        periodType: PeriodType.MONTHLY,
+        periodStart: '2025-01-01',
+        periodEnd: '2025-01-31',
+        fiscalYear: 2025,
+        cplId: 'cpl-1',
+        onInvoiceBudget: 100000,
+        offInvoiceBudget: 50000,
+      };
+
+      const mockQueryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([]),
+      };
+      budgetAllocationRepo.createQueryBuilder.mockReturnValue(
+        mockQueryBuilder as any,
+      );
+      budgetAllocationRepo.create.mockReturnValue({
+        id: mockAllocationId,
+      } as any);
+      budgetAllocationRepo.save.mockResolvedValue({
+        id: mockAllocationId,
+        ...dto,
+      } as any);
+      budgetTransactionLogRepo.create.mockReturnValue({} as any);
+      budgetTransactionLogRepo.save.mockResolvedValue({} as any);
+
+      await service.createAllocation(mockTenantId, mockUserId, dto);
+
+      // The can't-hide assertion: if the `if (idempotencyKey)` guard were ever
+      // removed (read runs unconditionally with idempotencyKey === undefined),
+      // this would flip to `toHaveBeenCalled()`.
+      expect(budgetTransactionLogRepo.findOne).not.toHaveBeenCalled();
+
+      // The write itself still happens normally — only the READ is skipped.
+      expect(budgetTransactionLogRepo.create).toHaveBeenCalledTimes(1);
+      expect(budgetTransactionLogRepo.save).toHaveBeenCalledTimes(1);
     });
   });
 });

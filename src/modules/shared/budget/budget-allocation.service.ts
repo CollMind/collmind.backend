@@ -11,6 +11,7 @@ import {
   Between,
   DataSource,
   EntityManager,
+  IsNull,
 } from 'typeorm';
 import {
   BudgetAllocation,
@@ -1007,6 +1008,30 @@ export class BudgetAllocationService {
     const repo = manager
       ? manager.getRepository(BudgetTransactionLog)
       : this.budgetTransactionLogRepository;
+
+    // T-095: read-before-write on the idempotency key, the same shape the other
+    // three tables that carry this column already use (ledger.repository.ts:32,
+    // agreement-transaction.repository.ts:42, on-invoice.repository.ts:115).
+    // Making the fourth one different would repeat the pattern this task exists
+    // to close: a later table quietly dropping a guarantee its siblings hold.
+    //
+    // THE TWO LAYERS DO DIFFERENT JOBS AND NEITHER REPLACES THE OTHER.
+    // This read gives the normal path a clean answer — "already written, no-op"
+    // — instead of a raw 23505 that every caller would have to catch. The
+    // partial unique index (migration 1798) is the last line, for the race this
+    // read cannot see: two writers can both read "absent" and both proceed.
+    // They have separate tests and separate mutation proofs for that reason.
+    //
+    // Guarded by `if (idempotencyKey)` rather than run unconditionally: ALLOCATION
+    // and ADJUSTMENT rows legitimately carry no key, and looking one up by
+    // `undefined` would match arbitrary rows. That is also exactly why the index
+    // is partial — the rule is about rows that carry a key, not about the column.
+    if (idempotencyKey) {
+      const existing = await repo.findOne({
+        where: { idempotencyKey, tenantId, deletedAt: IsNull() },
+      });
+      if (existing) return existing;
+    }
 
     const transaction = repo.create({
       tenantId,
