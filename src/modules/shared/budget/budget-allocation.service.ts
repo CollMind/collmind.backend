@@ -206,30 +206,31 @@ export class BudgetAllocationService {
 
     // T-096/2: balance write + logs in ONE transaction — see reserveBudget.
     //
-    // ⚠️ THIS METHOD RUNS THE PAIR IN THE OPPOSITE ORDER to the other five: the
-    // ADJUSTMENT logs are written first and the allocation is saved last. Inside
-    // one transaction that is now consistent — either both land or neither does.
-    // The ordering itself is still backwards (a log records something that has
-    // happened, not something about to) and is corrected in a separate commit,
-    // so that the correction can be shown to change no behaviour at all.
+    // T-096/3: the save now runs BEFORE the ADJUSTMENT logs, matching the other
+    // five methods. It used to run last.
+    //
+    // Inside a transaction this is behaviourally neutral — either everything
+    // lands or nothing does, in any order — and that neutrality is the whole
+    // evidence for this change: no test moved. It is corrected anyway for two
+    // reasons. A log records something that HAS happened; writing it before the
+    // thing happens is backwards on its own terms. And one method doing the
+    // same job in the opposite order is the small-scale form of §7 — a reader
+    // who notices the difference has to stop and look for a reason that does not
+    // exist. If a later refactor ever lifts these out of the transaction, the
+    // wrong order becomes a real defect again.
     return this.dataSource.transaction(async (m) => {
-      // Update fields
+      // Apply the field changes, capturing what each one adjusts.
+      const adjustments: Array<{ onInvoice: number; offInvoice: number; label: string }> = [];
+
       if (dto.onInvoiceBudget !== undefined) {
         const adjustment = dto.onInvoiceBudget - allocation.onInvoiceBudget;
         allocation.onInvoiceBudget = dto.onInvoiceBudget;
         if (adjustment !== 0) {
-          await this.createTransaction(
-            tenantId,
-            userId,
-            allocation.id,
-            BudgetTransactionType.ADJUSTMENT,
-            adjustment,
-            0,
-            null,
-            `On-invoice budget adjustment: ${adjustment > 0 ? '+' : ''}${adjustment}`,
-            undefined,
-            m,
-          );
+          adjustments.push({
+            onInvoice: adjustment,
+            offInvoice: 0,
+            label: `On-invoice budget adjustment: ${adjustment > 0 ? '+' : ''}${adjustment}`,
+          });
         }
       }
 
@@ -237,22 +238,37 @@ export class BudgetAllocationService {
         const adjustment = dto.offInvoiceBudget - allocation.offInvoiceBudget;
         allocation.offInvoiceBudget = dto.offInvoiceBudget;
         if (adjustment !== 0) {
-          await this.createTransaction(
-            tenantId,
-            userId,
-            allocation.id,
-            BudgetTransactionType.ADJUSTMENT,
-            0,
-            adjustment,
-            null,
-            `Off-invoice budget adjustment: ${adjustment > 0 ? '+' : ''}${adjustment}`,
-            undefined,
-            m,
-          );
+          adjustments.push({
+            onInvoice: 0,
+            offInvoice: adjustment,
+            label: `Off-invoice budget adjustment: ${adjustment > 0 ? '+' : ''}${adjustment}`,
+          });
         }
       }
 
-      return this.applyAllocationSettings(allocation, dto, userId, m);
+      const saved = await this.applyAllocationSettings(
+        allocation,
+        dto,
+        userId,
+        m,
+      );
+
+      for (const a of adjustments) {
+        await this.createTransaction(
+          tenantId,
+          userId,
+          allocation.id,
+          BudgetTransactionType.ADJUSTMENT,
+          a.onInvoice,
+          a.offInvoice,
+          null,
+          a.label,
+          undefined,
+          m,
+        );
+      }
+
+      return saved;
     });
   }
 

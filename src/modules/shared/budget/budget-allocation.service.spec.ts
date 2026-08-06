@@ -856,7 +856,7 @@ describe('BudgetAllocationService', () => {
       expect(budgetTransactionLogRepo.save).toHaveBeenCalledTimes(1);
     });
 
-    it('updateAllocation (log -> save order): ADJUSTMENT log write fails inside the transaction -> the balance save is NEVER reached (different failure signature from save -> log methods) and the error is not swallowed', async () => {
+    it('updateAllocation: an ADJUSTMENT log failure inside the transaction propagates rather than being swallowed (T-096/3 reordered this method to save -> log; the previous assertion pinned an intermediate state a transaction makes unobservable)', async () => {
       const allocation: Partial<BudgetAllocation> = {
         id: mockAllocationId,
         tenantId: mockTenantId,
@@ -872,8 +872,7 @@ describe('BudgetAllocationService', () => {
         allocation as BudgetAllocation,
       );
       budgetTransactionLogRepo.create.mockReturnValue({} as any);
-      // The fault: the ADJUSTMENT log write, which in this method runs
-      // BEFORE the allocation save, fails.
+      // The fault: the ADJUSTMENT log write fails.
       budgetTransactionLogRepo.save.mockRejectedValue(simulatedDbError());
 
       await expect(
@@ -882,10 +881,19 @@ describe('BudgetAllocationService', () => {
         }),
       ).rejects.toThrow(/42701/);
 
-      // Failure signature for log -> save: the log write throws before
-      // `applyAllocationSettings` ever calls save on the allocation.
+      // T-096/3: this assertion USED TO READ `budgetAllocationRepo.save` was
+      // never called, because the log ran first. The reorder inverted that, and
+      // this test is the only thing in the suite that noticed — which is the
+      // point worth recording: what it was pinning is an INTERMEDIATE state, and
+      // an intermediate state inside a transaction is not observable. Either
+      // both writes land or neither does, whatever their order. The reorder is
+      // behaviourally neutral and this assertion had been describing an
+      // implementation detail rather than a contract.
+      //
+      // What still matters, and is asserted below: the error propagates rather
+      // than being swallowed, and the log write was attempted exactly once.
       expect(budgetTransactionLogRepo.save).toHaveBeenCalledTimes(1);
-      expect(budgetAllocationRepo.save).not.toHaveBeenCalled();
+      expect(budgetAllocationRepo.save).toHaveBeenCalledTimes(1);
     });
   });
 
