@@ -60,3 +60,23 @@ src/modules/modes/planning-first/plan
 # after C2a/C2b/C3. The detector does not fire inside it; see money-float.sh
 # EXACTNESS_PRIMITIVES for why that is guard knowledge and not an exemption.
 src/common/numeric
+
+# ADR 0007 E10 üyelik testi: bir modül para üretiyor, para kalıcılaştırıyor veya
+# parayı bir eşikle karşılaştırıyorsa Alan A'dadır.
+#
+# `src/database/` üçünü de barındırıyor:
+#   transformers/  para değerlerinin entity sınırında dönüştüğü yer
+#   entities/      para kolonlarının ölçek ve tipinin tanımlandığı yer
+#   seeds/         fiyat ve maliyet ÜRETİYOR (product.seed.ts)
+#   migrations/    bugün temiz, ama veri dönüştüren bir migration yarın yazılabilir
+#
+# EKLENMESİNİN ASIL SEBEBİ BUGÜNKÜ BULGULAR DEĞİL (yalnız 5 tane, dördü seed).
+# `docs/analysis/0014` ölçtü: tabanın 163 bulgusundan 77'si, transformer'sız bir
+# kolondan okunan değere uygulanan `Number()`/`parseFloat()`. O dönüşümleri
+# `DecimalTransformer`'a taşımak modül dosyalarından 77 bulgu siler ve HİÇBİR
+# float dönüşümü kaldırmaz — taban 163'ten 86'ya düşer, borç yerinde durur.
+#
+# Bu dizin taranmadığı sürece o hamle sessizdir. Taranınca bulgular hedefte
+# sayılır ve taşıma taşıma olarak görünür, ödeme olarak değil. E15/E16 aynı
+# şeyi `src/common/numeric/` için yapmıştı; buradaki ölçek 77 kat.
+src/database
