@@ -31,6 +31,7 @@ import { randomUUID } from 'crypto';
 import { LedgerSourceType } from '../ledger/dto';
 import { SpendType } from '../../../../database/entities/ledger-entry.entity';
 import { BudgetSpendType } from '../../../../database/entities/budget-envelope.entity';
+import { diagnosticsOf } from '../../../../common/errors/diagnostics';
 
 @Injectable()
 export class OnInvoiceService {
@@ -559,7 +560,7 @@ export class OnInvoiceService {
           // this row failed and what kind of failure it was.
           this.logger.error(
             `On-invoice entry ${entry.id} failed processing`,
-            error,
+            diagnosticsOf(error),
           );
           await this.repository.updateEntry(entry.id, {
             status: OnInvoiceEntryStatus.ERROR,

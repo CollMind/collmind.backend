@@ -14,10 +14,21 @@ import { ValueTransformer } from 'typeorm';
  * make that trip.
  *
  * The message alone is therefore not diagnostic on purpose — it says WHAT failed,
- * never WITH WHAT. The value is still recoverable for diagnosis through `context`,
- * which the logger prints and which no persistence path copies. Splitting them is
- * what makes it unnecessary to audit every catch block that touches a message:
- * there is one place the value can leak from, and it is closed here.
+ * never WITH WHAT. Splitting them is what makes it unnecessary to audit every
+ * catch block that touches a message: there is one place the value can leak from,
+ * and it is closed here.
+ *
+ * ⚠️ `context` DOES NOT REACH A LOG ON ITS OWN. An earlier version of this comment
+ * said it did ("which the logger prints"), and review measured that false: Nest's
+ * ConsoleLogger renders an Error argument through `Error.toString()`, so a bare
+ * `logger.warn(msg, err)` prints the redacted message and drops both `context` and
+ * the stack. Redacting the message without changing the call sites would not have
+ * moved the value — it would have deleted it.
+ *
+ * Callers must pass `diagnosticsOf(err)` (`src/common/errors/diagnostics.ts`).
+ * That is the second time in two tasks an unmeasured "…and it is still available
+ * over there" claim went into a comment; the rule is in CLAUDE.md §2.7 now, and
+ * this comment is the counter-example it was written from.
  */
 export class InvalidDecimalError extends Error {
   readonly context: { rawValue: unknown };
@@ -122,11 +133,20 @@ export const DecimalTransformer: ValueTransformer = {
    * ⚠️ The error message NO LONGER carries the raw column value — see
    * `InvalidDecimalError` above. An earlier version of this comment said the value
    * "reaches the server log only", having measured exception FILTERS and found
-   * none that echo messages. That measurement searched one end of the pattern:
-   * `on-invoice.service.ts` PERSISTS `error.message` into an entry's
-   * `validation_errors`, so a message can leak by being written, not only by being
-   * returned. Whenever you ask where a value goes, count both — returning and
-   * storing are different ends (CLAUDE.md §7.1).
+   * none that echo messages. That was wrong twice over, and both ways are worth
+   * knowing:
+   *
+   *   - it can leak by being WRITTEN. `on-invoice.service.ts` persisted
+   *     `error.message` into an entry's `validation_errors`.
+   *   - it can leak by being RETHROWN. Nest echoes the message of an explicitly
+   *     thrown HttpException, so any `throw new BadRequestException(\`…${message}\`)`
+   *     puts it in the response body without a filter being involved —
+   *     `approval-workflow.service.ts` and `on-invoice.service.ts` both do this.
+   *
+   * Measuring "which filters echo messages" answered a narrower question than the
+   * one being asked. Where a value GOES has at least three ends — returned,
+   * rethrown, stored — and a sweep of one of them proves nothing about the others
+   * (CLAUDE.md §7.1).
    */
   from: (value?: string | null): number | null | undefined => {
     if (value === null || value === undefined) return value;

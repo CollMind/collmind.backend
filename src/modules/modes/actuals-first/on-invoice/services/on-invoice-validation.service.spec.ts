@@ -77,6 +77,7 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
 
     service = module.get(OnInvoiceValidationService);
     jest.spyOn(service['logger'], 'warn').mockImplementation();
+    jest.spyOn(service['logger'], 'error').mockImplementation();
   });
 
   // The defect this replaces: the catch pushed `current: 0, status: RED`. Zero is
@@ -105,6 +106,22 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
     const [impact] = await simulate();
 
     expect(impact.status).toBeNull();
+  });
+
+  // The point of redacting the message (T-098/1) was to relocate the value, not
+  // delete it. Without this assertion the logger call could pass the bare error —
+  // which Nest renders via Error.toString(), dropping context and stack — and
+  // every other test here would stay green while diagnosis was gone.
+  it('hands the logger the offending value, not just the redacted message', () => {
+    const warn = jest.spyOn(service['logger'], 'warn');
+    budgetService.findEnvelopeByDimensions.mockRejectedValue(
+      new InvalidDecimalError('CORRUPT-42'),
+    );
+
+    return simulate().then(() => {
+      const diagnostics = warn.mock.calls[0]?.[1];
+      expect(String(diagnostics)).toContain('CORRUPT-42');
+    });
   });
 
   // The row must survive. An envelope absent from a budget-impact report reads as

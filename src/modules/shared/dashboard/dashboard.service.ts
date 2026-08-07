@@ -21,6 +21,7 @@ import { UserRole } from '../../../database/entities/user.entity';
 import { FinanceReportingService } from '../finance-reporting/finance-reporting.service';
 import { ReportFilters } from '../finance-reporting/dto/report-filters.dto';
 import { DashboardSummaryResponseDto } from './dto/dashboard-summary.dto';
+import { diagnosticsOf } from '../../../common/errors/diagnostics';
 import {
   PendingTasksResponseDto,
   PendingApprovalItemDto,
@@ -140,12 +141,13 @@ export class DashboardService {
       };
       budgetUtilizationStatus = 'ok';
     } catch (err) {
-      // `context` (T-098) carries the offending value for InvalidDecimalError;
-      // the message deliberately does not. Log the error object, not its message,
-      // or the diagnosis is lost.
+      // `diagnosticsOf` (T-098), not the bare error: Nest renders an Error
+      // argument with `Error.toString()`, so `context` — which is where the
+      // offending value lives now that the message is redacted — never reached
+      // the log. Measured in review, after a comment here claimed otherwise.
       this.logger.warn(
         'getBudgetUtilization failed — reporting budgetUtilizationStatus=unavailable',
-        err,
+        diagnosticsOf(err),
       );
     }
 

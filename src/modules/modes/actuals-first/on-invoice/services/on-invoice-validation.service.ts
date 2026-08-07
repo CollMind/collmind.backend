@@ -14,6 +14,7 @@ import {
 import { OnInvoiceDiscountType } from '../../../../../database/entities/on-invoice-entry.entity';
 import { CustomerStatus } from '../../../../../database/entities/customer.entity';
 import { UtilizationStatus } from '../../../../shared/finance-reporting/dto/budget-utilization.dto';
+import { diagnosticsOf } from '../../../../../common/errors/diagnostics';
 
 export interface ValidationError {
   rowNumber: number;
@@ -582,7 +583,7 @@ export class OnInvoiceValidationService {
         // impact report reads as "not affected", which is the same lie inverted.
         this.logger.warn(
           `Budget impact could not be computed for envelope ${envelope.envelopeCode} — reporting dataStatus=unavailable`,
-          error,
+          diagnosticsOf(error),
         );
         budgetImpact.push({
           envelopeCode: envelope.envelopeCode,

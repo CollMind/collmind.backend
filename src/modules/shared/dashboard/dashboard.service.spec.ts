@@ -16,6 +16,7 @@ import {
 } from '../../../database/entities/approval-request.entity';
 import { UserRole } from '../../../database/entities/user.entity';
 import { UtilizationStatus } from '../finance-reporting/dto/budget-utilization.dto';
+import { InvalidDecimalError } from '../../../database/transformers/decimal.transformer';
 import {
   AccessScopeService,
   EffectiveScope,
@@ -315,6 +316,24 @@ describe('DashboardService', () => {
 
       expect(result.budgetUtilization).toBeNull();
       expect(result.budgetUtilizationStatus).toBe('unavailable');
+    });
+
+    // Same reason as the status pair: redacting the message only relocates the
+    // value if something actually logs it, and a bare `logger.warn(msg, err)`
+    // drops it (Nest renders Errors with Error.toString()).
+    it('hands the logger the offending value, not just the redacted message', async () => {
+      const warn = jest
+        .spyOn(service['logger'], 'warn')
+        .mockImplementation(() => undefined);
+      financeReportingService.getBudgetUtilization.mockRejectedValue(
+        new InvalidDecimalError('CORRUPT-7'),
+      );
+
+      await service.getSummary(TENANT_ID, USER_ADMIN_ID, UserRole.ADMIN, {
+        period: '2026-06',
+      });
+
+      expect(String(warn.mock.calls[0]?.[1])).toContain('CORRUPT-7');
     });
 
     // The pair is what gives the previous test its meaning: a status that reads
