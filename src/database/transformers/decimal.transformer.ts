@@ -5,13 +5,30 @@ import { ValueTransformer } from 'typeorm';
  * (pg parser BIGINT/NUMERIC güvenliği için). Bu transformer entity
  * sınırında sayıya çevirir; null/undefined korunur.
  */
+/**
+ * T-098: the offending value lives in `context`, NOT in `message`.
+ *
+ * The message is persisted and returned. Measured: `on-invoice.service.ts` writes
+ * `error.message` into the `validation_errors` JSONB of an entry, so anything in
+ * the message reaches storage and, from there, a user. A money value must not
+ * make that trip.
+ *
+ * The message alone is therefore not diagnostic on purpose — it says WHAT failed,
+ * never WITH WHAT. The value is still recoverable for diagnosis through `context`,
+ * which the logger prints and which no persistence path copies. Splitting them is
+ * what makes it unnecessary to audit every catch block that touches a message:
+ * there is one place the value can leak from, and it is closed here.
+ */
 export class InvalidDecimalError extends Error {
+  readonly context: { rawValue: unknown };
+
   constructor(value: unknown) {
     super(
-      `Cannot read a decimal column value: ${JSON.stringify(value)} does not ` +
-        `convert to a finite number. Refusing to hand a money path NaN or Infinity.`,
+      'Unreadable decimal column value: it does not convert to a finite ' +
+        'number. Refusing to hand a money path NaN or Infinity.',
     );
     this.name = 'InvalidDecimalError';
+    this.context = { rawValue: value };
   }
 }
 
@@ -102,13 +119,14 @@ export const DecimalTransformer: ValueTransformer = {
    * than none when it is mistaken for the whole thing — which is why the gap is
    * written here rather than left for someone to infer from the code.
    *
-   * ⚠️ The error message carries the raw column value. Measured 2026-08-07: no
-   * global exception filter echoes `exception.message` (`main.ts` registers only
-   * a `ValidationPipe`; the single filter is scoped to `NotFoundException`), so
-   * Nest's default turns this into `{"statusCode":500,"message":"Internal server
-   * error"}` and the value reaches the server log only — which is where it is
-   * wanted, for diagnosis. Adding a filter that echoes messages would put a money
-   * value in an HTTP response; that is the condition to re-check, not this line.
+   * ⚠️ The error message NO LONGER carries the raw column value — see
+   * `InvalidDecimalError` above. An earlier version of this comment said the value
+   * "reaches the server log only", having measured exception FILTERS and found
+   * none that echo messages. That measurement searched one end of the pattern:
+   * `on-invoice.service.ts` PERSISTS `error.message` into an entry's
+   * `validation_errors`, so a message can leak by being written, not only by being
+   * returned. Whenever you ask where a value goes, count both — returning and
+   * storing are different ends (CLAUDE.md §7.1).
    */
   from: (value?: string | null): number | null | undefined => {
     if (value === null || value === undefined) return value;

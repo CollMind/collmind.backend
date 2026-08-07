@@ -68,6 +68,41 @@ describe('DecimalTransformer', () => {
     });
   });
 
+  // T-098: the value must stay reachable for diagnosis and stay OUT of the
+  // message, because `on-invoice.service.ts` persists `error.message` into an
+  // entry's validation_errors — a message reaches storage, and from there a user.
+  describe('error shape (T-098)', () => {
+    const grab = (fn: () => unknown): InvalidDecimalError => {
+      try {
+        fn();
+      } catch (e) {
+        return e as InvalidDecimalError;
+      }
+      throw new Error('expected the call to throw, and it did not');
+    };
+
+    // The property is INVARIANCE, not the absence of a substring. Asserting the
+    // message does not contain the value is a weaker test that can pass by
+    // accident: `JSON.stringify(NaN)` is `"null"`, so a message interpolating the
+    // value would still not contain the text "NaN". Comparing two throws with
+    // different inputs pins what actually matters — the message cannot vary with
+    // the value, therefore it cannot carry it.
+    it('produces a message that does not depend on the offending value', () => {
+      const a = grab(() => DecimalTransformer.from('not-a-number'));
+      const b = grab(() => DecimalTransformer.from('0xZZ-different-value'));
+
+      expect(a.message).toBe(b.message);
+      expect(a.message).not.toContain('not-a-number');
+    });
+
+    it('keeps the offending value reachable in context, on both sides', () => {
+      expect(
+        grab(() => DecimalTransformer.from('not-a-number')).context,
+      ).toEqual({ rawValue: 'not-a-number' });
+      expect(grab(() => DecimalTransformer.to(NaN)).context.rawValue).toBeNaN();
+    });
+  });
+
   it('should pass values through unchanged on write', () => {
     expect(DecimalTransformer.to(500000)).toBe(500000);
     expect(DecimalTransformer.to(null)).toBeNull();
