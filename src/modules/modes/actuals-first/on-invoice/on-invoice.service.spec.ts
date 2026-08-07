@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { OnInvoiceService } from './on-invoice.service';
 import { OnInvoiceRepository } from './on-invoice.repository';
 import { OnInvoiceFileParserService } from './services/on-invoice-file-parser.service';
@@ -176,10 +176,35 @@ describe('OnInvoiceService — T-057 madde 4 (envelope resolution)', () => {
   });
 
   // T-098: `validation_errors` is stored and shown to the uploader, so whatever
-  // lands there has left the server. The test above pins the ERROR status and
-  // says nothing about the text — which is how `error.message` sat in a persisted
-  // field unnoticed. The offending value of an InvalidDecimalError travelled that
-  // way (it used to be interpolated into the message).
+  // lands there has left the server. The test above pins the ERROR status and says
+  // nothing about the text — which is how `error.message` sat in a persisted field
+  // unnoticed. An InvalidDecimalError's value travelled exactly that way.
+  //
+  // THE TWO TESTS BELOW ARE A PAIR. Neither is meaningful alone: blanket redaction
+  // passes the second and fails the first, blanket preservation does the reverse.
+  // Only together do they pin "redact what we did not author".
+  //
+  // `instanceof HttpException` is the codified form of "was this message written
+  // to be shown to a caller". It works because InvalidDecimalError is a plain Error
+  // — measured: `new InvalidDecimalError('x') instanceof HttpException` is false,
+  // `new NotFoundException('x') instanceof HttpException` is true. If that ever
+  // stops holding, this distinction loses its basis and must be revisited.
+  it('KEEPS a message we authored for the uploader (HttpException)', async () => {
+    budgetService.findEnvelopeByDimensions.mockRejectedValue(
+      new NotFoundException('Budget envelope bulunamadı: MT / HAIR / 2026-06'),
+    );
+
+    await service.processBatch(BATCH_ID, TENANT_ID, USER_ID);
+
+    const persisted = (repository.updateEntry as jest.Mock).mock.calls.find(
+      ([id]) => id === 'entry-1',
+    )?.[1];
+
+    expect(persisted.validationErrors[0].message).toContain(
+      'Budget envelope bulunamadı: MT / HAIR / 2026-06',
+    );
+  });
+
   it('does not persist the internal error message into validation_errors', async () => {
     budgetService.findEnvelopeByDimensions.mockRejectedValue(
       new Error('column budget_envelopes.available_amount is "NaN"'),

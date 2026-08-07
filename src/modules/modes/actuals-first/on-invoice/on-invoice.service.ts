@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -547,17 +548,29 @@ export class OnInvoiceService {
         } catch (error) {
           // Hata durumunda entry'yi ERROR durumuna al.
           //
-          // T-098: the CLASS name is persisted, not `error.message`.
+          // T-098: what gets persisted depends on WHO WROTE THE MESSAGE.
           //
-          // `validation_errors` is stored and shown to a user, so whatever lands
-          // here has left the server. An arbitrary internal message is not a
-          // validation error — it can carry a column value, a query fragment, or
-          // an id, and none of that is something the uploader can act on.
+          // `validation_errors` is stored and shown to the uploader, so whatever
+          // lands here has left the server. But "redact everything" was too wide:
+          // this try also calls customerService/skuService/ledgerService, whose
+          // `NotFoundException`s carry messages WE wrote FOR the uploader —
+          // `Budget envelope bulunamadı: MT / HAIR / 2026-06` is emitted verbatim
+          // a few lines above, and reducing its twin to a class name would take
+          // information away from the person who has to fix the row.
           //
-          // The message still exists: it is logged below with the error object
-          // intact, which is where `InvalidDecimalError.context` (T-098) keeps the
-          // offending value. Diagnosis stays server-side; the entry records that
-          // this row failed and what kind of failure it was.
+          // `instanceof HttpException` is that question expressed in code: a Nest
+          // HTTP exception exists to be shown to a caller, so its message was
+          // authored for display. Anything else — an ORM error, a TypeError,
+          // `InvalidDecimalError` — may carry a column value, a query fragment or
+          // an id, and drops to its class name.
+          //
+          // Measured, because the whole split rests on it: `InvalidDecimalError`
+          // extends Error, NOT HttpException (`instanceof HttpException` → false),
+          // while NotFoundException and BadRequestException → true. If that ever
+          // stops holding, this distinction has no basis and must be revisited.
+          //
+          // Either way the full error, with `context` and stack, goes to the log
+          // via `diagnosticsOf` — diagnosis is server-side, not in the entry.
           this.logger.error(
             `On-invoice entry ${entry.id} failed processing`,
             diagnosticsOf(error),
@@ -568,9 +581,11 @@ export class OnInvoiceService {
             validationErrors: [
               {
                 message:
-                  error instanceof Error
-                    ? `İşlenemedi (${error.name})`
-                    : 'Bilinmeyen hata',
+                  error instanceof HttpException
+                    ? error.message
+                    : error instanceof Error
+                      ? `İşlenemedi (${error.name})`
+                      : 'Bilinmeyen hata',
                 severity: 'ERROR',
               },
             ],
