@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -33,6 +32,7 @@ import { LedgerSourceType } from '../ledger/dto';
 import { SpendType } from '../../../../database/entities/ledger-entry.entity';
 import { BudgetSpendType } from '../../../../database/entities/budget-envelope.entity';
 import { diagnosticsOf } from '../../../../common/errors/diagnostics';
+import { isUserFacing } from '../../../../common/errors/user-facing';
 
 @Injectable()
 export class OnInvoiceService {
@@ -548,26 +548,24 @@ export class OnInvoiceService {
         } catch (error) {
           // Hata durumunda entry'yi ERROR durumuna al.
           //
-          // T-098: what gets persisted depends on WHO WROTE THE MESSAGE.
+          // T-098: what gets persisted depends on WHO WROTE THE MESSAGE, and
+          // that is DECLARED by the thrower, never inferred here.
           //
-          // `validation_errors` is stored and shown to the uploader, so whatever
-          // lands here has left the server. But "redact everything" was too wide:
-          // this try also calls customerService/skuService/ledgerService, whose
-          // `NotFoundException`s carry messages WE wrote FOR the uploader —
-          // `Budget envelope bulunamadı: MT / HAIR / 2026-06` is emitted verbatim
-          // a few lines above, and reducing its twin to a class name would take
-          // information away from the person who has to fix the row.
+          // `validation_errors` is stored and returned by `GET /on-invoice/entries`,
+          // so whatever lands here has left the server. Default: the class name.
           //
-          // `instanceof HttpException` is that question expressed in code: a Nest
-          // HTTP exception exists to be shown to a caller, so its message was
-          // authored for display. Anything else — an ORM error, a TypeError,
-          // `InvalidDecimalError` — may carry a column value, a query fragment or
-          // an id, and drops to its class name.
+          // An earlier attempt used `instanceof HttpException` as a proxy for
+          // "authored for a caller". Measured wrong on this exact path — the
+          // reachable throwers are `Customer with ID <uuid> not found`,
+          // `SKU with ID <uuid> not found`, and the split-guard's developer text,
+          // all of them NotFoundException/BadRequestException and none of them
+          // written for an uploader. See `common/errors/user-facing.ts` for the
+          // full measurement and for why the default points at redaction.
           //
-          // Measured, because the whole split rests on it: `InvalidDecimalError`
-          // extends Error, NOT HttpException (`instanceof HttpException` → false),
-          // while NotFoundException and BadRequestException → true. If that ever
-          // stops holding, this distinction has no basis and must be revisited.
+          // Nothing carries the marker today, so this reduces to redaction — the
+          // intended starting point. The user-facing text for the common case is
+          // not lost: the "envelope bulunamadı" branch above writes its own
+          // message directly rather than throwing.
           //
           // Either way the full error, with `context` and stack, goes to the log
           // via `diagnosticsOf` — diagnosis is server-side, not in the entry.
@@ -580,12 +578,11 @@ export class OnInvoiceService {
             validationStatus: 'ERROR',
             validationErrors: [
               {
-                message:
-                  error instanceof HttpException
-                    ? error.message
-                    : error instanceof Error
-                      ? `İşlenemedi (${error.name})`
-                      : 'Bilinmeyen hata',
+                message: isUserFacing(error)
+                  ? error.message
+                  : error instanceof Error
+                    ? `İşlenemedi (${error.name})`
+                    : 'Bilinmeyen hata',
                 severity: 'ERROR',
               },
             ],
