@@ -393,9 +393,19 @@ export class FileParserService {
    * and `mapToCustomerDtos` runs once for the whole file, so one bad cell rejects
    * the upload instead of silently dropping one field. That is the §2.5 direction
    * — a wrong credit limit is worse than a refused file — and it matches what the
-   * on-invoice and off-invoice importers already do. It is NOT row-level, because
-   * this parser has no row-level error channel to put it in; building one is a
-   * separate task.
+   * on-invoice and off-invoice importers already do.
+   *
+   * It is not row-level, and the reason is NARROWER than an earlier version of this
+   * comment claimed. That version said "this parser has no row-level error channel",
+   * which is false: `CustomerService.importCustomers` collects
+   * `{ row, code, error_type, error_message, original_row_data }`, and this parser
+   * already carries `_originalRowNumber`. The channel exists; what is missing is
+   * that `mapToCustomerDtos` was written to THROW rather than to return per-row
+   * errors into it.
+   *
+   * The distinction matters: an impossibility is something you plan around, an
+   * omission is something you fix. Wiring this into the existing channel is a small
+   * separate task, not a new subsystem.
    */
   private getOptionalNumber(value: any): number | undefined {
     const result = parseOptionalNumericText(value);
