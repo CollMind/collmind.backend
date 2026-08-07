@@ -79,12 +79,17 @@ export class OnInvoiceBatch extends BaseEntity {
       ltaOnInvoice?: { amount: number; percentage: number };
       promoDiscount?: { amount: number; percentage: number };
     };
+    // T-098: `current`/`after`/`status` are null when the envelope's figures could
+    // not be read. This shape is PERSISTED, so the distinction has to survive
+    // storage too — a snapshot that recorded 0 would preserve the disguise long
+    // after the failure that caused it was forgotten.
     budgetImpact?: Array<{
       envelopeCode: string;
-      current: number;
+      current: number | null;
       thisUpload: number;
-      after: number;
-      status: 'GREEN' | 'AMBER' | 'RED';
+      after: number | null;
+      status: 'GREEN' | 'AMBER' | 'RED' | null;
+      dataStatus: 'ok' | 'unavailable';
     }>;
     errors?: Array<{
       rowNumber: number;

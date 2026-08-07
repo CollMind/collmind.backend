@@ -289,7 +289,19 @@ describe('DashboardService', () => {
       expect(callArgs[1].cplIds).toBeUndefined();
     });
 
-    it('returns null budgetUtilization gracefully if service throws', async () => {
+    // T-098: this test used to read
+    //
+    //     it('returns null budgetUtilization gracefully if service throws', ...)
+    //     expect(result.budgetUtilization).toBeNull();
+    //
+    // and it was PINNING THE DEFECT — "gracefully" made swallowing the failure
+    // sound like the careful choice, exactly as T-097's "instead of NaN" did. The
+    // response could not distinguish "no budget data" from "we could not read the
+    // budget data", and this test made that a contract.
+    //
+    // `budgetUtilization` stays null, so the assertion below still holds. What is
+    // new is that the reason is now reported instead of inferred.
+    it('reports the failure as a status instead of passing null off as "no data"', async () => {
       financeReportingService.getBudgetUtilization.mockRejectedValue(
         new Error('DB error'),
       );
@@ -302,6 +314,25 @@ describe('DashboardService', () => {
       );
 
       expect(result.budgetUtilization).toBeNull();
+      expect(result.budgetUtilizationStatus).toBe('unavailable');
+    });
+
+    // The pair is what gives the previous test its meaning: a status that reads
+    // 'unavailable' on both the success and the failure path would distinguish
+    // nothing, and this test is the only thing that can catch that.
+    it('reports ok on the success path — the status must distinguish, not decorate', async () => {
+      financeReportingService.getBudgetUtilization.mockResolvedValue(
+        mockBudgetUtilization,
+      );
+
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_ADMIN_ID,
+        UserRole.ADMIN,
+        { period: '2026-06' },
+      );
+
+      expect(result.budgetUtilizationStatus).toBe('ok');
     });
 
     it('defaults period to current YYYY-MM when not provided', async () => {

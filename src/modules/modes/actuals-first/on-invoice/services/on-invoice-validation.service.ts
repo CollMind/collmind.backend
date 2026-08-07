@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CustomerService } from '../../../../customer/customer.service';
 import { SkuService } from '../../../../master-data/sku/sku.service';
 import { BudgetService } from '../../../../shared/budget/budget.service';
@@ -38,6 +38,8 @@ export interface ValidationResult {
 
 @Injectable()
 export class OnInvoiceValidationService {
+  private readonly logger = new Logger(OnInvoiceValidationService.name);
+
   constructor(
     private readonly customerService: CustomerService,
     private readonly skuService: SkuService,
@@ -433,6 +435,12 @@ export class OnInvoiceValidationService {
       (bi) => bi.status === 'RED',
     ).length;
 
+    // T-098: counted separately, never folded into criticalEnvelopesCount — an
+    // envelope we could not read is not a finding about the budget.
+    const unreadableEnvelopesCount = budgetImpact.filter(
+      (bi) => bi.dataStatus === 'unavailable',
+    ).length;
+
     return {
       lineAnalysis: {
         total: totalRows,
@@ -446,6 +454,7 @@ export class OnInvoiceValidationService {
       budgetImpact: budgetImpact,
       errors: errors,
       criticalEnvelopesCount: criticalEnvelopesCount,
+      unreadableEnvelopesCount: unreadableEnvelopesCount,
     };
   }
 
@@ -544,25 +553,44 @@ export class OnInvoiceValidationService {
             thisUpload: -envelope.thisUpload, // Negatif göster (bütçeden düşülüyor)
             after: after,
             status: status,
+            dataStatus: 'ok',
           });
         } else {
-          // Envelope bulunamadı - uyarı olarak ekle
+          // Envelope bulunamadı - uyarı olarak ekle.
+          // ⚠️ T-098 sibling, deliberately NOT changed here: this branch's `0` is a
+          // statement about a MISSING envelope, not a failed read, and whether an
+          // absent envelope should report 0 or nothing is a product question
+          // (CLAUDE.md §2.4). Recorded in T-098 rather than decided in passing.
           budgetImpact.push({
             envelopeCode: envelope.envelopeCode,
             current: 0,
             thisUpload: -envelope.thisUpload,
             after: -envelope.thisUpload,
             status: UtilizationStatus.RED, // Envelope yoksa RED
+            dataStatus: 'ok',
           });
         }
       } catch (error) {
-        // Hata durumunda da ekle
+        // T-098: the row stays, the figures do not.
+        //
+        // This used to push `current: 0, status: RED`, which put a failure into the
+        // report wearing two disguises at once: `0` is a valid budget figure, and
+        // RED is a FINDING ("this upload breaches the threshold"). A reader had no
+        // way to tell an unreadable envelope from a breached one.
+        //
+        // The row is still emitted on purpose — an envelope missing from a budget
+        // impact report reads as "not affected", which is the same lie inverted.
+        this.logger.warn(
+          `Budget impact could not be computed for envelope ${envelope.envelopeCode} — reporting dataStatus=unavailable`,
+          error,
+        );
         budgetImpact.push({
           envelopeCode: envelope.envelopeCode,
-          current: 0,
+          current: null,
           thisUpload: -envelope.thisUpload,
-          after: -envelope.thisUpload,
-          status: UtilizationStatus.RED,
+          after: null,
+          status: null,
+          dataStatus: 'unavailable',
         });
       }
     }

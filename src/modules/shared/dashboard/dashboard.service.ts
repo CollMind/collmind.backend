@@ -114,6 +114,18 @@ export class DashboardService {
 
     let budgetUtilization: DashboardSummaryResponseDto['budgetUtilization'] =
       null;
+    // T-098: the failure is reported as a status, not smuggled out as `null`.
+    // A dashboard is a summary screen, so one unreadable allocation must not take
+    // the whole page down — but it must not be presented as "no budget data"
+    // either, which is what the bare `null` did.
+    //
+    // Initialised to 'unavailable' and set to 'ok' ONLY after the assignment below
+    // succeeds — fail-closed, and with no redundant write in the catch. That is
+    // deliberate: with a second assignment down there, neither line would matter on
+    // its own, and a mutation removing either would leave every test green while
+    // looking like it had proved something.
+    let budgetUtilizationStatus: DashboardSummaryResponseDto['budgetUtilizationStatus'] =
+      'unavailable';
     try {
       const raw = await this.financeReportingService.getBudgetUtilization(
         tenantId,
@@ -126,8 +138,15 @@ export class DashboardService {
         periodStart: raw.periodStart,
         periodEnd: raw.periodEnd,
       };
+      budgetUtilizationStatus = 'ok';
     } catch (err) {
-      this.logger.warn('getBudgetUtilization failed — returning null', err);
+      // `context` (T-098) carries the offending value for InvalidDecimalError;
+      // the message deliberately does not. Log the error object, not its message,
+      // or the diagnosis is lost.
+      this.logger.warn(
+        'getBudgetUtilization failed — reporting budgetUtilizationStatus=unavailable',
+        err,
+      );
     }
 
     const openTaskCount = activeWithConsumedSpend;
@@ -138,6 +157,7 @@ export class DashboardService {
       pendingApprovalCount: pendingApprovalRequests,
       openTaskCount,
       budgetUtilization,
+      budgetUtilizationStatus,
     };
   }
 
