@@ -37,6 +37,29 @@ describe('diagnosticsOf (T-098)', () => {
       expect(out).not.toContain(RAW);
     });
 
+    // Two of the three call sites use warn, one uses error — and Nest parses them
+    // through different paths (`printMessages` vs `printStackTrace`). Asserting
+    // only warn would leave the error() site covered by nothing.
+    it('CONFIRMS THE HAZARD on error() too, which one call site uses', () => {
+      const written: string[] = [];
+      const spy = jest
+        .spyOn(process.stderr, 'write')
+        .mockImplementation((chunk: unknown) => {
+          written.push(String(chunk));
+          return true;
+        });
+      try {
+        new Logger('DiagnosticsSpec').error(
+          'failed',
+          new InvalidDecimalError(RAW),
+        );
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(written.join('')).not.toContain(RAW);
+    });
+
     it('passing diagnosticsOf(err) puts the value in the log', () => {
       const out = capture((l) =>
         l.warn('failed', diagnosticsOf(new InvalidDecimalError(RAW))),

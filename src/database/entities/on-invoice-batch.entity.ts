@@ -89,7 +89,11 @@ export class OnInvoiceBatch extends BaseEntity {
       thisUpload: number;
       after: number | null;
       status: 'GREEN' | 'AMBER' | 'RED' | null;
-      dataStatus: 'ok' | 'unavailable';
+      // Optional: rows written before T-098 have no dataStatus. Declaring it
+      // required would make the type claim something the stored data does not
+      // support, and a reader trusting that claim would treat a legacy row's
+      // `current: 0` as a real balance.
+      dataStatus?: 'ok' | 'unavailable';
     }>;
     errors?: Array<{
       rowNumber: number;

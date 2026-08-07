@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { InvalidDecimalError } from '../../../../database/transformers/decimal.transformer';
 import { OnInvoiceService } from './on-invoice.service';
 import { OnInvoiceRepository } from './on-invoice.repository';
 import { OnInvoiceFileParserService } from './services/on-invoice-file-parser.service';
@@ -203,6 +204,22 @@ describe('OnInvoiceService — T-057 madde 4 (envelope resolution)', () => {
     expect(persisted.validationErrors[0].message).toContain(
       'Budget envelope bulunamadı: MT / HAIR / 2026-06',
     );
+  });
+
+  // The third call site of `diagnosticsOf`. The other two are asserted in their own
+  // specs; without this one, this site could pass the bare error — losing `context`
+  // and the stack — and nothing here would notice.
+  it('hands the logger the offending value, not just the redacted message', async () => {
+    const error = jest
+      .spyOn(service['logger'], 'error')
+      .mockImplementation(() => undefined);
+    budgetService.findEnvelopeByDimensions.mockRejectedValue(
+      new InvalidDecimalError('CORRUPT-9'),
+    );
+
+    await service.processBatch(BATCH_ID, TENANT_ID, USER_ID);
+
+    expect(String(error.mock.calls[0]?.[1])).toContain('CORRUPT-9');
   });
 
   it('does not persist the internal error message into validation_errors', async () => {
