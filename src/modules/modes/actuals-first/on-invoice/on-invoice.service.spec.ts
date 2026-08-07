@@ -175,6 +175,30 @@ describe('OnInvoiceService — T-057 madde 4 (envelope resolution)', () => {
     );
   });
 
+  // T-098: `validation_errors` is stored and shown to the uploader, so whatever
+  // lands there has left the server. The test above pins the ERROR status and
+  // says nothing about the text — which is how `error.message` sat in a persisted
+  // field unnoticed. The offending value of an InvalidDecimalError travelled that
+  // way (it used to be interpolated into the message).
+  it('does not persist the internal error message into validation_errors', async () => {
+    budgetService.findEnvelopeByDimensions.mockRejectedValue(
+      new Error('column budget_envelopes.available_amount is "NaN"'),
+    );
+
+    await service.processBatch(BATCH_ID, TENANT_ID, USER_ID);
+
+    const persisted = (repository.updateEntry as jest.Mock).mock.calls.find(
+      ([id]) => id === 'entry-1',
+    )?.[1];
+
+    expect(persisted.validationErrors[0].message).not.toContain('NaN');
+    expect(persisted.validationErrors[0].message).not.toContain(
+      'available_amount',
+    );
+    // The kind of failure is still recorded — this is not a blanket redaction.
+    expect(persisted.validationErrors[0].message).toContain('Error');
+  });
+
   // Independent bug found while producing T-057's e2e evidence (unrelated
   // to spend-type resolution, pre-existing at HEAD — `git show HEAD`
   // confirms `entry.invoiceDate.toISOString()` predates this task):

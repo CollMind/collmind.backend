@@ -1,6 +1,7 @@
 import {
-  Injectable,
   BadRequestException,
+  Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { OnInvoiceRepository } from './on-invoice.repository';
@@ -33,6 +34,8 @@ import { BudgetSpendType } from '../../../../database/entities/budget-envelope.e
 
 @Injectable()
 export class OnInvoiceService {
+  private readonly logger = new Logger(OnInvoiceService.name);
+
   constructor(
     private readonly repository: OnInvoiceRepository,
     private readonly fileParserService: OnInvoiceFileParserService,
@@ -541,14 +544,32 @@ export class OnInvoiceService {
             });
           }
         } catch (error) {
-          // Hata durumunda entry'yi ERROR durumuna al
+          // Hata durumunda entry'yi ERROR durumuna al.
+          //
+          // T-098: the CLASS name is persisted, not `error.message`.
+          //
+          // `validation_errors` is stored and shown to a user, so whatever lands
+          // here has left the server. An arbitrary internal message is not a
+          // validation error — it can carry a column value, a query fragment, or
+          // an id, and none of that is something the uploader can act on.
+          //
+          // The message still exists: it is logged below with the error object
+          // intact, which is where `InvalidDecimalError.context` (T-098) keeps the
+          // offending value. Diagnosis stays server-side; the entry records that
+          // this row failed and what kind of failure it was.
+          this.logger.error(
+            `On-invoice entry ${entry.id} failed processing`,
+            error,
+          );
           await this.repository.updateEntry(entry.id, {
             status: OnInvoiceEntryStatus.ERROR,
             validationStatus: 'ERROR',
             validationErrors: [
               {
                 message:
-                  error instanceof Error ? error.message : 'Bilinmeyen hata',
+                  error instanceof Error
+                    ? `İşlenemedi (${error.name})`
+                    : 'Bilinmeyen hata',
                 severity: 'ERROR',
               },
             ],
