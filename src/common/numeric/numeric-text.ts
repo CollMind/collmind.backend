@@ -62,16 +62,29 @@ export interface NumericTextErr {
 
 export type NumericTextResult = NumericTextOk | NumericTextErr;
 
-/** Turkish-language message for a row-level rejection, safe to show a user. */
+/**
+ * Turkish-language message for a row-level rejection, safe to show a user.
+ *
+ * ⚠️ EVERY SUGGESTION THIS RETURNS MUST PARSE. The first version suggested
+ * `'1,234,00'` (which this parser rejects) and, for `12345.678`, `'12345678'` —
+ * a number a THOUSAND times larger than one of the two readings. A parser that
+ * refuses to guess and then hands the user a wrong guess has moved the defect into
+ * the error message. `suggestionsParse` in the spec feeds these back in.
+ */
 export function describeNumericTextFailure(err: NumericTextErr): string {
   switch (err.reason) {
     case 'EMPTY':
       return 'Sayı değeri boş.';
-    case 'AMBIGUOUS_SEPARATOR':
+    case 'AMBIGUOUS_SEPARATOR': {
+      const [whole, frac] = err.input.replace(/^[+-]/, '').split(/[.,]/);
+      // Both readings, each written in a form the grammar accepts. The decimal one
+      // gets a fourth digit precisely because three would be ambiguous again.
       return (
-        `Belirsiz sayı biçimi: '${err.input}'. Ondalık için '${err.input},00' ` +
-        `veya '${err.input.replace(/[.,]/g, '')}' kullanın.`
+        `Belirsiz sayı biçimi: '${err.input}'. ` +
+        `Binlik ayraç kastediyorsanız '${whole}${frac}', ` +
+        `ondalık kastediyorsanız '${whole},${frac}0' yazın.`
       );
+    }
     case 'MALFORMED':
       return `Geçersiz sayı biçimi: '${err.input}'.`;
   }
@@ -159,16 +172,21 @@ export function parseNumericText(input: unknown): NumericTextResult {
     return { ok: false, reason: 'MALFORMED', input: raw };
   }
 
-  // THE AMBIGUOUS CASE, and the only one: exactly three digits after a single
-  // separator could be a thousands group (`1.234` = 1234) or a fraction
-  // (`1.234` = 1.234). Refuse.
+  // THE AMBIGUOUS CASE, and the only one. It needs BOTH sides to be checkable as a
+  // thousands grouping, which is why two conditions appear here and not one:
   //
-  // One, two, or four-plus digits are NOT ambiguous, because a thousands group is
-  // always exactly three: `1.23`, `1.2` and `1.2345` can only be fractions. The
-  // product rule was stated as "two digits means decimal"; it is applied here as
-  // "three digits means ambiguous", which refuses strictly less while still never
-  // guessing. Rejecting `185.5` would have thrown away input we can read.
-  if (frac.length === 3) {
+  //   right side: exactly three digits  — a group is always exactly three
+  //   left  side: one to three digits   — so is the LEADING group
+  //
+  // `1.234` satisfies both, so it could be 1234 or 1.234, and is refused.
+  // `1234.567` satisfies only the first: `1234` is not a legal leading group, so
+  // the thousands reading is impossible and the value can only be 1234.567.
+  //
+  // The first version of this check looked at `frac` alone and rejected
+  // `1234.567` too — the shape an ERP exports a three-decimal quantity in, read
+  // correctly before T-105. Refusing what we CAN read is not caution; it is the
+  // same failure as guessing, pointed the other way.
+  if (frac.length === 3 && /^\d{1,3}$/.test(whole)) {
     return { ok: false, reason: 'AMBIGUOUS_SEPARATOR', input: raw };
   }
 

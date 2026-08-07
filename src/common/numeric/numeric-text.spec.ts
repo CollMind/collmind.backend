@@ -89,6 +89,47 @@ describe('parseNumericText (T-105)', () => {
       expect(ok(input)).toBe(expected);
     });
 
+    // T-105 review S1: ambiguity needs BOTH sides. `1234` is not a legal leading
+    // thousands group, so `1234.567` can only be a decimal — refusing it was
+    // refusing what we can read. This is the shape an ERP exports a three-decimal
+    // quantity in, and it parsed correctly before T-105.
+    it.each([
+      ['1234.567', '1234.567'],
+      ['12345.678', '12345.678'],
+      ['10000.000', '10000.000'],
+    ])('%s is NOT ambiguous — leading group too long for thousands', (i, e) => {
+      expect(ok(i)).toBe(e);
+    });
+
+    // T-105 review B2: the message used to suggest values this very parser
+    // rejects, and for `12345.678` it suggested a number a THOUSAND times bigger
+    // than one of the readings. Refusing to guess and then guessing wrongly in the
+    // error text is the same defect, relocated.
+    it.each(['1.234', '1,234', '999,999', '12.345'])(
+      'every suggestion offered for %s actually parses',
+      (input) => {
+        const message = describeNumericTextFailure(fail(input));
+        const suggestions = [...message.matchAll(/'([^']+)'/g)]
+          .map((m) => m[1])
+          .filter((s) => s !== input);
+
+        expect(suggestions.length).toBeGreaterThan(0);
+        for (const suggestion of suggestions) {
+          expect(parseNumericText(suggestion).ok).toBe(true);
+        }
+      },
+    );
+
+    it('offers the two readings as DIFFERENT numbers, not the same one twice', () => {
+      const message = describeNumericTextFailure(fail('1.234'));
+      const [a, b] = [...message.matchAll(/'([^']+)'/g)]
+        .map((m) => m[1])
+        .filter((s) => s !== '1.234')
+        .map((s) => (parseNumericText(s) as { canonical: string }).canonical);
+
+      expect(a).not.toBe(b);
+    });
+
     it('explains itself in a message a row-level error can carry', () => {
       expect(describeNumericTextFailure(fail('1.234'))).toContain('1.234');
       expect(describeNumericTextFailure(fail('1.234'))).toContain('Belirsiz');
