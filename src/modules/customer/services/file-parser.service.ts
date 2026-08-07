@@ -1,4 +1,8 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  parseOptionalNumericText,
+  describeNumericTextFailure,
+} from '../../../common/numeric/numeric-text';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -377,10 +381,29 @@ export class FileParserService {
     return str || undefined;
   }
 
+  /**
+   * T-105: `undefined` now means ABSENT and nothing else.
+   *
+   * It used to mean both "not given" and "unreadable", which merged a legitimate
+   * absence with a silent failure (CLAUDE.md §2.5). It also rejected every Turkish
+   * format outright — `1.234,56` went to `undefined` — so a credit limit written
+   * the way a Turkish user writes it simply vanished from the import.
+   *
+   * ⚠️ BEHAVIOUR CHANGE, stated rather than buried: an unreadable value now throws,
+   * and `mapToCustomerDtos` runs once for the whole file, so one bad cell rejects
+   * the upload instead of silently dropping one field. That is the §2.5 direction
+   * — a wrong credit limit is worse than a refused file — and it matches what the
+   * on-invoice and off-invoice importers already do. It is NOT row-level, because
+   * this parser has no row-level error channel to put it in; building one is a
+   * separate task.
+   */
   private getOptionalNumber(value: any): number | undefined {
-    if (value === null || value === undefined || value === '') return undefined;
-    const num = Number(value);
-    return isNaN(num) ? undefined : num;
+    const result = parseOptionalNumericText(value);
+    if (result === undefined) return undefined;
+    if (!result.ok) {
+      throw new BadRequestException(describeNumericTextFailure(result));
+    }
+    return Number(result.canonical);
   }
 
   private getOptionalBoolean(value: any): boolean | undefined {

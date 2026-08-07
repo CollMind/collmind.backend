@@ -1,6 +1,7 @@
 import {
   SalesActualsValidationService,
   parseAmount,
+  amountFailure,
 } from './sales-actuals-validation.service';
 import {
   SalesActualsMasterDataIndex,
@@ -271,6 +272,34 @@ describe('parseAmount', () => {
 
   it('Türkçe biçimli sayıyı parse eder (binlik nokta, ondalık virgül)', () => {
     expect(parseAmount('1.234.567,89')).toBeCloseTo(1234567.89);
+  });
+
+  // T-105: the defect this file carried. `1.234.567,89` above was the ONE example
+  // that happened to work — two separators took the correct branch — so the format
+  // family looked covered while its most common member was broken.
+  it('tek binlik ayraçlı Türkçe biçimi doğru okur (T-105: 1000 kat hataydı)', () => {
+    expect(parseAmount('1.234,56')).toBeCloseTo(1234.56);
+    expect(parseAmount('1.000,00')).toBe(1000);
+    expect(parseAmount('999.999,99')).toBeCloseTo(999999.99);
+  });
+
+  it('ondalık virgülü binlik ayraç sanmıyor (T-105: 100 kat hataydı)', () => {
+    expect(parseAmount('1234,56')).toBeCloseTo(1234.56);
+  });
+
+  // T-099 closes here: the grammar has no exponent and no `Infinity` literal, so
+  // this is refused by construction rather than by a special case.
+  it('Infinity ve üstel gösterimi reddeder (T-099)', () => {
+    expect(parseAmount('Infinity')).toBeNull();
+    expect(parseAmount('1e999')).toBeNull();
+    expect(parseAmount('1e5')).toBeNull();
+  });
+
+  it('belirsiz biçimi reddeder ve sebebini söyler', () => {
+    expect(parseAmount('1.234')).toBeNull();
+    expect(amountFailure('1.234')).toContain('Belirsiz');
+    // Ve ayırt ediyor: geçersiz ile belirsiz aynı mesajı almıyor.
+    expect(amountFailure('abc')).not.toContain('Belirsiz');
   });
 
   it('geçersiz değerde null döner', () => {

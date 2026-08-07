@@ -1,4 +1,8 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  parseNumericText,
+  describeNumericTextFailure,
+} from '../../../../../common/numeric/numeric-text';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -220,14 +224,32 @@ export class OffInvoiceFileParserService {
     return str || undefined;
   }
 
+  /**
+   * T-105: one grammar, shared with every other importer
+   * (`common/numeric/numeric-text.ts`).
+   *
+   * ⚠️ THIS CHANGES HOW AN EXISTING FILE IS READ, and the change is from wrong to
+   * right. The old line deleted every comma before converting, so it treated `,`
+   * as a thousands separator: `1234,56` became 123456 — a hundred times too big,
+   * silently. The template this importer publishes says `7250.00`, so a decimal
+   * comma was never supported; it was accepted and corrupted rather than refused.
+   *
+   * `1.234.567,89` used to throw here (the dots survived and `Number` gave NaN);
+   * it now reads correctly.
+   *
+   * `Number(canonical)` is safe: the grammar admits `-?\d+(\.\d+)?` only, so
+   * `Infinity` is refused before reaching it (T-099).
+   */
   private getNumberValue(value: any): number {
-    if (value === null || value === undefined || value === '') {
-      throw new BadRequestException('Amount değeri zorunludur');
+    const result = parseNumericText(value);
+    if (!result.ok) {
+      throw new BadRequestException(
+        result.reason === 'EMPTY'
+          ? 'Amount değeri zorunludur'
+          : describeNumericTextFailure(result),
+      );
     }
-    const num = Number(String(value).replace(/,/g, '')); // Virgülleri kaldır
-    if (isNaN(num)) {
-      throw new BadRequestException(`Geçersiz amount değeri: ${value}`);
-    }
+    const num = Number(result.canonical);
     if (num <= 0) {
       throw new BadRequestException(
         `Amount değeri pozitif olmalıdır: ${value}`,

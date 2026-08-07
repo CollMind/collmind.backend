@@ -42,30 +42,42 @@ export interface RowValidationOutcome {
   resolvedScope?: ResolvedRowScope;
 }
 
+import {
+  parseNumericText,
+  describeNumericTextFailure,
+} from '../../../../../common/numeric/numeric-text';
+
 const RECONCILIATION_TOLERANCE = 0.01;
 
 /**
- * Türkçe biçimli sayıları (binlik ayraç '.', ondalık ',') ve düz İngilizce
- * biçimi de destekleyen esnek numeric parser. Boş/geçersiz -> null.
+ * T-105: delegates to the single canonical parser. This function used to contain
+ * its own separator logic, which read `1.234,56` as 1.23456 — a thousand times
+ * too small, silently, on a live upload route. Three sibling parsers carried the
+ * same defect; all four now share one grammar
+ * (`common/numeric/numeric-text.ts`).
+ *
+ * Kept as a named function because the shape `string -> number | null` is what the
+ * three call sites below expect. The failure REASON is available separately via
+ * `parseNumericText` for callers that want to explain themselves — see
+ * `amountFailure` below, which is why an ambiguous `1.234` no longer produces the
+ * same message as `abc`.
+ *
+ * `Number()` on `canonical` is safe here in a way it never was on raw input: the
+ * grammar admits only `-?\d+(\.\d+)?`, so `""` -> 0, `"0x10"` -> 16 and
+ * `"Infinity"` -> Infinity cannot occur. That last one closes T-099 on this path.
  */
 export function parseAmount(value: string | undefined): number | null {
-  if (value === undefined || value === null) return null;
-  const trimmed = String(value).trim();
-  if (trimmed === '') return null;
+  const result = parseNumericText(value);
+  return result.ok ? Number(result.canonical) : null;
+}
 
-  let normalized = trimmed;
-  if (normalized.includes(',') && normalized.split('.').length > 2) {
-    // 1.234.567,89 -> binlik nokta, ondalık virgül
-    normalized = normalized.replace(/\./g, '').replace(',', '.');
-  } else if (normalized.includes(',') && !normalized.includes('.')) {
-    // 1234,56 -> virgül ondalık ayraç
-    normalized = normalized.replace(',', '.');
-  } else {
-    normalized = normalized.replace(/,/g, '');
-  }
-
-  const num = Number(normalized);
-  return Number.isNaN(num) ? null : num;
+/**
+ * The reason a value could not be read, for a row-level message. Returns
+ * `undefined` when the value parses.
+ */
+export function amountFailure(value: string | undefined): string | undefined {
+  const result = parseNumericText(value);
+  return result.ok ? undefined : describeNumericTextFailure(result);
 }
 
 @Injectable()
@@ -168,7 +180,9 @@ export class SalesActualsValidationService {
         rowNumber,
         code: 'INVALID_GROSS_AMOUNT',
         field: 'gross_amount',
-        message: `Geçersiz gross_amount: '${rawRow.gross_amount}'`,
+        message:
+          amountFailure(rawRow.gross_amount) ??
+          `Geçersiz gross_amount: '${rawRow.gross_amount}'`,
       });
     }
 
@@ -180,7 +194,9 @@ export class SalesActualsValidationService {
           rowNumber,
           code: 'INVALID_NET_AMOUNT',
           field: 'net_amount',
-          message: `Geçersiz net_amount: '${rawRow.net_amount}'`,
+          message:
+            amountFailure(rawRow.net_amount) ??
+            `Geçersiz net_amount: '${rawRow.net_amount}'`,
         });
       }
     }
@@ -193,7 +209,9 @@ export class SalesActualsValidationService {
           rowNumber,
           code: 'INVALID_DISCOUNT_AMOUNT',
           field: 'discount_amount',
-          message: `Geçersiz discount_amount: '${rawRow.discount_amount}'`,
+          message:
+            amountFailure(rawRow.discount_amount) ??
+            `Geçersiz discount_amount: '${rawRow.discount_amount}'`,
         });
       }
     }

@@ -1,4 +1,8 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  parseNumericText,
+  describeNumericTextFailure,
+} from '../../../../../common/numeric/numeric-text';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -241,25 +245,30 @@ export class OnInvoiceFileParserService {
     return str || undefined;
   }
 
+  /**
+   * T-105: one grammar, shared with every other importer
+   * (`common/numeric/numeric-text.ts`).
+   *
+   * This carried its own separator logic and got both directions wrong: it read
+   * `1.234,56` as 1.23456 (a thousand times too small) and `1234,56` as 123456 (a
+   * hundred times too big, by deleting a comma it had decided was a thousands
+   * separator). Its own comment claimed `Türkçe format: 1.234,56 -> 1234.56` —
+   * precisely the case it computed wrongly — and the comment went with the code.
+   *
+   * `Number(canonical)` is safe where `Number(numStr)` was not: the grammar admits
+   * `-?\d+(\.\d+)?` only, so `Infinity` and `1e5` are refused before reaching it
+   * (T-099).
+   */
   private getNumberValue(value: any): number {
-    if (value === null || value === undefined || value === '') {
-      throw new BadRequestException('Number değeri zorunludur');
+    const result = parseNumericText(value);
+    if (!result.ok) {
+      throw new BadRequestException(
+        result.reason === 'EMPTY'
+          ? 'Number değeri zorunludur'
+          : describeNumericTextFailure(result),
+      );
     }
-    // Virgül ve nokta ayracını düzelt (Türkçe format: 1.234,56 -> 1234.56)
-    let numStr = String(value).trim();
-    // Eğer nokta binlik ayraç gibi görünüyorsa (1.234,56 formatı)
-    if (numStr.includes(',') && numStr.split('.').length > 2) {
-      // Binlik ayraç olarak nokta kullanılmış
-      numStr = numStr.replace(/\./g, '').replace(',', '.');
-    } else {
-      // Sadece virgülü noktaya çevir
-      numStr = numStr.replace(/,/g, '');
-    }
-    const num = Number(numStr);
-    if (isNaN(num)) {
-      throw new BadRequestException(`Geçersiz number değeri: ${value}`);
-    }
-    return num;
+    return Number(result.canonical);
   }
 
   private getDateValue(value: any): string {
