@@ -31,6 +31,17 @@
  * here at all. That is what "strict parser" buys, and it is why this file needs no
  * entry in `exactness-primitives.txt`: it contains no float entry point to exempt.
  *
+ * ⚠️ BEHAVIOURAL TWIN: `collmind.frontend/src/utils/numberUtils.ts`
+ *
+ * The frontend carries the same grammar, because the two repos share no package
+ * (measured T-106: no root `package.json`, no workspace, separate remotes). IF THE
+ * GRAMMAR CHANGES HERE IT MUST CHANGE THERE — and `numberUtils.test.ts` mirrors
+ * this module's spec case for case, so a divergence turns that suite red.
+ *
+ * The reference is written on both sides deliberately. A test catches divergence
+ * only once someone has thought to update it; a pointer in the file makes the
+ * person editing the grammar look at the other copy while they are editing.
+ *
  * AMBIGUITY IS REFUSED, NEVER GUESSED (product decision, 2026-08-07)
  *
  *     "1.234"  ->  1234? or 1.234?  Unknowable. REJECTED.
