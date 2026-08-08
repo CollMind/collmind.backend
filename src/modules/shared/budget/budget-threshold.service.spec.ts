@@ -69,20 +69,125 @@ describe('BudgetThresholdService', () => {
       expect(t.exceeded).toBe(100);
     });
 
-    it('falls back to {80, 95, 100} when no rows exist', async () => {
+    // T-101: these two used to assert the same object, and that WAS the defect —
+    // four different situations produced one indistinguishable result. The values
+    // are still the defaults; what is new is that the caller can tell why.
+    //
+    // The camouflage was total: the seeded configuration holds exactly the
+    // hardcoded defaults (80/95/100, measured in the live DB), so a fallback firing
+    // and a configuration being read looked identical from every angle.
+    it('reports no-configuration as such, not as a configured value', async () => {
       repo.find.mockResolvedValue([]);
 
       const t = await service.getThresholds(mockTenantId);
 
-      expect(t).toEqual({ warning: 80, critical: 95, exceeded: 100 });
+      expect(t).toEqual({
+        warning: 80,
+        critical: 95,
+        exceeded: 100,
+        source: 'default',
+        reason: 'no-configuration',
+      });
     });
 
-    it('falls back to defaults when DB throws', async () => {
+    // `unavailable`, not `default`: "nothing is configured" and "we could not read
+    // the configuration" are different facts, and merging them is the error-as-data
+    // defect T-098 removed one layer up.
+    it('reports a read failure as unavailable, distinct from no-configuration', async () => {
       repo.find.mockRejectedValue(new Error('DB error'));
 
       const t = await service.getThresholds(mockTenantId);
 
-      expect(t).toEqual({ warning: 80, critical: 95, exceeded: 100 });
+      expect(t.source).toBe('unavailable');
+      expect(t.reason).toBe('read-failed');
+      expect({ w: t.warning, c: t.critical, e: t.exceeded }).toEqual({
+        w: 80,
+        c: 95,
+        e: 100,
+      });
+    });
+
+    // A read failure is transient; caching it would stretch one bad moment across
+    // the whole TTL and hide a recovery.
+    it('does not cache a read failure', async () => {
+      repo.find.mockRejectedValueOnce(new Error('DB error'));
+      await service.getThresholds(mockTenantId);
+
+      repo.find.mockResolvedValue([
+        makeConfig(AlertLevel.WARNING_80, 60),
+        makeConfig(AlertLevel.CRITICAL_95, 70),
+        makeConfig(AlertLevel.EXCEEDED_100, 80),
+      ]);
+      const t = await service.getThresholds(mockTenantId);
+
+      expect(t.source).toBe('config');
+      expect(t.warning).toBe(60);
+    });
+
+    // T-101 (K3): all three from the configuration, or all three from the defaults.
+    // The old code seeded with defaults and overwrote what it found, so this case
+    // produced {60, 95, 100} — neither the configuration nor the defaults, and
+    // marked as neither.
+    it('does not mix a partial configuration with defaults', async () => {
+      repo.find.mockResolvedValue([makeConfig(AlertLevel.WARNING_80, 60)]);
+
+      const t = await service.getThresholds(mockTenantId);
+
+      expect(t).toEqual({
+        warning: 80,
+        critical: 95,
+        exceeded: 100,
+        source: 'default',
+        reason: 'partial-configuration',
+      });
+    });
+
+    // The measured worst case: one invalid value used to leave
+    // {warning: 80, critical: 70}, where 75% is RED without ever being AMBER —
+    // an ordering no configuration could express.
+    it('rejects the whole configuration when one value is invalid', async () => {
+      repo.find.mockResolvedValue([
+        makeConfig(AlertLevel.WARNING_80, 'abc' as unknown as number),
+        makeConfig(AlertLevel.CRITICAL_95, 70),
+        makeConfig(AlertLevel.EXCEEDED_100, 80),
+      ]);
+
+      const t = await service.getThresholds(mockTenantId);
+
+      expect(t.reason).toBe('invalid-value');
+      expect(t.warning).toBe(80);
+      expect(t.critical).toBe(95);
+    });
+
+    // T-101 (K4). Every level is present and valid; only the ORDER is wrong.
+    it('rejects a complete but unordered configuration', async () => {
+      repo.find.mockResolvedValue([
+        makeConfig(AlertLevel.WARNING_80, 90),
+        makeConfig(AlertLevel.CRITICAL_95, 70),
+        makeConfig(AlertLevel.EXCEEDED_100, 80),
+      ]);
+
+      const t = await service.getThresholds(mockTenantId);
+
+      expect(t.reason).toBe('unordered');
+      expect(t.source).toBe('default');
+    });
+
+    // There is no unique constraint on (tenant_id, alert_level) and no ORDER BY,
+    // so "the last row wins" means "whichever Postgres returned last" — the same
+    // request could resolve differently twice.
+    it('refuses duplicate levels rather than letting one win arbitrarily', async () => {
+      repo.find.mockResolvedValue([
+        makeConfig(AlertLevel.WARNING_80, 60),
+        makeConfig(AlertLevel.WARNING_80, 70),
+        makeConfig(AlertLevel.CRITICAL_95, 80),
+        makeConfig(AlertLevel.EXCEEDED_100, 90),
+      ]);
+
+      const t = await service.getThresholds(mockTenantId);
+
+      expect(t.reason).toBe('duplicate-level');
+      expect(t.source).toBe('default');
     });
 
     it('returns cached value on second call without hitting DB again', async () => {
