@@ -259,6 +259,87 @@ export async function seedAgreements(
     }
   }
 
+  // T-113: dedicated single-SKU FU for grid e2e fixtures. FU-WELLA-HC-500ML
+  // (above) is shared by multiple unrelated e2e fixtures (SKU-E2E-COGS-FIXTURE
+  // and the T-062 lumpsum pair), so its SKU count is no longer 1 and can't be
+  // relied on by any test that needs "exactly one SKU on this FU". The name
+  // deliberately encodes ownership + the invariant it protects, so nobody
+  // extends this FU without reading why.
+  //
+  // OWNERSHIP CONTRACT: this FU must have EXACTLY ONE SKU
+  // (SKU-E2E-GRID-SINGLE-SKU, created right below). Adding a second SKU here
+  // breaks collmind.frontend/tests/e2e/support/api.ts's
+  // createDraftPlanWithSingleSkuFu (which asserts skus.length === 1), and
+  // through it collmind.frontend/tests/e2e/04-grid-cell-kpi.spec.ts and
+  // collmind.frontend/tests/e2e/02-version-conflict.spec.ts. If you need a
+  // multi-SKU fixture, create a NEW FU — do not add SKUs here.
+  let e2eGridFu = await fuRepo.findOne({
+    where: { code: 'FU-E2E-GRID-SINGLE-SKU', tenantId },
+  });
+  if (!e2eGridFu) {
+    try {
+      e2eGridFu = fuRepo.create({
+        code: 'FU-E2E-GRID-SINGLE-SKU',
+        name: 'E2E Grid Fixture FU (single SKU)',
+        guId: gu.id,
+        size: '500ml',
+        segment: 'Premium',
+        currency: 'TRY',
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      e2eGridFu = await fuRepo.save(e2eGridFu);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        e2eGridFu = await fuRepo.findOne({
+          where: { code: 'FU-E2E-GRID-SINGLE-SKU', tenantId },
+        });
+        if (!e2eGridFu) throw error;
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  let e2eGridSku = await skuRepo.findOne({
+    where: { code: 'SKU-E2E-GRID-SINGLE-SKU', tenantId },
+  });
+  if (!e2eGridSku) {
+    try {
+      e2eGridSku = skuRepo.create({
+        code: 'SKU-E2E-GRID-SINGLE-SKU',
+        name: 'E2E Grid Fixture SKU (Wella HC 500ml)',
+        guId: gu.id,
+        fuId: e2eGridFu.id,
+        size: '500ml',
+        // LOAD-BEARING: collmind.frontend/tests/e2e/05-grid-column-alignment.spec.ts
+        // asserts these exact values render in the correct grid columns —
+        // unitPrice as ₺100 in "List Price per Piece" (toContainText('₺100'))
+        // and cogs as ₺60 in "COGS per Piece" (toContainText('₺60')), plus
+        // negative assertions that neither value leaks into the volume
+        // columns (not.toContainText('₺100') / not.toContainText('₺60')).
+        // Line numbers deliberately omitted — they drift with formatting;
+        // grep the assertion text above instead. Changing either number
+        // here silently changes what that test proves.
+        unitPrice: 100,
+        cogs: 60,
+        currency: 'TRY',
+        tenantId,
+        createdBy: createdByUserId,
+      });
+      e2eGridSku = await skuRepo.save(e2eGridSku);
+    } catch (error: any) {
+      if (isDuplicateError(error)) {
+        e2eGridSku = await skuRepo.findOne({
+          where: { code: 'SKU-E2E-GRID-SINGLE-SKU', tenantId },
+        });
+        if (!e2eGridSku) throw error;
+      } else {
+        throw error;
+      }
+    }
+  }
+
   // Create or get Tactic
   let tactic = await tacticRepo.findOne({
     where: { code: 'TAC-PROMO', tenantId },
