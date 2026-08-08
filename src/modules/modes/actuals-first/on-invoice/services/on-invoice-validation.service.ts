@@ -15,6 +15,7 @@ import { OnInvoiceDiscountType } from '../../../../../database/entities/on-invoi
 import { CustomerStatus } from '../../../../../database/entities/customer.entity';
 import { UtilizationStatus } from '../../../../shared/finance-reporting/dto/budget-utilization.dto';
 import { diagnosticsOf } from '../../../../../common/errors/diagnostics';
+import { ResolvedThresholds } from '../../../../shared/budget/budget-threshold.service';
 
 export interface ValidationError {
   rowNumber: number;
@@ -413,7 +414,11 @@ export class OnInvoiceValidationService {
     }
 
     // Bütçe Etkisi Simülasyonu
-    const budgetImpact = await this.simulateBudgetImpact(
+    const {
+      rows: budgetImpact,
+      thresholdSource,
+      thresholdReason,
+    } = await this.simulateBudgetImpact(
       validRowsData,
       validationResults,
       tenantId,
@@ -456,6 +461,8 @@ export class OnInvoiceValidationService {
       errors: errors,
       criticalEnvelopesCount: criticalEnvelopesCount,
       unreadableEnvelopesCount: unreadableEnvelopesCount,
+      thresholdSource,
+      thresholdReason,
     };
   }
 
@@ -466,7 +473,11 @@ export class OnInvoiceValidationService {
     validRows: ParsedOnInvoiceRow[],
     validationResults: ValidationResult[],
     tenantId: string,
-  ): Promise<BudgetImpactItemDto[]> {
+  ): Promise<{
+    rows: BudgetImpactItemDto[];
+    thresholdSource: ResolvedThresholds['source'];
+    thresholdReason?: ResolvedThresholds['reason'];
+  }> {
     // Fetch thresholds once outside any loop (config-driven, tenant-scoped)
     const thresholds =
       await this.budgetThresholdService.getThresholds(tenantId);
@@ -553,7 +564,13 @@ export class OnInvoiceValidationService {
             current: current,
             thisUpload: -envelope.thisUpload, // Negatif göster (bütçeden düşülüyor)
             after: after,
-            status: status,
+            // T-101: the RAG verdict is withheld when the thresholds did not come
+            // from the tenant's own configuration. The FIGURES are fine — they were
+            // computed from real envelope data — so `dataStatus` stays 'ok' and the
+            // amounts are shown. What cannot be asserted is the COLOUR: RED means
+            // "this upload breaches YOUR threshold", and that sentence is false if
+            // the threshold is a product default nobody chose.
+            status: thresholds.source === 'config' ? status : null,
             dataStatus: 'ok',
           });
         } else {
@@ -596,6 +613,14 @@ export class OnInvoiceValidationService {
       }
     }
 
-    return budgetImpact;
+    // Returned together, deliberately: the rows and the provenance of the
+    // thresholds that coloured them come from ONE read. Fetching the thresholds a
+    // second time in the caller would let the two disagree across a cache
+    // boundary — the summary claiming a source the rows were not built from.
+    return {
+      rows: budgetImpact,
+      thresholdSource: thresholds.source,
+      thresholdReason: thresholds.reason,
+    };
   }
 }

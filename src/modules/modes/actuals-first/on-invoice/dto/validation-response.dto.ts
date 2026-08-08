@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UtilizationStatus } from '../../../../shared/finance-reporting/dto/budget-utilization.dto';
 
 export class LineAnalysisDto {
@@ -128,4 +128,26 @@ export class ValidationResponseDto {
       'criticalEnvelopesCount — an unreadable envelope is not a finding.',
   })
   unreadableEnvelopesCount!: number;
+
+  /**
+   * T-101: where the RAG thresholds behind `status` came from.
+   *
+   * `status` is null on every row when this is not `'config'`, because RED means
+   * "this upload breaches YOUR threshold" and that sentence is false when the
+   * threshold is a product default nobody chose. The null says the verdict is
+   * withheld; this field says why it was withheld.
+   *
+   * Deliberately NOT expressed as `dataStatus: 'unavailable'` on the rows. That
+   * flag is about whether the row's FIGURES could be computed, and here they
+   * could — `current` and `after` are real. Marking them unavailable would make
+   * the UI print "hesaplanamadı" over numbers it had calculated correctly, which
+   * is the result/cause conflation this contract exists to prevent.
+   */
+  @ApiProperty({ enum: ['config', 'default', 'unavailable'] })
+  thresholdSource!: 'config' | 'default' | 'unavailable';
+
+  @ApiPropertyOptional({
+    description: 'Absent when thresholdSource is "config".',
+  })
+  thresholdReason?: string;
 }

@@ -46,20 +46,27 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
       [row(1000)],
       [result()],
       TENANT_ID,
-    ) as Promise<
-      Array<{
+    ) as Promise<{
+      rows: Array<{
         envelopeCode: string;
         current: number | null;
         after: number | null;
         status: UtilizationStatus | null;
         dataStatus: 'ok' | 'unavailable';
-      }>
-    >;
+      }>;
+      thresholdSource: string;
+      thresholdReason?: string;
+    }>;
 
   beforeEach(async () => {
     budgetService = { findEnvelopeByDimensions: jest.fn() };
     budgetThresholdService = {
-      getThresholds: jest.fn().mockResolvedValue({}),
+      getThresholds: jest.fn().mockResolvedValue({
+        warning: 80,
+        critical: 95,
+        exceeded: 100,
+        source: 'config',
+      }),
       toStatus: jest.fn().mockReturnValue(UtilizationStatus.GREEN),
       isExceeded: jest.fn().mockReturnValue(false),
     };
@@ -88,7 +95,7 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
       new InvalidDecimalError('NaN'),
     );
 
-    const [impact] = await simulate();
+    const [impact] = (await simulate()).rows;
 
     expect(impact.dataStatus).toBe('unavailable');
     expect(impact.current).toBeNull();
@@ -103,7 +110,7 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
       new InvalidDecimalError('NaN'),
     );
 
-    const [impact] = await simulate();
+    const [impact] = (await simulate()).rows;
 
     expect(impact.status).toBeNull();
   });
@@ -131,10 +138,40 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
       new InvalidDecimalError('NaN'),
     );
 
-    const impacts = await simulate();
+    const impacts = (await simulate()).rows;
 
     expect(impacts).toHaveLength(1);
     expect(impacts[0].envelopeCode).toContain('MT');
+  });
+
+  // T-101: RED means "this upload breaches YOUR threshold". When the thresholds
+  // are product defaults nobody configured, that sentence is false, so the verdict
+  // is withheld rather than asserted.
+  //
+  // The FIGURES stay — `dataStatus` is still 'ok' and the amounts are real. Marking
+  // the row unavailable would make the UI print "hesaplanamadı" over numbers it had
+  // computed correctly: the row's data and the threshold's provenance are two
+  // different facts.
+  it("withholds the RAG verdict when thresholds are not the tenant's own", async () => {
+    budgetThresholdService.getThresholds.mockResolvedValue({
+      warning: 80,
+      critical: 95,
+      exceeded: 100,
+      source: 'default',
+      reason: 'no-configuration',
+    });
+    budgetService.findEnvelopeByDimensions.mockResolvedValue({
+      availableAmount: 5000,
+      allocatedAmount: 10000,
+    });
+
+    const result = await simulate();
+
+    expect(result.rows[0].status).toBeNull();
+    expect(result.rows[0].dataStatus).toBe('ok');
+    expect(result.rows[0].current).toBe(5000);
+    expect(result.thresholdSource).toBe('default');
+    expect(result.thresholdReason).toBe('no-configuration');
   });
 
   // Without this, every assertion above would also pass on a service that
@@ -145,7 +182,7 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
       allocatedAmount: 10000,
     });
 
-    const [impact] = await simulate();
+    const [impact] = (await simulate()).rows;
 
     expect(impact.dataStatus).toBe('ok');
     expect(impact.current).toBe(5000);
