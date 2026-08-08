@@ -197,7 +197,10 @@ export function parseNumericText(input: unknown): NumericTextResult {
   // `1234.567` too — the shape an ERP exports a three-decimal quantity in, read
   // correctly before T-105. Refusing what we CAN read is not caution; it is the
   // same failure as guessing, pointed the other way.
-  if (frac.length === 3 && /^\d{1,3}$/.test(whole)) {
+  // A leading thousands group never starts with 0: 125 is written `125`, never
+  // `0,125`. So `0.125` can only be a decimal. Found by the frontend twin's
+  // round-trip test (T-110) and applied here to keep the two identical.
+  if (frac.length === 3 && /^[1-9]\d{0,2}$/.test(whole)) {
     return { ok: false, reason: 'AMBIGUOUS_SEPARATOR', input: raw };
   }
 

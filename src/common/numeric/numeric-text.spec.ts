@@ -85,6 +85,12 @@ describe('parseNumericText (T-105)', () => {
       ['1.23', '1.23'],
       ['1.2345', '1.2345'],
       ['1,2', '1.2'],
+      // T-110: a leading group never starts with 0 — 125 is written `125`, never
+      // `0,125` — so these can only be decimals. Found by the frontend twin's
+      // round-trip test and mirrored here.
+      ['0.125', '0.125'],
+      ['-0.125', '-0.125'],
+      ['0,125', '0.125'],
     ])('%s is NOT ambiguous -> %s', (input, expected) => {
       expect(ok(input)).toBe(expected);
     });
