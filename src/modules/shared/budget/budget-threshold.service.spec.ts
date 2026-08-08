@@ -67,6 +67,14 @@ describe('BudgetThresholdService', () => {
       expect(t.warning).toBe(80);
       expect(t.critical).toBe(95);
       expect(t.exceeded).toBe(100);
+
+      // Without these two the test cannot tell a working config path from a
+      // service that ignores configuration entirely: DEFAULT_THRESHOLDS is
+      // {80, 95, 100}, the same values this fixture configures. The camouflage
+      // this task exists to remove was sitting inside the test written to prove
+      // the config path works.
+      expect(t.source).toBe('config');
+      expect(t.reason).toBeUndefined();
     });
 
     // T-101: these two used to assert the same object, and that WAS the defect —
@@ -173,9 +181,15 @@ describe('BudgetThresholdService', () => {
       expect(t.source).toBe('default');
     });
 
-    // There is no unique constraint on (tenant_id, alert_level) and no ORDER BY,
-    // so "the last row wins" means "whichever Postgres returned last" — the same
-    // request could resolve differently twice.
+    // The query has no ORDER BY, so "the last row wins" would mean "whichever
+    // Postgres returned last" — the same request could resolve differently twice.
+    //
+    // Unreachable through the database today: `IDX_budget_alert_config_tenant_level`
+    // has been a UNIQUE index on exactly this pair since migration 1771169825000.
+    // An earlier version of this comment said no such constraint existed, having
+    // measured `pg_constraint` alone — TypeORM's `@Index({ unique: true })` creates
+    // an INDEX, which never appears there. The branch is kept as defence and this
+    // test exercises it directly.
     it('refuses duplicate levels rather than letting one win arbitrarily', async () => {
       repo.find.mockResolvedValue([
         makeConfig(AlertLevel.WARNING_80, 60),
@@ -207,14 +221,14 @@ describe('BudgetThresholdService', () => {
       repo.find.mockResolvedValue([
         makeConfig(AlertLevel.WARNING_80, 70),
         makeConfig(AlertLevel.CRITICAL_95, 90),
-        makeConfig(AlertLevel.EXCEEDED_100, 105),
+        makeConfig(AlertLevel.EXCEEDED_100, 100),
       ]);
 
       const t = await service.getThresholds(mockTenantId);
 
       expect(t.warning).toBe(70);
       expect(t.critical).toBe(90);
-      expect(t.exceeded).toBe(105);
+      expect(t.exceeded).toBe(100);
     });
   });
 
@@ -256,8 +270,12 @@ describe('BudgetThresholdService', () => {
     });
   });
 
-  describe('toStatus — custom thresholds {70, 90, 105}', () => {
-    const customT = { warning: 70, critical: 90, exceeded: 105 };
+  // T-101: values must be storable. The range CHECK added in migration
+  // 1799000000000 refuses anything above 100, so a fixture using 105 asserted a
+  // configuration the schema no longer accepts — a test whose premise its own
+  // commit had just invalidated.
+  describe('toStatus — custom thresholds {70, 90, 100}', () => {
+    const customT = { warning: 70, critical: 90, exceeded: 100 };
 
     it('69.9 → GREEN', () => {
       expect(service.toStatus(69.9, customT)).toBe(UtilizationStatus.GREEN);

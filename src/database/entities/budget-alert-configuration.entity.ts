@@ -14,16 +14,23 @@ export enum NotificationChannel {
 }
 
 @Entity({ name: 'budget_alert_configurations', schema: 'main' })
-// T-101 (migration 1799000000000): PARTIAL unique — only rows that
-// `budget-threshold.service.ts` can actually read (`find({ isActive: true })`,
-// which TypeORM implicitly narrows to `deleted_at IS NULL`) must be unique
-// per (tenant_id, alert_level). Deactivated/soft-deleted history is exempt
-// so a level can be reconfigured without deleting its audit trail. This
-// REPLACES the full (non-partial) unique index migration 1771169825000 had
-// created — see 1799000000000 for the measurement behind that change.
-@Index(['tenantId', 'alertLevel'], {
+// Full UNIQUE, matching `IDX_budget_alert_config_tenant_level` as migration
+// 1771169825000 created it. T-101 briefly carried a PARTIAL variant here
+// (`WHERE deleted_at IS NULL AND is_active = true`) so a deactivated row could
+// coexist with a new active one. It was removed from the migration as
+// out-of-scope — whether configuration history is kept belongs to the task that
+// designs the configuration lifecycle (T-108) — but it survived HERE for one
+// commit, which is worse than either choice: `migration:generate` diffs entity
+// metadata against the database, so the next run would have emitted the swap as
+// an unexplained migration. A decision deferred in one file and left standing in
+// another is a decision that lands with no author.
+//
+// The NAME is explicit on purpose: without it TypeORM derives a hash
+// (`IDX_8f28b6d0…`) and `migration:generate` proposes renaming the real index to
+// it — churn that says nothing and would orphan the name every migration since
+// 1771169825000 refers to.
+@Index('IDX_budget_alert_config_tenant_level', ['tenantId', 'alertLevel'], {
   unique: true,
-  where: '"deleted_at" IS NULL AND "is_active" = true',
 })
 export class BudgetAlertConfiguration extends BaseEntity {
   @Column({

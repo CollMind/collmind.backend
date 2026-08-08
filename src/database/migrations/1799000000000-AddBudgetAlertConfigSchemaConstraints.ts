@@ -79,7 +79,7 @@ export class AddBudgetAlertConfigSchemaConstraints1799000000000 implements Migra
       );
     }
 
-    // --- Apply: range CHECK, idempotent via pg_constraint (schema-qualified). ---
+    // --- Apply the range CHECK, idempotent via pg_constraint (schema-qualified). ---
     const existingCheck = await queryRunner.query(
       `
       SELECT 1
@@ -101,8 +101,6 @@ export class AddBudgetAlertConfigSchemaConstraints1799000000000 implements Migra
           CHECK (threshold_percent > 0 AND threshold_percent <= 100)
       `);
     }
-
-    // --- Apply 2a: drop the old FULL unique index (schema-qualified probe). ---
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
