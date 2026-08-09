@@ -272,9 +272,36 @@ case "${1:-}" in
     # stays an explicit, reviewable commit.
     while read -r file count; do
       case "$file" in ''|\#*) continue ;; esac
+      # T-111: a malformed count is a SETUP FAILURE, not a zero.
+      #
+      # `[ "$now" -gt "$count" ]` errors on a non-numeric count, leaves RC
+      # untouched, and the loop continues — so one corrupted line switches that
+      # file's ratchet off permanently, with nothing but bash noise on stderr to
+      # say so. Measured on the frontend twin: a corrupted count plus TWO real
+      # violations in the same file exited 0.
+      case "$count" in
+        ''|*[!0-9]*)
+          echo "!! [$GUARD_NAME] SETUP FAILURE: malformed baseline line for $file (count: '$count')" >&2
+          exit 2
+          ;;
+      esac
       now="$(printf '%s\n' "$CUR" | awk -v f="$file" '$1==f {print $2}')"
       if [ ! -e "$file" ]; then
         echo "-- [$GUARD_NAME] GONE: $file (baseline $count) — deleted or renamed; drop the line in the same commit"
+        continue
+      fi
+      # T-111: a file still on disk but no longer in the domain list has not
+      # repaid its debt — it has left the scope. Calling that "improved" invites
+      # the operator to bless a shrunken scope by updating the baseline.
+      #
+      # This is E16's distinction ("it cannot tell a repayment from a
+      # relocation"), which was wired into the primitives list and left to
+      # convention for the domain list.
+      if ! printf '%s\n' "$FILES" | grep -qxF "$file"; then
+        echo "[$GUARD_NAME] $file"
+        echo "  OUT OF SCOPE: still on disk but no longer covered by the domain list (baseline $count)"
+        echo "  A scope removal is not a repayment. Restore it, or remove the baseline line in the same commit with a reason."
+        RC=1
         continue
       fi
       now="${now:-0}"
