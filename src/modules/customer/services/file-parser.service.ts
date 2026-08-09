@@ -92,10 +92,25 @@ export class FileParserService {
       }
 
       // Security: Use defval: false to prevent prototype pollution
+      //
+      // T-121 review B4: `blankrows: false` DROPS a blank row from this
+      // array instead of keeping it as an entry — measured: a sheet with a
+      // blank row at sheet row 3 (header=1, C1=2, blank=3, C2=4, C3=5)
+      // produced an array of 3 elements, and `mapToCustomerDtos`'s
+      // `index + 2` then numbered them 2, 3, 4 — C2 and C3 both reported
+      // one row EARLY, off by exactly the number of blank rows skipped
+      // before them. The CSV branch below does not have this gap:
+      // `csv-parser` emits one object per physical line including blank
+      // ones, so its index already accounts for them. `blankrows: true`
+      // makes the Excel branch match: the blank row becomes a real entry
+      // (every cell reads as the `false` sentinel handled by
+      // `stripBlankCellSentinel` below), gets a correct row number, and is
+      // then dropped by the SAME `code || name` filter that already drops
+      // blank CSV rows — not by being invisible to the indexer.
       const data = XLSX.utils.sheet_to_json(worksheet, {
         raw: false,
         defval: false, // Prevent prototype pollution attacks
-        blankrows: false, // Skip blank rows for performance
+        blankrows: true, // T-121 B4: keep blank rows as entries so row numbers stay aligned with the file; they are dropped later by mapToCustomerDtos's code||name filter, same as CSV
       });
 
       return this.mapToCustomerDtos(data);
@@ -191,20 +206,32 @@ export class FileParserService {
    * the literal boolean `false`, not with an absent key. `raw: false` in the
    * same call formats every FILLED cell (including real "TRUE"/"FALSE" text)
    * to a string, and `csv-parser` (the CSV branch) never produces a
-   * `boolean` either — measured, see the probe referenced in the T-121
-   * review. So a `boolean` in `row` can only ever be this one sentinel, from
-   * this one source, never a value a user actually typed.
+   * `boolean` either — measured (T-121 second-tour review, 2026-08-10):
+   * `csv-parser` returns `string` for every cell, including blank ones
+   * (`""`, never `false`), for both quoted and unquoted, TRUE/FALSE and
+   * blank input — see the probe transcript logged under "B3" in
+   * `.claude/backlog/tasks/T-121.md`. So a `boolean` in `row` can only ever
+   * be this one sentinel, from this one source, never a value a user
+   * actually typed.
    *
    * Left unstripped, that `false` sat inside every `row.a || row.b || row.c`
-   * alias chain below and behaved like a real value once every earlier alias
-   * was truly absent: `[false, undefined, undefined, undefined]` returns
-   * `false` — not the row's actual absence — because `||` returns its LAST
-   * operand when every operand is falsy. Three different families then broke
-   * on that same `false`, each in its own way: `getOptionalDate` (T-121's
-   * new strict grammar has no format for the string `"false"`) started
-   * THROWING and rejecting the whole upload; `getOptionalNumber` threw for
-   * the same reason; `getOptionalString` had no rejection path at all and
-   * silently PERSISTED the string `"false"` into a text column.
+   * alias chain below and behaved like a real value, but ONLY when it was
+   * the LAST operand evaluated — `||` returns its last operand only when
+   * EVERY operand is falsy, and an absent key reads as `undefined`, not
+   * `false`, so the sentinel only survives to the end of the chain when the
+   * file's header matches the chain's LAST alias spelling (the
+   * SCREAMING_SNAKE_CASE one here, e.g. `CITY`, `NOTES`,
+   * `CONTRACT_START_DATE`, `CREDIT_LIMIT`): `undefined || undefined ||
+   * false` returns `false`. A sentinel earlier in the chain does NOT leak
+   * this way — `false || undefined || undefined` returns `undefined`,
+   * because the falsy `false` is simply passed over in favour of a later
+   * operand (verified with `node -e`, T-121 second-tour review "B3").
+   * Three different families then broke on that leaked `false`, each in its
+   * own way: `getOptionalDate` (T-121's new strict grammar has no format
+   * for the string `"false"`) started THROWING and rejecting the whole
+   * upload; `getOptionalNumber` threw for the same reason;
+   * `getOptionalString` had no rejection path at all and silently
+   * PERSISTED the string `"false"` into a text column.
    *
    * Stripping the sentinel here, once, before any alias chain reads the row,
    * restores "blank cell" to actually meaning absent — for every alias

@@ -2,6 +2,7 @@ import { FileParserService, FieldParseError } from './file-parser.service';
 import { describeExcelSerialDateFailure } from '../../../common/date/excel-serial-date';
 import { describeDateTextFailure } from '../../../common/date/date-text';
 import { describeNumericTextFailure } from '../../../common/numeric/numeric-text';
+import * as XLSX from 'xlsx';
 
 /**
  * T-107 adım 1 — wiring test for the fifth call site: `getOptionalDate`.
@@ -386,6 +387,185 @@ describe('FileParserService — field-level parsing wiring (T-121)', () => {
       expect(rows[1].dto.code).toBe('CUST-GOOD');
       expect(rows[1].dto.contractStartDate).toBe('2026-01-15');
       expect(rows[1].parseErrors).toBeUndefined();
+    });
+  });
+});
+
+/**
+ * T-121 second-tour review (B3/B4) — the PUBLIC surface, with a real xlsx
+ * buffer, not the private-method shortcuts the suite above uses.
+ *
+ * Before this block, nothing in the repo ran `parseExcel`/`parseCSV`
+ * end-to-end (every spec for these two parsers reaches in via
+ * `as unknown as { ... }` to a private method — see the header comment on
+ * this file and the sibling `on-invoice`/`off-invoice` specs). That gap is
+ * exactly where B3 lived: `stripBlankCellSentinel` (private) is exercised
+ * correctly by nothing that also exercises `sheet_to_json`'s actual
+ * `raw:false`/`defval:false` behaviour, so a regression in the interaction
+ * between the two (not in either one alone) had no test to catch it.
+ *
+ * B3's trigger, measured (see the comment on `stripBlankCellSentinel`):
+ * `defval: false` fills a genuinely blank cell with the literal boolean
+ * `false`. That sentinel only survives an `a || b || c` alias chain when it
+ * is the LAST operand — i.e. when the file's header spelling matches the
+ * chain's SCREAMING_SNAKE_CASE alias (`CITY`, `NOTES`,
+ * `CONTRACT_START_DATE`, `CREDIT_LIMIT`, …). No fixture in the suite above
+ * used a SCREAMING_SNAKE header, so none of them could have failed the way
+ * removing the strip actually fails.
+ */
+describe('parseExcel / parseCSV — public surface, real buffers (T-121 second-tour review)', () => {
+  let service: FileParserService;
+
+  beforeEach(() => {
+    service = new FileParserService();
+  });
+
+  function buildMulterFile(
+    buffer: Buffer,
+    originalname: string,
+    mimetype: string,
+  ): Express.Multer.File {
+    return {
+      originalname,
+      mimetype,
+      buffer,
+      size: buffer.length,
+      fieldname: 'file',
+      encoding: '7bit',
+      destination: '',
+      filename: '',
+      path: '',
+      stream: null as unknown as Express.Multer.File['stream'],
+    };
+  }
+
+  /** `rows[0]` is the header row; every cell after it is a data cell. `null`
+   *  produces a genuinely blank cell (no key written at all in the
+   *  underlying sheet) — the shape `defval: false` fills, which is the shape
+   *  this whole block is about. A literal `false` produces a REAL boolean
+   *  cell (not a blank one) — see the dedicated test below for why that is
+   *  a different case entirely. */
+  function buildXlsxFile(rows: unknown[][]): Express.Multer.File {
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+    const buffer = XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }) as Buffer;
+    return buildMulterFile(
+      buffer,
+      'customers.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+  }
+
+  function buildCsvFile(text: string): Express.Multer.File {
+    return buildMulterFile(
+      Buffer.from(text, 'utf-8'),
+      'customers.csv',
+      'text/csv',
+    );
+  }
+
+  describe('B3 — blank-cell sentinel must not leak into SCREAMING_SNAKE-aliased fields', () => {
+    it('a blank cell under SCREAMING_SNAKE headers (CITY, NOTES) is undefined, never the string "false"', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'CITY', 'NOTES'],
+        ['CUST-1', 'Test Customer', null, null],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      // §2.5: the sentinel, unstripped, formats to the STRING "false" here
+      // (getOptionalString trims/stringifies whatever it is handed) — that
+      // is the exact regression this pins against, not just "is falsy".
+      expect(rows[0].dto.city).toBeUndefined();
+      expect(rows[0].dto.notes).toBeUndefined();
+    });
+
+    it('a blank CONTRACT_START_DATE cell is undefined with NO parseError — absent, not unreadable', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'CONTRACT_START_DATE'],
+        ['CUST-1', 'Test Customer', null],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.contractStartDate).toBeUndefined();
+      // Unstripped, the sentinel reaches `getOptionalDate` as the string
+      // "false", which matches neither the ISO nor the GG.AA.YYYY grammar
+      // and is therefore collected as an INVALID_DATE row-level error — a
+      // blank cell must NOT produce an error at all (§2.5's other edge: a
+      // genuine absence is not a failure).
+      expect(rows[0].parseErrors).toBeUndefined();
+    });
+
+    it('a blank CREDIT_LIMIT cell is undefined with NO parseError — absent, not unreadable', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'CREDIT_LIMIT'],
+        ['CUST-1', 'Test Customer', null],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.creditLimit).toBeUndefined();
+      // Unstripped, "false" fails `numeric-text.ts`'s grammar (MALFORMED)
+      // and is collected as an INVALID_AMOUNT row-level error.
+      expect(rows[0].parseErrors).toBeUndefined();
+    });
+
+    // Scope check, not a mutation-sensitive assertion (the fix strips only
+    // the BOOLEAN `false`, never the string `"FALSE"` `raw: false` produces
+    // for a genuinely filled boolean cell — see `buildXlsxFile`'s comment):
+    // proves the fix does not overreach into a field a user actually filled.
+    it('a genuine FALSE boolean cell for IS_VIP is preserved as `false`, not stripped to undefined', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'IS_VIP'],
+        ['CUST-1', 'Test Customer', false],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.isVip).toBe(false);
+    });
+  });
+
+  describe('B4 — blank-row numbering stays aligned with the physical file, XLSX and CSV alike', () => {
+    it('parseExcel: a blank row in the middle does not shift the row numbers of the rows after it', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name'],
+        ['C1', 'Customer One'], // sheet row 2
+        [], // sheet row 3 — blank
+        ['C2', 'Customer Two'], // sheet row 4
+        ['C3', 'Customer Three'], // sheet row 5
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows.map((r) => [r.dto.code, r.originalRowNumber])).toEqual([
+        ['C1', 2],
+        ['C2', 4],
+        ['C3', 5],
+      ]);
+    });
+
+    it('parseCSV: a blank line in the middle numbers the surviving rows identically to parseExcel', async () => {
+      const file = buildCsvFile(
+        'code,name\nC1,Customer One\n\nC2,Customer Two\nC3,Customer Three\n',
+      );
+
+      const rows = await service.parseCSV(file);
+
+      expect(rows.map((r) => [r.dto.code, r.originalRowNumber])).toEqual([
+        ['C1', 2],
+        ['C2', 4],
+        ['C3', 5],
+      ]);
     });
   });
 });
