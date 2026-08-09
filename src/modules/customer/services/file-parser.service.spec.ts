@@ -1,6 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
-import { FileParserService } from './file-parser.service';
+import { FileParserService, FieldParseError } from './file-parser.service';
 import { describeExcelSerialDateFailure } from '../../../common/date/excel-serial-date';
+import { describeDateTextFailure } from '../../../common/date/date-text';
+import { describeNumericTextFailure } from '../../../common/numeric/numeric-text';
 
 /**
  * T-107 adım 1 — wiring test for the fifth call site: `getOptionalDate`.
@@ -9,58 +10,115 @@ import { describeExcelSerialDateFailure } from '../../../common/date/excel-seria
  * private method rather than the public `parseExcel`/`parseCSV` surface
  * (identical `raw: false` reachability gap, unchanged this turn).
  *
- * ⚠️ `getOptionalDate` is the one call site with an "optional" field. §2.5's
- * silent-zero ban is why it does NOT return `undefined` for a value that IS
- * present but fails to parse — see the source comment at line ~436: "MEVCUT
- * bir değerin okunamaması ile alanın hiç verilmemiş olması aynı şey değildir".
- * That distinction (absent vs. present-but-broken) is exactly what the first
- * two tests below pin.
+ * T-121 REVIEW — CONTRACT CHANGE (2026-08-09): `getOptionalDate` and
+ * `getOptionalNumber` used to THROW `BadRequestException` for a present-but-
+ * unreadable value, which `mapToCustomerDtos`'s single `.map()` call and
+ * `parseExcel`/`parseCSV`'s own try/catch turned into a FILE-LEVEL rejection
+ * in `CustomerService.importFromFile` — one bad cell anywhere rejected the
+ * whole upload, with no row number and no indication of which field
+ * (measured, T-121 review: a 500-row file with one bad date at data row 250
+ * returned a single file error, not 499 created + 1 row-level error).
  *
- * ⚠️ OUT OF SCOPE, DELIBERATELY NOT ASSERTED "CORRECT" HERE: the STRING branch
- * of this same method (line ~448, `new Date(str).toISOString()`) has its own,
- * live, UTC-eastward-only off-by-one defect on non-ISO input — tracked
- * separately as [[T-121]]. Nothing below exercises or asserts a value for
- * that branch; doing so would risk pinning the bug as "expected" behavior.
+ * The two getters now take a third `errors: FieldParseError[]` parameter and
+ * COLLECT into it instead of throwing — `mapToCustomerDtos` allocates one
+ * such array per row and hands it to `CustomerService.importFromFile`'s
+ * existing per-row error channel via `ParsedCustomerRow.parseErrors`. §2.5
+ * is still satisfied: a present-but-unreadable value is never silently
+ * treated as absent — it still produces an error, just not a thrown one, and
+ * that error still identifies the row (`ParsedCustomerRow.originalRowNumber`)
+ * and the field (`FieldParseError.field`). The tests below pin the NEW shape;
+ * the old `.toThrow(BadRequestException)` contract this file used to assert
+ * is gone on purpose, not by omission.
+ *
+ * `parseErrors` for the string date branch routes through
+ * `../../../common/date/date-text.ts`, which has its own exhaustive spec
+ * (`date-text.spec.ts`) covering the parsing grammar, the calendar-validity
+ * check (including the century leap-year rule, T-121 review S2), and TZ
+ * independence. What is tested HERE is narrower and deliberately so: only
+ * that `getOptionalDate`/`getOptionalNumber` actually WIRE their branch to
+ * the shared helper (collect its error, or return its value unchanged) —
+ * the same "wiring, not math" split this file has always used.
  */
-describe('FileParserService — excel-serial-date wiring (T-107 adım 1)', () => {
+describe('FileParserService — field-level parsing wiring (T-121)', () => {
   let service: FileParserService;
 
   beforeEach(() => {
     service = new FileParserService();
   });
 
-  const getOptionalDate = (value: unknown): string | undefined =>
-    (
+  const getOptionalDate = (
+    value: unknown,
+    field = 'testField',
+  ): { value: string | undefined; errors: FieldParseError[] } => {
+    const errors: FieldParseError[] = [];
+    const result = (
       service as unknown as {
-        getOptionalDate(v: unknown): string | undefined;
+        getOptionalDate(
+          v: unknown,
+          f: string,
+          e: FieldParseError[],
+        ): string | undefined;
       }
-    ).getOptionalDate(value);
+    ).getOptionalDate(value, field, errors);
+    return { value: result, errors };
+  };
 
-  describe('numeric (Excel serial) branch', () => {
-    it('a numeric cell value is handed to the shared helper and its ISO date returned unchanged', () => {
-      expect(getOptionalDate(46037)).toBe('2026-01-15');
+  const getOptionalNumber = (
+    value: unknown,
+    field = 'testField',
+  ): { value: number | undefined; errors: FieldParseError[] } => {
+    const errors: FieldParseError[] = [];
+    const result = (
+      service as unknown as {
+        getOptionalNumber(
+          v: unknown,
+          f: string,
+          e: FieldParseError[],
+        ): number | undefined;
+      }
+    ).getOptionalNumber(value, field, errors);
+    return { value: result, errors };
+  };
+
+  describe('getOptionalDate — numeric (Excel serial) branch', () => {
+    it('a numeric cell value is handed to the shared helper and its ISO date returned unchanged, no error pushed', () => {
+      const { value, errors } = getOptionalDate(46037);
+      expect(value).toBe('2026-01-15');
+      expect(errors).toHaveLength(0);
     });
 
     it('a DST-boundary serial converts correctly', () => {
-      expect(getOptionalDate(46320)).toBe('2026-10-25');
+      const { value, errors } = getOptionalDate(46320);
+      expect(value).toBe('2026-10-25');
+      expect(errors).toHaveLength(0);
     });
 
-    // §2.5: a PRESENT value that fails to parse must be refused, never
-    // silently treated the same as an ABSENT value.
-    it('a NOT_FINITE numeric input is refused (throws), not returned as undefined', () => {
-      expect(() => getOptionalDate(NaN)).toThrow(BadRequestException);
+    // §2.5: a PRESENT value that fails to parse must be refused — collected
+    // as a row-level error — never silently treated the same as an ABSENT
+    // value (which would return `undefined` with no error at all).
+    it('a NOT_FINITE numeric input (NaN) is collected as an INVALID_DATE error, value is undefined', () => {
+      const { value, errors } = getOptionalDate(NaN, 'lastOrderDate');
+      expect(value).toBeUndefined();
+      expect(errors).toEqual([
+        {
+          field: 'lastOrderDate',
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure({
+            ok: false,
+            reason: 'NOT_FINITE',
+            input: NaN,
+          }),
+        },
+      ]);
     });
 
-    it("Excel's fictitious 1900-02-29 (serial 60) is refused via the helper, with the helper's own message", () => {
-      let caught: BadRequestException | undefined;
-      try {
-        getOptionalDate(60);
-      } catch (e) {
-        caught = e as BadRequestException;
-      }
-      expect(caught).toBeInstanceOf(BadRequestException);
-      const response = caught!.getResponse() as { message: string };
-      expect(response.message).toBe(
+    it("Excel's fictitious 1900-02-29 (serial 60) is collected via the helper, with the helper's own message", () => {
+      const { value, errors } = getOptionalDate(60, 'contractStartDate');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].field).toBe('contractStartDate');
+      expect(errors[0].error_type).toBe('INVALID_DATE');
+      expect(errors[0].error_message).toBe(
         describeExcelSerialDateFailure({
           ok: false,
           reason: 'LEAP_BUG_DAY',
@@ -70,31 +128,174 @@ describe('FileParserService — excel-serial-date wiring (T-107 adım 1)', () =>
     });
 
     // 0 is a number, not the sentinel for "absent" — must reach the helper
-    // and be refused as NON_POSITIVE, not silently pass through as `undefined`.
-    it('numeric 0 is refused via the helper, not treated as absent', () => {
-      expect(() => getOptionalDate(0)).toThrow(BadRequestException);
+    // and be collected as NON_POSITIVE, not silently pass through as if the
+    // field had never been given.
+    it('numeric 0 is collected via the helper, not treated as absent', () => {
+      const { value, errors } = getOptionalDate(0);
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].error_type).toBe('INVALID_DATE');
     });
   });
 
-  describe('genuinely absent input — the one case that legitimately returns undefined', () => {
+  describe('getOptionalDate — genuinely absent input (the only case with zero errors AND an undefined value)', () => {
     it.each([undefined, null, ''])(
-      '%p returns undefined, not an error',
+      '%p returns undefined with NO error pushed',
       (v) => {
-        expect(getOptionalDate(v)).toBeUndefined();
+        const { value, errors } = getOptionalDate(v);
+        expect(value).toBeUndefined();
+        expect(errors).toHaveLength(0);
       },
     );
   });
 
-  describe('end-to-end from a parsed row to the final DTO (mapToCustomerDtos)', () => {
-    it('a row with a numeric lastOrderDate reaches the DTO with the correct ISO value', () => {
-      const mapToCustomerDtos = (
-        service as unknown as {
-          mapToCustomerDtos(
-            rows: unknown[],
-          ): Array<{ dto: Record<string, unknown> }>;
-        }
-      ).mapToCustomerDtos.bind(service);
+  describe('getOptionalDate — string branch, wiring to date-text.ts (T-121)', () => {
+    // The headline case: a Turkish date written GG.AA.YYYY must resolve to
+    // 3 Nisan (April), not silently become 4 Mart via a US month/day guess.
+    // Math itself belongs to date-text.spec.ts; this pins that the WIRING
+    // returns that value unchanged.
+    it('a Turkish-format string cell (GG.AA.YYYY) is parsed correctly, not guessed as US order', () => {
+      const { value, errors } = getOptionalDate('3.4.2026');
+      expect(value).toBe('2026-04-03');
+      expect(errors).toHaveLength(0);
+    });
 
+    it('an ISO-format string cell passes through unchanged', () => {
+      const { value, errors } = getOptionalDate('2026-01-15');
+      expect(value).toBe('2026-01-15');
+      expect(errors).toHaveLength(0);
+    });
+
+    // §2.5: an ambiguous/unreadable-but-PRESENT string must be collected as
+    // an error, never silently dropped to `undefined` with no trace — this
+    // is the exact defect T-121 closes (the old code's `new Date(str)`
+    // either guessed US order or returned `undefined` for anything it could
+    // not parse, with no way to tell the two apart).
+    it('a US-order / ambiguous string cell is collected as an error, not silently dropped', () => {
+      const { value, errors } = getOptionalDate('3/4/26', 'contractEndDate');
+      expect(value).toBeUndefined();
+      expect(errors).toEqual([
+        {
+          field: 'contractEndDate',
+          error_type: 'INVALID_DATE',
+          error_message: describeDateTextFailure({
+            ok: false,
+            reason: 'UNRECOGNIZED_FORMAT',
+            input: '3/4/26',
+          }),
+        },
+      ]);
+    });
+
+    it("a calendar-invalid string cell is collected via the helper, with the helper's own message", () => {
+      const { value, errors } = getOptionalDate('2026-02-30');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].error_type).toBe('INVALID_DATE');
+      expect(errors[0].error_message).toContain('2026-02-30');
+    });
+
+    it('an empty string cell (post-trim) still returns undefined with NO error', () => {
+      const { value, errors } = getOptionalDate('   ');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(0);
+    });
+  });
+
+  describe('getOptionalNumber — wiring to numeric-text.ts (T-105 / T-121 review)', () => {
+    it('a well-formed numeric string is parsed and returned as a number, no error pushed', () => {
+      const { value, errors } = getOptionalNumber('1500');
+      expect(value).toBe(1500);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('a Turkish-formatted numeric string (1.234,56) is accepted, not silently dropped', () => {
+      const { value, errors } = getOptionalNumber('1.234,56');
+      expect(value).toBeCloseTo(1234.56);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('genuinely absent input (undefined/null/empty) returns undefined with NO error', () => {
+      for (const v of [undefined, null, '']) {
+        const { value, errors } = getOptionalNumber(v);
+        expect(value).toBeUndefined();
+        expect(errors).toHaveLength(0);
+      }
+    });
+
+    // §2.5: a present-but-ambiguous numeric value is collected as an error,
+    // never silently coerced or dropped.
+    it('an ambiguous numeric string is collected as an INVALID_AMOUNT error, value is undefined', () => {
+      const { value, errors } = getOptionalNumber('1.234', 'creditLimit');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].field).toBe('creditLimit');
+      expect(errors[0].error_type).toBe('INVALID_AMOUNT');
+      // Reuse the module's own failure descriptor so this assertion does not
+      // hardcode a message the source could drift away from unnoticed (§2.7).
+      expect(errors[0].error_message).toBe(
+        describeNumericTextFailure({
+          ok: false,
+          reason: 'AMBIGUOUS_SEPARATOR',
+          input: '1.234',
+        }),
+      );
+    });
+  });
+
+  describe('end-to-end via mapToCustomerDtos — the row-level error channel (T-121)', () => {
+    const mapToCustomerDtos = (
+      rows: unknown[],
+    ): Array<{
+      dto: Record<string, unknown>;
+      originalRowNumber: number;
+      parseErrors?: FieldParseError[];
+    }> =>
+      (
+        service as unknown as {
+          mapToCustomerDtos(rows: unknown[]): Array<{
+            dto: Record<string, unknown>;
+            originalRowNumber: number;
+            parseErrors?: FieldParseError[];
+          }>;
+        }
+      ).mapToCustomerDtos(rows);
+
+    it('a row with a Turkish-format string contractStartDate reaches the DTO correctly, parseErrors is undefined', () => {
+      const rows = mapToCustomerDtos([
+        {
+          code: 'CUST-2',
+          name: 'Test Customer 2',
+          contractStartDate: '3.4.2026',
+        },
+      ]);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.contractStartDate).toBe('2026-04-03');
+      expect(rows[0].parseErrors).toBeUndefined();
+    });
+
+    it('a row with an ambiguous string contractStartDate is NOT dropped from the result — it is collected as a row-level parseError (§2.5)', () => {
+      const rows = mapToCustomerDtos([
+        {
+          code: 'CUST-2',
+          name: 'Test Customer 2',
+          contractStartDate: '3/4/26',
+        },
+      ]);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.contractStartDate).toBeUndefined();
+      expect(rows[0].parseErrors).toEqual([
+        {
+          field: 'contractStartDate',
+          error_type: 'INVALID_DATE',
+          error_message: expect.any(String),
+        },
+      ]);
+    });
+
+    it('a row with a numeric lastOrderDate reaches the DTO with the correct ISO value, parseErrors is undefined', () => {
       const rows = mapToCustomerDtos([
         {
           code: 'CUST-1',
@@ -105,24 +306,86 @@ describe('FileParserService — excel-serial-date wiring (T-107 adım 1)', () =>
 
       expect(rows).toHaveLength(1);
       expect(rows[0].dto.lastOrderDate).toBe('2026-01-15');
+      expect(rows[0].parseErrors).toBeUndefined();
     });
 
-    it('a row with an unreadable numeric lastOrderDate is refused, not silently dropped (§2.5)', () => {
-      const mapToCustomerDtos = (
-        service as unknown as {
-          mapToCustomerDtos(rows: unknown[]): unknown[];
-        }
-      ).mapToCustomerDtos.bind(service);
+    it('a row with an unreadable numeric lastOrderDate is NOT dropped from the result — it is collected as a row-level parseError (§2.5)', () => {
+      const rows = mapToCustomerDtos([
+        {
+          code: 'CUST-1',
+          name: 'Test Customer',
+          lastOrderDate: 60, // Excel's fictitious 1900-02-29
+        },
+      ]);
 
-      expect(() =>
-        mapToCustomerDtos([
-          {
-            code: 'CUST-1',
-            name: 'Test Customer',
-            lastOrderDate: 60, // Excel's fictitious 1900-02-29
-          },
-        ]),
-      ).toThrow(BadRequestException);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.lastOrderDate).toBeUndefined();
+      expect(rows[0].parseErrors).toHaveLength(1);
+      expect(rows[0].parseErrors![0].field).toBe('lastOrderDate');
+      expect(rows[0].parseErrors![0].error_type).toBe('INVALID_DATE');
+    });
+
+    it('a row with two independently broken fields collects BOTH errors, in field-declaration order (creditLimit before contractStartDate)', () => {
+      const rows = mapToCustomerDtos([
+        {
+          code: 'CUST-3',
+          name: 'Test Customer 3',
+          creditLimit: '1.234', // ambiguous numeric
+          contractStartDate: '3/4/26', // ambiguous date
+        },
+      ]);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].parseErrors).toHaveLength(2);
+      expect(rows[0].parseErrors![0].field).toBe('creditLimit');
+      expect(rows[0].parseErrors![0].error_type).toBe('INVALID_AMOUNT');
+      expect(rows[0].parseErrors![1].field).toBe('contractStartDate');
+      expect(rows[0].parseErrors![1].error_type).toBe('INVALID_DATE');
+    });
+
+    // ⚠️ THE DELIVERY ITSELF, not just the per-field mechanics: a single bad
+    // cell on ONE row must not affect a SIBLING row in the same file. A
+    // single-row fixture cannot show this — with only one row there is
+    // nothing for the bug (the old file-level throw, or any future
+    // regression that re-couples rows) to leak into. This needs at least
+    // two rows, one broken and one clean, and must check that row numbers
+    // are not conflated between them.
+    it('one bad row does not affect a sibling row — both are present in the result, correctly numbered (T-121 review, measured: 500-row file, 1 bad date -> 499 created + 1 row-level error, not a file-level rejection)', () => {
+      const rows = mapToCustomerDtos([
+        {
+          code: 'CUST-BAD',
+          name: 'Broken Row',
+          contractStartDate: '3/4/26', // ambiguous — unparseable
+        },
+        {
+          code: 'CUST-GOOD',
+          name: 'Clean Row',
+          contractStartDate: '15.01.2026', // valid Turkish format
+        },
+      ]);
+
+      expect(rows).toHaveLength(2);
+
+      // Row 1: broken field is undefined and reported, but the REST of the
+      // row (code/name) is untouched — this is a field-level failure, not a
+      // row-level wipeout.
+      expect(rows[0].originalRowNumber).toBe(2); // header(1) + 0-based(1)
+      expect(rows[0].dto.code).toBe('CUST-BAD');
+      expect(rows[0].dto.name).toBe('Broken Row');
+      expect(rows[0].dto.contractStartDate).toBeUndefined();
+      expect(rows[0].parseErrors).toEqual([
+        {
+          field: 'contractStartDate',
+          error_type: 'INVALID_DATE',
+          error_message: expect.any(String),
+        },
+      ]);
+
+      // Row 2: entirely unaffected by row 1's failure, correct row number.
+      expect(rows[1].originalRowNumber).toBe(3);
+      expect(rows[1].dto.code).toBe('CUST-GOOD');
+      expect(rows[1].dto.contractStartDate).toBe('2026-01-15');
+      expect(rows[1].parseErrors).toBeUndefined();
     });
   });
 });

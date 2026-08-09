@@ -7,6 +7,10 @@ import {
   excelSerialToIsoDate,
   describeExcelSerialDateFailure,
 } from '../../../common/date/excel-serial-date';
+import {
+  parseOptionalDateText,
+  describeDateTextFailure,
+} from '../../../common/date/date-text';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -17,15 +21,44 @@ import {
   CustomerStatus,
 } from '../../../database/entities/customer.entity';
 
+/**
+ * T-121 review (a): a single field on a single row that could not be turned
+ * into a value (an unparseable date or number cell) is a ROW-LEVEL error,
+ * not a file-level one (§2.5 — present-but-unreadable must not be silently
+ * dropped, and must not take the whole file down with it either). This is
+ * the shape that carries ONE such failure from `getOptionalDate` /
+ * `getOptionalNumber` up to `CustomerService.importFromFile`'s existing
+ * per-row error channel (`{ row, code, error_type, error_message,
+ * original_row_data }`, see `customer.service.ts`).
+ *
+ * `error_type` reuses the vocabulary already documented on the `POST
+ * /customers/import` Swagger response (`customer.controller.ts`) —
+ * `INVALID_DATE` for the date family, `INVALID_AMOUNT` for the numeric
+ * family (deliberately covers counts like `numberOfBranches` too: they go
+ * through the same strict-grammar parser as money fields, and introducing a
+ * third, undocumented error type for them would be an unrequested API
+ * surface expansion — §2.4).
+ */
+export interface FieldParseError {
+  field: string;
+  error_type: string;
+  error_message: string;
+}
+
+export interface ParsedCustomerRow {
+  dto: CreateCustomerDto;
+  originalRowNumber: number;
+  originalRowData?: Record<string, any>;
+  /** Non-empty iff at least one field on this row failed to parse. Ordered
+   *  by field-declaration order in `mapToCustomerDtos`, so `[0]` is the same
+   *  "first error wins" field the rest of this file's validation already
+   *  uses (see `CustomerService.validateCustomerDto`). */
+  parseErrors?: FieldParseError[];
+}
+
 @Injectable()
 export class FileParserService {
-  async parseExcel(file: Express.Multer.File): Promise<
-    Array<{
-      dto: CreateCustomerDto;
-      originalRowNumber: number;
-      originalRowData?: Record<string, any>;
-    }>
-  > {
+  async parseExcel(file: Express.Multer.File): Promise<ParsedCustomerRow[]> {
     try {
       // Security: Limit file size to prevent DoS attacks (10MB max)
       const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -76,13 +109,7 @@ export class FileParserService {
     }
   }
 
-  async parseCSV(file: Express.Multer.File): Promise<
-    Array<{
-      dto: CreateCustomerDto;
-      originalRowNumber: number;
-      originalRowData?: Record<string, any>;
-    }>
-  > {
+  async parseCSV(file: Express.Multer.File): Promise<ParsedCustomerRow[]> {
     try {
       // Security: Limit file size to prevent DoS attacks (10MB max) - same as parseExcel
       const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -156,14 +183,55 @@ export class FileParserService {
     }
   }
 
-  private mapToCustomerDtos(data: any[]): Array<{
-    dto: CreateCustomerDto;
-    originalRowNumber: number;
-    originalRowData?: Record<string, any>;
-  }> {
+  /**
+   * T-121 review B1: `parseExcel` calls `sheet_to_json` with `defval: false`
+   * (prototype-pollution guard, see the comment there — untouched by this
+   * fix). That option fills a cell that was never written at all — the
+   * common shape for a blank cell in a real, human-edited spreadsheet — with
+   * the literal boolean `false`, not with an absent key. `raw: false` in the
+   * same call formats every FILLED cell (including real "TRUE"/"FALSE" text)
+   * to a string, and `csv-parser` (the CSV branch) never produces a
+   * `boolean` either — measured, see the probe referenced in the T-121
+   * review. So a `boolean` in `row` can only ever be this one sentinel, from
+   * this one source, never a value a user actually typed.
+   *
+   * Left unstripped, that `false` sat inside every `row.a || row.b || row.c`
+   * alias chain below and behaved like a real value once every earlier alias
+   * was truly absent: `[false, undefined, undefined, undefined]` returns
+   * `false` — not the row's actual absence — because `||` returns its LAST
+   * operand when every operand is falsy. Three different families then broke
+   * on that same `false`, each in its own way: `getOptionalDate` (T-121's
+   * new strict grammar has no format for the string `"false"`) started
+   * THROWING and rejecting the whole upload; `getOptionalNumber` threw for
+   * the same reason; `getOptionalString` had no rejection path at all and
+   * silently PERSISTED the string `"false"` into a text column.
+   *
+   * Stripping the sentinel here, once, before any alias chain reads the row,
+   * restores "blank cell" to actually meaning absent — for every alias
+   * spelling, every field family, in one place — without touching the
+   * `defval: false` choice itself or any per-field getter.
+   *
+   * Return type is deliberately `any`, not `Record<string, any>`: spreading a
+   * `Record<string, any>`-typed value into an object literal together with a
+   * named property (`_originalRowNumber`) makes TS drop the index signature
+   * from the resulting literal type — measured, `tsc --strict` then refuses
+   * every `row.SOME_ALIAS` access below with "Property does not exist on
+   * type '{ _originalRowNumber: number }'". `data: any[]` already makes this
+   * whole pipeline untyped by design; `any` here keeps it that way instead of
+   * fighting a spread-narrowing quirk with no behavioural benefit.
+   */
+  private stripBlankCellSentinel(row: Record<string, any>): any {
+    const normalized: Record<string, any> = {};
+    for (const key of Object.keys(row)) {
+      normalized[key] = row[key] === false ? undefined : row[key];
+    }
+    return normalized;
+  }
+
+  private mapToCustomerDtos(data: any[]): ParsedCustomerRow[] {
     // Önce her satıra orijinal satır numarasını ekle (header + 1-based index)
     const dataWithRowNumbers = data.map((row, index) => ({
-      ...row,
+      ...this.stripBlankCellSentinel(row),
       _originalRowNumber: index + 2, // +2: header row (1) + 0-based index (1) = 2
     }));
 
@@ -171,6 +239,18 @@ export class FileParserService {
     return dataWithRowNumbers
       .filter((row) => row.code || row.name) // Boş satırları filtrele
       .map((row) => {
+        // T-121 review (a): field-level parse failures (an unreadable date or
+        // number cell) are collected here, in field-declaration order, rather
+        // than thrown — a thrown exception from inside this object literal
+        // would abort the WHOLE FILE at the first bad cell (measured: the
+        // prior design turned `getOptionalDate`'s throw into
+        // `CustomerService.importFromFile`'s file-level `BadRequestException`
+        // at line ~244, losing the row number entirely). `getOptionalDate`
+        // is deliberately unaware of the destination — it only appends to
+        // this array — so it stays the single seam per T-107 adım 1 /
+        // T-105's own split (parsing vs. what an invalid value MEANS to the
+        // caller).
+        const parseErrors: FieldParseError[] = [];
         const dto: CreateCustomerDto = {
           code: this.getStringValue(
             row.code ||
@@ -250,6 +330,8 @@ export class FileParserService {
               row.credit_limit ||
               row.CreditLimit ||
               row.CREDIT_LIMIT,
+            'creditLimit',
+            parseErrors,
           ),
           currency:
             this.getOptionalString(
@@ -296,24 +378,32 @@ export class FileParserService {
               row.annual_revenue ||
               row.AnnualRevenue ||
               row.ANNUAL_REVENUE,
+            'annualRevenue',
+            parseErrors,
           ),
           lastOrderDate: this.getOptionalDate(
             row.lastOrderDate ||
               row.last_order_date ||
               row.LastOrderDate ||
               row.LAST_ORDER_DATE,
+            'lastOrderDate',
+            parseErrors,
           ),
           firstOrderDate: this.getOptionalDate(
             row.firstOrderDate ||
               row.first_order_date ||
               row.FirstOrderDate ||
               row.FIRST_ORDER_DATE,
+            'firstOrderDate',
+            parseErrors,
           ),
           numberOfBranches: this.getOptionalNumber(
             row.numberOfBranches ||
               row.number_of_branches ||
               row.NumberOfBranches ||
               row.NUMBER_OF_BRANCHES,
+            'numberOfBranches',
+            parseErrors,
           ),
           notes: this.getOptionalString(row.notes || row.Notes || row.NOTES),
           isVip: this.getOptionalBoolean(
@@ -324,12 +414,16 @@ export class FileParserService {
               row.contract_start_date ||
               row.ContractStartDate ||
               row.CONTRACT_START_DATE,
+            'contractStartDate',
+            parseErrors,
           ),
           contractEndDate: this.getOptionalDate(
             row.contractEndDate ||
               row.contract_end_date ||
               row.ContractEndDate ||
               row.CONTRACT_END_DATE,
+            'contractEndDate',
+            parseErrors,
           ),
         };
 
@@ -353,12 +447,16 @@ export class FileParserService {
                 row.store_size ||
                 row.StoreSize ||
                 row.STORE_SIZE,
+              'metadata.storeSize',
+              parseErrors,
             ),
             numberOfEmployees: this.getOptionalNumber(
               row.numberOfEmployees ||
                 row.number_of_employees ||
                 row.NumberOfEmployees ||
                 row.NUMBER_OF_EMPLOYEES,
+              'metadata.numberOfEmployees',
+              parseErrors,
             ),
             industry: this.getOptionalString(
               row.industry || row.Industry || row.INDUSTRY,
@@ -370,6 +468,7 @@ export class FileParserService {
           dto,
           originalRowNumber: row._originalRowNumber,
           originalRowData: row, // Store original row data for error reporting
+          parseErrors: parseErrors.length > 0 ? parseErrors : undefined,
         };
       });
   }
@@ -386,36 +485,39 @@ export class FileParserService {
   }
 
   /**
-   * T-105: `undefined` now means ABSENT and nothing else.
+   * T-105 / T-121 review (a): `undefined` means ABSENT and nothing else.
    *
    * It used to mean both "not given" and "unreadable", which merged a legitimate
    * absence with a silent failure (CLAUDE.md §2.5). It also rejected every Turkish
    * format outright — `1.234,56` went to `undefined` — so a credit limit written
    * the way a Turkish user writes it simply vanished from the import.
    *
-   * ⚠️ BEHAVIOUR CHANGE, stated rather than buried: an unreadable value now throws,
-   * and `mapToCustomerDtos` runs once for the whole file, so one bad cell rejects
-   * the upload instead of silently dropping one field. That is the §2.5 direction
-   * — a wrong credit limit is worse than a refused file — and it matches what the
-   * on-invoice and off-invoice importers already do.
-   *
-   * It is not row-level, and the reason is NARROWER than an earlier version of this
-   * comment claimed. That version said "this parser has no row-level error channel",
-   * which is false: `CustomerService.importCustomers` collects
-   * `{ row, code, error_type, error_message, original_row_data }`, and this parser
-   * already carries `_originalRowNumber`. The channel exists; what is missing is
-   * that `mapToCustomerDtos` was written to THROW rather than to return per-row
-   * errors into it.
-   *
-   * The distinction matters: an impossibility is something you plan around, an
-   * omission is something you fix. Wiring this into the existing channel is a small
-   * separate task, not a new subsystem.
+   * An unreadable-but-present value is now a ROW-LEVEL error, appended to
+   * `errors` under `field`, not a thrown exception. T-121 review (a) measured
+   * the earlier throw-based version: it crossed `mapToCustomerDtos`'s single
+   * `.map()` call and `parseExcel`/`parseCSV`'s own try/catch, and
+   * `CustomerService.importFromFile` (line ~244) turned it into a
+   * FILE-level `BadRequestException` — one bad cell anywhere in the file
+   * rejected the entire upload, with no row number and no indication of
+   * which field. That is a real regression relative to the row-level channel
+   * this method's caller already has (`{ row, code, error_type,
+   * error_message, original_row_data }`) — collecting into it, instead of
+   * throwing past it, is the fix.
    */
-  private getOptionalNumber(value: any): number | undefined {
+  private getOptionalNumber(
+    value: any,
+    field: string,
+    errors: FieldParseError[],
+  ): number | undefined {
     const result = parseOptionalNumericText(value);
     if (result === undefined) return undefined;
     if (!result.ok) {
-      throw new BadRequestException(describeNumericTextFailure(result));
+      errors.push({
+        field,
+        error_type: 'INVALID_AMOUNT',
+        error_message: describeNumericTextFailure(result),
+      });
+      return undefined;
     }
     return Number(result.canonical);
   }
@@ -427,10 +529,27 @@ export class FileParserService {
     return str === 'true' || str === '1' || str === 'yes' || str === 'evet';
   }
 
-  private getOptionalDate(value: any): string | undefined {
+  /**
+   * T-121 review (a): `undefined` means ABSENT and nothing else, on both
+   * branches below. Neither branch guesses or silently drops an unreadable
+   * value — but neither THROWS anymore either. A thrown exception here used
+   * to cross `mapToCustomerDtos`'s `.map()` and land in
+   * `CustomerService.importFromFile`'s file-level catch (line ~244),
+   * turning a single bad date cell into a whole-file `BadRequestException`
+   * with no row number — measured, T-121 review (a): a file with 500 good
+   * rows and ONE unparseable date returned 500 as a file error, not 499
+   * created + 1 row-level error. Both branches now append to `errors` and
+   * return `undefined` for that field instead, so the caller decides what
+   * an unreadable value MEANS (row-fails-validation, via the same channel
+   * `MISSING_FIELD` / `INVALID_AMOUNT` / `INVALID_EMAIL` already use) rather
+   * than losing the row entirely.
+   */
+  private getOptionalDate(
+    value: any,
+    field: string,
+    errors: FieldParseError[],
+  ): string | undefined {
     if (value === null || value === undefined || value === '') return undefined;
-    const str = String(value).trim();
-    if (!str) return undefined;
 
     // Excel tarih formatını kontrol et (serial number)
     // T-107 adım 1: paylaşılan, TZ-bağımsız yardımcı. Alan opsiyonel olsa da
@@ -439,18 +558,30 @@ export class FileParserService {
     if (typeof value === 'number') {
       const result = excelSerialToIsoDate(value);
       if (!result.ok) {
-        throw new BadRequestException(describeExcelSerialDateFailure(result));
+        errors.push({
+          field,
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure(result),
+        });
+        return undefined;
       }
       return result.isoDate;
     }
 
-    // String tarih formatlarını dene
-    const date = new Date(str);
-    if (!isNaN(date.getTime())) {
-      return date.toISOString().split('T')[0];
+    // String tarih formatı: katı gramer (T-121) — ISO ya da GG.AA.YYYY,
+    // ikisi dışında her şey (US sırası, belirsiz gün/ay, serbest metin)
+    // reddedilir; hiçbir zaman `new Date(str)` ile tahmin edilmez.
+    const result = parseOptionalDateText(value);
+    if (result === undefined) return undefined;
+    if (!result.ok) {
+      errors.push({
+        field,
+        error_type: 'INVALID_DATE',
+        error_message: describeDateTextFailure(result),
+      });
+      return undefined;
     }
-
-    return undefined;
+    return result.isoDate;
   }
 
   private getChannel(value: any): CustomerChannel {

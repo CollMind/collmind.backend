@@ -12,7 +12,15 @@ import {
   Customer,
   CustomerStatus,
 } from '../../database/entities/customer.entity';
-import { FileParserService } from './services/file-parser.service';
+import {
+  FileParserService,
+  FieldParseError,
+  ParsedCustomerRow,
+} from './services/file-parser.service';
+import {
+  parseDateText,
+  describeDateTextFailure,
+} from '../../common/date/date-text';
 
 @Injectable()
 export class CustomerService {
@@ -222,11 +230,7 @@ export class CustomerService {
     }
 
     const fileExtension = file.originalname.split('.').pop()?.toLowerCase();
-    let customersWithRowNumbers: Array<{
-      dto: CreateCustomerDto;
-      originalRowNumber: number;
-      originalRowData?: Record<string, any>;
-    }>;
+    let customersWithRowNumbers: ParsedCustomerRow[];
 
     try {
       if (fileExtension === 'xlsx' || fileExtension === 'xls') {
@@ -270,10 +274,12 @@ export class CustomerService {
       dto: customerDto,
       originalRowNumber,
       originalRowData,
+      parseErrors,
     } of customersWithRowNumbers) {
       const validationError = this.validateCustomerDto(
         customerDto,
         originalRowNumber,
+        parseErrors,
       );
       if (validationError) {
         validationErrors.push({
@@ -382,6 +388,7 @@ export class CustomerService {
   private validateCustomerDto(
     dto: CreateCustomerDto,
     rowNumber: number,
+    parseErrors?: FieldParseError[],
   ): {
     row: number;
     code: string;
@@ -416,35 +423,53 @@ export class CustomerService {
       };
     }
 
-    // Date format and validity validation (YYYY-MM-DD)
-    const dateFields = [
-      { field: 'lastOrderDate', value: dto.lastOrderDate },
-      { field: 'firstOrderDate', value: dto.firstOrderDate },
-      { field: 'contractStartDate', value: dto.contractStartDate },
-      { field: 'contractEndDate', value: dto.contractEndDate },
+    // T-121 review (a): a field that `FileParserService` could not turn into
+    // a value at all (an unreadable date/number cell) takes precedence over
+    // the DTO-level checks below — that field is not "absent" (§2.5), it is
+    // broken, and `dto.<field>` is `undefined` for it either way, so the
+    // checks below would see it as legitimately unset and let the row
+    // through silently if this were skipped. Only the FIRST such failure is
+    // reported, in the field order `FileParserService.mapToCustomerDtos`
+    // produced them — the same "first error wins" contract the rest of this
+    // method already uses.
+    if (parseErrors && parseErrors.length > 0) {
+      const first = parseErrors[0];
+      return {
+        row: rowNumber,
+        code: dto.code,
+        error_type: first.error_type,
+        error_message: `${first.field}: ${first.error_message}`,
+      };
+    }
+
+    // Date validity (calendar-level, on values that already parsed to a
+    // canonical YYYY-MM-DD via `FileParserService.getOptionalDate` when they
+    // came from the real import path). T-121 review S4: this used to be a
+    // second, independent calendar-validity implementation
+    // (`validateDateString`, hand-rolled `new Date(year, month-1, day)`)
+    // that DISAGREED with the shared parser on years below 100 — measured:
+    // `"0026-01-15"` passed `date-text.ts`'s hand computation but
+    // `validateDateString` silently "corrected" it via `new Date`'s
+    // year-below-100-means-19xx quirk to `1926-01-15` and rejected it as
+    // "otomatik düzeltme". `validateDateString` is removed; this now routes
+    // through the same `parseDateText` the file parser uses, so there is
+    // exactly one place that decides whether a date string is valid.
+    const dateFields: Array<[string, string | undefined]> = [
+      ['lastOrderDate', dto.lastOrderDate],
+      ['firstOrderDate', dto.firstOrderDate],
+      ['contractStartDate', dto.contractStartDate],
+      ['contractEndDate', dto.contractEndDate],
     ];
 
-    for (const { field, value } of dateFields) {
+    for (const [field, value] of dateFields) {
       if (value) {
-        // Check format first
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const parsed = parseDateText(value);
+        if (!parsed.ok) {
           return {
             row: rowNumber,
             code: dto.code,
             error_type: 'INVALID_DATE',
-            error_message: `${field} geçersiz tarih formatı. YYYY-MM-DD formatında olmalıdır`,
-          };
-        }
-
-        // Validate date is actually valid (not just format)
-        // This catches invalid dates like 2024-02-30 that pass regex but are invalid
-        const dateValidation = this.validateDateString(value);
-        if (!dateValidation.isValid) {
-          return {
-            row: rowNumber,
-            code: dto.code,
-            error_type: 'INVALID_DATE',
-            error_message: `${field} geçersiz tarih: ${dateValidation.error}`,
+            error_message: `${field} geçersiz tarih: ${describeDateTextFailure(parsed)}`,
           };
         }
       }
@@ -483,68 +508,6 @@ export class CustomerService {
     }
 
     return null;
-  }
-
-  /**
-   * Validate date string is both correctly formatted and represents a valid date
-   * Prevents silent data corruption from invalid dates like 2024-02-30
-   *
-   * @param dateString - Date string in YYYY-MM-DD format
-   * @returns Object with isValid flag and optional error message
-   */
-  private validateDateString(dateString: string): {
-    isValid: boolean;
-    error?: string;
-  } {
-    // Parse the date components
-    const parts = dateString.split('-');
-    if (parts.length !== 3) {
-      return { isValid: false, error: 'Tarih formatı hatalı' };
-    }
-
-    const year = parseInt(parts[0], 10);
-    const month = parseInt(parts[1], 10);
-    const day = parseInt(parts[2], 10);
-
-    // Check if parsing was successful
-    if (isNaN(year) || isNaN(month) || isNaN(day)) {
-      return { isValid: false, error: 'Tarih bileşenleri sayısal değil' };
-    }
-
-    // Check month range
-    if (month < 1 || month > 12) {
-      return { isValid: false, error: `Geçersiz ay: ${month}` };
-    }
-
-    // Check day range (basic check)
-    if (day < 1 || day > 31) {
-      return { isValid: false, error: `Geçersiz gün: ${day}` };
-    }
-
-    // Create date object and verify it's valid
-    const date = new Date(year, month - 1, day);
-
-    // Check if date is valid (invalid dates become invalid Date objects)
-    if (isNaN(date.getTime())) {
-      return { isValid: false, error: 'Geçersiz tarih' };
-    }
-
-    // Critical: Verify the parsed date matches the input string
-    // This catches cases where JavaScript auto-corrects invalid dates
-    // e.g., 2024-02-30 becomes 2024-03-01, which we want to reject
-    const parsedYear = date.getFullYear();
-    const parsedMonth = String(date.getMonth() + 1).padStart(2, '0');
-    const parsedDay = String(date.getDate()).padStart(2, '0');
-    const parsedDateString = `${parsedYear}-${parsedMonth}-${parsedDay}`;
-
-    if (parsedDateString !== dateString) {
-      return {
-        isValid: false,
-        error: `Geçersiz tarih: ${dateString} (otomatik düzeltme: ${parsedDateString})`,
-      };
-    }
-
-    return { isValid: true };
   }
 
   async getCplList(

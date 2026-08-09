@@ -623,6 +623,118 @@ describe('CustomerService', () => {
         true,
       );
     });
+
+    /**
+     * T-121 review (a): `FileParserService.mapToCustomerDtos` now carries
+     * field-level parse failures (an unreadable date/number cell) on
+     * `ParsedCustomerRow.parseErrors` instead of throwing past
+     * `importFromFile` as a file-level `BadRequestException` (see the source
+     * comment on `validateCustomerDto`, "parseErrors precedence"). These
+     * tests pin that `CustomerService` — the OTHER end of that wiring, which
+     * `file-parser.service.spec.ts` cannot see because it never touches
+     * `CustomerService` — actually consumes `parseErrors`: reports the FIRST
+     * one under the row's own `error_type`/`error_message`, still creates
+     * every OTHER valid row in the same file, and does not fall through to
+     * the DTO-level date/amount checks that run beneath it (which would see
+     * the field as legitimately `undefined` and let the row through).
+     */
+    it('a row with a parseErrors entry from the file parser is reported under its own error_type and does not block sibling rows', async () => {
+      const parsedCustomers = [
+        {
+          dto: {
+            code: 'CUST-BAD',
+            name: 'Broken Row',
+            channel: CustomerChannel.RETAIL,
+            // contractStartDate deliberately absent from the dto: this is
+            // what `FileParserService.getOptionalDate` returns for an
+            // unreadable cell — `undefined`, with the failure recorded in
+            // parseErrors instead.
+          },
+          originalRowNumber: 2,
+          parseErrors: [
+            {
+              field: 'contractStartDate',
+              error_type: 'INVALID_DATE',
+              error_message: "Tanınmayan tarih biçimi: '3/4/26'.",
+            },
+          ],
+        },
+        {
+          dto: {
+            code: 'CUST-GOOD',
+            name: 'Clean Row',
+            channel: CustomerChannel.RETAIL,
+          },
+          originalRowNumber: 3,
+        },
+      ];
+
+      fileParserService.parseExcel.mockResolvedValue(parsedCustomers as any);
+      customerRepository.findByCode.mockResolvedValue(null);
+      customerRepository.create.mockReturnValue(mockCustomer);
+      customerRepository.save.mockResolvedValue(mockCustomer);
+
+      const result = await service.importFromFile(mockTenantId, mockFile);
+
+      expect(result.total).toBe(2);
+      expect(result.created).toBe(1);
+      expect(result.skipped).toBe(1);
+
+      const badRowError = result.errors.find((e) => e.row === 2);
+      expect(badRowError).toBeDefined();
+      expect(badRowError!.error_type).toBe('INVALID_DATE');
+      expect(badRowError!.error_message).toContain('contractStartDate');
+
+      // The sibling row must not be touched by row 2's failure — neither
+      // reported as an error nor missing from the created count.
+      expect(result.errors.some((e) => e.row === 3)).toBe(false);
+    });
+
+    /**
+     * T-121 review S4: `validateDateString` (hand-rolled, `new Date(year,
+     * month-1, day)`) is removed; the date-validity check inside
+     * `validateCustomerDto` now routes through the same `parseDateText` the
+     * file parser uses. Measured regression in the OLD code: a year below
+     * 100 (`"0026-01-15"`) passed `date-text.ts`'s hand computation as a
+     * legitimate calendar date, year 26, but `validateDateString` silently
+     * "corrected" it via `new Date`'s year-below-100-means-19xx quirk to
+     * `1926-01-15` and then rejected it as a self-inflicted mismatch
+     * ("otomatik düzeltme"). This pins that the row is now accepted with the
+     * year UNCHANGED — not silently shifted 1900 years, and not rejected for
+     * a mismatch the code itself introduced.
+     */
+    it('a year-below-100 date ("0026-01-15") is accepted unchanged, not silently shifted to 1926 (T-121 review S4)', async () => {
+      const parsedCustomers = [
+        {
+          dto: {
+            code: 'CUST-LEGACY',
+            name: 'Legacy Year Customer',
+            channel: CustomerChannel.RETAIL,
+            lastOrderDate: '0026-01-15',
+          },
+          originalRowNumber: 2,
+        },
+      ];
+
+      fileParserService.parseExcel.mockResolvedValue(parsedCustomers as any);
+      customerRepository.findByCode.mockResolvedValue(null);
+      customerRepository.create.mockReturnValue(mockCustomer);
+      customerRepository.save.mockResolvedValue(mockCustomer);
+
+      const result = await service.importFromFile(mockTenantId, mockFile);
+
+      // Scope: this pins ONLY that `validateCustomerDto`'s date-validity
+      // check accepts the value via `parseDateText` and does not reject it
+      // with the old `validateDateString` mismatch. What `convertDateFields`
+      // does with the accepted string afterwards (`new Date(...)`, on the
+      // persistence path) is a SEPARATE, already-tracked concern — see
+      // [[T-122]] — and deliberately not asserted on here.
+      expect(result.errors.some((e) => e.error_type === 'INVALID_DATE')).toBe(
+        false,
+      );
+      expect(result.created).toBe(1);
+      expect(result.skipped).toBe(0);
+    });
   });
 
   describe('getCplList', () => {
