@@ -7,6 +7,7 @@ import {
   excelSerialToIsoDate,
   describeExcelSerialDateFailure,
 } from '../../../../../common/date/excel-serial-date';
+import { pickCell } from '../../../../../common/row-parsing/pick-cell';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -54,8 +55,17 @@ export class OffInvoiceFileParserService {
       }
 
       const data = XLSX.utils.sheet_to_json(worksheet, {
-        raw: false,
-        defval: false,
+        raw: true, // T-107 adım 2: hücreyi kaynağında oku (sayı/tarih hücreleri
+        // metne çevrilmeden gelir) — `getNumberValue`/`getDateValue` sayısal
+        // girdiyi zaten kabul ediyor (T-105/adım 1).
+        //
+        // T-107 adım 2: `defval: null`, not `false` — under `raw: true` a
+        // written cell is only ever `string | number | boolean`
+        // (`cellDates: false` above), so `null` can never collide with a
+        // value a user typed, unlike `false` (see `pick-cell.ts` for the
+        // measured regression this caused: a real `0` amount, read under a
+        // non-last alias spelling, silently resolved to `undefined`).
+        defval: null,
         blankrows: false,
       });
 
@@ -155,56 +165,79 @@ export class OffInvoiceFileParserService {
         _originalRowNumber: index + 2, // +2: header row (1) + 0-based index (1) = 2
       }))
       .filter((row) => {
-        // Boş satırları filtrele - en azından agreement_id veya invoice_no olmalı
+        // Boş satırları filtrele - en azından agreement_id veya invoice_no
+        // olmalı. T-107 adım 2: presence, `!== undefined` ile karar
+        // verilir — JS-truthiness ile değil (aynı sınıf: bir alias `0`/`''`
+        // taşıyorsa bile satır GERÇEK bir kimlik içerir, boş sayılmamalı).
         return (
-          row.agreement_id ||
-          row.agreementId ||
-          row.Agreement_ID ||
-          row.AgreementId ||
-          row.invoice_no ||
-          row.invoiceNo ||
-          row.Invoice_No ||
-          row.InvoiceNo
+          pickCell(
+            row,
+            'agreement_id',
+            'agreementId',
+            'Agreement_ID',
+            'AgreementId',
+          ) !== undefined ||
+          pickCell(
+            row,
+            'invoice_no',
+            'invoiceNo',
+            'Invoice_No',
+            'InvoiceNo',
+          ) !== undefined
         );
       })
       .map((row) => {
         const dto: CreateAgreementTransactionDto = {
           agreementId: this.getStringValue(
-            row.agreement_id ||
-              row.agreementId ||
-              row.Agreement_ID ||
-              row.AgreementId,
+            pickCell(
+              row,
+              'agreement_id',
+              'agreementId',
+              'Agreement_ID',
+              'AgreementId',
+            ),
           ),
           invoiceNo: this.getStringValue(
-            row.invoice_no || row.invoiceNo || row.Invoice_No || row.InvoiceNo,
+            pickCell(row, 'invoice_no', 'invoiceNo', 'Invoice_No', 'InvoiceNo'),
           ),
           invoiceDate: this.getDateValue(
-            row.invoice_date ||
-              row.invoiceDate ||
-              row.Invoice_Date ||
-              row.InvoiceDate,
+            pickCell(
+              row,
+              'invoice_date',
+              'invoiceDate',
+              'Invoice_Date',
+              'InvoiceDate',
+            ),
           ),
-          amount: this.getNumberValue(row.amount || row.Amount || row.AMOUNT),
+          amount: this.getNumberValue(
+            pickCell(row, 'amount', 'Amount', 'AMOUNT'),
+          ),
           currency:
             this.getOptionalString(
-              row.currency || row.Currency || row.CURRENCY,
+              pickCell(row, 'currency', 'Currency', 'CURRENCY'),
             ) || 'TRY',
           notes: this.getOptionalString(
-            row.description ||
-              row.Description ||
-              row.DESCRIPTION ||
-              row.notes ||
-              row.Notes ||
-              row.NOTES,
+            pickCell(
+              row,
+              'description',
+              'Description',
+              'DESCRIPTION',
+              'notes',
+              'Notes',
+              'NOTES',
+            ),
           ),
         };
 
         // Fiscal period (YYYY-MM formatında)
         const fiscalPeriod = this.getFiscalPeriod(
-          row.fiscal_period ||
-            row.fiscalPeriod ||
-            row.Fiscal_Period ||
-            row.FiscalPeriod,
+          pickCell(
+            row,
+            'fiscal_period',
+            'fiscalPeriod',
+            'Fiscal_Period',
+            'FiscalPeriod',
+          ),
         );
 
         return {

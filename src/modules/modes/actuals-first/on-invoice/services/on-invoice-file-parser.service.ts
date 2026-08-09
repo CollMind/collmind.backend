@@ -7,6 +7,7 @@ import {
   excelSerialToIsoDate,
   describeExcelSerialDateFailure,
 } from '../../../../../common/date/excel-serial-date';
+import { pickCell } from '../../../../../common/row-parsing/pick-cell';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -53,8 +54,18 @@ export class OnInvoiceFileParserService {
       }
 
       const data = XLSX.utils.sheet_to_json(worksheet, {
-        raw: false,
-        defval: false,
+        raw: true, // T-107 adım 2: hücreyi kaynağında oku (sayı/tarih hücreleri
+        // metne çevrilmeden gelir) — `getNumberValue`/`getDateValue` sayısal
+        // girdiyi zaten kabul ediyor (T-105/adım 1).
+        //
+        // T-107 adım 2: `defval: null`, not `false` — under `raw: true` a
+        // written cell is only ever `string | number | boolean`
+        // (`cellDates: false` above), so `null` can never collide with a
+        // value a user typed, unlike `false` (see `pick-cell.ts` for the
+        // measured regression this caused: a real `0` quantity/discount,
+        // read under a non-last alias spelling, silently resolved to
+        // `undefined`).
+        defval: null,
         blankrows: false,
       });
 
@@ -154,63 +165,86 @@ export class OnInvoiceFileParserService {
         _originalRowNumber: index + 2, // +2: header row (1) + 0-based index (1) = 2
       }))
       .filter((row) => {
-        // Boş satırları filtrele - en azından customer_code veya invoice_no olmalı
+        // Boş satırları filtrele - en azından customer_code veya invoice_no
+        // olmalı. T-107 adım 2: presence, `!== undefined` ile karar
+        // verilir — JS-truthiness ile değil.
         return (
-          row.customer_code ||
-          row.customerCode ||
-          row.CUSTOMER_CODE ||
-          row.CustomerCode ||
-          row.invoice_no ||
-          row.invoiceNo ||
-          row.INVOICE_NO ||
-          row.InvoiceNo
+          pickCell(
+            row,
+            'customer_code',
+            'customerCode',
+            'CUSTOMER_CODE',
+            'CustomerCode',
+          ) !== undefined ||
+          pickCell(
+            row,
+            'invoice_no',
+            'invoiceNo',
+            'INVOICE_NO',
+            'InvoiceNo',
+          ) !== undefined
         );
       })
       .map((row) => {
         const customerCode = this.getStringValue(
-          row.customer_code ||
-            row.customerCode ||
-            row.CUSTOMER_CODE ||
-            row.CustomerCode,
+          pickCell(
+            row,
+            'customer_code',
+            'customerCode',
+            'CUSTOMER_CODE',
+            'CustomerCode',
+          ),
         );
         const invoiceNo = this.getStringValue(
-          row.invoice_no || row.invoiceNo || row.INVOICE_NO || row.InvoiceNo,
+          pickCell(row, 'invoice_no', 'invoiceNo', 'INVOICE_NO', 'InvoiceNo'),
         );
         const invoiceDate = this.getDateValue(
-          row.invoice_date ||
-            row.invoiceDate ||
-            row.INVOICE_DATE ||
-            row.InvoiceDate,
+          pickCell(
+            row,
+            'invoice_date',
+            'invoiceDate',
+            'INVOICE_DATE',
+            'InvoiceDate',
+          ),
         );
         const fiscalPeriod = this.getFiscalPeriod(
-          row.fiscal_period ||
-            row.fiscalPeriod ||
-            row.FISCAL_PERIOD ||
-            row.FiscalPeriod,
+          pickCell(
+            row,
+            'fiscal_period',
+            'fiscalPeriod',
+            'FISCAL_PERIOD',
+            'FiscalPeriod',
+          ),
         );
         const skuCode = this.getStringValue(
-          row.sku_code || row.skuCode || row.SKU_CODE || row.SkuCode,
+          pickCell(row, 'sku_code', 'skuCode', 'SKU_CODE', 'SkuCode'),
         );
         const quantity = this.getNumberValue(
-          row.quantity || row.Quantity || row.QUANTITY,
+          pickCell(row, 'quantity', 'Quantity', 'QUANTITY'),
         );
         const listPrice = this.getNumberValue(
-          row.list_price || row.listPrice || row.LIST_PRICE || row.ListPrice,
+          pickCell(row, 'list_price', 'listPrice', 'LIST_PRICE', 'ListPrice'),
         );
         const actualPrice = this.getNumberValue(
-          row.actual_price ||
-            row.actualPrice ||
-            row.ACTUAL_PRICE ||
-            row.ActualPrice,
+          pickCell(
+            row,
+            'actual_price',
+            'actualPrice',
+            'ACTUAL_PRICE',
+            'ActualPrice',
+          ),
         );
         const discount = this.getNumberValue(
-          row.discount || row.Discount || row.DISCOUNT,
+          pickCell(row, 'discount', 'Discount', 'DISCOUNT'),
         );
         const discountType = this.getDiscountType(
-          row.discount_type ||
-            row.discountType ||
-            row.DISCOUNT_TYPE ||
-            row.DiscountType,
+          pickCell(
+            row,
+            'discount_type',
+            'discountType',
+            'DISCOUNT_TYPE',
+            'DiscountType',
+          ),
         );
 
         const dto: CreateOnInvoiceEntryDto = {
@@ -226,7 +260,7 @@ export class OnInvoiceFileParserService {
           discountType: discountType,
           currency:
             this.getOptionalString(
-              row.currency || row.Currency || row.CURRENCY,
+              pickCell(row, 'currency', 'Currency', 'CURRENCY'),
             ) || 'TRY',
         };
 

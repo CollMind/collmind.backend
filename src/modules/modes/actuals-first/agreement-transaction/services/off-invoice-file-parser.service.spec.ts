@@ -1,15 +1,21 @@
 import { BadRequestException } from '@nestjs/common';
 import { OffInvoiceFileParserService } from './off-invoice-file-parser.service';
 import { describeExcelSerialDateFailure } from '../../../../../common/date/excel-serial-date';
+import * as XLSX from 'xlsx';
 
 /**
  * T-107 adım 1 — wiring tests for the two call sites in THIS file
  * (`getDateValue`, `getFiscalPeriod`). See `on-invoice-file-parser.service.spec.ts`
  * for why the shared math is not re-tested here and why the numeric branch
  * is exercised through the private methods rather than the public
- * `parseExcel`/`parseCSV` surface: the same `raw: false` reachability gap
- * applies to this file (identical `XLSX.utils.sheet_to_json` options), unchanged
- * this turn (adım 2 is out of scope).
+ * `parseExcel`/`parseCSV` surface here.
+ *
+ * ⚠️ REACHABILITY NOTE, UPDATED (T-107 adım 2 landed, 2026-08-10): adım 1's
+ * original note said the `raw: false` reachability gap applied here
+ * unchanged. adım 2 flipped `raw: true` for this file too (see
+ * `off-invoice-file-parser.service.ts`'s `sheet_to_json` call site) — the
+ * gap is closed. See the "T-107 adım 2 — public surface" describe block
+ * below for the now-reachable end-to-end coverage.
  *
  * ⚠️ This file's `getFiscalPeriod` differs from `OnInvoiceFileParserService`'s:
  * it returns `undefined` for an absent value instead of throwing (see the
@@ -133,6 +139,87 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
           },
         ]),
       ).toThrow(BadRequestException);
+    });
+  });
+
+  /**
+   * T-107 adım 2 — public surface (`parseExcel`), real `.xlsx` buffers,
+   * `raw: true` live. `amount` is the field `pickCell` protects here (a real
+   * `0` amount is a legitimate off-invoice transaction line, not an absent
+   * one) — pinned under the LAST alias spelling (`AMOUNT`), the position
+   * `pick-cell.ts`'s docstring measures as the one the old `||` chain got
+   * right only by accident of being the chain's final operand.
+   */
+  describe('T-107 adım 2 — public surface (parseExcel), raw: true', () => {
+    function buildXlsxFile(rows: unknown[][]): Express.Multer.File {
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+      const buffer = XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer;
+      return {
+        originalname: 'off-invoice.xlsx',
+        mimetype:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer,
+        size: buffer.length,
+        fieldname: 'file',
+        encoding: '7bit',
+        destination: '',
+        filename: '',
+        path: '',
+        stream: null as unknown as Express.Multer.File['stream'],
+      };
+    }
+
+    // MEASURED (not the assumption this test started with): unlike
+    // `on-invoice`'s `getNumberValue`, this file's own `getNumberValue` has a
+    // separate, PRE-EXISTING business rule — `num <= 0` is refused with its
+    // own message (`getNumberValue`, this file) — an off-invoice transaction
+    // amount of 0 or less is rejected on purpose, unrelated to T-107. What
+    // this test actually proves is narrower and still real: `pickCell`
+    // delivers the genuine `0` under the LAST alias spelling (`AMOUNT`) TO
+    // `getNumberValue` at all — rather than the pre-fix `||` chain's shape,
+    // where a `0` under a non-last alias would have resolved to `undefined`
+    // and been rejected as "Amount değeri zorunludur" (EMPTY) instead of
+    // this specific positivity message. The two rejection reasons are
+    // observably different, which is how this test can tell "pickCell
+    // delivered 0" apart from "pickCell silently dropped it".
+    it('a real 0 amount under the LAST alias (AMOUNT) reaches getNumberValue and is refused by the POSITIVE-amount rule, not silently dropped as absent', async () => {
+      const file = buildXlsxFile([
+        [
+          'agreement_id',
+          'invoice_no',
+          'invoice_date',
+          'AMOUNT',
+          'fiscal_period',
+        ],
+        ['AGR-1', 'INV-1', '2026-01-15', 0, '2026-01'],
+      ]);
+
+      await expect(service.parseExcel(file)).rejects.toThrow(
+        'Amount değeri pozitif olmalıdır: 0',
+      );
+    });
+
+    it('a numeric invoice_date cell (Excel serial) resolves via parseExcel end-to-end, not just the private method', async () => {
+      const file = buildXlsxFile([
+        [
+          'agreement_id',
+          'invoice_no',
+          'invoice_date',
+          'amount',
+          'fiscal_period',
+        ],
+        ['AGR-1', 'INV-1', 46037, 100, '2026-01'],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.invoiceDate).toBe('2026-01-15');
     });
   });
 });

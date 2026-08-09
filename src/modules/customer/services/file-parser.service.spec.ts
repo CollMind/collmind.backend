@@ -568,4 +568,163 @@ describe('parseExcel / parseCSV — public surface, real buffers (T-121 second-t
       ]);
     });
   });
+
+  /**
+   * T-107 adım 2 — `raw: true` + `pickCell` through the PUBLIC surface
+   * (`parseExcel`). Every case here is pinned with the real value planted
+   * under a NON-first alias at least once (§2.7 lesson 6: a suite that only
+   * ever fills the first key cannot distinguish `pickCell` from an
+   * accidentally-correct `||` chain).
+   */
+  describe('T-107 adım 2 — real 0 / real false do not vanish, under any alias position', () => {
+    it('a real 0 creditLimit under the FIRST alias spelling (creditLimit) is NOT lost', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'creditLimit'],
+        ['CUST-1', 'Test Customer', 0],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.creditLimit).toBe(0);
+      expect(rows[0].parseErrors).toBeUndefined();
+    });
+
+    // The exact regression measured in `pick-cell.ts`'s own docstring: under
+    // the pre-fix `row.creditLimit || row.credit_limit || row.CreditLimit ||
+    // row.CREDIT_LIMIT` chain, a real `0` typed under this LAST alias
+    // resolved correctly ONLY because it happened to be the chain's last
+    // operand — this pins that `pickCell` gets there for a structural
+    // reason (first-present-wins), not by the same accident.
+    it('a real 0 creditLimit under the LAST alias spelling (CREDIT_LIMIT) is NOT lost', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'CREDIT_LIMIT'],
+        ['CUST-1', 'Test Customer', 0],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.creditLimit).toBe(0);
+      expect(rows[0].parseErrors).toBeUndefined();
+    });
+
+    it('a real false isVip under the FIRST alias spelling (isVip) is NOT lost', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'isVip'],
+        ['CUST-1', 'Test Customer', false],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.isVip).toBe(false);
+    });
+
+    // Mirrors the B3 "genuine FALSE" test above, but this is the ADIM 2
+    // acceptance case specifically: under `raw: true` the cell arrives as
+    // the actual JS boolean `false` (not the string `"FALSE"` `raw: false`
+    // produced), and must still survive through `pickCell` unchanged.
+    it('a real false isVip under the LAST alias spelling (IS_VIP) is NOT lost', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'IS_VIP'],
+        ['CUST-1', 'Test Customer', false],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.isVip).toBe(false);
+    });
+
+    it('a real 0 does not collide with the metadata-object-presence check (a lone metadata.storeSize=0 still creates dto.metadata)', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'storeSize'],
+        ['CUST-1', 'Test Customer', 0],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.metadata).toBeDefined();
+      expect(rows[0].dto.metadata!.storeSize).toBe(0);
+    });
+  });
+
+  describe('T-107 adım 2 — code columns keep leading zeros and other digit-like text unchanged', () => {
+    it('a code cell typed as text with a leading zero is preserved verbatim, not coerced to a number', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name'],
+        ['0012345678901', 'Test Customer'],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.code).toBe('0012345678901');
+    });
+  });
+
+  describe('T-107 adım 2 — a #,##0-formatted numeric cell is accepted, not rejected (T-105 regression closed)', () => {
+    it('creditLimit formatted #,##0 in the sheet is read as the underlying number, no parseError', async () => {
+      const worksheet = XLSX.utils.aoa_to_sheet([
+        ['code', 'name', 'creditLimit'],
+        ['CUST-1', 'Test Customer', 12500],
+      ]);
+      // The cell's OWN display format is thousands-grouped — exactly the
+      // shape `raw: false` could only hand back as the string `"12,500"`,
+      // which `numeric-text.ts` cannot disambiguate from a decimal and
+      // refuses (T-105). `raw: true` must never even reach that grammar for
+      // a genuinely numeric cell.
+      (worksheet['C2'] as { z?: string }).z = '#,##0';
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+      const buffer = XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer;
+      const file = buildMulterFile(
+        buffer,
+        'customers.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.creditLimit).toBe(12500);
+      expect(rows[0].parseErrors).toBeUndefined();
+    });
+  });
+
+  describe("T-107 adım 2 — a date cell is read via its raw serial, independent of the column's own display format", () => {
+    it('a contractStartDate cell formatted dd.mm.yyyy resolves to the correct calendar day via the serial, not the (unread) display text', async () => {
+      const worksheet = XLSX.utils.aoa_to_sheet([
+        ['code', 'name', 'contractStartDate'],
+        ['CUST-1', 'Test Customer', 46037], // serial for 2026-01-15
+      ]);
+      // T-121 measured: under `raw: false`, THIS display format is exactly
+      // the one SheetJS cannot turn into a parseable string (it hands back
+      // the raw serial AS TEXT, e.g. "46037", not "15.01.2026") — adım 2's
+      // whole point is that `raw: true` never depends on this format at all.
+      (worksheet['C2'] as { z?: string }).z = 'dd.mm.yyyy';
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+      const buffer = XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer;
+      const file = buildMulterFile(
+        buffer,
+        'customers.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.contractStartDate).toBe('2026-01-15');
+      expect(rows[0].parseErrors).toBeUndefined();
+    });
+  });
 });

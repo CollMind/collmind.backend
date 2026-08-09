@@ -11,6 +11,7 @@ import {
   parseOptionalDateText,
   describeDateTextFailure,
 } from '../../../common/date/date-text';
+import { pickCell } from '../../../common/row-parsing/pick-cell';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -91,8 +92,6 @@ export class FileParserService {
         throw new BadRequestException('Excel dosyası geçersiz veya boş.');
       }
 
-      // Security: Use defval: false to prevent prototype pollution
-      //
       // T-121 review B4: `blankrows: false` DROPS a blank row from this
       // array instead of keeping it as an entry — measured: a sheet with a
       // blank row at sheet row 3 (header=1, C1=2, blank=3, C2=4, C3=5)
@@ -103,13 +102,29 @@ export class FileParserService {
       // `csv-parser` emits one object per physical line including blank
       // ones, so its index already accounts for them. `blankrows: true`
       // makes the Excel branch match: the blank row becomes a real entry
-      // (every cell reads as the `false` sentinel handled by
-      // `stripBlankCellSentinel` below), gets a correct row number, and is
+      // (every cell reads as the `null` sentinel normalized by
+      // `normalizeBlankCells` below), gets a correct row number, and is
       // then dropped by the SAME `code || name` filter that already drops
       // blank CSV rows — not by being invisible to the indexer.
       const data = XLSX.utils.sheet_to_json(worksheet, {
-        raw: false,
-        defval: false, // Prevent prototype pollution attacks
+        raw: true, // T-107 adım 2: hücreyi kaynağında oku (sayı/tarih hücreleri
+        // metne çevrilmeden gelir) — bkz. `parseOptionalNumericText` ve
+        // `excelSerialToIsoDate`, ikisi de sayısal girdiyi zaten kabul ediyor.
+        //
+        // T-107 adım 2: `defval` was `false` (a boolean) until this turn,
+        // labelled "prevent prototype pollution" — measured (2026-08-10,
+        // under `raw: true`): a `__proto__` header column produces the row
+        // key `__proto___NaN` under BOTH `defval: false` and `defval:
+        // null`, and `({}).<anything>` stays `undefined` either way —
+        // SheetJS's own header handling is what neutralizes `__proto__`,
+        // not this option. The `false`/`null` choice here is orthogonal to
+        // that protection. `null` is used instead because, under `raw:
+        // true`, a cell SheetJS actually read is only ever `string |
+        // number | boolean` (see `cellDates: false` above) — `null` can
+        // therefore never collide with something a user typed, which the
+        // old `false` sentinel did (a real boolean `false` cell was
+        // indistinguishable from a blank one; see `normalizeBlankCells`).
+        defval: null,
         blankrows: true, // T-121 B4: keep blank rows as entries so row numbers stay aligned with the file; they are dropped later by mapToCustomerDtos's code||name filter, same as CSV
       });
 
@@ -199,44 +214,23 @@ export class FileParserService {
   }
 
   /**
-   * T-121 review B1: `parseExcel` calls `sheet_to_json` with `defval: false`
-   * (prototype-pollution guard, see the comment there — untouched by this
-   * fix). That option fills a cell that was never written at all — the
-   * common shape for a blank cell in a real, human-edited spreadsheet — with
-   * the literal boolean `false`, not with an absent key. `raw: false` in the
-   * same call formats every FILLED cell (including real "TRUE"/"FALSE" text)
-   * to a string, and `csv-parser` (the CSV branch) never produces a
-   * `boolean` either — measured (T-121 second-tour review, 2026-08-10):
-   * `csv-parser` returns `string` for every cell, including blank ones
-   * (`""`, never `false`), for both quoted and unquoted, TRUE/FALSE and
-   * blank input — see the probe transcript logged under "B3" in
-   * `.claude/backlog/tasks/T-121.md`. So a `boolean` in `row` can only ever
-   * be this one sentinel, from this one source, never a value a user
-   * actually typed.
+   * T-107 adım 2: renamed from `stripBlankCellSentinel` and re-pointed at
+   * `null`, not `false` — the blank-cell sentinel changed shape when
+   * `parseExcel`'s `sheet_to_json` call switched `defval` from `false` to
+   * `null` (see that call site's comment for why `false` was never a safe
+   * sentinel under `raw: true`: it collided with a REAL boolean cell, e.g.
+   * `IS_VIP`, which `raw: true` now reads as the actual JS boolean `false`
+   * rather than the string `"FALSE"`).
    *
-   * Left unstripped, that `false` sat inside every `row.a || row.b || row.c`
-   * alias chain below and behaved like a real value, but ONLY when it was
-   * the LAST operand evaluated — `||` returns its last operand only when
-   * EVERY operand is falsy, and an absent key reads as `undefined`, not
-   * `false`, so the sentinel only survives to the end of the chain when the
-   * file's header matches the chain's LAST alias spelling (the
-   * SCREAMING_SNAKE_CASE one here, e.g. `CITY`, `NOTES`,
-   * `CONTRACT_START_DATE`, `CREDIT_LIMIT`): `undefined || undefined ||
-   * false` returns `false`. A sentinel earlier in the chain does NOT leak
-   * this way — `false || undefined || undefined` returns `undefined`,
-   * because the falsy `false` is simply passed over in favour of a later
-   * operand (verified with `node -e`, T-121 second-tour review "B3").
-   * Three different families then broke on that leaked `false`, each in its
-   * own way: `getOptionalDate` (T-121's new strict grammar has no format
-   * for the string `"false"`) started THROWING and rejecting the whole
-   * upload; `getOptionalNumber` threw for the same reason;
-   * `getOptionalString` had no rejection path at all and silently
-   * PERSISTED the string `"false"` into a text column.
-   *
-   * Stripping the sentinel here, once, before any alias chain reads the row,
-   * restores "blank cell" to actually meaning absent — for every alias
-   * spelling, every field family, in one place — without touching the
-   * `defval: false` choice itself or any per-field getter.
+   * This method is no longer load-bearing for alias resolution — every
+   * `row.a || row.b || row.c` chain below has been replaced with
+   * `pickCell(row, 'a', 'b', 'c')` (`common/row-parsing/pick-cell.ts`),
+   * which already treats `null` and `undefined` as equally absent, so a raw,
+   * unnormalized row would resolve identically. What this pass still buys is
+   * `originalRowData` (stored below, for the caller's row-level error
+   * reporting): without it, a blank cell would surface downstream as the
+   * literal `null` instead of an omitted key. Kept for that reason, not for
+   * correctness.
    *
    * Return type is deliberately `any`, not `Record<string, any>`: spreading a
    * `Record<string, any>`-typed value into an object literal together with a
@@ -247,10 +241,10 @@ export class FileParserService {
    * whole pipeline untyped by design; `any` here keeps it that way instead of
    * fighting a spread-narrowing quirk with no behavioural benefit.
    */
-  private stripBlankCellSentinel(row: Record<string, any>): any {
+  private normalizeBlankCells(row: Record<string, any>): any {
     const normalized: Record<string, any> = {};
     for (const key of Object.keys(row)) {
-      normalized[key] = row[key] === false ? undefined : row[key];
+      normalized[key] = row[key] === null ? undefined : row[key];
     }
     return normalized;
   }
@@ -258,7 +252,7 @@ export class FileParserService {
   private mapToCustomerDtos(data: any[]): ParsedCustomerRow[] {
     // Önce her satıra orijinal satır numarasını ekle (header + 1-based index)
     const dataWithRowNumbers = data.map((row, index) => ({
-      ...this.stripBlankCellSentinel(row),
+      ...this.normalizeBlankCells(row),
       _originalRowNumber: index + 2, // +2: header row (1) + 0-based index (1) = 2
     }));
 
@@ -280,214 +274,281 @@ export class FileParserService {
         const parseErrors: FieldParseError[] = [];
         const dto: CreateCustomerDto = {
           code: this.getStringValue(
-            row.code ||
-              row.Code ||
-              row.CODE ||
+            pickCell(row, 'code', 'Code', 'CODE') ??
               `AUTO_${row._originalRowNumber}`,
           ),
-          name: this.getStringValue(row.name || row.Name || row.NAME || ''),
-          channel: this.getChannel(
-            row.channel || row.Channel || row.CHANNEL || 'RETAIL',
+          name: this.getStringValue(
+            pickCell(row, 'name', 'Name', 'NAME') ?? '',
           ),
-          type: this.getType(row.type || row.Type || row.TYPE),
-          status: this.getStatus(row.status || row.Status || row.STATUS),
-          city: this.getOptionalString(row.city || row.City || row.CITY),
+          channel: this.getChannel(
+            pickCell(row, 'channel', 'Channel', 'CHANNEL') ?? 'RETAIL',
+          ),
+          type: this.getType(pickCell(row, 'type', 'Type', 'TYPE')),
+          status: this.getStatus(pickCell(row, 'status', 'Status', 'STATUS')),
+          city: this.getOptionalString(pickCell(row, 'city', 'City', 'CITY')),
           district: this.getOptionalString(
-            row.district || row.District || row.DISTRICT,
+            pickCell(row, 'district', 'District', 'DISTRICT'),
           ),
           region: this.getOptionalString(
-            row.region || row.Region || row.REGION,
+            pickCell(row, 'region', 'Region', 'REGION'),
           ),
           country: this.getOptionalString(
-            row.country || row.Country || row.COUNTRY,
+            pickCell(row, 'country', 'Country', 'COUNTRY'),
           ),
           address: this.getOptionalString(
-            row.address || row.Address || row.ADDRESS,
+            pickCell(row, 'address', 'Address', 'ADDRESS'),
           ),
           postalCode: this.getOptionalString(
-            row.postalCode ||
-              row.postal_code ||
-              row.PostalCode ||
-              row.POSTAL_CODE,
+            pickCell(
+              row,
+              'postalCode',
+              'postal_code',
+              'PostalCode',
+              'POSTAL_CODE',
+            ),
           ),
           taxNumber: this.getOptionalString(
-            row.taxNumber || row.tax_number || row.TaxNumber || row.TAX_NUMBER,
+            pickCell(row, 'taxNumber', 'tax_number', 'TaxNumber', 'TAX_NUMBER'),
           ),
           taxOffice: this.getOptionalString(
-            row.taxOffice || row.tax_office || row.TaxOffice || row.TAX_OFFICE,
+            pickCell(row, 'taxOffice', 'tax_office', 'TaxOffice', 'TAX_OFFICE'),
           ),
           companyRegistrationNumber: this.getOptionalString(
-            row.companyRegistrationNumber ||
-              row.company_registration_number ||
-              row.CompanyRegistrationNumber ||
-              row.COMPANY_REGISTRATION_NUMBER,
+            pickCell(
+              row,
+              'companyRegistrationNumber',
+              'company_registration_number',
+              'CompanyRegistrationNumber',
+              'COMPANY_REGISTRATION_NUMBER',
+            ),
           ),
           contactPerson: this.getOptionalString(
-            row.contactPerson ||
-              row.contact_person ||
-              row.ContactPerson ||
-              row.CONTACT_PERSON,
+            pickCell(
+              row,
+              'contactPerson',
+              'contact_person',
+              'ContactPerson',
+              'CONTACT_PERSON',
+            ),
           ),
           contactEmail: this.getOptionalString(
-            row.contactEmail ||
-              row.contact_email ||
-              row.ContactEmail ||
-              row.CONTACT_EMAIL,
+            pickCell(
+              row,
+              'contactEmail',
+              'contact_email',
+              'ContactEmail',
+              'CONTACT_EMAIL',
+            ),
           ),
           contactPhone: this.getOptionalString(
-            row.contactPhone ||
-              row.contact_phone ||
-              row.ContactPhone ||
-              row.CONTACT_PHONE,
+            pickCell(
+              row,
+              'contactPhone',
+              'contact_phone',
+              'ContactPhone',
+              'CONTACT_PHONE',
+            ),
           ),
           contactMobile: this.getOptionalString(
-            row.contactMobile ||
-              row.contact_mobile ||
-              row.ContactMobile ||
-              row.CONTACT_MOBILE,
+            pickCell(
+              row,
+              'contactMobile',
+              'contact_mobile',
+              'ContactMobile',
+              'CONTACT_MOBILE',
+            ),
           ),
           paymentTerms: this.getOptionalString(
-            row.paymentTerms ||
-              row.payment_terms ||
-              row.PaymentTerms ||
-              row.PAYMENT_TERMS,
+            pickCell(
+              row,
+              'paymentTerms',
+              'payment_terms',
+              'PaymentTerms',
+              'PAYMENT_TERMS',
+            ),
           ),
           creditLimit: this.getOptionalNumber(
-            row.creditLimit ||
-              row.credit_limit ||
-              row.CreditLimit ||
-              row.CREDIT_LIMIT,
+            pickCell(
+              row,
+              'creditLimit',
+              'credit_limit',
+              'CreditLimit',
+              'CREDIT_LIMIT',
+            ),
             'creditLimit',
             parseErrors,
           ),
           currency:
             this.getOptionalString(
-              row.currency || row.Currency || row.CURRENCY,
+              pickCell(row, 'currency', 'Currency', 'CURRENCY'),
             ) || 'TRY',
           salesRepresentative: this.getOptionalString(
-            row.salesRepresentative ||
-              row.sales_representative ||
-              row.SalesRepresentative ||
-              row.SALES_REPRESENTATIVE,
+            pickCell(
+              row,
+              'salesRepresentative',
+              'sales_representative',
+              'SalesRepresentative',
+              'SALES_REPRESENTATIVE',
+            ),
           ),
           accountManager: this.getOptionalString(
-            row.accountManager ||
-              row.account_manager ||
-              row.AccountManager ||
-              row.ACCOUNT_MANAGER,
+            pickCell(
+              row,
+              'accountManager',
+              'account_manager',
+              'AccountManager',
+              'ACCOUNT_MANAGER',
+            ),
           ),
           customerGroup: this.getOptionalString(
-            row.customerGroup ||
-              row.customer_group ||
-              row.CustomerGroup ||
-              row.CUSTOMER_GROUP,
+            pickCell(
+              row,
+              'customerGroup',
+              'customer_group',
+              'CustomerGroup',
+              'CUSTOMER_GROUP',
+            ),
           ),
           customerSegment: this.getOptionalString(
-            row.customerSegment ||
-              row.customer_segment ||
-              row.CustomerSegment ||
-              row.CUSTOMER_SEGMENT,
+            pickCell(
+              row,
+              'customerSegment',
+              'customer_segment',
+              'CustomerSegment',
+              'CUSTOMER_SEGMENT',
+            ),
           ),
           customerTier: this.getOptionalString(
-            row.customerTier ||
-              row.customer_tier ||
-              row.CustomerTier ||
-              row.CUSTOMER_TIER,
+            pickCell(
+              row,
+              'customerTier',
+              'customer_tier',
+              'CustomerTier',
+              'CUSTOMER_TIER',
+            ),
           ),
           businessSize: this.getOptionalString(
-            row.businessSize ||
-              row.business_size ||
-              row.BusinessSize ||
-              row.BUSINESS_SIZE,
+            pickCell(
+              row,
+              'businessSize',
+              'business_size',
+              'BusinessSize',
+              'BUSINESS_SIZE',
+            ),
           ),
           annualRevenue: this.getOptionalNumber(
-            row.annualRevenue ||
-              row.annual_revenue ||
-              row.AnnualRevenue ||
-              row.ANNUAL_REVENUE,
+            pickCell(
+              row,
+              'annualRevenue',
+              'annual_revenue',
+              'AnnualRevenue',
+              'ANNUAL_REVENUE',
+            ),
             'annualRevenue',
             parseErrors,
           ),
           lastOrderDate: this.getOptionalDate(
-            row.lastOrderDate ||
-              row.last_order_date ||
-              row.LastOrderDate ||
-              row.LAST_ORDER_DATE,
+            pickCell(
+              row,
+              'lastOrderDate',
+              'last_order_date',
+              'LastOrderDate',
+              'LAST_ORDER_DATE',
+            ),
             'lastOrderDate',
             parseErrors,
           ),
           firstOrderDate: this.getOptionalDate(
-            row.firstOrderDate ||
-              row.first_order_date ||
-              row.FirstOrderDate ||
-              row.FIRST_ORDER_DATE,
+            pickCell(
+              row,
+              'firstOrderDate',
+              'first_order_date',
+              'FirstOrderDate',
+              'FIRST_ORDER_DATE',
+            ),
             'firstOrderDate',
             parseErrors,
           ),
           numberOfBranches: this.getOptionalNumber(
-            row.numberOfBranches ||
-              row.number_of_branches ||
-              row.NumberOfBranches ||
-              row.NUMBER_OF_BRANCHES,
+            pickCell(
+              row,
+              'numberOfBranches',
+              'number_of_branches',
+              'NumberOfBranches',
+              'NUMBER_OF_BRANCHES',
+            ),
             'numberOfBranches',
             parseErrors,
           ),
-          notes: this.getOptionalString(row.notes || row.Notes || row.NOTES),
+          notes: this.getOptionalString(
+            pickCell(row, 'notes', 'Notes', 'NOTES'),
+          ),
           isVip: this.getOptionalBoolean(
-            row.isVip || row.is_vip || row.IsVip || row.IS_VIP,
+            pickCell(row, 'isVip', 'is_vip', 'IsVip', 'IS_VIP'),
           ),
           contractStartDate: this.getOptionalDate(
-            row.contractStartDate ||
-              row.contract_start_date ||
-              row.ContractStartDate ||
-              row.CONTRACT_START_DATE,
+            pickCell(
+              row,
+              'contractStartDate',
+              'contract_start_date',
+              'ContractStartDate',
+              'CONTRACT_START_DATE',
+            ),
             'contractStartDate',
             parseErrors,
           ),
           contractEndDate: this.getOptionalDate(
-            row.contractEndDate ||
-              row.contract_end_date ||
-              row.ContractEndDate ||
-              row.CONTRACT_END_DATE,
+            pickCell(
+              row,
+              'contractEndDate',
+              'contract_end_date',
+              'ContractEndDate',
+              'CONTRACT_END_DATE',
+            ),
             'contractEndDate',
             parseErrors,
           ),
         };
 
-        // Metadata objesi oluştur
+        // Metadata objesi oluştur — T-107 adım 2: presence is decided by
+        // "is any of these three fields NOT absent" (`!== undefined`), not
+        // by JS-truthiness — a real `storeSize: 0` must still create the
+        // metadata object, and under the old `row.a || row.b || ...`
+        // existence check it would not have (same silent-zero shape as the
+        // scalar fields above, just applied to an object-creation decision
+        // instead of a value).
+        const storeSize = pickCell(
+          row,
+          'storeSize',
+          'store_size',
+          'StoreSize',
+          'STORE_SIZE',
+        );
+        const numberOfEmployees = pickCell(
+          row,
+          'numberOfEmployees',
+          'number_of_employees',
+          'NumberOfEmployees',
+          'NUMBER_OF_EMPLOYEES',
+        );
+        const industry = pickCell(row, 'industry', 'Industry', 'INDUSTRY');
         if (
-          row.storeSize ||
-          row.store_size ||
-          row.StoreSize ||
-          row.STORE_SIZE ||
-          row.numberOfEmployees ||
-          row.number_of_employees ||
-          row.NumberOfEmployees ||
-          row.NUMBER_OF_EMPLOYEES ||
-          row.industry ||
-          row.Industry ||
-          row.INDUSTRY
+          storeSize !== undefined ||
+          numberOfEmployees !== undefined ||
+          industry !== undefined
         ) {
           dto.metadata = {
             storeSize: this.getOptionalNumber(
-              row.storeSize ||
-                row.store_size ||
-                row.StoreSize ||
-                row.STORE_SIZE,
+              storeSize,
               'metadata.storeSize',
               parseErrors,
             ),
             numberOfEmployees: this.getOptionalNumber(
-              row.numberOfEmployees ||
-                row.number_of_employees ||
-                row.NumberOfEmployees ||
-                row.NUMBER_OF_EMPLOYEES,
+              numberOfEmployees,
               'metadata.numberOfEmployees',
               parseErrors,
             ),
-            industry: this.getOptionalString(
-              row.industry || row.Industry || row.INDUSTRY,
-            ),
+            industry: this.getOptionalString(industry),
           };
         }
 

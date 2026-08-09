@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { OnInvoiceFileParserService } from './on-invoice-file-parser.service';
 import { describeExcelSerialDateFailure } from '../../../../../common/date/excel-serial-date';
+import * as XLSX from 'xlsx';
 
 /**
  * T-107 adım 1 — wiring tests for the two call sites in THIS file
@@ -12,20 +13,22 @@ import { describeExcelSerialDateFailure } from '../../../../../common/date/excel
  * is proof that this file actually CALLS the shared helper and propagates
  * its result/failure correctly, not a second copy of the helper's own suite).
  *
- * ⚠️ REACHABILITY NOTE (measured, not assumed — see the module-level finding
- * reported to the team lead): with the current `raw: false` passed to
- * `XLSX.utils.sheet_to_json` (unchanged this turn — adım 2 is out of scope),
- * every cell value `sheet_to_json` hands back is a STRING, even for a purely
- * numeric, unformatted cell (measured: a plain integer cell round-trips as
- * `"46037"`, `typeof` `string`, under `raw: false`; the SAME cell comes back
- * as `46037`, `typeof` `number`, only under `raw: true`). So `parseExcel` and
- * `parseCSV`, called as an outside caller would call them, CANNOT reach the
- * `typeof value === 'number'` branch this turn — that branch only becomes
- * live once adım 2 flips `raw: true`. The tests below call the private
- * numeric-branch methods directly (bracket-notation), which is the ONLY way
- * to exercise wiring that is real but not yet reachable through the public
- * API; they are not a substitute for an adım-2 end-to-end test through
- * `parseExcel` once that lands.
+ * ⚠️ REACHABILITY NOTE, UPDATED (T-107 adım 2 landed, 2026-08-10): the
+ * paragraph below described a real gap AT THE TIME adım 1 was written — with
+ * `raw: false`, `sheet_to_json` handed back every cell as a STRING, so
+ * `parseExcel`/`parseCSV` could never reach the `typeof value === 'number'`
+ * branch through their public surface, only through the private-method
+ * bracket-notation calls this file already used. adım 2 flipped `raw: true`
+ * (see `on-invoice-file-parser.service.ts`'s `sheet_to_json` call site), so
+ * that gap is CLOSED — the "T-107 adım 2 — public surface" describe block
+ * below now exercises the numeric branch through `parseExcel` itself, with a
+ * real `.xlsx` buffer. The private-method tests are kept (still the
+ * narrowest way to pin the wiring/error-propagation contract in isolation),
+ * not because the gap they were written to work around still exists.
+ *
+ * Original note, for the historical record: with `raw: false`, a plain
+ * integer cell round-tripped as `"46037"` (`typeof` `string`); the SAME cell
+ * came back as `46037` (`typeof` `number`) only under `raw: true`.
  */
 describe('OnInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1)', () => {
   let service: OnInvoiceFileParserService;
@@ -169,6 +172,163 @@ describe('OnInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1
           },
         ]),
       ).toThrow(BadRequestException);
+    });
+  });
+
+  /**
+   * T-107 adım 2 — public surface (`parseExcel`), real `.xlsx` buffers,
+   * `raw: true` live. Closes the reachability gap the file header used to
+   * document. `pickCell` replaced this file's `row.a || row.b || row.c`
+   * chains for `quantity`/`discount` (money/count fields — exactly the
+   * shape `pick-cell.ts`'s own docstring measures the regression on), so
+   * each is pinned with the real `0` NOT under the first alias at least
+   * once (§2.7 lesson 6).
+   */
+  describe('T-107 adım 2 — public surface (parseExcel), raw: true', () => {
+    function buildXlsxFile(rows: unknown[][]): Express.Multer.File {
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+      const buffer = XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer;
+      return {
+        originalname: 'on-invoice.xlsx',
+        mimetype:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer,
+        size: buffer.length,
+        fieldname: 'file',
+        encoding: '7bit',
+        destination: '',
+        filename: '',
+        path: '',
+        stream: null as unknown as Express.Multer.File['stream'],
+      };
+    }
+
+    it('a real 0 quantity under the FIRST alias (quantity) and a real 0 discount under the LAST alias (DISCOUNT) both survive through parseExcel', async () => {
+      const file = buildXlsxFile([
+        [
+          'customer_code',
+          'invoice_no',
+          'invoice_date',
+          'fiscal_period',
+          'sku_code',
+          'quantity',
+          'list_price',
+          'actual_price',
+          'DISCOUNT',
+          'discount_type',
+        ],
+        [
+          'CUST-1',
+          'INV-1',
+          '2026-01-15',
+          '2026-01',
+          'SKU-1',
+          0,
+          100,
+          95,
+          0,
+          'CPP_ON',
+        ],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.quantity).toBe(0);
+      expect(rows[0].dto.discount).toBe(0);
+    });
+
+    it('a numeric invoice_date cell (Excel serial) resolves via parseExcel end-to-end, not just the private method', async () => {
+      const file = buildXlsxFile([
+        [
+          'customer_code',
+          'invoice_no',
+          'invoice_date',
+          'fiscal_period',
+          'sku_code',
+          'quantity',
+          'list_price',
+          'actual_price',
+          'discount',
+          'discount_type',
+        ],
+        [
+          'CUST-1',
+          'INV-1',
+          46037, // 2026-01-15
+          '2026-01',
+          'SKU-1',
+          10,
+          100,
+          95,
+          5,
+          'CPP_ON',
+        ],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.invoiceDate).toBe('2026-01-15');
+    });
+
+    it('a #,##0-formatted quantity cell is read as the underlying number, not rejected (T-105 regression closed)', async () => {
+      const worksheet = XLSX.utils.aoa_to_sheet([
+        [
+          'customer_code',
+          'invoice_no',
+          'invoice_date',
+          'fiscal_period',
+          'sku_code',
+          'quantity',
+          'list_price',
+          'actual_price',
+          'discount',
+          'discount_type',
+        ],
+        [
+          'CUST-1',
+          'INV-1',
+          '2026-01-15',
+          '2026-01',
+          'SKU-1',
+          7250,
+          100,
+          95,
+          5,
+          'CPP_ON',
+        ],
+      ]);
+      (worksheet['F2'] as { z?: string }).z = '#,##0';
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+      const buffer = XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer;
+      const file: Express.Multer.File = {
+        originalname: 'on-invoice.xlsx',
+        mimetype:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer,
+        size: buffer.length,
+        fieldname: 'file',
+        encoding: '7bit',
+        destination: '',
+        filename: '',
+        path: '',
+        stream: null as unknown as Express.Multer.File['stream'],
+      };
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.quantity).toBe(7250);
     });
   });
 });
