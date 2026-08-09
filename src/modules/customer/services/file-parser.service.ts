@@ -3,6 +3,10 @@ import {
   parseOptionalNumericText,
   describeNumericTextFailure,
 } from '../../../common/numeric/numeric-text';
+import {
+  excelSerialToIsoDate,
+  describeExcelSerialDateFailure,
+} from '../../../common/date/excel-serial-date';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -429,11 +433,15 @@ export class FileParserService {
     if (!str) return undefined;
 
     // Excel tarih formatını kontrol et (serial number)
+    // T-107 adım 1: paylaşılan, TZ-bağımsız yardımcı. Alan opsiyonel olsa da
+    // MEVCUT bir değerin okunamaması ile alanın hiç verilmemiş olması aynı şey
+    // değildir (§2.5) — bu yüzden burada da sessizce `undefined` dönülmez.
     if (typeof value === 'number') {
-      // Excel serial date to JavaScript date
-      const excelEpoch = new Date(1899, 11, 30);
-      const jsDate = new Date(excelEpoch.getTime() + value * 86400000);
-      return jsDate.toISOString().split('T')[0];
+      const result = excelSerialToIsoDate(value);
+      if (!result.ok) {
+        throw new BadRequestException(describeExcelSerialDateFailure(result));
+      }
+      return result.isoDate;
     }
 
     // String tarih formatlarını dene
