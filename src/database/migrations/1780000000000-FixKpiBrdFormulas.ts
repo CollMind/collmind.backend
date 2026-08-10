@@ -2,9 +2,17 @@
  * T-008 — KPI/ROI BRD Parite Fix Migration
  *
  * Bu migration şunları yapar:
- * 1. GP_ROI_PCT formula_text'ini BRD kanonik formüle günceller:
+ * 1. GP_ROI_PCT formula_text'ini günceller:
  *    YANLIŞ (önceki): GP / TACTIC_SPEND * 100
- *    DOĞRU (BRD):     INCR_GP / INCR_SPEND * 100
+ *    BU MIGRATION'IN UYGULADIĞI: INCR_GP / INCR_SPEND * 100
+ *
+ *    ⚠️ DÜZELTME (2026-08-10, ADR 0011): Yukarıdaki "DOĞRU (BRD)" iddiası YANLIŞTI.
+ *    BRD `Section_05 §5.3`, Glossary `GP ROI`/`ROI` maddeleri, `04_Reviews` ve TTM'in
+ *    seed + testi paydayı `TOTAL_PLANNED_SPEND` olarak tanımlıyor — `INCR_SPEND` değil.
+ *    Doğru payda `migration 1801000000000-FixGpRoiPctDenominator` ile uygulandı.
+ *    Bu dosyanın kod satırları GERİYE DÖNÜK DEĞİŞTİRİLMEDİ (uygulanmış bir migration'ın
+ *    gövdesini düzenlemek çalışan veritabanına ulaşmaz) — yalnız bu yorum düzeltildi.
+ *    Tam gerekçe: `docs/decisions/0011-gp-roi-paydasi-total-planned-spend.md`.
  *
  * 2. Eksik BRD KPI'larını ekler (yoksa):
  *    PLANNED_LTA_ON, PLANNED_LTA_OFF, BASE_LTA_ON, BASE_LTA_OFF,

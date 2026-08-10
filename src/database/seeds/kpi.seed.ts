@@ -17,7 +17,7 @@ import {
   AggregationMethod,
 } from '../entities/kpi.entity';
 
-type KpiSeedRow = Omit<Partial<Kpi>, 'tenantId'>;
+export type KpiSeedRow = Omit<Partial<Kpi>, 'tenantId'>;
 
 /** Fields always overwritten when an existing row is found (upsert). */
 const UPSERT_FIELDS: Array<keyof KpiSeedRow> = [
@@ -29,7 +29,13 @@ const UPSERT_FIELDS: Array<keyof KpiSeedRow> = [
   'dependsOnKpis',
 ];
 
-const KPI_DEFAULTS: KpiSeedRow[] = [
+// T-163 / ADR 0011: exported (read-only) so tests can pin the seed contract
+// (the array's VALUES are untouched — only visibility changed) without
+// re-implementing this list. seedKpis() is idempotent upsert and always
+// overwrites formula_text — see UPSERT_FIELDS above — so a test that pins
+// this array is the only thing standing between `npm run seed` and silently
+// reverting ADR 0011.
+export const KPI_DEFAULTS: KpiSeedRow[] = [
   // ── LEVEL 1: User inputs ───────────────────────────────────────────────
   {
     kpiCode: 'BASE_VOL',
@@ -408,17 +414,20 @@ const KPI_DEFAULTS: KpiSeedRow[] = [
     aggregationMethodFu: AggregationMethod.SUM,
     isActive: true,
   },
-  // ── LEVEL 10: ROI (BRD canonical: GP_ROI_PCT=INCR_GP/INCR_SPEND*100) ─
+  // ── LEVEL 10: ROI (BRD canonical: GP_ROI_PCT=INCR_GP/TOTAL_PLANNED_SPEND*100) ─
+  // ADR 0011 (2026-08-10): payda INCR_SPEND'ten TOTAL_PLANNED_SPEND'e düzeltildi.
+  // Bkz. docs/decisions/0011-gp-roi-paydasi-total-planned-spend.md ve
+  // migration 1801000000000-FixGpRoiPctDenominator.
   // calculation_order 48/49: must be ≤50 (CHK_KPIS_CALCULATION_ORDER constraint)
   {
     kpiCode: 'GP_ROI_PCT',
     kpiName: 'GP ROI %',
     kpiGroup: 'ROI',
     kpiDescription:
-      'Incremental GP ROI %: INCR_GP / INCR_SPEND * 100 (BRD canonical — fixes BUG #1)',
+      'Incremental GP ROI %: INCR_GP / TOTAL_PLANNED_SPEND * 100 (BRD canonical — ADR 0011)',
     formulaType: FormulaType.EXPRESSION,
-    formulaText: 'INCR_GP / INCR_SPEND * 100',
-    dependsOnKpis: ['INCR_GP', 'INCR_SPEND'],
+    formulaText: 'INCR_GP / TOTAL_PLANNED_SPEND * 100',
+    dependsOnKpis: ['INCR_GP', 'TOTAL_PLANNED_SPEND'],
     calculationOrder: 48,
     calculationLevel: CalculationLevel.SKU,
     displayFormat: DisplayFormat.PERCENTAGE,

@@ -642,19 +642,20 @@ export class KpiService {
         aggregationMethodFu: AggregationMethod.SUM,
         isActive: true,
       },
-      // ── LEVEL 10: ROI (BRD: GP_ROI_PCT=INCR_GP/INCR_SPEND*100) ─────────
+      // ── LEVEL 10: ROI (BRD canonical: GP_ROI_PCT=INCR_GP/TOTAL_PLANNED_SPEND*100) ─
+      // ADR 0011 (2026-08-10): payda INCR_SPEND'ten TOTAL_PLANNED_SPEND'e düzeltildi.
+      // Bkz. docs/decisions/0011-gp-roi-paydasi-total-planned-spend.md ve
+      // migration 1801000000000-FixGpRoiPctDenominator.
       // calculation_order 48/49: must be ≤50 (CHK_KPIS_CALCULATION_ORDER constraint)
       {
         kpiCode: 'GP_ROI_PCT',
         kpiName: 'GP ROI %',
         kpiGroup: 'ROI',
         kpiDescription:
-          'Incremental GP ROI %: INCR_GP / INCR_SPEND * 100 (BRD canonical formula — BUG #1 FIX)',
+          'Incremental GP ROI %: INCR_GP / TOTAL_PLANNED_SPEND * 100 (BRD canonical — ADR 0011)',
         formulaType: FormulaType.EXPRESSION,
-        // BRD: GP_ROI_PCT = INCR_GP / INCR_SPEND * 100
-        // Previous (WRONG): GP / TACTIC_SPEND * 100
-        formulaText: 'INCR_GP / INCR_SPEND * 100',
-        dependsOnKpis: ['INCR_GP', 'INCR_SPEND'],
+        formulaText: 'INCR_GP / TOTAL_PLANNED_SPEND * 100',
+        dependsOnKpis: ['INCR_GP', 'TOTAL_PLANNED_SPEND'],
         calculationOrder: 48,
         calculationLevel: CalculationLevel.SKU,
         displayFormat: DisplayFormat.PERCENTAGE,
