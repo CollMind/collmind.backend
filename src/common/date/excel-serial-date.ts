@@ -90,6 +90,21 @@
  * rule §2.4 warns against inventing. If a caller is ever found that can
  * legitimately receive a serial in that range, that is a new, separately
  * decided question, not an extension of this comment.
+ *
+ * 4. Too large to be a representable JS `Date` -> REFUSED (`OUT_OF_RANGE`).
+ *    T-126: measured — `excelSerialToIsoDate(99999999999)` (a plausible typo
+ *    or a stray non-date number landing in a numeric cell) computed a
+ *    millisecond offset (`8.64e18`) far past `Date`'s own valid range
+ *    (`±8.64e15`), and `new Date(ms).toISOString()` on that THREW a raw,
+ *    uncaught `RangeError: Invalid time value` — not the `BadRequestException`
+ *    every other refusal in this file produces. Every one of this function's
+ *    six call sites (`off-invoice`×2, `on-invoice`×3, `customer`×1) already
+ *    wraps `!result.ok` into a 400; none of them expected an exception to
+ *    escape a `result.ok === true` branch instead. That made a single
+ *    malformed cell a 500, not a 400 — and, upstream of any per-row error
+ *    channel, a 500 there takes the WHOLE request down. Checked before
+ *    `.toISOString()` is called, so the throw can never happen; refused with
+ *    the same shape as the other three cases instead.
  */
 
 export type ExcelSerialDateFailure =
@@ -98,7 +113,11 @@ export type ExcelSerialDateFailure =
   /** `<= 0` — before or at Excel's own epoch; no calendar date exists there. */
   | 'NON_POSITIVE'
   /** `Math.floor(value) === 60` — Excel's fictitious, non-existent 1900-02-29. */
-  | 'LEAP_BUG_DAY';
+  | 'LEAP_BUG_DAY'
+  /** Computed millisecond offset falls outside `Date`'s own representable
+   *  range — `new Date(ms).toISOString()` would throw `RangeError` rather
+   *  than produce a date at all. */
+  | 'OUT_OF_RANGE';
 
 export interface ExcelSerialDateOk {
   readonly ok: true;
@@ -131,6 +150,8 @@ export function describeExcelSerialDateFailure(
         `Geçersiz tarih değeri: '${err.input}'. Bu, Excel'in 1900 artık yıl ` +
         `hatası nedeniyle var olmayan bir takvim gününü (29 Şubat 1900) temsil eder.`
       );
+    case 'OUT_OF_RANGE':
+      return `Geçersiz tarih değeri: '${err.input}'. Değer çok büyük, bir takvim gününe karşılık gelmiyor.`;
   }
 }
 
@@ -164,5 +185,13 @@ export function excelSerialToIsoDate(value: number): ExcelSerialDateResult {
   }
 
   const ms = EXCEL_EPOCH_UTC_MS + value * MS_PER_DAY;
-  return { ok: true, isoDate: new Date(ms).toISOString().split('T')[0] };
+  const date = new Date(ms);
+  // T-126: checked BEFORE `.toISOString()` runs — that call throws
+  // `RangeError` on an out-of-range `Date`, and `Number.isNaN(date.getTime())`
+  // is `Date`'s own documented signal for "construction did not produce a
+  // representable instant" (see module doc, case 4).
+  if (Number.isNaN(date.getTime())) {
+    return { ok: false, reason: 'OUT_OF_RANGE', input: value };
+  }
+  return { ok: true, isoDate: date.toISOString().split('T')[0] };
 }

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { CustomerService } from '../../../../customer/customer.service';
 import { SkuService } from '../../../../master-data/sku/sku.service';
 import { BudgetService } from '../../../../shared/budget/budget.service';
@@ -56,6 +56,26 @@ export class OnInvoiceValidationService {
   ): Promise<ValidationResult> {
     const errors: ValidationError[] = [];
     const warnings: ValidationError[] = [];
+
+    // T-126: a field that failed to PARSE (present, but unreadable — §2.5)
+    // is reported here, in the SAME row-level channel every check below
+    // already uses — `OnInvoiceFileParserService.getDateValue`/
+    // `getNumberValue`/`getDiscountType` collect these instead of throwing,
+    // so a single bad cell fails its OWN row instead of the whole upload.
+    // Pushed BEFORE the early-return checks below so a parse error survives
+    // every one of them — the row is invalid either way.
+    const parseErrorFields = new Set(
+      (row.parseErrors ?? []).map((e) => e.field),
+    );
+    for (const parseError of row.parseErrors ?? []) {
+      errors.push({
+        rowNumber: row.originalRowNumber,
+        field: parseError.field,
+        severity: 'ERROR',
+        message: parseError.error_message,
+        originalRowData: row.originalRowData,
+      });
+    }
 
     // 1. Customer Code kontrolü
     if (!row.dto.customerCode || row.dto.customerCode.trim() === '') {
@@ -175,13 +195,18 @@ export class OnInvoiceValidationService {
 
     // 6. Invoice Date kontrolü
     if (!row.dto.invoiceDate) {
-      errors.push({
-        rowNumber: row.originalRowNumber,
-        field: 'invoice_date',
-        severity: 'ERROR',
-        message: 'Fatura tarihi zorunludur',
-        originalRowData: row.originalRowData,
-      });
+      // T-126: a present-but-unreadable cell already produced a SPECIFIC
+      // `invoice_date` error above (parseErrorFields); do not also claim it
+      // was never given — those are two different failures (§2.5).
+      if (!parseErrorFields.has('invoice_date')) {
+        errors.push({
+          rowNumber: row.originalRowNumber,
+          field: 'invoice_date',
+          severity: 'ERROR',
+          message: 'Fatura tarihi zorunludur',
+          originalRowData: row.originalRowData,
+        });
+      }
     } else {
       const invoiceDate = new Date(row.dto.invoiceDate);
       const today = new Date();
@@ -221,10 +246,16 @@ export class OnInvoiceValidationService {
     }
 
     // 8. Quantity kontrolü
+    // T-126: `parseErrorFields.has('quantity')` guards against a DOUBLE
+    // report — a present-but-unreadable cell already produced a SPECIFIC
+    // error above; `undefined` here also satisfies the presence check
+    // below, so without the guard both the specific AND the generic
+    // "zorunlu" message would fire for the same cell.
     if (
-      row.dto.quantity === null ||
-      row.dto.quantity === undefined ||
-      row.dto.quantity <= 0
+      !parseErrorFields.has('quantity') &&
+      (row.dto.quantity === null ||
+        row.dto.quantity === undefined ||
+        row.dto.quantity <= 0)
     ) {
       errors.push({
         rowNumber: row.originalRowNumber,
@@ -237,9 +268,10 @@ export class OnInvoiceValidationService {
 
     // 9. List Price kontrolü
     if (
-      row.dto.listPrice === null ||
-      row.dto.listPrice === undefined ||
-      row.dto.listPrice <= 0
+      !parseErrorFields.has('list_price') &&
+      (row.dto.listPrice === null ||
+        row.dto.listPrice === undefined ||
+        row.dto.listPrice <= 0)
     ) {
       errors.push({
         rowNumber: row.originalRowNumber,
@@ -252,9 +284,10 @@ export class OnInvoiceValidationService {
 
     // 10. Actual Price kontrolü
     if (
-      row.dto.actualPrice === null ||
-      row.dto.actualPrice === undefined ||
-      row.dto.actualPrice < 0
+      !parseErrorFields.has('actual_price') &&
+      (row.dto.actualPrice === null ||
+        row.dto.actualPrice === undefined ||
+        row.dto.actualPrice < 0)
     ) {
       errors.push({
         rowNumber: row.originalRowNumber,
@@ -266,7 +299,9 @@ export class OnInvoiceValidationService {
     }
 
     // 11. Discount kontrolü
-    if (row.dto.discount === null || row.dto.discount === undefined) {
+    if (parseErrorFields.has('discount')) {
+      // already reported above
+    } else if (row.dto.discount === null || row.dto.discount === undefined) {
       errors.push({
         rowNumber: row.originalRowNumber,
         field: 'discount',
@@ -285,7 +320,7 @@ export class OnInvoiceValidationService {
     }
 
     // 12. Discount Type kontrolü
-    if (!row.dto.discountType) {
+    if (!parseErrorFields.has('discount_type') && !row.dto.discountType) {
       errors.push({
         rowNumber: row.originalRowNumber,
         field: 'discount_type',
@@ -526,7 +561,7 @@ export class OnInvoiceValidationService {
     // Her envelope için mevcut durumu al ve simülasyon yap
     const budgetImpact: BudgetImpactItemDto[] = [];
 
-    for (const [key, envelope] of envelopeMap.entries()) {
+    for (const envelope of envelopeMap.values()) {
       try {
         // Envelope'u bul
         const foundEnvelope = await this.budgetService.findEnvelopeByDimensions(

@@ -2,111 +2,198 @@ import { BadRequestException } from '@nestjs/common';
 import { OffInvoiceFileParserService } from './off-invoice-file-parser.service';
 import { describeExcelSerialDateFailure } from '../../../../../common/date/excel-serial-date';
 import { describeDateTextFailure } from '../../../../../common/date/date-text';
+import { FieldParseError } from '../../../../../common/row-parsing/field-parse-error';
 import * as XLSX from 'xlsx';
 
 /**
  * T-107 adım 1 — wiring tests for the two call sites in THIS file
  * (`getDateValue`, `getFiscalPeriod`). See `on-invoice-file-parser.service.spec.ts`
- * for why the shared math is not re-tested here and why the numeric branch
- * is exercised through the private methods rather than the public
- * `parseExcel`/`parseCSV` surface here.
+ * for why the shared math is not re-tested here.
  *
- * ⚠️ REACHABILITY NOTE, UPDATED (T-107 adım 2 landed, 2026-08-10): adım 1's
- * original note said the `raw: false` reachability gap applied here
- * unchanged. adım 2 flipped `raw: true` for this file too (see
- * `off-invoice-file-parser.service.ts`'s `sheet_to_json` call site) — the
- * gap is closed. See the "T-107 adım 2 — public surface" describe block
- * below for the now-reachable end-to-end coverage.
- *
- * ⚠️ This file's `getFiscalPeriod` differs from `OnInvoiceFileParserService`'s:
- * it returns `undefined` for an absent value instead of throwing (see the
- * source, line ~297) — a pre-existing, separate design choice, not something
- * T-107 adım 1 changed. Not exercised here to avoid asserting on behavior
- * outside this task's scope.
+ * T-126 REWRITE (2026-08-10): `getDateValue`/`getNumberValue`/`getFiscalPeriod`
+ * used to THROW `BadRequestException` for a present-but-unreadable cell, which
+ * `mapToTransactionDtos`'s single `.map()` and `parseExcel`/`parseCSV`'s own
+ * try/catch turned into a FILE-LEVEL rejection with no row number (measured,
+ * T-123: a single bad `invoice_date` cell anywhere in a 500-row file rejected
+ * the whole upload). All three now take a fourth/third `errors:
+ * FieldParseError[]` parameter and COLLECT into it instead of throwing —
+ * mirroring the identical contract change `customer/services/file-parser.service.ts`
+ * went through first (T-121 review (a)) and `field-parse-error.ts` now shares
+ * (T-126). §2.5 is still satisfied: a present-but-unreadable value is never
+ * silently treated as absent — it still produces an error, just not a thrown
+ * one, and `OffInvoiceValidationService.validateRow` folds it into the SAME
+ * row-level `ValidationError` channel every other check already uses. The old
+ * `.toThrow(BadRequestException)` assertions this file used to make are gone
+ * on purpose, not by omission — see that service's own spec for the
+ * validateRow-side half of this contract.
  */
-describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1)', () => {
+describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1 / T-126)', () => {
   let service: OffInvoiceFileParserService;
 
   beforeEach(() => {
     service = new OffInvoiceFileParserService();
   });
 
-  const getDateValue = (value: unknown): string =>
-    (service as unknown as { getDateValue(v: unknown): string }).getDateValue(
-      value,
-    );
-  const getFiscalPeriod = (value: unknown): string | undefined =>
-    (
+  const getDateValue = (
+    value: unknown,
+    field = 'invoice_date',
+  ): { value: string | undefined; errors: FieldParseError[] } => {
+    const errors: FieldParseError[] = [];
+    const result = (
       service as unknown as {
-        getFiscalPeriod(v: unknown): string | undefined;
+        getDateValue(
+          v: unknown,
+          f: string,
+          e: FieldParseError[],
+        ): string | undefined;
       }
-    ).getFiscalPeriod(value);
+    ).getDateValue(value, field, errors);
+    return { value: result, errors };
+  };
+
+  const getFiscalPeriod = (
+    value: unknown,
+    field = 'fiscal_period',
+  ): { value: string | undefined; errors: FieldParseError[] } => {
+    const errors: FieldParseError[] = [];
+    const result = (
+      service as unknown as {
+        getFiscalPeriod(
+          v: unknown,
+          f: string,
+          e: FieldParseError[],
+        ): string | undefined;
+      }
+    ).getFiscalPeriod(value, field, errors);
+    return { value: result, errors };
+  };
 
   describe('getDateValue — numeric (Excel serial) branch', () => {
-    it('a numeric cell value is handed to the shared helper and its ISO date returned unchanged', () => {
-      expect(getDateValue(46037)).toBe('2026-01-15');
+    it('a numeric cell value is handed to the shared helper and its ISO date returned unchanged, no error pushed', () => {
+      const { value, errors } = getDateValue(46037);
+      expect(value).toBe('2026-01-15');
+      expect(errors).toHaveLength(0);
     });
 
-    it('a NOT_FINITE input is refused via the helper', () => {
-      expect(() => getDateValue(Infinity)).toThrow(BadRequestException);
+    it('a NOT_FINITE input (Infinity) is collected as an INVALID_DATE error, value is undefined — not thrown', () => {
+      const { value, errors } = getDateValue(Infinity);
+      expect(value).toBeUndefined();
+      expect(errors).toEqual([
+        {
+          field: 'invoice_date',
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure({
+            ok: false,
+            reason: 'NOT_FINITE',
+            input: Infinity,
+          }),
+        },
+      ]);
     });
 
-    it('a NON_POSITIVE input is refused via the helper', () => {
-      expect(() => getDateValue(0)).toThrow(BadRequestException);
+    // 0 is a number, not the "absent" sentinel — must reach the helper and be
+    // collected as NON_POSITIVE, not treated as if the field had never been
+    // given (which would return undefined with ZERO errors).
+    it('numeric 0 is collected via the helper, not treated as absent', () => {
+      const { value, errors } = getDateValue(0);
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].error_type).toBe('INVALID_DATE');
     });
 
-    it("Excel's fictitious 1900-02-29 (serial 60) is refused via the helper, with the helper's own message", () => {
-      let caught: BadRequestException | undefined;
-      try {
-        getDateValue(60);
-      } catch (e) {
-        caught = e as BadRequestException;
-      }
-      expect(caught).toBeInstanceOf(BadRequestException);
-      const response = caught!.getResponse() as { message: string };
-      expect(response.message).toBe(
-        describeExcelSerialDateFailure({
-          ok: false,
-          reason: 'LEAP_BUG_DAY',
-          input: 60,
-        }),
-      );
+    it("Excel's fictitious 1900-02-29 (serial 60) is collected via the helper, with the helper's own message", () => {
+      const { value, errors } = getDateValue(60, 'invoice_date');
+      expect(value).toBeUndefined();
+      expect(errors).toEqual([
+        {
+          field: 'invoice_date',
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure({
+            ok: false,
+            reason: 'LEAP_BUG_DAY',
+            input: 60,
+          }),
+        },
+      ]);
     });
 
-    it('an absent value is refused before the helper is reached, with its own message', () => {
-      expect(() => getDateValue(null)).toThrow(
-        'Invoice date değeri zorunludur',
+    // T-126: a value too large to be a representable `Date` used to escape as
+    // a raw `RangeError` from `excelSerialToIsoDate` itself (see that
+    // module's own spec) — asserted here too, at this call site, since it is
+    // this getter that would have propagated the crash before the upstream
+    // fix.
+    it('a value too large to be a representable Date is refused as OUT_OF_RANGE, not a crash', () => {
+      expect(() => getDateValue(99999999999)).not.toThrow();
+      const { value, errors } = getDateValue(99999999999);
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].error_type).toBe('INVALID_DATE');
+    });
+
+    // §2.5's three-way split, pinned explicitly at this call site: a
+    // genuinely ABSENT value (never given) is not the same as a PRESENT but
+    // unreadable one — only the latter produces an error.
+    describe('genuinely absent input — the only case with zero errors AND an undefined value', () => {
+      it.each([null, undefined, ''])(
+        '%p returns undefined with NO error pushed',
+        (v) => {
+          const { value, errors } = getDateValue(v);
+          expect(value).toBeUndefined();
+          expect(errors).toHaveLength(0);
+        },
       );
     });
   });
 
   describe('getFiscalPeriod — numeric (Excel serial) branch', () => {
-    it('a numeric cell value is converted via the shared helper and truncated to YYYY-MM', () => {
-      expect(getFiscalPeriod(46037)).toBe('2026-01');
+    it('a numeric cell value is converted via the shared helper and truncated to YYYY-MM, no error pushed', () => {
+      const { value, errors } = getFiscalPeriod(46037);
+      expect(value).toBe('2026-01');
+      expect(errors).toHaveLength(0);
     });
 
     it('a DST-boundary serial converts correctly', () => {
-      expect(getFiscalPeriod(46320)).toBe('2026-10');
+      const { value, errors } = getFiscalPeriod(46320);
+      expect(value).toBe('2026-10');
+      expect(errors).toHaveLength(0);
     });
 
-    it('a refused serial propagates the helper failure rather than falling through to "undefined"', () => {
-      expect(() => getFiscalPeriod(60)).toThrow(BadRequestException);
+    it('a refused serial is collected as an error, not silently dropped as "undefined = absent"', () => {
+      const { value, errors } = getFiscalPeriod(60, 'fiscal_period');
+      expect(value).toBeUndefined();
+      expect(errors).toEqual([
+        {
+          field: 'fiscal_period',
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure({
+            ok: false,
+            reason: 'LEAP_BUG_DAY',
+            input: 60,
+          }),
+        },
+      ]);
     });
   });
 
   describe('end-to-end from a parsed row to the final DTO/fiscal period (mapToTransactionDtos)', () => {
-    // Closest available approximation of "through the parser's own public
-    // surface" given the raw:false reachability gap — see the file header.
-    it('a row with a numeric invoice_date and fiscal_period reaches the output with correct ISO values', () => {
-      const mapToTransactionDtos = (
+    const mapToTransactionDtos = (
+      rows: unknown[],
+    ): Array<{
+      dto: Record<string, unknown>;
+      fiscalPeriod: string | undefined;
+      parseErrors?: FieldParseError[];
+    }> =>
+      (
         service as unknown as {
           mapToTransactionDtos(rows: unknown[]): Array<{
             dto: Record<string, unknown>;
             fiscalPeriod: string | undefined;
+            parseErrors?: FieldParseError[];
           }>;
         }
-      ).mapToTransactionDtos.bind(service);
+      ).mapToTransactionDtos(rows);
 
+    it('a row with a numeric invoice_date and fiscal_period reaches the output with correct ISO values, no parseErrors', () => {
       const rows = mapToTransactionDtos([
         {
           agreement_id: 'AGR-1',
@@ -120,44 +207,52 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
       expect(rows).toHaveLength(1);
       expect(rows[0].dto.invoiceDate).toBe('2026-01-15');
       expect(rows[0].fiscalPeriod).toBe('2026-01');
+      expect(rows[0].parseErrors).toBeUndefined();
     });
 
-    it('a row with an unreadable numeric date is refused, not silently dropped (§2.5)', () => {
-      const mapToTransactionDtos = (
-        service as unknown as {
-          mapToTransactionDtos(rows: unknown[]): unknown[];
-        }
-      ).mapToTransactionDtos.bind(service);
+    // T-126: this is the closed regression. Before this turn, an unreadable
+    // numeric invoice_date threw straight out of `mapToTransactionDtos`'s
+    // `.map()`, taking the WHOLE FILE down with it. Now the row survives
+    // with a row-level `parseErrors` entry.
+    it('a row with an unreadable numeric date is NOT thrown out of the batch — it survives with a parseErrors entry (§2.5, T-126)', () => {
+      const rows = mapToTransactionDtos([
+        {
+          agreement_id: 'AGR-1',
+          invoice_no: 'INV-1',
+          invoice_date: 60, // Excel's fictitious 1900-02-29
+          amount: '100.00',
+          fiscal_period: '2026-01',
+        },
+      ]);
 
-      expect(() =>
-        mapToTransactionDtos([
-          {
-            agreement_id: 'AGR-1',
-            invoice_no: 'INV-1',
-            invoice_date: 60, // Excel's fictitious 1900-02-29
-            amount: '100.00',
-            fiscal_period: '2026-01',
-          },
-        ]),
-      ).toThrow(BadRequestException);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.invoiceDate).toBeUndefined();
+      expect(rows[0].parseErrors).toEqual([
+        {
+          field: 'invoice_date',
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure({
+            ok: false,
+            reason: 'LEAP_BUG_DAY',
+            input: 60,
+          }),
+        },
+      ]);
     });
   });
 
   /**
    * T-107 adım 2 — public surface (`parseExcel`), real `.xlsx` buffers,
    * `raw: true` live. `amount` is the field `pickCell` protects here (a real
-   * `0` amount is a legitimate off-invoice transaction line, not an absent
-   * one).
+   * `0` amount reaching `getNumberValue` at all, distinct from a non-last
+   * alias silently resolving it to `undefined`).
    *
-   * MEASURED (T-107 adım 2 review, B4 — `pickCell` mutated back to an
-   * `a || b || c` chain, this describe block re-run): the LAST-alias-
-   * spelling case (`AMOUNT`) stayed GREEN under the mutation — being the
-   * chain's own last operand (`row.amount || row.Amount || row.AMOUNT`,
-   * with the first two absent from the row), `0` has nothing after it to
-   * be overridden by, so `||` and `pickCell` agree there. It is kept
-   * because it pins the exact shape `pick-cell.ts`'s docstring measures,
-   * not because it distinguishes from `||` — that is the FIRST-alias case
-   * added below, which DID go red under the same mutation.
+   * T-126: the parser's own `getNumberValue` no longer enforces positivity —
+   * that moved to `OffInvoiceValidationService.validateRow` (its own spec
+   * pins the business rule; out of scope here per the task's own boundary —
+   * see [[T-124]]). What THIS test proves is narrower: a genuine `0` reaches
+   * `dto.amount` unchanged, with no `parseErrors` entry (it parsed fine —
+   * positivity is a MEANING question, not a parsing one).
    */
   describe('T-107 adım 2 — public surface (parseExcel), raw: true', () => {
     function buildXlsxFile(rows: unknown[][]): Express.Multer.File {
@@ -183,20 +278,7 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
       };
     }
 
-    // MEASURED (not the assumption this test started with): unlike
-    // `on-invoice`'s `getNumberValue`, this file's own `getNumberValue` has a
-    // separate, PRE-EXISTING business rule — `num <= 0` is refused with its
-    // own message (`getNumberValue`, this file) — an off-invoice transaction
-    // amount of 0 or less is rejected on purpose, unrelated to T-107. What
-    // this test actually proves is narrower and still real: `pickCell`
-    // delivers the genuine `0` under the LAST alias spelling (`AMOUNT`) TO
-    // `getNumberValue` at all — rather than the pre-fix `||` chain's shape,
-    // where a `0` under a non-last alias would have resolved to `undefined`
-    // and been rejected as "Amount değeri zorunludur" (EMPTY) instead of
-    // this specific positivity message. The two rejection reasons are
-    // observably different, which is how this test can tell "pickCell
-    // delivered 0" apart from "pickCell silently dropped it".
-    it('a real 0 amount under the LAST alias (AMOUNT) reaches getNumberValue and is refused by the POSITIVE-amount rule, not silently dropped as absent', async () => {
+    it('a real 0 amount under the LAST alias (AMOUNT) reaches dto.amount unchanged, not silently dropped as absent', async () => {
       const file = buildXlsxFile([
         [
           'agreement_id',
@@ -208,20 +290,20 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
         ['AGR-1', 'INV-1', '2026-01-15', 0, '2026-01'],
       ]);
 
-      await expect(service.parseExcel(file)).rejects.toThrow(
-        'Amount değeri pozitif olmalıdır: 0',
-      );
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.amount).toBe(0);
+      expect(rows[0].parseErrors).toBeUndefined();
     });
 
-    // T-107 adım 2 review (B4): the LAST-alias case above does not
-    // distinguish `pickCell` from `||` (see its own comment) — this does.
-    // `amount` is the FIRST of three aliases (`amount`, `Amount`, `AMOUNT`)
-    // with the other two absent from the row, so under `||` the real `0`
-    // is overridden by a later, merely-absent alias (`0 || undefined ||
-    // undefined` = `undefined`) and would resolve to the EMPTY rejection
-    // ("Amount değeri zorunludur") instead of the POSITIVE-amount one.
-    // MEASURED: red under the `pickCell` -> `||` mutation.
-    it('a real 0 amount under the FIRST alias (amount) reaches getNumberValue and is refused by the POSITIVE-amount rule, not silently dropped as absent', async () => {
+    // MEASURED (T-107 adım 2 review, B4 — `pickCell` mutated back to an
+    // `a || b || c` chain): the LAST-alias case above does not distinguish
+    // `pickCell` from `||` (see its own comment) — this does. `amount` is
+    // the FIRST of three aliases with the other two absent, so under `||`
+    // the real `0` is overridden by a later, merely-absent alias
+    // (`0 || undefined || undefined` = `undefined`).
+    it('a real 0 amount under the FIRST alias (amount) reaches dto.amount unchanged, not silently dropped as absent', async () => {
       const file = buildXlsxFile([
         [
           'agreement_id',
@@ -233,9 +315,11 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
         ['AGR-1', 'INV-1', '2026-01-15', 0, '2026-01'],
       ]);
 
-      await expect(service.parseExcel(file)).rejects.toThrow(
-        'Amount değeri pozitif olmalıdır: 0',
-      );
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.amount).toBe(0);
+      expect(rows[0].parseErrors).toBeUndefined();
     });
 
     it('a numeric invoice_date cell (Excel serial) resolves via parseExcel end-to-end, not just the private method', async () => {
@@ -255,6 +339,48 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
       expect(rows).toHaveLength(1);
       expect(rows[0].dto.invoiceDate).toBe('2026-01-15');
     });
+
+    // §2.5's third state, distinct from the two the getters above cover: the
+    // FILE itself is malformed (no data rows at all), not a single cell.
+    // That is still a file-level rejection, deliberately unchanged by T-126
+    // — there is no row to attach a per-row error to.
+    it('a file with a header row but zero data rows is still a file-level rejection, unaffected by the per-row parseErrors channel', async () => {
+      const file = buildXlsxFile([
+        [
+          'agreement_id',
+          'invoice_no',
+          'invoice_date',
+          'amount',
+          'fiscal_period',
+        ],
+      ]);
+
+      await expect(service.parseExcel(file)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    // T-126: the file used to reject entirely on an unparseable amount cell
+    // (the old `getNumberValue` threw). Now the row survives, reported.
+    it('an unparseable amount cell (garbage text) does not reject the file — the row survives with a parseErrors entry', async () => {
+      const file = buildXlsxFile([
+        [
+          'agreement_id',
+          'invoice_no',
+          'invoice_date',
+          'amount',
+          'fiscal_period',
+        ],
+        ['AGR-1', 'INV-1', '2026-01-15', 'çöp', '2026-01'],
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dto.amount).toBeUndefined();
+      expect(rows[0].parseErrors).toHaveLength(1);
+      expect(rows[0].parseErrors![0].field).toBe('amount');
+    });
   });
 });
 
@@ -263,10 +389,9 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
  * `csv-parser`'s blank-cell value is `''`, never XLSX's `null`/`undefined`
  * sentinel — a `,,,,,,` row (every aliased column resolves to `''`) used to
  * survive the old `pickCell(...) !== undefined` blank-row filter (`'' !==
- * undefined`) and hit `getDateValue`, which throws on `value === ''`,
- * taking the WHOLE FILE down. `hasCellValue` is the fix; this is its only
- * public-surface (`parseCSV`) coverage for this importer — before this turn
- * there was NONE (only `parseExcel` had a public-surface describe block).
+ * undefined`) and hit `getDateValue`, which threw on `value === ''`, taking
+ * the WHOLE FILE down. `hasCellValue` is the fix; this is its only
+ * public-surface (`parseCSV`) coverage for this importer.
  */
 describe('OffInvoiceFileParserService — parseCSV public surface (T-107 adım 2 review, B1)', () => {
   let service: OffInvoiceFileParserService;
@@ -378,160 +503,212 @@ describe('OffInvoiceFileParserService — originalRowData has no leaked null (T-
 });
 
 /**
- * T-123 — wiring tests for the STRING branch of `getDateValue` /
- * `getFiscalPeriod` in THIS file, now routed through `date-text.ts` instead
- * of `new Date(str)`. Companion to the numeric (excel-serial) wiring block
- * above (T-107 adım 1) and to `date-text.spec.ts` (T-121), which owns the
- * grammar/calendar-math itself — not re-tested here (§2.7).
- *
- * ⚠️ `getFiscalPeriod` in THIS file has a RETRACTED throw — see the
- * dedicated describe block below ("retraction pinned") for that half of
- * T-123. This block covers only `getDateValue` (unaffected by the
- * retraction — see its own doc comment: it still throws, deliberately, same
- * as `OnInvoiceFileParserService.getDateValue`) plus `getFiscalPeriod`'s
- * OK-path (a parseable string still truncates to YYYY-MM exactly as before).
+ * T-123 / T-126 — wiring tests for the STRING branch of `getDateValue` /
+ * `getFiscalPeriod` in THIS file, routed through `date-text.ts` instead of
+ * `new Date(str)`. Companion to the numeric (excel-serial) wiring block
+ * above and to `date-text.spec.ts` (T-121), which owns the grammar/calendar
+ * math itself — not re-tested here (§2.7).
  */
-describe('OffInvoiceFileParserService — date-text string-branch wiring (T-123)', () => {
+describe('OffInvoiceFileParserService — date-text string-branch wiring (T-123 / T-126)', () => {
   let service: OffInvoiceFileParserService;
 
   beforeEach(() => {
     service = new OffInvoiceFileParserService();
   });
 
-  const getDateValue = (value: unknown): string =>
-    (service as unknown as { getDateValue(v: unknown): string }).getDateValue(
-      value,
-    );
-  const getFiscalPeriod = (value: unknown): string | undefined =>
-    (
+  const getDateValue = (
+    value: unknown,
+    field = 'invoice_date',
+  ): { value: string | undefined; errors: FieldParseError[] } => {
+    const errors: FieldParseError[] = [];
+    const result = (
       service as unknown as {
-        getFiscalPeriod(v: unknown): string | undefined;
+        getDateValue(
+          v: unknown,
+          f: string,
+          e: FieldParseError[],
+        ): string | undefined;
       }
-    ).getFiscalPeriod(value);
+    ).getDateValue(value, field, errors);
+    return { value: result, errors };
+  };
 
-  describe('getDateValue — string branch (still throws on a bad string, unaffected by the getFiscalPeriod retraction)', () => {
+  const getFiscalPeriod = (
+    value: unknown,
+    field = 'fiscal_period',
+  ): { value: string | undefined; errors: FieldParseError[] } => {
+    const errors: FieldParseError[] = [];
+    const result = (
+      service as unknown as {
+        getFiscalPeriod(
+          v: unknown,
+          f: string,
+          e: FieldParseError[],
+        ): string | undefined;
+      }
+    ).getFiscalPeriod(value, field, errors);
+    return { value: result, errors };
+  };
+
+  describe('getDateValue — string branch, OK path', () => {
     it('GG.AA.YYYY ("3.4.2026") resolves to 3 Nisan (2026-04-03), not the old US-order guess (2026-03-04)', () => {
-      expect(getDateValue('3.4.2026')).toBe('2026-04-03');
+      expect(getDateValue('3.4.2026').value).toBe('2026-04-03');
     });
 
-    it('a zero-padded Turkish date ("15.01.2026") is accepted and correct — the old branch threw on this exact input (Team Lead measurement)', () => {
-      expect(getDateValue('15.01.2026')).toBe('2026-01-15');
+    it('a zero-padded Turkish date ("15.01.2026") is accepted and correct', () => {
+      expect(getDateValue('15.01.2026').value).toBe('2026-01-15');
     });
 
     it('an ISO date string passes through unchanged', () => {
-      expect(getDateValue('2026-01-15')).toBe('2026-01-15');
+      expect(getDateValue('2026-01-15').value).toBe('2026-01-15');
+    });
+  });
+
+  /**
+   * T-126: present-but-unreadable string dates now COLLECT into `errors`
+   * instead of throwing (this file no longer takes the whole batch down on
+   * one bad cell — see the `mapToTransactionDtos` describe block below).
+   * Also pins the six shapes the Team Lead's task body called out as
+   * "previously read correctly" under the pre-T-121 `new Date(str)`
+   * implementation and now correctly REJECTED by the strict grammar
+   * (`date-text.ts`) — never silently guessed, never silently fallen back.
+   */
+  describe('getDateValue — string branch, present-but-unreadable is collected, never thrown, never silently accepted', () => {
+    it('US slash order ("3/4/26") is collected as an error, not silently accepted as March 4th', () => {
+      const { value, errors } = getDateValue('3/4/26', 'invoice_date');
+      expect(value).toBeUndefined();
+      expect(errors).toEqual([
+        {
+          field: 'invoice_date',
+          error_type: 'INVALID_DATE',
+          error_message: describeDateTextFailure({
+            ok: false,
+            reason: 'UNRECOGNIZED_FORMAT',
+            input: '3/4/26',
+          }),
+        },
+      ]);
     });
 
-    it('US slash order ("3/4/26") is refused, not silently accepted as March 4th', () => {
-      expect(() => getDateValue('3/4/26')).toThrow(BadRequestException);
+    it('a calendar rollover ("2026-02-30") is collected as an error, not silently rolled into March', () => {
+      const { value, errors } = getDateValue('2026-02-30');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].error_message).toContain('2026-02-30');
     });
 
-    it('a calendar rollover ("2026-02-30") is refused, not silently rolled into March (new Date\'s fifth silent-failure mode, added per task instruction)', () => {
-      expect(() => getDateValue('2026-02-30')).toThrow(BadRequestException);
+    it('an out-of-range month ("2026-13-01") is collected as an error', () => {
+      const { value, errors } = getDateValue('2026-13-01');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
     });
 
-    it('an out-of-range month ("2026-13-01") is refused', () => {
-      expect(() => getDateValue('2026-13-01')).toThrow(BadRequestException);
-    });
-
-    it('the thrown message for a rejected string is exactly what describeDateTextFailure produces, not a locally reworded copy', () => {
-      let caught: BadRequestException | undefined;
-      try {
-        getDateValue('3/4/26');
-      } catch (e) {
-        caught = e as BadRequestException;
-      }
-      expect(caught).toBeInstanceOf(BadRequestException);
-      const response = caught!.getResponse() as { message: string };
-      expect(response.message).toBe(
-        describeDateTextFailure({
-          ok: false,
-          reason: 'UNRECOGNIZED_FORMAT',
-          input: '3/4/26',
-        }),
-      );
-    });
+    // The six shapes the old `new Date(str)` branch happened to parse
+    // (correctly or not) before T-121/T-123 introduced the strict grammar —
+    // pinned here as the "asıl kazanç" the task body calls out: they must
+    // now produce a ROW-LEVEL error, never a silent fallback and never a
+    // throw that rejects the whole file.
+    it.each([
+      '2026/01',
+      '2026-1',
+      '2026-01-15 00:00:00',
+      '2026/01/15',
+      '01/15/2026',
+      'Jan 2026',
+    ])(
+      'previously-silently-accepted-or-dropped shape %p is now a row-level parseErrors entry, not a silent fallback',
+      (input) => {
+        const { value, errors } = getDateValue(input, 'invoice_date');
+        expect(value).toBeUndefined();
+        expect(errors).toHaveLength(1);
+        expect(errors[0].field).toBe('invoice_date');
+        expect(errors[0].error_type).toBe('INVALID_DATE');
+      },
+    );
   });
 
   describe('getFiscalPeriod — OK path: a parseable full-date string still truncates to YYYY-MM', () => {
     it('GG.AA.YYYY ("3.4.2026") resolves to 2026-04, not the old guess 2026-03', () => {
-      expect(getFiscalPeriod('3.4.2026')).toBe('2026-04');
+      expect(getFiscalPeriod('3.4.2026').value).toBe('2026-04');
     });
 
     it('a zero-padded Turkish date ("15.01.2026") truncates to 2026-01', () => {
-      expect(getFiscalPeriod('15.01.2026')).toBe('2026-01');
+      expect(getFiscalPeriod('15.01.2026').value).toBe('2026-01');
     });
 
     it('a full ISO date string truncates to YYYY-MM', () => {
-      expect(getFiscalPeriod('2026-01-15')).toBe('2026-01');
+      expect(getFiscalPeriod('2026-01-15').value).toBe('2026-01');
     });
 
-    it('a plain YYYY-MM string is accepted directly, unaffected by T-123 (checked before the date-text branch is ever reached)', () => {
-      expect(getFiscalPeriod('2026-04')).toBe('2026-04');
+    it('a plain YYYY-MM string is accepted directly (checked before the date-text branch is ever reached)', () => {
+      expect(getFiscalPeriod('2026-04').value).toBe('2026-04');
     });
   });
 
   /**
    * T-123 madde 3, RETRACTED (product owner decision, 2026-08-10) — see the
    * long rationale in `off-invoice-file-parser.service.ts`'s `getFiscalPeriod`
-   * doc comment. This block pins the CURRENT (reverted) behavior, not the
-   * intermediate throwing version T-123 shipped first:
+   * doc comment: this field is genuinely OPTIONAL (the caller has a 3-level
+   * fallback chain), so a present-but-unparseable cell resolves to
+   * `undefined` rather than rejecting the row's fiscal period outright.
    *
-   *   - a genuinely ABSENT cell (`''`/`null`/`undefined`) -> `undefined`,
-   *     no error — legitimate optionality, unaffected by T-123 either way
-   *     (`agreement-transaction.service.ts`'s Priority 1/2/3 fallback chain
-   *     covers this case).
-   *   - a PRESENT but unparseable cell (garbage text, US-order slash, a
-   *     calendar rollover) -> ALSO `undefined`, but for a different reason:
-   *     this importer has no row-level error-accumulation channel (measured
-   *     — `getNumberValue`/`getDateValue` in this same file both throw and
-   *     take the whole file down), so throwing here converts a single bad
-   *     fiscal_period cell into a rejection of every row in the upload.
-   *
-   * ⚠️ Do not "fix" this by reintroducing the throw without ALSO building the
-   * row-level channel T-126 tracks — that reintroduction is exactly what was
-   * measured and reverted here.
+   * T-126 UPDATE to that pin: the retraction is about the RETURN VALUE
+   * (`undefined`, never a guessed period) — it does NOT mean "no trace". A
+   * present-but-unreadable cell now ALSO pushes a row-level `parseErrors`
+   * entry, closing the T-123 retraction's own silent gap (measured then:
+   * `errors` did not exist yet, so this state produced neither a throw nor
+   * an error — pure silence, unlike a genuinely absent cell, which still
+   * produces neither).
    */
-  describe('getFiscalPeriod — retraction pinned: present-but-unparseable resolves to undefined, does NOT throw (T-123, reverted 2026-08-10, see T-126)', () => {
-    it('a genuinely absent cell resolves to undefined (unaffected either way — legitimate optionality)', () => {
-      expect(getFiscalPeriod('')).toBeUndefined();
-      expect(getFiscalPeriod(null)).toBeUndefined();
-      expect(getFiscalPeriod(undefined)).toBeUndefined();
+  describe('getFiscalPeriod — present-but-unparseable resolves to undefined AND records a parseError (T-123 retraction + T-126)', () => {
+    it('a genuinely absent cell resolves to undefined with NO error (legitimate optionality, unaffected by T-123 either way)', () => {
+      for (const v of ['', null, undefined]) {
+        const { value, errors } = getFiscalPeriod(v);
+        expect(value).toBeUndefined();
+        expect(errors).toHaveLength(0);
+      }
     });
 
-    it('a present-but-garbage cell ("çöp") resolves to undefined, does NOT throw', () => {
-      expect(getFiscalPeriod('çöp')).toBeUndefined();
+    it('a present-but-garbage cell ("çöp") resolves to undefined AND pushes a parseErrors entry', () => {
+      const { value, errors } = getFiscalPeriod('çöp', 'fiscal_period');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0].field).toBe('fiscal_period');
+      expect(errors[0].error_type).toBe('INVALID_DATE');
+      expect(errors[0].error_message).toContain('çöp');
     });
 
-    it('a present-but-US-order cell ("3/4/26") resolves to undefined, does NOT throw', () => {
-      expect(getFiscalPeriod('3/4/26')).toBeUndefined();
+    it('a present-but-US-order cell ("3/4/26") resolves to undefined AND pushes a parseErrors entry', () => {
+      const { value, errors } = getFiscalPeriod('3/4/26');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
     });
 
-    it('a present-but-calendar-invalid cell ("2026-02-30", a rollover) resolves to undefined, does NOT throw', () => {
-      expect(getFiscalPeriod('2026-02-30')).toBeUndefined();
+    it('a present-but-calendar-invalid cell ("2026-02-30", a rollover) resolves to undefined AND pushes a parseErrors entry', () => {
+      const { value, errors } = getFiscalPeriod('2026-02-30');
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(1);
     });
   });
 
-  describe('end-to-end via mapToTransactionDtos — a broken fiscal_period cell does not drop its row or reject the file (T-123, reverted 2026-08-10)', () => {
+  describe('end-to-end via mapToTransactionDtos — a broken fiscal_period or invoice_date cell does not drop its row or reject the file (T-123 retraction + T-126)', () => {
     const mapToTransactionDtos = (
       rows: unknown[],
     ): Array<{
       dto: Record<string, unknown>;
       fiscalPeriod: string | undefined;
+      parseErrors?: FieldParseError[];
     }> =>
       (
         service as unknown as {
           mapToTransactionDtos(rows: unknown[]): Array<{
             dto: Record<string, unknown>;
             fiscalPeriod: string | undefined;
+            parseErrors?: FieldParseError[];
           }>;
         }
       ).mapToTransactionDtos(rows);
 
-    // MEASURED (Team Lead, 2026-08-10, task body):
-    //   A1 fiscal_period = "çöp"  ->  satır geçiyor, fiscalPeriod = undefined
-    //   A2 sağlam satır           ->  geçiyor
-    //   satır sayısı: 2
     it('a broken fiscal_period cell on one row does not drop that row and does not reject the file — the sibling row is unaffected', () => {
       const rows = mapToTransactionDtos([
         {
@@ -553,29 +730,72 @@ describe('OffInvoiceFileParserService — date-text string-branch wiring (T-123)
       expect(rows).toHaveLength(2);
       expect(rows[0].fiscalPeriod).toBeUndefined();
       expect(rows[0].dto.agreementId).toBe('AGR-1');
+      expect(rows[0].parseErrors).toEqual([
+        {
+          field: 'fiscal_period',
+          error_type: 'INVALID_DATE',
+          error_message: expect.stringContaining('çöp'),
+        },
+      ]);
       expect(rows[1].fiscalPeriod).toBe('2026-01');
       expect(rows[1].dto.agreementId).toBe('AGR-2');
+      expect(rows[1].parseErrors).toBeUndefined();
     });
 
-    it('a broken invoice_date (getDateValue, unaffected by the retraction) on one row still rejects the WHOLE FILE — contrast with fiscal_period above', () => {
+    // T-126: this used to be the contrast case — `invoice_date` still threw
+    // and rejected the whole file while `fiscal_period` did not. That
+    // asymmetry is now CLOSED for off-invoice: both fields go through the
+    // same row-level `parseErrors` channel, neither throws.
+    it('a broken invoice_date on one row ALSO survives via parseErrors now — the T-123-era asymmetry (fiscal_period silent, invoice_date file-rejecting) is closed by T-126', () => {
+      const rows = mapToTransactionDtos([
+        {
+          agreement_id: 'AGR-1',
+          invoice_no: 'INV-1',
+          invoice_date: '3/4/26', // ambiguous US order
+          amount: '100.00',
+          fiscal_period: '2026-01',
+        },
+        {
+          agreement_id: 'AGR-2',
+          invoice_no: 'INV-2',
+          invoice_date: '2026-01-16',
+          amount: '200.00',
+          fiscal_period: '2026-01',
+        },
+      ]);
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0].dto.invoiceDate).toBeUndefined();
+      expect(rows[0].parseErrors).toEqual([
+        {
+          field: 'invoice_date',
+          error_type: 'INVALID_DATE',
+          error_message: describeDateTextFailure({
+            ok: false,
+            reason: 'UNRECOGNIZED_FORMAT',
+            input: '3/4/26',
+          }),
+        },
+      ]);
+      expect(rows[1].dto.invoiceDate).toBe('2026-01-16');
+      expect(rows[1].parseErrors).toBeUndefined();
+    });
+
+    // MEASURED (Team Lead, task body): the file itself is never rejected —
+    // both rows survive `mapToTransactionDtos`, one with a parse error, one
+    // without.
+    it('the file itself is not rejected — no exception is thrown for either broken-cell case above', () => {
       expect(() =>
         mapToTransactionDtos([
           {
             agreement_id: 'AGR-1',
             invoice_no: 'INV-1',
-            invoice_date: '3/4/26', // ambiguous US order — getDateValue still throws
+            invoice_date: '3/4/26',
             amount: '100.00',
-            fiscal_period: '2026-01',
-          },
-          {
-            agreement_id: 'AGR-2',
-            invoice_no: 'INV-2',
-            invoice_date: '2026-01-16',
-            amount: '200.00',
-            fiscal_period: '2026-01',
+            fiscal_period: 'çöp',
           },
         ]),
-      ).toThrow(BadRequestException);
+      ).not.toThrow();
     });
   });
 });

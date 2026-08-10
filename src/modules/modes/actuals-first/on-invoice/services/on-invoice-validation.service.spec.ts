@@ -7,6 +7,8 @@ import { BudgetThresholdService } from '../../../../shared/budget/budget-thresho
 import { OnInvoiceRepository } from '../on-invoice.repository';
 import { UtilizationStatus } from '../../../../shared/finance-reporting/dto/budget-utilization.dto';
 import { InvalidDecimalError } from '../../../../../database/transformers/decimal.transformer';
+import { CustomerStatus } from '../../../../../database/entities/customer.entity';
+import { ParsedOnInvoiceRow } from './on-invoice-file-parser.service';
 
 /**
  * FIRST SPEC FOR THIS FILE. It had none — and in this codebase an untested file
@@ -187,5 +189,249 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
     expect(impact.dataStatus).toBe('ok');
     expect(impact.current).toBe(5000);
     expect(impact.status).toBe(UtilizationStatus.GREEN);
+  });
+});
+
+/**
+ * T-126: `OnInvoiceFileParserService`'s getters (`getDateValue`,
+ * `getNumberValue`, `getDiscountType`) no longer THROW for a
+ * present-but-unreadable cell — they collect into `ParsedOnInvoiceRow.
+ * parseErrors` instead (see that file's own spec). This is the OTHER half of
+ * the contract: `validateRow` must fold every entry into its own
+ * `ValidationError` list with the row's correct `rowNumber`, and NOT also
+ * emit the generic "zorunludur"/"pozitif olmalıdır" message for the SAME
+ * field.
+ */
+describe('OnInvoiceValidationService — parseErrors integration (T-126)', () => {
+  let service: OnInvoiceValidationService;
+  let customerService: { findByCode: jest.Mock };
+  let skuService: { findByCode: jest.Mock };
+  let repository: {
+    findByIdempotencyKey: jest.Mock;
+  };
+
+  const CUSTOMER = {
+    id: 'cust-1',
+    code: 'CUST-1',
+    status: CustomerStatus.ACTIVE,
+    channel: 'MT',
+  };
+  const SKU = {
+    id: 'sku-1',
+    code: 'SKU-1',
+    isActive: true,
+    genericUnit: { category: { code: 'HAIR' } },
+  };
+
+  function buildRow(
+    overrides: Partial<ParsedOnInvoiceRow> = {},
+  ): ParsedOnInvoiceRow {
+    return {
+      dto: {
+        customerCode: 'CUST-1',
+        invoiceNo: 'INV-1',
+        invoiceDate: '2026-01-15',
+        fiscalPeriod: '2026-01',
+        skuCode: 'SKU-1',
+        quantity: 10,
+        listPrice: 100,
+        actualPrice: 95,
+        discount: 5,
+        discountType: 'CPP_ON' as any,
+        currency: 'TRY',
+      },
+      originalRowNumber: 2,
+      originalRowData: {},
+      ...overrides,
+    };
+  }
+
+  beforeEach(async () => {
+    customerService = { findByCode: jest.fn().mockResolvedValue(CUSTOMER) };
+    skuService = { findByCode: jest.fn().mockResolvedValue(SKU) };
+    repository = { findByIdempotencyKey: jest.fn().mockResolvedValue(null) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OnInvoiceValidationService,
+        { provide: CustomerService, useValue: customerService },
+        { provide: SkuService, useValue: skuService },
+        { provide: BudgetService, useValue: {} },
+        { provide: BudgetThresholdService, useValue: {} },
+        { provide: OnInvoiceRepository, useValue: repository },
+      ],
+    }).compile();
+
+    service = module.get(OnInvoiceValidationService);
+  });
+
+  it('a sound row with no parseErrors is reported as valid, with the correct rowNumber', async () => {
+    const row = buildRow({ originalRowNumber: 5 });
+
+    const result = await service.validateRow(row, TENANT_ID);
+
+    expect(result.isValid).toBe(true);
+    expect(result.rowNumber).toBe(5);
+  });
+
+  it('a row.parseErrors entry is folded into the ValidationError list, with the row-level rowNumber attached', async () => {
+    const row = buildRow({
+      originalRowNumber: 9,
+      dto: {
+        ...buildRow().dto,
+        invoiceDate: undefined,
+      },
+      parseErrors: [
+        {
+          field: 'invoice_date',
+          error_type: 'INVALID_DATE',
+          error_message: "Tanınmayan tarih biçimi: '3/4/26'.",
+        },
+      ],
+    });
+
+    const result = await service.validateRow(row, TENANT_ID);
+
+    expect(result.isValid).toBe(false);
+    const dateErrors = result.errors.filter((e) => e.field === 'invoice_date');
+    expect(dateErrors).toEqual([
+      {
+        rowNumber: 9,
+        field: 'invoice_date',
+        severity: 'ERROR',
+        message: "Tanınmayan tarih biçimi: '3/4/26'.",
+        originalRowData: row.originalRowData,
+      },
+    ]);
+  });
+
+  it('does NOT also emit the generic "Fatura tarihi zorunludur" message when invoice_date already has a parseErrors entry', async () => {
+    const row = buildRow({
+      dto: { ...buildRow().dto, invoiceDate: undefined },
+      parseErrors: [
+        {
+          field: 'invoice_date',
+          error_type: 'INVALID_DATE',
+          error_message: "Tanınmayan tarih biçimi: '3/4/26'.",
+        },
+      ],
+    });
+
+    const result = await service.validateRow(row, TENANT_ID);
+
+    const dateErrors = result.errors.filter((e) => e.field === 'invoice_date');
+    expect(dateErrors).toHaveLength(1);
+  });
+
+  // Contrast case: a genuinely absent invoice_date must still get the
+  // generic message — otherwise the suppression guard above could be
+  // satisfied by a service that dropped the generic check altogether.
+  it('DOES emit the generic "Fatura tarihi zorunludur" message when invoice_date is genuinely absent (no parseErrors entry)', async () => {
+    const row = buildRow({
+      dto: { ...buildRow().dto, invoiceDate: undefined },
+      parseErrors: undefined,
+    });
+
+    const result = await service.validateRow(row, TENANT_ID);
+
+    const dateErrors = result.errors.filter((e) => e.field === 'invoice_date');
+    expect(dateErrors).toEqual([
+      {
+        rowNumber: row.originalRowNumber,
+        field: 'invoice_date',
+        severity: 'ERROR',
+        message: 'Fatura tarihi zorunludur',
+        originalRowData: row.originalRowData,
+      },
+    ]);
+  });
+
+  // `quantity` is the field the code's own guard comment calls out: without
+  // `!parseErrorFields.has('quantity')`, `undefined` would ALSO satisfy the
+  // generic "zorunlu" presence check below, double-reporting the same cell.
+  it('a quantity parseErrors entry suppresses the generic "Miktar pozitif bir sayı olmalıdır" message', async () => {
+    const row = buildRow({
+      dto: { ...buildRow().dto, quantity: undefined },
+      parseErrors: [
+        {
+          field: 'quantity',
+          error_type: 'INVALID_AMOUNT',
+          error_message: "Tanınmayan sayı biçimi: 'çöp'.",
+        },
+      ],
+    });
+
+    const result = await service.validateRow(row, TENANT_ID);
+
+    const quantityErrors = result.errors.filter((e) => e.field === 'quantity');
+    expect(quantityErrors).toEqual([
+      {
+        rowNumber: row.originalRowNumber,
+        field: 'quantity',
+        severity: 'ERROR',
+        message: "Tanınmayan sayı biçimi: 'çöp'.",
+        originalRowData: row.originalRowData,
+      },
+    ]);
+  });
+
+  it('a discount_type parseErrors entry suppresses the generic "İndirim tipi zorunludur" message', async () => {
+    const row = buildRow({
+      dto: { ...buildRow().dto, discountType: undefined },
+      parseErrors: [
+        {
+          field: 'discount_type',
+          error_type: 'INVALID_ENUM',
+          error_message: "Geçersiz indirim tipi: 'XYZ'.",
+        },
+      ],
+    });
+
+    const result = await service.validateRow(row, TENANT_ID);
+
+    const discountTypeErrors = result.errors.filter(
+      (e) => e.field === 'discount_type',
+    );
+    expect(discountTypeErrors).toEqual([
+      {
+        rowNumber: row.originalRowNumber,
+        field: 'discount_type',
+        severity: 'ERROR',
+        message: "Geçersiz indirim tipi: 'XYZ'.",
+        originalRowData: row.originalRowData,
+      },
+    ]);
+  });
+
+  // Two-row fixture — item 3 of the task body ("teslimin kendisi"): one
+  // sound row, one broken row, each reported with its own correct
+  // rowNumber; validateBatch does not stop or reject anything.
+  it('end-to-end (validateBatch): a sound row and a broken row are BOTH reported, each with its own correct rowNumber', async () => {
+    const soundRow = buildRow({ originalRowNumber: 2 });
+    const brokenRow = buildRow({
+      originalRowNumber: 3,
+      dto: { ...buildRow().dto, invoiceDate: undefined },
+      parseErrors: [
+        {
+          field: 'invoice_date',
+          error_type: 'INVALID_DATE',
+          error_message: "Tanınmayan tarih biçimi: '3/4/26'.",
+        },
+      ],
+    });
+
+    const results = await service.validateBatch(
+      [soundRow, brokenRow],
+      TENANT_ID,
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results[0].rowNumber).toBe(2);
+    expect(results[0].isValid).toBe(true);
+    expect(results[1].rowNumber).toBe(3);
+    expect(results[1].isValid).toBe(false);
+    expect(
+      results[1].errors.find((e) => e.field === 'invoice_date')?.rowNumber,
+    ).toBe(3);
   });
 });

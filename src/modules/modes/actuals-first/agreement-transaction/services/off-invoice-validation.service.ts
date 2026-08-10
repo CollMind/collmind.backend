@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { AgreementService } from '../../agreement/agreement.service';
 import { AgreementStatus } from '../../../../../database/entities/agreement.entity';
 import { ParsedOffInvoiceRow } from './off-invoice-file-parser.service';
@@ -34,6 +34,29 @@ export class OffInvoiceValidationService {
   ): Promise<ValidationResult> {
     const errors: ValidationError[] = [];
     const warnings: ValidationError[] = [];
+
+    // T-126: a field that failed to PARSE (present, but unreadable — §2.5)
+    // is reported here, in the SAME row-level channel every check below
+    // already uses — `OffInvoiceFileParserService.getDateValue`/
+    // `getNumberValue`/`getFiscalPeriod` collect these instead of throwing,
+    // so a single bad cell fails its OWN row instead of the whole upload
+    // (measured regression this closes: previously one unreadable cell threw
+    // out of `mapToTransactionDtos`'s `.map()` into `parseExcel`/`parseCSV`'s
+    // file-level `catch`, rejecting every other row in the file too).
+    // Pushed BEFORE the early-return checks below so a parse error survives
+    // every one of them — the row is invalid either way.
+    const parseErrorFields = new Set(
+      (row.parseErrors ?? []).map((e) => e.field),
+    );
+    for (const parseError of row.parseErrors ?? []) {
+      errors.push({
+        rowNumber: row.originalRowNumber,
+        field: parseError.field,
+        severity: 'ERROR',
+        message: parseError.error_message,
+        originalRowData: row.originalRowData,
+      });
+    }
 
     // 1. Agreement ID kontrolü
     if (!row.dto.agreementId || row.dto.agreementId.trim() === '') {
@@ -151,13 +174,18 @@ export class OffInvoiceValidationService {
 
     // 5. Invoice Date kontrolü
     if (!row.dto.invoiceDate) {
-      errors.push({
-        rowNumber: row.originalRowNumber,
-        field: 'invoice_date',
-        severity: 'ERROR',
-        message: 'Fatura tarihi zorunludur',
-        originalRowData: row.originalRowData,
-      });
+      // T-126: a present-but-unreadable cell already produced a SPECIFIC
+      // `invoice_date` error above (parseErrorFields); do not also claim it
+      // was never given — those are two different failures (§2.5).
+      if (!parseErrorFields.has('invoice_date')) {
+        errors.push({
+          rowNumber: row.originalRowNumber,
+          field: 'invoice_date',
+          severity: 'ERROR',
+          message: 'Fatura tarihi zorunludur',
+          originalRowData: row.originalRowData,
+        });
+      }
     } else {
       const invoiceDate = new Date(row.dto.invoiceDate);
       const today = new Date();
@@ -223,6 +251,13 @@ export class OffInvoiceValidationService {
           }
         }
       }
+    } else if (parseErrorFields.has('fiscal_period')) {
+      // T-126: the cell WAS given but could not be parsed — already reported
+      // above as a row-level ERROR with the specific reason. Do not ALSO
+      // claim it was "not specified" (that warning is for the genuinely
+      // absent case only) and do not fall through to
+      // `agreement-transaction.service.ts`'s `agreement.periodMonth`/
+      // `invoiceDate` fallback chain — this row is invalid, full stop.
     } else {
       // Fiscal period zorunlu değil ama uyarı verilebilir
       warnings.push({
@@ -235,7 +270,12 @@ export class OffInvoiceValidationService {
     }
 
     // 7. Amount kontrolü
-    if (!row.dto.amount || row.dto.amount <= 0) {
+    if (parseErrorFields.has('amount')) {
+      // T-126: already reported above with the specific parse failure; an
+      // unparseable amount has nothing to compare against the cap either, so
+      // the cap-check branch below is skipped along with the generic
+      // "zorunludur/pozitif" message.
+    } else if (!row.dto.amount || row.dto.amount <= 0) {
       errors.push({
         rowNumber: row.originalRowNumber,
         field: 'amount',

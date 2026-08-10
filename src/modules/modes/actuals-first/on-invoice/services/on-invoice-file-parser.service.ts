@@ -16,16 +16,49 @@ import {
   hasCellValue,
 } from '../../../../../common/row-parsing/pick-cell';
 import { normalizeBlankCells } from '../../../../../common/row-parsing/normalize-blank-cells';
+import { FieldParseError } from '../../../../../common/row-parsing/field-parse-error';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
 import { CreateOnInvoiceEntryDto } from '../dto/create-on-invoice-entry.dto';
 import { OnInvoiceDiscountType } from '../../../../../database/entities/on-invoice-entry.entity';
 
+/**
+ * T-126: `invoiceDate`/`quantity`/`listPrice`/`actualPrice`/`discount`/
+ * `discountType` are required on `CreateOnInvoiceEntryDto` (the API-facing
+ * shape), but AT PARSE TIME a cell may be present-and-unreadable — a state
+ * that must not be invented as some other value (§2.5). `fiscalPeriod`
+ * deliberately stays `string` (not loosened) — see the doc on
+ * `getFiscalPeriod` below for why that one field keeps throwing instead of
+ * joining this row-level channel.
+ */
+export type ParsedOnInvoiceEntryDto = Omit<
+  CreateOnInvoiceEntryDto,
+  | 'invoiceDate'
+  | 'quantity'
+  | 'listPrice'
+  | 'actualPrice'
+  | 'discount'
+  | 'discountType'
+> & {
+  invoiceDate: string | undefined;
+  quantity: number | undefined;
+  listPrice: number | undefined;
+  actualPrice: number | undefined;
+  discount: number | undefined;
+  discountType: OnInvoiceDiscountType | undefined;
+};
+
 export interface ParsedOnInvoiceRow {
-  dto: CreateOnInvoiceEntryDto;
+  dto: ParsedOnInvoiceEntryDto;
   originalRowNumber: number;
   originalRowData?: Record<string, any>;
+  /** Non-empty iff at least one required field on this row failed to PARSE
+   *  (present, but unreadable — §2.5). Folded into
+   *  `OnInvoiceValidationService.validateRow`'s row-level `ValidationError`
+   *  channel by that service, not thrown here (T-126) — a single bad cell
+   *  must fail its OWN row, not the whole upload. */
+  parseErrors?: FieldParseError[];
 }
 
 @Injectable()
@@ -203,6 +236,16 @@ export class OnInvoiceFileParserService {
         );
       })
       .map((row) => {
+        // T-126: field-level parse failures (an unreadable date, number or
+        // enum cell) are collected here, in field-declaration order, rather
+        // than thrown — a thrown exception from any of the getters below
+        // would abort the WHOLE FILE at the first bad cell (measured, T-123:
+        // this importer had no row-level channel yet and every one of these
+        // getters threw straight into `parseExcel`/`parseCSV`'s file-level
+        // `catch`). `fiscalPeriod` is the deliberate exception — see
+        // `getFiscalPeriod`'s own doc for why it still throws.
+        const parseErrors: FieldParseError[] = [];
+
         const customerCode = this.getStringValue(
           pickCell(
             row,
@@ -223,6 +266,8 @@ export class OnInvoiceFileParserService {
             'INVOICE_DATE',
             'InvoiceDate',
           ),
+          'invoice_date',
+          parseErrors,
         );
         const fiscalPeriod = this.getFiscalPeriod(
           pickCell(
@@ -238,9 +283,13 @@ export class OnInvoiceFileParserService {
         );
         const quantity = this.getNumberValue(
           pickCell(row, 'quantity', 'Quantity', 'QUANTITY'),
+          'quantity',
+          parseErrors,
         );
         const listPrice = this.getNumberValue(
           pickCell(row, 'list_price', 'listPrice', 'LIST_PRICE', 'ListPrice'),
+          'list_price',
+          parseErrors,
         );
         const actualPrice = this.getNumberValue(
           pickCell(
@@ -250,9 +299,13 @@ export class OnInvoiceFileParserService {
             'ACTUAL_PRICE',
             'ActualPrice',
           ),
+          'actual_price',
+          parseErrors,
         );
         const discount = this.getNumberValue(
           pickCell(row, 'discount', 'Discount', 'DISCOUNT'),
+          'discount',
+          parseErrors,
         );
         const discountType = this.getDiscountType(
           pickCell(
@@ -262,9 +315,11 @@ export class OnInvoiceFileParserService {
             'DISCOUNT_TYPE',
             'DiscountType',
           ),
+          'discount_type',
+          parseErrors,
         );
 
-        const dto: CreateOnInvoiceEntryDto = {
+        const dto: ParsedOnInvoiceEntryDto = {
           customerCode: customerCode,
           invoiceNo: invoiceNo,
           invoiceDate: invoiceDate,
@@ -285,6 +340,7 @@ export class OnInvoiceFileParserService {
           dto,
           originalRowNumber: row._originalRowNumber,
           originalRowData: row,
+          parseErrors: parseErrors.length > 0 ? parseErrors : undefined,
         };
       });
   }
@@ -313,47 +369,70 @@ export class OnInvoiceFileParserService {
    * `Number(canonical)` is safe where `Number(numStr)` was not: the grammar admits
    * `-?\d+(\.\d+)?` only, so `Infinity` and `1e5` are refused before reaching it
    * (T-099).
+   *
+   * T-126: no longer throws — EMPTY and present-but-unreadable both return
+   * `undefined`, but only the latter appends to `errors`. EMPTY is a
+   * legitimate absence; `OnInvoiceValidationService.validateRow`'s existing
+   * per-field "zorunludur"/"pozitif olmalıdır" checks (they already treat
+   * `undefined` as failing, same as `null`) catch it with the SAME message a
+   * truly-empty cell always produced. Positivity/`<= 0` stays validateRow's
+   * job, not this parser's — matches the parsing/meaning split
+   * `numeric-text.ts` documents (T-105).
    */
-  private getNumberValue(value: any): number {
+  private getNumberValue(
+    value: any,
+    field: string,
+    errors: FieldParseError[],
+  ): number | undefined {
     const result = parseNumericText(value);
     if (!result.ok) {
-      throw new BadRequestException(
-        result.reason === 'EMPTY'
-          ? 'Number değeri zorunludur'
-          : describeNumericTextFailure(result),
-      );
+      if (result.reason !== 'EMPTY') {
+        errors.push({
+          field,
+          error_type: 'INVALID_AMOUNT',
+          error_message: describeNumericTextFailure(result),
+        });
+      }
+      return undefined;
     }
     return Number(result.canonical);
   }
 
   /**
-   * T-123: string branch now goes through `date-text.ts`'s katı gramer (ISO
+   * T-123: string branch goes through `date-text.ts`'s katı gramer (ISO
    * `YYYY-MM-DD` veya Türk `GG.AA.YYYY`, ürün sahibi kararı 2026-08-09,
    * T-121) instead of `new Date(str)` — closes bulgu 3 (US-order guess,
    * `"3.4.2026"` -> 4 Mart yerine 3 Nisan) here too; bulgu 1 (TZ slip) was
    * never present at this call site (measured, T-123: local getters, not
    * `toISOString()`) but bulgu 3 was, unchanged, until this edit.
    *
-   * Satır-bazlı hata teslimi (T-123 madde 4): bu metod hâlâ FIRLATIR, tıpkı
-   * `getNumberValue`/`getDiscountType`/`getFiscalPeriod` gibi — bilinçli, bu
-   * dosyanın var olan tasarımı: `mapToEntryDtos`'un hiçbir alanı için satır
-   * bazlı bir hata biriktirme kanalı yok (`customer/file-parser.service.ts`
-   * `FieldParseError`/`parseErrors`'ın burada karşılığı yok, ölçüldü). Bir
-   * satırdaki tek bozuk tarih hücresi bu throw ile `parseExcel`/`parseCSV`'nin
-   * dış `catch`'ine çıkar ve TÜM dosyayı reddeder — bu, T-123'ün kapsamı
-   * DEĞİL (yeni bir satır-kanalı mimarisi kurmak ayrı bir task gerektirir);
-   * burada yalnız var olan dosya-bazlı ret deseni belgeleniyor.
+   * T-126: satır-bazlı hata teslimi artık VAR — bu metod artık FIRLATMIYOR,
+   * `errors`'a yazıyor (`OnInvoiceValidationService.validateRow`'un okuduğu
+   * `parseErrors` kanalı; bu importer'ın kendisi bu turdan önce böyle bir
+   * kanala sahip DEĞİLDİ — `getDiscountType`/`getFiscalPeriod` de aynı
+   * şekilde atıyordu, ölçüldü). EMPTY sessizce `undefined` döner (meşru
+   * yokluk, `validateRow`'un "Fatura tarihi zorunludur" kontrolü zaten
+   * yakalıyor); present-but-unreadable `errors`'a spesifik mesajla yazılır.
    */
-  private getDateValue(value: any): string {
+  private getDateValue(
+    value: any,
+    field: string,
+    errors: FieldParseError[],
+  ): string | undefined {
     if (value === null || value === undefined || value === '') {
-      throw new BadRequestException('Date değeri zorunludur');
+      return undefined;
     }
 
     // Excel serial date kontrolü (T-107 adım 1: paylaşılan, TZ-bağımsız yardımcı)
     if (typeof value === 'number') {
       const result = excelSerialToIsoDate(value);
       if (!result.ok) {
-        throw new BadRequestException(describeExcelSerialDateFailure(result));
+        errors.push({
+          field,
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure(result),
+        });
+        return undefined;
       }
       return result.isoDate;
     }
@@ -363,7 +442,12 @@ export class OnInvoiceFileParserService {
     // metin) reddedilir; hiçbir zaman `new Date(str)` ile tahmin edilmez.
     const result = parseDateText(value);
     if (!result.ok) {
-      throw new BadRequestException(describeDateTextFailure(result));
+      errors.push({
+        field,
+        error_type: 'INVALID_DATE',
+        error_message: describeDateTextFailure(result),
+      });
+      return undefined;
     }
     return result.isoDate;
   }
@@ -377,6 +461,25 @@ export class OnInvoiceFileParserService {
    * karıştırmak §7'nin "aynı yeteneği iki kez yazma" kuralının bir başka
    * yönü olurdu — bu yüzden dönüşüm burada, `excelSerialToIsoDate`'in
    * üstündeki `.slice(0, 7)` ile AYNI, hâlihazırda var olan desenle yapılır.
+   *
+   * T-126 KARARI (ölçüldü, satır-bazlı kanala TAŞINMADI — `getDateValue`/
+   * `getNumberValue`/`getDiscountType`'ın aksine): bu metod hâlâ FIRLATIR.
+   * Sebep, off-invoice'un tersine bu alanın burada gerçekten OPSİYONEL
+   * OLMAMASI değil — `on-invoice.service.ts`'in `uploadAndValidateFile`/
+   * `uploadFile`'ı `parsedRows[0]?.dto.fiscalPeriod`'u satır-bazlı validasyon
+   * HİÇ ÇALIŞMADAN, batch'i YARATMAK için okuyor (`batch.fiscalPeriod`
+   * NOT NULL kolonu ve `batchCode`'un kendisi buradan üretiliyor,
+   * `on-invoice.service.ts:82-87`). Bu, off-invoice'daki 3 seviyeli düşüş
+   * zincirinin (agreement.periodMonth / invoiceDate'ten türetilen dönem)
+   * KARŞILIĞI YOK ("o serviste düşüş zinciri yok" — doğru asimetri, ama
+   * gerekçesi bu). Bu metodu satır-bazlı yapmak 2..n. satırları korurdu, ama
+   * satır 1'in fiscal_period'u bozuksa hem batch zaten yaratılamıyor (aynı
+   * sonuç: dosya reddedilir) HEM DE mesaj daha az spesifik hale gelirdi
+   * (`"Fiscal period belirtilmedi."` — "verilmedi" değil "okunamadı" olduğu
+   * hâlde). Kazanç yok, kayıp var — bu yüzden değiştirilmedi. Batch'in tek
+   * bir satırın fiscal period'una ÇAPALANMASI (hangi satırın "doğru" period
+   * olduğuna dair bir uzlaşma/karşılaştırma kontrolü yok) ayrı, daha büyük
+   * bir tasarım sorusu — bu task'ın kapsamı değil.
    */
   private getFiscalPeriod(value: any): string {
     if (value === null || value === undefined || value === '') {
@@ -418,9 +521,20 @@ export class OnInvoiceFileParserService {
     );
   }
 
-  private getDiscountType(value: any): OnInvoiceDiscountType {
+  /**
+   * T-126: no longer throws — `errors` gets the specific reason, `undefined`
+   * is returned (EMPTY and "not one of the known codes" both — there is no
+   * partial-match state for an enum the way there is for a date or a
+   * number, so both collapse to the same row-level error family). Mirrors
+   * `getDateValue`/`getNumberValue`'s split above.
+   */
+  private getDiscountType(
+    value: any,
+    field: string,
+    errors: FieldParseError[],
+  ): OnInvoiceDiscountType | undefined {
     if (value === null || value === undefined || value === '') {
-      throw new BadRequestException('Discount type değeri zorunludur');
+      return undefined;
     }
 
     const str = String(value).trim().toUpperCase();
@@ -449,9 +563,12 @@ export class OnInvoiceFileParserService {
       return OnInvoiceDiscountType.PROMO_DISCOUNT;
     }
 
-    throw new BadRequestException(
-      `Geçersiz discount type: ${value}. Geçerli değerler: CPP_ON, LTA_ON, PROMO_DISCOUNT`,
-    );
+    errors.push({
+      field,
+      error_type: 'INVALID_ENUM',
+      error_message: `Geçersiz indirim tipi: '${value}'. Geçerli değerler: CPP_ON, LTA_ON, PROMO_DISCOUNT`,
+    });
+    return undefined;
   }
 
   /**

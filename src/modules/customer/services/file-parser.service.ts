@@ -13,6 +13,7 @@ import {
 } from '../../../common/date/date-text';
 import { pickCell, hasCellValue } from '../../../common/row-parsing/pick-cell';
 import { normalizeBlankCells } from '../../../common/row-parsing/normalize-blank-cells';
+import { FieldParseError } from '../../../common/row-parsing/field-parse-error';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -24,14 +25,12 @@ import {
 } from '../../../database/entities/customer.entity';
 
 /**
- * T-121 review (a): a single field on a single row that could not be turned
- * into a value (an unparseable date or number cell) is a ROW-LEVEL error,
- * not a file-level one (§2.5 — present-but-unreadable must not be silently
- * dropped, and must not take the whole file down with it either). This is
- * the shape that carries ONE such failure from `getOptionalDate` /
- * `getOptionalNumber` up to `CustomerService.importFromFile`'s existing
- * per-row error channel (`{ row, code, error_type, error_message,
- * original_row_data }`, see `customer.service.ts`).
+ * T-126: `FieldParseError` moved to
+ * `common/row-parsing/field-parse-error.ts` — `off-invoice`/`on-invoice`
+ * need the identical shape and this was about to become a second/third
+ * copy (§7). Re-exported here so this module's own callers
+ * (`customer.service.ts`'s `import { FieldParseError } from
+ * './services/file-parser.service'`) do not need an import-path change.
  *
  * `error_type` reuses the vocabulary already documented on the `POST
  * /customers/import` Swagger response (`customer.controller.ts`) —
@@ -41,11 +40,7 @@ import {
  * third, undocumented error type for them would be an unrequested API
  * surface expansion — §2.4).
  */
-export interface FieldParseError {
-  field: string;
-  error_type: string;
-  error_message: string;
-}
+export type { FieldParseError };
 
 export interface ParsedCustomerRow {
   dto: CreateCustomerDto;

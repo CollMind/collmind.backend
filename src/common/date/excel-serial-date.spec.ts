@@ -167,7 +167,7 @@ describe('excelSerialToIsoDate (T-107 adım 1)', () => {
   // each returns before reaching `EXCEL_EPOCH_UTC_MS`), so they cannot be
   // timezone-sensitive by construction — no subprocess needed. Exercised
   // in-process, directly against the real module.
-  describe('three refusal classes (§2.5 — no silent guess), timezone-independent by construction', () => {
+  describe('refusal classes (§2.5 — no silent guess), timezone-independent by construction', () => {
     it.each([NaN, Infinity, -Infinity])(
       'refuses non-finite input %p as NOT_FINITE, echoing the exact input',
       (input) => {
@@ -217,6 +217,40 @@ describe('excelSerialToIsoDate (T-107 adım 1)', () => {
         isoDate: '1900-03-01',
       });
     });
+
+    /**
+     * T-126: fourth refusal class. MEASURED before the fix (module doc,
+     * case 4): the computed millisecond offset for this input (`8.64e18`)
+     * is far past `Date`'s own representable range (`±8.64e15`), and the
+     * pre-fix code called `new Date(ms).toISOString()` directly — which
+     * THREW a raw, uncaught `RangeError: Invalid time value`, not a
+     * `BadRequestException` like every other refusal in this file. The
+     * assertion below is the crash guard itself: calling this function must
+     * not throw for this input — if the `Number.isNaN(date.getTime())`
+     * check the fix added were ever removed, this test would not go red
+     * with a failed `toEqual`, it would go red with an UNCAUGHT
+     * `RangeError`, which is exactly the distinction §2.7's "mutasyon
+     * kırmızısı testin kırılmasından da hiç koşmamasından da gelebilir"
+     * warns about — both look red, only one is this test doing its job.
+     */
+    it('refuses a value too large to be a representable Date as OUT_OF_RANGE, without throwing RangeError', () => {
+      expect(() => excelSerialToIsoDate(99999999999)).not.toThrow();
+      expect(excelSerialToIsoDate(99999999999)).toEqual({
+        ok: false,
+        reason: 'OUT_OF_RANGE',
+        input: 99999999999,
+      });
+    });
+
+    it('a value just past the safe boundary is also refused as OUT_OF_RANGE, not silently clamped', () => {
+      // `EXCEL_EPOCH_UTC_MS + value * MS_PER_DAY` must exceed `Date`'s max
+      // representable instant (`±8.64e15` ms) for this to refuse — a value
+      // merely "large" is not enough; it has to actually overflow `Date`.
+      expect(excelSerialToIsoDate(1e11).ok).toBe(false);
+      expect((excelSerialToIsoDate(1e11) as { reason: string }).reason).toBe(
+        'OUT_OF_RANGE',
+      );
+    });
   });
 
   describe('describeExcelSerialDateFailure — Turkish, user-safe messages', () => {
@@ -248,6 +282,16 @@ describe('excelSerialToIsoDate (T-107 adım 1)', () => {
       );
       expect(message).toContain('1900');
       expect(message).toContain('29 Şubat 1900');
+    });
+
+    it('OUT_OF_RANGE message names the value, not a guessed or clamped date', () => {
+      const result = excelSerialToIsoDate(99999999999);
+      expect(result.ok).toBe(false);
+      const message = describeExcelSerialDateFailure(
+        result as ExcelSerialDateErr,
+      );
+      expect(message).toContain('Geçersiz tarih değeri');
+      expect(message).not.toMatch(/\d{4}-\d{2}-\d{2}/); // no invented ISO date
     });
   });
 

@@ -25,9 +25,7 @@ import {
   isSplitDimensionGuardError,
 } from '../../../shared/budget/budget.service';
 import { LedgerService } from '../ledger/ledger.service';
-import { CreateOnInvoiceEntryDto } from './dto';
 import { ValidationResponseDto, CompletionResponseDto } from './dto';
-import { randomUUID } from 'crypto';
 import { LedgerSourceType } from '../ledger/dto';
 import { SpendType } from '../../../../database/entities/ledger-entry.entity';
 import { BudgetSpendType } from '../../../../database/entities/budget-envelope.entity';
@@ -328,7 +326,14 @@ export class OnInvoiceService {
 
         if (!result || !result.isValid) continue;
 
-        const invoiceDate = new Date(row.dto.invoiceDate);
+        // T-126: `row.dto.invoiceDate` is `string | undefined` at the type
+        // level (a cell may fail to PARSE — §2.5), but this row already
+        // passed `validateRow` (`result.isValid`, checked above), and
+        // `validateRow`'s own "Fatura tarihi zorunludur" / parse-error check
+        // would have made `isValid` false had `invoiceDate` been missing or
+        // unreadable — so it is guaranteed present here, same guarantee
+        // `result.customerId!`/`result.skuId!` below already rely on.
+        const invoiceDate = new Date(row.dto.invoiceDate!);
         const idempotencyKey = `${row.dto.customerCode}|${row.dto.invoiceNo}|${invoiceDate.toISOString().split('T')[0]}|${row.dto.skuCode}|${row.originalRowNumber}`;
 
         entries.push({

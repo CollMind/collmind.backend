@@ -16,17 +16,40 @@ import {
   hasCellValue,
 } from '../../../../../common/row-parsing/pick-cell';
 import { normalizeBlankCells } from '../../../../../common/row-parsing/normalize-blank-cells';
+import { FieldParseError } from '../../../../../common/row-parsing/field-parse-error';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
 import { CreateAgreementTransactionDto } from '../dto/create-agreement-transaction.dto';
 
+/**
+ * T-126: `amount`/`invoiceDate` are required on `CreateAgreementTransactionDto`
+ * (the API-facing shape), but AT PARSE TIME a cell may be present-and-unreadable
+ * — a state that must not be invented as some other value (§2.5). Mirrors
+ * `OnInvoiceFileParserService`'s `ParsedOnInvoiceEntryDto` (same task, same
+ * split); `fiscalPeriod` here is carried as its own sibling field on
+ * `ParsedOffInvoiceRow` (below), not on this DTO — unchanged from before.
+ */
+export type ParsedOffInvoiceTransactionDto = Omit<
+  CreateAgreementTransactionDto,
+  'amount' | 'invoiceDate'
+> & {
+  amount: number | undefined;
+  invoiceDate: string | undefined;
+};
+
 export interface ParsedOffInvoiceRow {
-  dto: CreateAgreementTransactionDto;
+  dto: ParsedOffInvoiceTransactionDto;
   originalRowNumber: number;
   originalRowData?: Record<string, any>;
   fiscalPeriod?: string; // YYYY-MM formatında
   description?: string;
+  /** Non-empty iff at least one field on this row failed to PARSE (present,
+   *  but unreadable — §2.5). Folded into
+   *  `OffInvoiceValidationService.validateRow`'s row-level `ValidationError`
+   *  channel by that service, not thrown here (T-126) — a single bad cell
+   *  must fail its OWN row, not the whole upload. */
+  parseErrors?: FieldParseError[];
 }
 
 @Injectable()
@@ -206,7 +229,15 @@ export class OffInvoiceFileParserService {
         );
       })
       .map((row) => {
-        const dto: CreateAgreementTransactionDto = {
+        // T-126: field-level parse failures (an unreadable date, number or
+        // fiscal-period cell) are collected here, in field-declaration
+        // order, rather than thrown — a thrown exception from any of the
+        // getters below would abort the WHOLE FILE at the first bad cell
+        // (measured, T-123: this is exactly what used to happen; see the
+        // getters' own docs).
+        const parseErrors: FieldParseError[] = [];
+
+        const dto: ParsedOffInvoiceTransactionDto = {
           agreementId: this.getStringValue(
             pickCell(
               row,
@@ -227,9 +258,13 @@ export class OffInvoiceFileParserService {
               'Invoice_Date',
               'InvoiceDate',
             ),
+            'invoice_date',
+            parseErrors,
           ),
           amount: this.getNumberValue(
             pickCell(row, 'amount', 'Amount', 'AMOUNT'),
+            'amount',
+            parseErrors,
           ),
           currency:
             this.getOptionalString(
@@ -257,6 +292,8 @@ export class OffInvoiceFileParserService {
             'Fiscal_Period',
             'FiscalPeriod',
           ),
+          'fiscal_period',
+          parseErrors,
         );
 
         return {
@@ -265,6 +302,7 @@ export class OffInvoiceFileParserService {
           originalRowData: row,
           fiscalPeriod,
           description: dto.notes,
+          parseErrors: parseErrors.length > 0 ? parseErrors : undefined,
         };
       });
   }
@@ -295,46 +333,72 @@ export class OffInvoiceFileParserService {
    *
    * `Number(canonical)` is safe: the grammar admits `-?\d+(\.\d+)?` only, so
    * `Infinity` is refused before reaching it (T-099).
+   *
+   * T-126: no longer throws, and no longer enforces positivity — EMPTY and
+   * present-but-unreadable both return `undefined`, but only the latter
+   * appends to `errors`. EMPTY is a legitimate absence;
+   * `OffInvoiceValidationService.validateRow`'s existing "Tutar pozitif bir
+   * sayı olmalıdır" check (§7.1's `amount <= 0` — [[T-124]]'s scope, not
+   * this one) already treats `undefined`/`<= 0` as failing. Positivity stays
+   * validateRow's job, not this parser's — matches the parsing/meaning split
+   * `numeric-text.ts` documents (T-105) and the identical move
+   * `OnInvoiceFileParserService.getNumberValue` already went through.
    */
-  private getNumberValue(value: any): number {
+  private getNumberValue(
+    value: any,
+    field: string,
+    errors: FieldParseError[],
+  ): number | undefined {
     const result = parseNumericText(value);
     if (!result.ok) {
-      throw new BadRequestException(
-        result.reason === 'EMPTY'
-          ? 'Amount değeri zorunludur'
-          : describeNumericTextFailure(result),
-      );
+      if (result.reason !== 'EMPTY') {
+        errors.push({
+          field,
+          error_type: 'INVALID_AMOUNT',
+          error_message: describeNumericTextFailure(result),
+        });
+      }
+      return undefined;
     }
-    const num = Number(result.canonical);
-    if (num <= 0) {
-      throw new BadRequestException(
-        `Amount değeri pozitif olmalıdır: ${value}`,
-      );
-    }
-    return num;
+    return Number(result.canonical);
   }
 
   /**
-   * T-123: string branch now goes through `date-text.ts`'s katı gramer (ISO
+   * T-123: string branch goes through `date-text.ts`'s katı gramer (ISO
    * `YYYY-MM-DD` veya Türk `GG.AA.YYYY`, ürün sahibi kararı 2026-08-09,
    * T-121) instead of `new Date(str)` — bkz. `OnInvoiceFileParserService`'in
    * aynı isimli metodundaki doküman, tıpatıp aynı gerekçe/bulgu.
    *
-   * Satır-bazlı hata teslimi (T-123 madde 4): bu metod da FIRLATIR ve bu
-   * dosyada da satır bazlı bir hata biriktirme kanalı yok (ölçüldü — bkz.
-   * `getNumberValue` de aynı şekilde atıyor). Bilinçli, var olan dosya-bazlı
-   * ret tasarımı; T-123'ün kapsamı değil.
+   * T-126: this method no longer THROWS. `invoice_date` used to reject the
+   * WHOLE FILE on a single unreadable cell (measured, T-123: this dosyada
+   * satır-bazlı bir hata kanalı yoktu). Now it takes the same `errors:
+   * FieldParseError[]` sink `getNumberValue` and `getFiscalPeriod` do —
+   * genuinely absent (`null`/`undefined`/`''`) returns `undefined` with NO
+   * error pushed (a legitimate absence, caught by
+   * `OffInvoiceValidationService.validateRow`'s existing "Fatura tarihi
+   * zorunludur" check); present-but-unreadable pushes a specific error and
+   * also returns `undefined` — the two states are NEVER collapsed into one
+   * (§2.5). Mirrors `OnInvoiceFileParserService.getDateValue` exactly.
    */
-  private getDateValue(value: any): string {
+  private getDateValue(
+    value: any,
+    field: string,
+    errors: FieldParseError[],
+  ): string | undefined {
     if (value === null || value === undefined || value === '') {
-      throw new BadRequestException('Invoice date değeri zorunludur');
+      return undefined;
     }
 
     // Excel serial date kontrolü (T-107 adım 1: paylaşılan, TZ-bağımsız yardımcı)
     if (typeof value === 'number') {
       const result = excelSerialToIsoDate(value);
       if (!result.ok) {
-        throw new BadRequestException(describeExcelSerialDateFailure(result));
+        errors.push({
+          field,
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure(result),
+        });
+        return undefined;
       }
       return result.isoDate;
     }
@@ -344,7 +408,12 @@ export class OffInvoiceFileParserService {
     // metin) reddedilir; hiçbir zaman `new Date(str)` ile tahmin edilmez.
     const result = parseDateText(value);
     if (!result.ok) {
-      throw new BadRequestException(describeDateTextFailure(result));
+      errors.push({
+        field,
+        error_type: 'INVALID_DATE',
+        error_message: describeDateTextFailure(result),
+      });
+      return undefined;
     }
     return result.isoDate;
   }
@@ -365,15 +434,48 @@ export class OffInvoiceFileParserService {
    * throw`), bu yüzden orada alan zorunlu. §2.4 gereği bu asimetri
    * DEĞİŞTİRİLMEDİ — yalnız burada ölçülüp belgelendi.
    *
-   * Ama BU asimetri, aşağıdaki bug'ı meşrulaştırmıyordu: hücre MEVCUT ama
-   * ayrıştırılamıyorsa (`§2.5` — mevcut-ama-okunamaz, YOK ile aynı şey
-   * değildir) eskiden burası sessizce `undefined` dönüyordu — yani "girdi
-   * yok" ile "girdi var ama çöp" ayrımı kayboluyordu ve satır, agreement'ın
-   * periodMonth'una ya da invoiceDate'ten türetilen döneme SESSİZCE
-   * düşüyordu; kullanıcının yazdığı (muhtemelen yanlış yazılmış) değer
-   * hiç görünmeden atlanıyordu. T-123 madde 3: artık FIRLATIR.
+   * ⚠️ TARİHÇE (throw -> geri alma -> parseErrors, üç turda):
+   *
+   * 1) T-123 madde 3 önce buraya bir `BadRequestException` koydu (§2.5:
+   *    "mevcut ama okunamaz" ile "hiç verilmemiş" aynı şey değildir — doğru
+   *    bir kural): hücre MEVCUT ama ayrıştırılamıyorsa eskiden burası
+   *    sessizce `undefined` dönüyordu — "girdi yok" ile "girdi var ama çöp"
+   *    ayrımı kayboluyordu ve satır, agreement'ın periodMonth'una ya da
+   *    invoiceDate'ten türetilen döneme SESSİZCE düşüyordu.
+   *
+   * 2) O throw GERİ ALINDI (T-123, ürün sahibi kararı 2026-08-10). Ölçüldü ki
+   *    bu importer'da o katılığın gideceği bir yer YOK:
+   *
+   *        A1 fiscal_period = "çöp"  ->  THROW
+   *        A2 sağlam satır           ->  o da reddedildi (TÜM DOSYA)
+   *
+   *    Bu dosyada satır-bazlı bir hata kanalı henüz YOKTU — throw `.map()`'ten
+   *    `parseCSV`/`parseExcel`'in dış catch'ine çıkıp dosyayı satır numarasız
+   *    reddediyordu. Tek bozuk hücre 500 satırlık bir yüklemeyi düşürüyordu.
+   *    Katılık eklerken teslimi düzeltmemek, §2.5'i bir ucundan uygulayıp
+   *    diğerini açık bırakmaktır (T-121'in dersi). Geri alma o zaman koda
+   *    yazıldı: "GERİ GELECEK: satır-bazlı hata kanalı bu iki importer'a
+   *    taşındığında (T-126) bu throw geri konmalı."
+   *
+   * 3) T-126: kanal şimdi VAR (`FieldParseError`/`parseErrors`,
+   *    `getDateValue`/`getNumberValue` ile aynı desen). Throw GERİ KONMADI —
+   *    dönüş değeri hâlâ `undefined` (madde 1'deki asimetri hâlâ geçerli:
+   *    alan gerçekten opsiyonel, `agreement-transaction.service.ts`'in düşüş
+   *    zinciri hâlâ orada) — ama artık "hiç" değil: present-but-unreadable
+   *    durumu ARTIK bir `parseErrors` girdisi de üretiyor, kapatarak madde
+   *    2'nin kendi sessiz boşluğunu (o zaman `errors` diye bir şey yoktu, bu
+   *    durum ne throw ne error üretiyordu — saf sessizlik, gerçekten yok olan
+   *    hücreden farksız). ⚠️ SESSİZ VARSAYILAN İLE SESSİZ FALLBACK AYNI ŞEY
+   *    DEĞİLDİR: §2.5 bilgi UYDURMAYI yasaklıyor; buradaki düşüş zinciri
+   *    başka bir KAYNAK kullanıyor (`agreement.periodMonth`, sonra
+   *    `invoiceDate`'ten türetilen dönem) — sessiz, ama artık İZLENEBİLİR de
+   *    (parseErrors'ta bir iz bırakıyor) ve kaynaklı.
    */
-  private getFiscalPeriod(value: any): string | undefined {
+  private getFiscalPeriod(
+    value: any,
+    field: string,
+    errors: FieldParseError[],
+  ): string | undefined {
     if (value === null || value === undefined || value === '') return undefined;
 
     const str = String(value).trim();
@@ -393,7 +495,12 @@ export class OffInvoiceFileParserService {
     if (typeof value === 'number') {
       const result = excelSerialToIsoDate(value);
       if (!result.ok) {
-        throw new BadRequestException(describeExcelSerialDateFailure(result));
+        errors.push({
+          field,
+          error_type: 'INVALID_DATE',
+          error_message: describeExcelSerialDateFailure(result),
+        });
+        return undefined;
       }
       return result.isoDate.slice(0, 7);
     }
@@ -405,32 +512,13 @@ export class OffInvoiceFileParserService {
       return dateResult.isoDate.slice(0, 7);
     }
 
-    // ⚠️ BURADA BİLEREK FIRLATMIYORUZ — ve bu bir eksiklik değil, ölçülmüş bir
-    // takas. Geri alındı: T-123, ürün sahibi kararı 2026-08-10.
-    //
-    // T-123 önce buraya bir `BadRequestException` koydu (§2.5: "mevcut ama
-    // okunamaz" ile "hiç verilmemiş" aynı şey değildir — doğru bir kural).
-    // Ölçüldü ki bu importer'da o katılığın gideceği bir yer YOK:
-    //
-    //     A1 fiscal_period = "çöp"  ->  THROW
-    //     A2 sağlam satır           ->  o da reddedildi (TÜM DOSYA)
-    //
-    // `customer` importunda satır-bazlı bir hata kanalı var
-    // (`FieldParseError`/`parseErrors`, T-121); burada YOK — throw `.map()`'ten
-    // `parseCSV`/`parseExcel`'in dış catch'ine çıkıp dosyayı satır numarasız
-    // reddediyor. Yani tek bozuk hücre 500 satırlık bir yüklemeyi düşürüyordu.
-    //
-    // Katılık eklerken teslimi düzeltmemek, §2.5'i bir ucundan uygulayıp
-    // diğerini açık bırakmaktır (T-121'in dersi).
-    //
-    // ⚠️ SESSİZ VARSAYILAN İLE SESSİZ FALLBACK AYNI ŞEY DEĞİLDİR. §2.5 bilgi
-    // UYDURMAYI yasaklıyor; buradaki düşüş zinciri başka bir KAYNAK kullanıyor:
-    // `agreement-transaction.service.ts:109-119` sırayla `agreement.periodMonth`,
-    // sonra `invoiceDate`'ten türetilen dönem. Sessiz, ama kaynaklı.
-    //
-    // GERİ GELECEK: satır-bazlı hata kanalı bu iki importer'a taşındığında
-    // (T-126) bu throw geri konmalı — o zaman bozuk hücre satırı reddeder,
-    // dosyayı değil. İki task birbirini biliyor.
+    // Present-but-unreadable: yukarıdaki tarihçenin 3. maddesi — throw yok,
+    // ama artık sessiz de değil.
+    errors.push({
+      field,
+      error_type: 'INVALID_DATE',
+      error_message: describeDateTextFailure(dateResult),
+    });
     return undefined;
   }
 
