@@ -180,9 +180,20 @@ describe('OnInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1
    * `raw: true` live. Closes the reachability gap the file header used to
    * document. `pickCell` replaced this file's `row.a || row.b || row.c`
    * chains for `quantity`/`discount` (money/count fields — exactly the
-   * shape `pick-cell.ts`'s own docstring measures the regression on), so
-   * each is pinned with the real `0` NOT under the first alias at least
-   * once (§2.7 lesson 6).
+   * shape `pick-cell.ts`'s own docstring measures the regression on).
+   *
+   * MEASURED (T-107 adım 2 review, B4 — `pickCell` mutated back to an
+   * `a || b || c` chain): this test DOES go red under that mutation, but
+   * not for the reason its title implies. `quantity` is planted under the
+   * FIRST of three aliases (`quantity`, `Quantity`, `QUANTITY`) with the
+   * other two absent from the row — under `||`, `0 || undefined ||
+   * undefined` evaluates to `undefined` (the falsy `0` gets overridden by
+   * a LATER, merely-absent alias in the chain, not by a competing value).
+   * `discount` is planted under the LAST alias (`DISCOUNT`) with nothing
+   * after it, so its half of the assertion does NOT distinguish (see
+   * `pick-cell.spec.ts`'s file header for why a value at the chain's own
+   * tail always survives `||` too). The failure is real; it comes entirely
+   * from the `quantity` half.
    */
   describe('T-107 adım 2 — public surface (parseExcel), raw: true', () => {
     function buildXlsxFile(rows: unknown[][]): Express.Multer.File {
@@ -330,5 +341,136 @@ describe('OnInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1
       expect(rows).toHaveLength(1);
       expect(rows[0].dto.quantity).toBe(7250);
     });
+  });
+});
+
+/**
+ * T-107 adım 2 review (B1) — public surface (`parseCSV`), real CSV text.
+ * `csv-parser`'s blank-cell value is `''`, never XLSX's `null`/`undefined`
+ * sentinel — a `,,,,,,,,,` row (every aliased column resolves to `''`) used
+ * to survive the old `pickCell(...) !== undefined` blank-row filter
+ * (`'' !== undefined`) and hit `getDateValue`, which throws on `value ===
+ * ''`, taking the WHOLE FILE down. `hasCellValue` is the fix; this is its
+ * only public-surface (`parseCSV`) coverage for this importer — before this
+ * turn there was NONE (only `parseExcel` had a public-surface describe
+ * block, see the file header for why).
+ */
+describe('OnInvoiceFileParserService — parseCSV public surface (T-107 adım 2 review, B1)', () => {
+  let service: OnInvoiceFileParserService;
+
+  beforeEach(() => {
+    service = new OnInvoiceFileParserService();
+  });
+
+  function buildCsvFile(text: string): Express.Multer.File {
+    return {
+      originalname: 'on-invoice.csv',
+      mimetype: 'text/csv',
+      buffer: Buffer.from(text, 'utf-8'),
+      size: Buffer.byteLength(text, 'utf-8'),
+      fieldname: 'file',
+      encoding: '7bit',
+      destination: '',
+      filename: '',
+      path: '',
+      stream: null as unknown as Express.Multer.File['stream'],
+    };
+  }
+
+  const HEADER =
+    'customer_code,invoice_no,invoice_date,fiscal_period,sku_code,quantity,list_price,actual_price,discount,discount_type';
+  const GOOD_ROW =
+    'CUST-1,INV-1,2026-01-15,2026-01,SKU-1,100,185.00,162.80,2220.00,CPP_ON';
+  const BLANK_ROW = ',,,,,,,,,';
+
+  it('a `,,,` blank CSV row in the middle does not take the whole file down — the good rows around it still import', async () => {
+    const file = buildCsvFile(
+      `${HEADER}\n${GOOD_ROW}\n${BLANK_ROW}\n${GOOD_ROW}\n`,
+    );
+
+    const rows = await service.parseCSV(file);
+
+    // The blank row is filtered out; both good rows survive.
+    expect(rows).toHaveLength(2);
+    expect(rows[0].dto.customerCode).toBe('CUST-1');
+    expect(rows[1].dto.customerCode).toBe('CUST-1');
+  });
+
+  it('a lone `,,,` blank CSV row (no good rows) does not throw — it is filtered to an empty result, not a file-level rejection', async () => {
+    const file = buildCsvFile(`${HEADER}\n${BLANK_ROW}\n`);
+
+    const rows = await service.parseCSV(file);
+
+    expect(rows).toHaveLength(0);
+  });
+});
+
+/**
+ * T-107 adım 2 review (S2) — `originalRowData` must not leak XLSX's `null`
+ * blank-cell sentinel to a caller reading the per-row error payload; a
+ * blank cell should be an OMITTED/undefined key, never the literal `null`.
+ */
+describe('OnInvoiceFileParserService — originalRowData has no leaked null (T-107 adım 2 review, S2)', () => {
+  let service: OnInvoiceFileParserService;
+
+  beforeEach(() => {
+    service = new OnInvoiceFileParserService();
+  });
+
+  it('a blank cell surfaces in originalRowData as undefined/omitted, never the literal null', async () => {
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      [
+        'customer_code',
+        'invoice_no',
+        'invoice_date',
+        'fiscal_period',
+        'sku_code',
+        'quantity',
+        'list_price',
+        'actual_price',
+        'discount',
+        'discount_type',
+        'currency',
+      ],
+      [
+        'CUST-1',
+        'INV-1',
+        '2026-01-15',
+        '2026-01',
+        'SKU-1',
+        100,
+        185.0,
+        162.8,
+        2220.0,
+        'CPP_ON',
+        null, // currency: genuinely blank cell
+      ],
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+    const buffer = XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }) as Buffer;
+    const file: Express.Multer.File = {
+      originalname: 'on-invoice.xlsx',
+      mimetype:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer,
+      size: buffer.length,
+      fieldname: 'file',
+      encoding: '7bit',
+      destination: '',
+      filename: '',
+      path: '',
+      stream: null as unknown as Express.Multer.File['stream'],
+    };
+
+    const rows = await service.parseExcel(file);
+
+    expect(rows).toHaveLength(1);
+    const originalRowData = rows[0].originalRowData!;
+    expect(Object.values(originalRowData)).not.toContain(null);
+    expect(originalRowData.currency).toBeUndefined();
   });
 });

@@ -571,10 +571,19 @@ describe('parseExcel / parseCSV — public surface, real buffers (T-121 second-t
 
   /**
    * T-107 adım 2 — `raw: true` + `pickCell` through the PUBLIC surface
-   * (`parseExcel`). Every case here is pinned with the real value planted
-   * under a NON-first alias at least once (§2.7 lesson 6: a suite that only
-   * ever fills the first key cannot distinguish `pickCell` from an
-   * accidentally-correct `||` chain).
+   * (`parseExcel`).
+   *
+   * ⚠️ MEASURED (T-107 adım 2 review, B4 — `pickCell` mutated back to an
+   * `a || b || c` chain, this describe block re-run): only the two FIRST-
+   * alias-spelling cases (`creditLimit`, `isVip`) went RED. The two LAST-
+   * alias-spelling cases (`CREDIT_LIMIT`, `IS_VIP`) stayed GREEN — in a
+   * strict `||` chain, a falsy real value that is the chain's own LAST
+   * operand has nothing left to override it, so `||` and `pickCell` agree
+   * there regardless of position labels. See `pick-cell.spec.ts`'s file
+   * header for the same finding at the primitive's own level. The LAST-
+   * alias tests below are kept because they pin the exact shape
+   * `pick-cell.ts`'s docstring measures (a real `0`/`false` surviving a
+   * non-first header spelling) — they are not `||`-regression detectors.
    */
   describe('T-107 adım 2 — real 0 / real false do not vanish, under any alias position', () => {
     it('a real 0 creditLimit under the FIRST alias spelling (creditLimit) is NOT lost', async () => {
@@ -590,13 +599,14 @@ describe('parseExcel / parseCSV — public surface, real buffers (T-121 second-t
       expect(rows[0].parseErrors).toBeUndefined();
     });
 
-    // The exact regression measured in `pick-cell.ts`'s own docstring: under
-    // the pre-fix `row.creditLimit || row.credit_limit || row.CreditLimit ||
-    // row.CREDIT_LIMIT` chain, a real `0` typed under this LAST alias
-    // resolved correctly ONLY because it happened to be the chain's last
-    // operand — this pins that `pickCell` gets there for a structural
-    // reason (first-present-wins), not by the same accident.
-    it('a real 0 creditLimit under the LAST alias spelling (CREDIT_LIMIT) is NOT lost', async () => {
+    // Pins the exact shape measured in `pick-cell.ts`'s own docstring: a
+    // real `0` typed under this LAST alias. MEASURED (T-107 adım 2 review,
+    // B4): this does NOT distinguish `pickCell` from the pre-fix `||`
+    // chain — being the chain's own last operand, `row.creditLimit ||
+    // row.credit_limit || row.CreditLimit || row.CREDIT_LIMIT` resolves to
+    // the same `0` for the same reason `pickCell` does (nothing after it to
+    // override). See the describe-block header above for the mutation.
+    it('a real 0 creditLimit under the LAST alias spelling (CREDIT_LIMIT) is NOT lost (pins the shape; not a `||`-regression detector — see block header)', async () => {
       const file = buildXlsxFile([
         ['code', 'name', 'CREDIT_LIMIT'],
         ['CUST-1', 'Test Customer', 0],
@@ -625,7 +635,11 @@ describe('parseExcel / parseCSV — public surface, real buffers (T-121 second-t
     // acceptance case specifically: under `raw: true` the cell arrives as
     // the actual JS boolean `false` (not the string `"FALSE"` `raw: false`
     // produced), and must still survive through `pickCell` unchanged.
-    it('a real false isVip under the LAST alias spelling (IS_VIP) is NOT lost', async () => {
+    // MEASURED (T-107 adım 2 review, B4): like the `CREDIT_LIMIT` case
+    // above, this does NOT distinguish `pickCell` from `||` — `IS_VIP` is
+    // the chain's last operand. See the describe-block header for the
+    // mutation.
+    it('a real false isVip under the LAST alias spelling (IS_VIP) is NOT lost (pins the shape; not a `||`-regression detector — see block header)', async () => {
       const file = buildXlsxFile([
         ['code', 'name', 'IS_VIP'],
         ['CUST-1', 'Test Customer', false],
@@ -725,6 +739,62 @@ describe('parseExcel / parseCSV — public surface, real buffers (T-121 second-t
       expect(rows).toHaveLength(1);
       expect(rows[0].dto.contractStartDate).toBe('2026-01-15');
       expect(rows[0].parseErrors).toBeUndefined();
+    });
+  });
+
+  /**
+   * T-107 adım 2 review (B2) — `pickCell(...) ?? \`AUTO_\${n}\`` does not
+   * fall back on an explicit blank string (`??` only triggers on
+   * `null`/`undefined`). Under XLSX a blank `code` cell IS `null` (then
+   * normalized to `undefined`), so `??` fired and CSV/XLSX agreed by
+   * accident of one format's sentinel shape matching `??`'s trigger.
+   * `csv-parser` never produces `null` — its blank-cell value is `''` — so
+   * the SAME file (a blank `code` cell) produced `code: ''` via CSV and
+   * `code: 'AUTO_2'` via XLSX, silently dropping a row a CSV upload used to
+   * accept (measured, this turn — see `pick-cell.ts`). Both branches are
+   * asserted in the SAME test, on purpose: that is the shape that makes the
+   * (now-closed) CSV/XLSX divergence visible, rather than two tests that
+   * could each pass while still disagreeing with each other.
+   */
+  describe('T-107 adım 2 review (B2) — a blank code cell falls back to AUTO_n identically for CSV and XLSX', () => {
+    it('CSV and XLSX both assign AUTO_n to a blank code cell', async () => {
+      const csvFile = buildCsvFile('code,name,city\n,Acme,Ankara\n');
+      const xlsxFile = buildXlsxFile([
+        ['code', 'name', 'city'],
+        [null, 'Acme', 'Ankara'],
+      ]);
+
+      const csvRows = await service.parseCSV(csvFile);
+      const xlsxRows = await service.parseExcel(xlsxFile);
+
+      expect(csvRows).toHaveLength(1);
+      expect(xlsxRows).toHaveLength(1);
+      // Row index 0 -> _originalRowNumber 2 (header=1, first data row=2) for
+      // both branches, so both fall back to the SAME AUTO_n value.
+      expect(csvRows[0].dto.code).toBe('AUTO_2');
+      expect(xlsxRows[0].dto.code).toBe('AUTO_2');
+    });
+  });
+
+  /**
+   * T-107 adım 2 review (S2) — `originalRowData` must not leak XLSX's
+   * `null` blank-cell sentinel to a caller reading the per-row error
+   * payload; a blank cell should be an omitted/undefined key, never the
+   * literal `null`.
+   */
+  describe('T-107 adım 2 review (S2) — originalRowData has no leaked null', () => {
+    it('a blank cell surfaces in originalRowData as undefined/omitted, never the literal null', async () => {
+      const file = buildXlsxFile([
+        ['code', 'name', 'city'],
+        ['CUST-1', 'Test Customer', null], // city: genuinely blank cell
+      ]);
+
+      const rows = await service.parseExcel(file);
+
+      expect(rows).toHaveLength(1);
+      const originalRowData = rows[0].originalRowData!;
+      expect(Object.values(originalRowData)).not.toContain(null);
+      expect(originalRowData.city).toBeUndefined();
     });
   });
 });

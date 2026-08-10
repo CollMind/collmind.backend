@@ -34,10 +34,42 @@
  * `pickCell` asks one question per alias — is this key's value `null` or
  * `undefined`? — and returns the FIRST one that is neither. A real `false`, a
  * real `0`, and a real `''` (an explicit blank string, as opposed to a
- * genuinely absent cell) all qualify and are returned as-is; the field-level
- * getter each caller passes the result to (`getOptionalNumber`,
- * `getOptionalBoolean`, `getOptionalString`, ...) already treats `null` /
- * `undefined` as absent, so no second normalization step is needed here.
+ * genuinely absent cell) all qualify and are returned as-is.
+ *
+ * ⚠️ The claim that used to sit here — "the field-level getter each caller
+ * passes the result to already treats `null`/`undefined` as absent, so no
+ * second normalization step is needed" — was checked against three getters
+ * (`getOptionalNumber`, `getOptionalBoolean`, `getOptionalString`) and
+ * generalized to "each caller" without enumerating the REST of the call
+ * sites (T-107 adım 2 review, B3). Measured, the actual set of things a
+ * `pickCell` result flows into, and what each does with `''`:
+ *
+ *   - `getStringValue` (all three importers): returns `''` AS-IS — no
+ *     normalization. `file-parser.service.ts`'s `code` field fed this
+ *     straight from `pickCell(...) ?? \`AUTO_\${n}\`` — `??` does not
+ *     trigger on `''`, so a CSV's empty `code` cell (`csv-parser` fills
+ *     missing text with `''`, never `null`) produced `code: ''` instead of
+ *     the `AUTO_n` fallback an XLSX blank cell still got (`file-parser.
+ *     service.ts:276-279`, fixed alongside this comment).
+ *   - `getNumberValue` (`on-invoice-file-parser.service.ts:300`,
+ *     `off-invoice-file-parser.service.ts:280`): does NOT treat `''` as
+ *     absent — `parseNumericText('')` fails the grammar and THROWS.
+ *   - `getDateValue` (both invoice importers): explicitly throws on
+ *     `value === ''`.
+ *   - `getFiscalPeriod` (on-invoice, required variant): same — throws.
+ *   - the blank-row filters in both invoice importers (`pickCell(...) !==
+ *     undefined`): `''` is neither `null` nor `undefined`, so `''` counted
+ *     as PRESENT — a `,,,` CSV row (every aliased column resolves to `''`)
+ *     survived the filter and then hit one of the throwing getters above,
+ *     taking the WHOLE FILE down (§2.5 — this is exactly a row-level defect
+ *     escalating to file-level, undetected because the filter's job was
+ *     never verified against `csv-parser`'s actual blank-cell value).
+ *
+ * None of this is a defect in `pickCell` itself — resolving "what value" and
+ * deciding "is this row blank" are different questions, and `pickCell`
+ * answers only the first. `hasCellValue` below answers the second; ask it,
+ * not `pickCell(...) !== undefined`, when the question is presence rather
+ * than value.
  *
  * `null` matters because `defval: null` (the importers' shared blank-cell
  * fill value as of T-107 adım 2) is the one value `sheet_to_json` can NEVER
@@ -55,4 +87,42 @@ export function pickCell(row: Record<string, unknown>, ...keys: string[]): any {
     }
   }
   return undefined;
+}
+
+/**
+ * "Does this row have anything a user typed under any of these aliases" —
+ * the question a blank-row filter actually asks, and a DIFFERENT question
+ * from `pickCell`'s "what value should this field resolve to" (T-107 adım 2
+ * review, B1/B3). `pickCell(...) !== undefined` answers the wrong question
+ * for this purpose: under `csv-parser` (the CSV branch of all three
+ * importers), a column with nothing between two commas resolves to `''`,
+ * never `null`/`undefined` — `sheet_to_json`'s `defval: null` behavior does
+ * not apply to the CSV path at all. `pickCell` correctly returns that `''`
+ * (a real, if blank, string is a value, not an absence — see `pickCell`'s
+ * own doc), but a filter deciding "is this whole ROW blank" needs a
+ * stricter bar: `null`, `undefined`, and an empty-after-trim string are all
+ * "nothing was typed here"; everything else — INCLUDING a real `0` or
+ * `false` — is "something was typed here".
+ *
+ * Measured regression this closes (T-107 adım 2 review, B1): a `,,,` CSV
+ * row (header `agreement_id,invoice_no,amount,invoice_date`) has every
+ * aliased column at `''`. Under the old `pickCell(...) !== undefined`
+ * filter this counted as a real row (`'' !== undefined`), survived into
+ * `getDateValue`, which explicitly throws on `value === ''` —
+ * `BadRequestException('Invoice date değeri zorunludur')` — rejecting the
+ * ENTIRE FILE, including every good row after it. Excel's "Save as CSV"
+ * produces exactly this shape for every row within the used range that has
+ * no content in a given column, so this is not a rare hand-crafted input.
+ */
+export function hasCellValue(
+  row: Record<string, unknown>,
+  ...keys: string[]
+): boolean {
+  for (const key of keys) {
+    const value = row[key];
+    if (value === null || value === undefined) continue;
+    if (typeof value === 'string' && value.trim() === '') continue;
+    return true;
+  }
+  return false;
 }

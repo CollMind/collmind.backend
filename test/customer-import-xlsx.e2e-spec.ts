@@ -103,8 +103,14 @@ describe('T-107 adım 2 — gerçek .xlsx yüklemesi (POST /customers/import)', 
       // not shift (T-121 B4, exercised end-to-end here).
       [],
       // Row B (sheet row 4): real 0 / real false through the LAST alias
-      // spelling — the exact shape `pick-cell.ts`'s docstring measures
-      // (leaked only as the chain's last operand under `||`).
+      // spelling — pins the exact shape `pick-cell.ts`'s docstring measures
+      // (a real `0`/`false` surviving a non-first header spelling).
+      // MEASURED (T-107 adım 2 review, B4 — `pickCell` mutated back to an
+      // `a || b || c` chain): this row's assertions stay GREEN under that
+      // mutation, not red — being the chain's own LAST operand, `0`/`false`
+      // here have nothing after them to be overridden by, so `||` and
+      // `pickCell` agree. Row A (FIRST alias, above) is the one that
+      // distinguishes; see its own assertion's test title below.
       [CODE_B, 'T-107 Row B', 'RETAIL', null, 0, null, false, 'Ankara', null],
       // Row C (sheet row 5): unreadable date text (US-order/ambiguous) —
       // must surface as a ROW-LEVEL error, not silently drop the row or
@@ -208,7 +214,7 @@ describe('T-107 adım 2 — gerçek .xlsx yüklemesi (POST /customers/import)', 
     expect(row.contract_start_date).toBe(EXPECTED_ISO_DATE);
   });
 
-  it('Row B persisted with real 0 / real false via the LAST alias spelling (CREDIT_LIMIT / IS_VIP) — the shape that leaked under the old `||` chain', async () => {
+  it('Row B persisted with real 0 / real false via the LAST alias spelling (CREDIT_LIMIT / IS_VIP) — pins the shape; not a `||`-regression detector, see fixture comment', async () => {
     const rows = await dataSource.query(
       `SELECT code, credit_limit, is_vip, city,
               contract_start_date

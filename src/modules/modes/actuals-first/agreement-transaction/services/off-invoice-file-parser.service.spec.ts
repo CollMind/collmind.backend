@@ -146,9 +146,17 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
    * T-107 adım 2 — public surface (`parseExcel`), real `.xlsx` buffers,
    * `raw: true` live. `amount` is the field `pickCell` protects here (a real
    * `0` amount is a legitimate off-invoice transaction line, not an absent
-   * one) — pinned under the LAST alias spelling (`AMOUNT`), the position
-   * `pick-cell.ts`'s docstring measures as the one the old `||` chain got
-   * right only by accident of being the chain's final operand.
+   * one).
+   *
+   * MEASURED (T-107 adım 2 review, B4 — `pickCell` mutated back to an
+   * `a || b || c` chain, this describe block re-run): the LAST-alias-
+   * spelling case (`AMOUNT`) stayed GREEN under the mutation — being the
+   * chain's own last operand (`row.amount || row.Amount || row.AMOUNT`,
+   * with the first two absent from the row), `0` has nothing after it to
+   * be overridden by, so `||` and `pickCell` agree there. It is kept
+   * because it pins the exact shape `pick-cell.ts`'s docstring measures,
+   * not because it distinguishes from `||` — that is the FIRST-alias case
+   * added below, which DID go red under the same mutation.
    */
   describe('T-107 adım 2 — public surface (parseExcel), raw: true', () => {
     function buildXlsxFile(rows: unknown[][]): Express.Multer.File {
@@ -204,6 +212,31 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
       );
     });
 
+    // T-107 adım 2 review (B4): the LAST-alias case above does not
+    // distinguish `pickCell` from `||` (see its own comment) — this does.
+    // `amount` is the FIRST of three aliases (`amount`, `Amount`, `AMOUNT`)
+    // with the other two absent from the row, so under `||` the real `0`
+    // is overridden by a later, merely-absent alias (`0 || undefined ||
+    // undefined` = `undefined`) and would resolve to the EMPTY rejection
+    // ("Amount değeri zorunludur") instead of the POSITIVE-amount one.
+    // MEASURED: red under the `pickCell` -> `||` mutation.
+    it('a real 0 amount under the FIRST alias (amount) reaches getNumberValue and is refused by the POSITIVE-amount rule, not silently dropped as absent', async () => {
+      const file = buildXlsxFile([
+        [
+          'agreement_id',
+          'invoice_no',
+          'invoice_date',
+          'amount',
+          'fiscal_period',
+        ],
+        ['AGR-1', 'INV-1', '2026-01-15', 0, '2026-01'],
+      ]);
+
+      await expect(service.parseExcel(file)).rejects.toThrow(
+        'Amount değeri pozitif olmalıdır: 0',
+      );
+    });
+
     it('a numeric invoice_date cell (Excel serial) resolves via parseExcel end-to-end, not just the private method', async () => {
       const file = buildXlsxFile([
         [
@@ -221,5 +254,124 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
       expect(rows).toHaveLength(1);
       expect(rows[0].dto.invoiceDate).toBe('2026-01-15');
     });
+  });
+});
+
+/**
+ * T-107 adım 2 review (B1) — public surface (`parseCSV`), real CSV text.
+ * `csv-parser`'s blank-cell value is `''`, never XLSX's `null`/`undefined`
+ * sentinel — a `,,,,,,` row (every aliased column resolves to `''`) used to
+ * survive the old `pickCell(...) !== undefined` blank-row filter (`'' !==
+ * undefined`) and hit `getDateValue`, which throws on `value === ''`,
+ * taking the WHOLE FILE down. `hasCellValue` is the fix; this is its only
+ * public-surface (`parseCSV`) coverage for this importer — before this turn
+ * there was NONE (only `parseExcel` had a public-surface describe block).
+ */
+describe('OffInvoiceFileParserService — parseCSV public surface (T-107 adım 2 review, B1)', () => {
+  let service: OffInvoiceFileParserService;
+
+  beforeEach(() => {
+    service = new OffInvoiceFileParserService();
+  });
+
+  function buildCsvFile(text: string): Express.Multer.File {
+    return {
+      originalname: 'off-invoice.csv',
+      mimetype: 'text/csv',
+      buffer: Buffer.from(text, 'utf-8'),
+      size: Buffer.byteLength(text, 'utf-8'),
+      fieldname: 'file',
+      encoding: '7bit',
+      destination: '',
+      filename: '',
+      path: '',
+      stream: null as unknown as Express.Multer.File['stream'],
+    };
+  }
+
+  const HEADER =
+    'agreement_id,invoice_no,invoice_date,fiscal_period,amount,description';
+  const GOOD_ROW = 'AGR-1,INV-1,2026-01-15,2026-01,7250.00,Q1 Settlement';
+  const BLANK_ROW = ',,,,,';
+
+  it('a `,,,` blank CSV row in the middle does not take the whole file down — the good rows around it still import', async () => {
+    const file = buildCsvFile(
+      `${HEADER}\n${GOOD_ROW}\n${BLANK_ROW}\n${GOOD_ROW}\n`,
+    );
+
+    const rows = await service.parseCSV(file);
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0].dto.agreementId).toBe('AGR-1');
+    expect(rows[1].dto.agreementId).toBe('AGR-1');
+  });
+
+  it('a lone `,,,` blank CSV row (no good rows) does not throw — it is filtered to an empty result, not a file-level rejection', async () => {
+    const file = buildCsvFile(`${HEADER}\n${BLANK_ROW}\n`);
+
+    const rows = await service.parseCSV(file);
+
+    expect(rows).toHaveLength(0);
+  });
+});
+
+/**
+ * T-107 adım 2 review (S2) — `originalRowData` must not leak XLSX's `null`
+ * blank-cell sentinel to a caller reading the per-row error payload.
+ */
+describe('OffInvoiceFileParserService — originalRowData has no leaked null (T-107 adım 2 review, S2)', () => {
+  let service: OffInvoiceFileParserService;
+
+  beforeEach(() => {
+    service = new OffInvoiceFileParserService();
+  });
+
+  it('a blank cell surfaces in originalRowData as undefined/omitted, never the literal null', async () => {
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      [
+        'agreement_id',
+        'invoice_no',
+        'invoice_date',
+        'fiscal_period',
+        'amount',
+        'description',
+        'currency',
+      ],
+      [
+        'AGR-1',
+        'INV-1',
+        '2026-01-15',
+        '2026-01',
+        7250.0,
+        'Q1 Settlement',
+        null, // currency: genuinely blank cell
+      ],
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+    const buffer = XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }) as Buffer;
+    const file: Express.Multer.File = {
+      originalname: 'off-invoice.xlsx',
+      mimetype:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer,
+      size: buffer.length,
+      fieldname: 'file',
+      encoding: '7bit',
+      destination: '',
+      filename: '',
+      path: '',
+      stream: null as unknown as Express.Multer.File['stream'],
+    };
+
+    const rows = await service.parseExcel(file);
+
+    expect(rows).toHaveLength(1);
+    const originalRowData = rows[0].originalRowData!;
+    expect(Object.values(originalRowData)).not.toContain(null);
+    expect(originalRowData.currency).toBeUndefined();
   });
 });

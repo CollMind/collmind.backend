@@ -11,7 +11,8 @@ import {
   parseOptionalDateText,
   describeDateTextFailure,
 } from '../../../common/date/date-text';
-import { pickCell } from '../../../common/row-parsing/pick-cell';
+import { pickCell, hasCellValue } from '../../../common/row-parsing/pick-cell';
+import { normalizeBlankCells } from '../../../common/row-parsing/normalize-blank-cells';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -213,46 +214,16 @@ export class FileParserService {
     }
   }
 
-  /**
-   * T-107 adım 2: renamed from `stripBlankCellSentinel` and re-pointed at
-   * `null`, not `false` — the blank-cell sentinel changed shape when
-   * `parseExcel`'s `sheet_to_json` call switched `defval` from `false` to
-   * `null` (see that call site's comment for why `false` was never a safe
-   * sentinel under `raw: true`: it collided with a REAL boolean cell, e.g.
-   * `IS_VIP`, which `raw: true` now reads as the actual JS boolean `false`
-   * rather than the string `"FALSE"`).
-   *
-   * This method is no longer load-bearing for alias resolution — every
-   * `row.a || row.b || row.c` chain below has been replaced with
-   * `pickCell(row, 'a', 'b', 'c')` (`common/row-parsing/pick-cell.ts`),
-   * which already treats `null` and `undefined` as equally absent, so a raw,
-   * unnormalized row would resolve identically. What this pass still buys is
-   * `originalRowData` (stored below, for the caller's row-level error
-   * reporting): without it, a blank cell would surface downstream as the
-   * literal `null` instead of an omitted key. Kept for that reason, not for
-   * correctness.
-   *
-   * Return type is deliberately `any`, not `Record<string, any>`: spreading a
-   * `Record<string, any>`-typed value into an object literal together with a
-   * named property (`_originalRowNumber`) makes TS drop the index signature
-   * from the resulting literal type — measured, `tsc --strict` then refuses
-   * every `row.SOME_ALIAS` access below with "Property does not exist on
-   * type '{ _originalRowNumber: number }'". `data: any[]` already makes this
-   * whole pipeline untyped by design; `any` here keeps it that way instead of
-   * fighting a spread-narrowing quirk with no behavioural benefit.
-   */
-  private normalizeBlankCells(row: Record<string, any>): any {
-    const normalized: Record<string, any> = {};
-    for (const key of Object.keys(row)) {
-      normalized[key] = row[key] === null ? undefined : row[key];
-    }
-    return normalized;
-  }
-
   private mapToCustomerDtos(data: any[]): ParsedCustomerRow[] {
     // Önce her satıra orijinal satır numarasını ekle (header + 1-based index)
+    // T-107 adım 2 review (S2): `normalizeBlankCells` moved to
+    // `common/row-parsing/normalize-blank-cells.ts`, shared with the two
+    // invoice importers so `originalRowData` stops leaking the raw `null`
+    // sentinel inconsistently per importer (see that file's doc for why
+    // this is only a presentation concern, not a resolution one —
+    // `pickCell` already treats `null`/`undefined` as equally absent).
     const dataWithRowNumbers = data.map((row, index) => ({
-      ...this.normalizeBlankCells(row),
+      ...normalizeBlankCells(row),
       _originalRowNumber: index + 2, // +2: header row (1) + 0-based index (1) = 2
     }));
 
@@ -272,11 +243,26 @@ export class FileParserService {
         // T-105's own split (parsing vs. what an invalid value MEANS to the
         // caller).
         const parseErrors: FieldParseError[] = [];
+        // T-107 adım 2 review (B2): `pickCell(...) ?? \`AUTO_\${n}\`` does
+        // NOT fall back on an explicit blank string — `??` only triggers on
+        // `null`/`undefined`, and `pickCell` correctly returns `''` as-is
+        // (it IS a value, per `pickCell`'s own doc). Under XLSX this never
+        // showed: a blank `code` cell is XLSX's `null` sentinel, normalized
+        // to `undefined` by `normalizeBlankCells` above, so `??` fired.
+        // Under CSV, `csv-parser` fills a blank cell with `''`, never
+        // `null` — `''` ?? AUTO_n` stays `''`, and `code: ''` then failed
+        // `CustomerService.validateCustomerDto`'s `MISSING_FIELD` check,
+        // silently dropping a row a CSV upload used to accept (measured,
+        // this turn: `code,name,city\n,Acme,Ankara\n` → CSV `code: ''`,
+        // XLSX `code: 'AUTO_2'` — same file, different outcome by format).
+        // `hasCellValue` is the presence question this fallback actually
+        // needs (see `pick-cell.ts`): blank-after-trim counts as absent for
+        // BOTH formats, so CSV and XLSX agree again.
+        const code = hasCellValue(row, 'code', 'Code', 'CODE')
+          ? pickCell(row, 'code', 'Code', 'CODE')
+          : `AUTO_${row._originalRowNumber}`;
         const dto: CreateCustomerDto = {
-          code: this.getStringValue(
-            pickCell(row, 'code', 'Code', 'CODE') ??
-              `AUTO_${row._originalRowNumber}`,
-          ),
+          code: this.getStringValue(code),
           name: this.getStringValue(
             pickCell(row, 'name', 'Name', 'NAME') ?? '',
           ),

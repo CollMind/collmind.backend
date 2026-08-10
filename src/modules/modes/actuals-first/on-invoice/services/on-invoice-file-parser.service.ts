@@ -7,7 +7,11 @@ import {
   excelSerialToIsoDate,
   describeExcelSerialDateFailure,
 } from '../../../../../common/date/excel-serial-date';
-import { pickCell } from '../../../../../common/row-parsing/pick-cell';
+import {
+  pickCell,
+  hasCellValue,
+} from '../../../../../common/row-parsing/pick-cell';
+import { normalizeBlankCells } from '../../../../../common/row-parsing/normalize-blank-cells';
 import * as XLSX from 'xlsx';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
@@ -161,28 +165,37 @@ export class OnInvoiceFileParserService {
   private mapToEntryDtos(data: any[]): ParsedOnInvoiceRow[] {
     return data
       .map((row, index) => ({
-        ...row,
+        // T-107 adım 2 review (S2): normalize XLSX's `null` blank-cell
+        // sentinel to `undefined` before this row is stored as
+        // `originalRowData` below — shared with the other two importers
+        // (`common/row-parsing/normalize-blank-cells.ts`).
+        ...normalizeBlankCells(row),
         _originalRowNumber: index + 2, // +2: header row (1) + 0-based index (1) = 2
       }))
       .filter((row) => {
         // Boş satırları filtrele - en azından customer_code veya invoice_no
-        // olmalı. T-107 adım 2: presence, `!== undefined` ile karar
-        // verilir — JS-truthiness ile değil.
+        // olmalı. T-107 adım 2 review (B1): presence is `hasCellValue`, NOT
+        // `pickCell(...) !== undefined` — under the CSV branch, a blank
+        // cell is `csv-parser`'s `''`, not XLSX's `null`/`undefined`
+        // sentinel, so `!== undefined` counted it as present and a `,,,`
+        // row survived into a throwing getter below, taking the WHOLE FILE
+        // down (see `pick-cell.ts`'s `hasCellValue` doc for the measured
+        // repro).
         return (
-          pickCell(
+          hasCellValue(
             row,
             'customer_code',
             'customerCode',
             'CUSTOMER_CODE',
             'CustomerCode',
-          ) !== undefined ||
-          pickCell(
+          ) ||
+          hasCellValue(
             row,
             'invoice_no',
             'invoiceNo',
             'INVOICE_NO',
             'InvoiceNo',
-          ) !== undefined
+          )
         );
       })
       .map((row) => {
