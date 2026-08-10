@@ -34,6 +34,19 @@ export interface CalculationResult {
   displayFormat: string;
   decimalPlaces: number;
   ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
+  /**
+   * T-177: only set on results produced by rolling up a set of children
+   * (SKU→FU, FU→Plan) — fraction of those children whose value was
+   * non-null and therefore contributed to `value`. 1 = every child
+   * resolved; e.g. 0.5 = half the children were null and silently
+   * excluded from the aggregate (§2.5: the exclusion itself must never be
+   * silent — this field is what makes it visible to the caller/UI).
+   * `null` when there were no children to aggregate at all (empty FU/plan
+   * — not the same as "zero coverage of some children").
+   * Undefined for SKU-level results and for FU/PLAN-level formula KPIs
+   * that are computed directly (not rolled up from an array of children).
+   */
+  coverageRatio?: number | null;
 }
 
 @Injectable()
@@ -110,18 +123,35 @@ export class KpiEngineService {
 
     for (const kpi of kpis) {
       if (kpi.calculationLevel === CalculationLevel.SKU) {
-        // Aggregate SKU values to FU using aggregation method
+        // T-177: aggregate SKU values to FU. `values` silently drops any
+        // SKU whose value is null/undefined (e.g. missing COGS, T-027) —
+        // that silence used to be untracked. `coverageRatio` makes it a
+        // visible result field instead: 1 = every SKU resolved, <1 = the
+        // value below was derived from a strict subset (§2.5 — the subset
+        // itself is never a fabricated number, but which subset it is must
+        // not be silent either).
+        const totalSkuCount = skuResults.length;
         const values = skuResults
           .map((sr) => sr[kpi.kpiCode]?.value)
           .filter((v): v is number => v !== null && v !== undefined);
+        const coverageRatio =
+          totalSkuCount === 0 ? null : values.length / totalSkuCount;
+        const fullCoverage = coverageRatio === 1;
 
         const aggregated = this.aggregate(
           values,
           kpi.aggregationMethodFu || AggregationMethod.SUM,
         );
 
+        // T-177 (product owner, 2026-08-11): RAG is only ever assigned on
+        // FULL coverage. A partial rollup still surfaces `value` (computed
+        // from the calculable subset) and `coverageRatio`, but never a
+        // color — a color implies a judgement over the whole set, and a
+        // judgement over 3% of SKUs (docs/analysis/0016: 4/170 have COGS)
+        // is not a judgement over the FU.
         let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
         if (
+          fullCoverage &&
           kpi.ragGreenThreshold !== undefined &&
           kpi.ragGreenThreshold !== null &&
           aggregated !== null
@@ -142,6 +172,7 @@ export class KpiEngineService {
           displayFormat: kpi.displayFormat,
           decimalPlaces: kpi.decimalPlaces,
           ragStatus,
+          coverageRatio,
         };
       } else if (kpi.calculationLevel === CalculationLevel.FU) {
         // FU-level KPIs (calculated from aggregated SKU values + tactics)
@@ -228,29 +259,38 @@ export class KpiEngineService {
           ragStatus,
         };
       } else {
-        // Aggregate from FU level
+        // T-177: aggregate from FU level — same coverage discipline as the
+        // SKU→FU rollup in calculateFu (see comment there).
+        const totalFuCount = fuResults.length;
         const values = fuResults
           .map((fr) => fr[kpi.kpiCode]?.value)
           .filter((v): v is number => v !== null && v !== undefined);
+        const coverageRatio =
+          totalFuCount === 0 ? null : values.length / totalFuCount;
+        const fullCoverage = coverageRatio === 1;
 
         const aggregated = this.aggregate(
           values,
           kpi.aggregationMethodFu || AggregationMethod.SUM,
         );
 
-        // Plan RAG: aggregate from FU RAGs
+        // Plan RAG: aggregate from FU RAGs — only on full coverage (T-177,
+        // product owner 2026-08-11; see calculateFu for the rationale).
         let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        const fuRags = fuResults
-          .map((fr) => fr[kpi.kpiCode]?.ragStatus)
-          .filter(Boolean) as string[];
+        if (fullCoverage) {
+          const fuRags = fuResults
+            .map((fr) => fr[kpi.kpiCode]?.ragStatus)
+            .filter(Boolean) as string[];
 
-        if (fuRags.includes('RED')) ragStatus = 'RED';
-        else if (fuRags.includes('AMBER')) ragStatus = 'AMBER';
-        else if (fuRags.length > 0) ragStatus = 'GREEN';
+          if (fuRags.includes('RED')) ragStatus = 'RED';
+          else if (fuRags.includes('AMBER')) ragStatus = 'AMBER';
+          else if (fuRags.length > 0) ragStatus = 'GREEN';
+        }
 
         results[kpi.kpiCode] = {
           kpiCode: kpi.kpiCode,
           value: aggregated,
+          coverageRatio,
           displayFormat: kpi.displayFormat,
           decimalPlaces: kpi.decimalPlaces,
           ragStatus,
