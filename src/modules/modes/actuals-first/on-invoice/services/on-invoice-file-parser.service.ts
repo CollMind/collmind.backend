@@ -8,6 +8,10 @@ import {
   describeExcelSerialDateFailure,
 } from '../../../../../common/date/excel-serial-date';
 import {
+  parseDateText,
+  describeDateTextFailure,
+} from '../../../../../common/date/date-text';
+import {
   pickCell,
   hasCellValue,
 } from '../../../../../common/row-parsing/pick-cell';
@@ -322,6 +326,24 @@ export class OnInvoiceFileParserService {
     return Number(result.canonical);
   }
 
+  /**
+   * T-123: string branch now goes through `date-text.ts`'s katı gramer (ISO
+   * `YYYY-MM-DD` veya Türk `GG.AA.YYYY`, ürün sahibi kararı 2026-08-09,
+   * T-121) instead of `new Date(str)` — closes bulgu 3 (US-order guess,
+   * `"3.4.2026"` -> 4 Mart yerine 3 Nisan) here too; bulgu 1 (TZ slip) was
+   * never present at this call site (measured, T-123: local getters, not
+   * `toISOString()`) but bulgu 3 was, unchanged, until this edit.
+   *
+   * Satır-bazlı hata teslimi (T-123 madde 4): bu metod hâlâ FIRLATIR, tıpkı
+   * `getNumberValue`/`getDiscountType`/`getFiscalPeriod` gibi — bilinçli, bu
+   * dosyanın var olan tasarımı: `mapToEntryDtos`'un hiçbir alanı için satır
+   * bazlı bir hata biriktirme kanalı yok (`customer/file-parser.service.ts`
+   * `FieldParseError`/`parseErrors`'ın burada karşılığı yok, ölçüldü). Bir
+   * satırdaki tek bozuk tarih hücresi bu throw ile `parseExcel`/`parseCSV`'nin
+   * dış `catch`'ine çıkar ve TÜM dosyayı reddeder — bu, T-123'ün kapsamı
+   * DEĞİL (yeni bir satır-kanalı mimarisi kurmak ayrı bir task gerektirir);
+   * burada yalnız var olan dosya-bazlı ret deseni belgeleniyor.
+   */
   private getDateValue(value: any): string {
     if (value === null || value === undefined || value === '') {
       throw new BadRequestException('Date değeri zorunludur');
@@ -336,23 +358,26 @@ export class OnInvoiceFileParserService {
       return result.isoDate;
     }
 
-    // String tarih formatlarını dene
-    const str = String(value).trim();
-    const date = new Date(str);
-
-    if (isNaN(date.getTime())) {
-      throw new BadRequestException(
-        `Geçersiz tarih formatı: ${value}. YYYY-MM-DD formatında olmalıdır.`,
-      );
+    // String tarih formatı: katı gramer (T-123/T-121) — ISO ya da
+    // GG.AA.YYYY, ikisi dışında her şey (US sırası, belirsiz gün/ay, serbest
+    // metin) reddedilir; hiçbir zaman `new Date(str)` ile tahmin edilmez.
+    const result = parseDateText(value);
+    if (!result.ok) {
+      throw new BadRequestException(describeDateTextFailure(result));
     }
-
-    // YYYY-MM-DD formatına çevir
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return result.isoDate;
   }
 
+  /**
+   * T-123: metin dalı artık `date-text.ts` üzerinden — bkz. `getDateValue`
+   * dokümanı. `YYYY-MM-DD`'yi `YYYY-MM`'e kısaltma işi BİLEREK burada
+   * (çağıran tarafta) yapılıyor, `date-text.ts` içinde değil: o modül
+   * yalnızca bir takvim GÜNÜ kavramını kodluyor (bkz. modülün kendi
+   * dokümanı), "dönem" (ay) ayrı bir gramer ve iki grameri aynı primitive'te
+   * karıştırmak §7'nin "aynı yeteneği iki kez yazma" kuralının bir başka
+   * yönü olurdu — bu yüzden dönüşüm burada, `excelSerialToIsoDate`'in
+   * üstündeki `.slice(0, 7)` ile AYNI, hâlihazırda var olan desenle yapılır.
+   */
   private getFiscalPeriod(value: any): string {
     if (value === null || value === undefined || value === '') {
       throw new BadRequestException('Fiscal period değeri zorunludur');
@@ -380,16 +405,16 @@ export class OnInvoiceFileParserService {
       return result.isoDate.slice(0, 7);
     }
 
-    // Date objesi ise çevir
-    const date = new Date(str);
-    if (!isNaN(date.getTime())) {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      return `${year}-${month}`;
+    // Tam tarih metni ise katı gramer (T-123/T-121) ile çöz, sonra YYYY-MM'e
+    // kısalt — `new Date(str)` yerine.
+    const dateResult = parseDateText(str);
+    if (dateResult.ok) {
+      return dateResult.isoDate.slice(0, 7);
     }
 
     throw new BadRequestException(
-      `Geçersiz fiscal period formatı: ${value}. YYYY-MM formatında olmalıdır.`,
+      `Geçersiz fiscal period formatı: ${value}. Kabul edilen biçimler: ` +
+        `YYYY-MM (ör. 2026-01) veya tam tarih (YYYY-MM-DD ya da GG.AA.YYYY).`,
     );
   }
 

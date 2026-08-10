@@ -7,12 +7,17 @@
  * numbers). This module is the STRING branch: what runs when a date cell or CSV
  * field arrives as text instead of a serial number.
  *
- * Replaces, at the one site measured to actually run it today
- * (`customer/services/file-parser.service.ts:448`, §7 kapsam ölçümü — the
- * pattern also appears in `off-invoice-file-parser.service.ts` and
- * `on-invoice-file-parser.service.ts`, but formats with LOCAL getters instead
- * of `toISOString()` there and so does not carry bulgu 1; see the module this
- * replaces, T-121 in the meta-repo backlog, for the full four-column matrix):
+ * Replaces, as of T-123, all three sites where a human-written date TEXT
+ * used to be turned into a string by hand: `customer/services/file-parser.service.ts`
+ * (T-121, the original site), and `on-invoice-file-parser.service.ts` /
+ * `off-invoice-file-parser.service.ts`'s `getDateValue`/`getFiscalPeriod`
+ * (T-123 — measured, 2026-08-08, Team Lead: those two used LOCAL getters
+ * instead of `toISOString()` and so did NOT carry bulgu 1 (the TZ day-slip),
+ * but DID carry bulgu 3 (the US-order guess) unchanged — `"3.4.2026"` parsed
+ * as 4 Mart, not 3 Nisan, in both. Bulgu 1 being absent does not mean the
+ * grammar defect was absent; only one of the three defects below was fixed by
+ * accident of formatting choice. See T-121 in the meta-repo backlog for the
+ * full four-column before/after matrix this decision is based on):
  *
  *     const date = new Date(str);                       // instant, ambiguous parse
  *     if (!isNaN(date.getTime())) {

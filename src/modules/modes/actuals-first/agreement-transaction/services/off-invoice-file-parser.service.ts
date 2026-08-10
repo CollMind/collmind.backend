@@ -8,6 +8,10 @@ import {
   describeExcelSerialDateFailure,
 } from '../../../../../common/date/excel-serial-date';
 import {
+  parseDateText,
+  describeDateTextFailure,
+} from '../../../../../common/date/date-text';
+import {
   pickCell,
   hasCellValue,
 } from '../../../../../common/row-parsing/pick-cell';
@@ -310,6 +314,17 @@ export class OffInvoiceFileParserService {
     return num;
   }
 
+  /**
+   * T-123: string branch now goes through `date-text.ts`'s katı gramer (ISO
+   * `YYYY-MM-DD` veya Türk `GG.AA.YYYY`, ürün sahibi kararı 2026-08-09,
+   * T-121) instead of `new Date(str)` — bkz. `OnInvoiceFileParserService`'in
+   * aynı isimli metodundaki doküman, tıpatıp aynı gerekçe/bulgu.
+   *
+   * Satır-bazlı hata teslimi (T-123 madde 4): bu metod da FIRLATIR ve bu
+   * dosyada da satır bazlı bir hata biriktirme kanalı yok (ölçüldü — bkz.
+   * `getNumberValue` de aynı şekilde atıyor). Bilinçli, var olan dosya-bazlı
+   * ret tasarımı; T-123'ün kapsamı değil.
+   */
   private getDateValue(value: any): string {
     if (value === null || value === undefined || value === '') {
       throw new BadRequestException('Invoice date değeri zorunludur');
@@ -324,23 +339,40 @@ export class OffInvoiceFileParserService {
       return result.isoDate;
     }
 
-    // String tarih formatlarını dene
-    const str = String(value).trim();
-    const date = new Date(str);
-
-    if (isNaN(date.getTime())) {
-      throw new BadRequestException(
-        `Geçersiz tarih formatı: ${value}. YYYY-MM-DD formatında olmalıdır.`,
-      );
+    // String tarih formatı: katı gramer (T-123/T-121) — ISO ya da
+    // GG.AA.YYYY, ikisi dışında her şey (US sırası, belirsiz gün/ay, serbest
+    // metin) reddedilir; hiçbir zaman `new Date(str)` ile tahmin edilmez.
+    const result = parseDateText(value);
+    if (!result.ok) {
+      throw new BadRequestException(describeDateTextFailure(result));
     }
-
-    // YYYY-MM-DD formatına çevir
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return result.isoDate;
   }
 
+  /**
+   * T-123: metin dalı artık `date-text.ts` üzerinden — `YYYY-MM-DD`'yi
+   * `YYYY-MM`'e kısaltma çağıran tarafta yapılır (bkz. `OnInvoiceFileParserService`
+   * ikizindeki gerekçe: `date-text.ts` yalnız takvim GÜNÜ'nü kodluyor, "dönem"
+   * ayrı bir gramer).
+   *
+   * `string | undefined` dönüşü — `OnInvoiceFileParserService.getFiscalPeriod`
+   * her zaman `string` döner ve boş girdide FIRLATIR — BİLİNÇLİ VE ÖLÇÜLMÜŞ bir
+   * asimetridir, T-123'ün icadı değil: `agreement-transaction.service.ts:109-119`
+   * fiscal period'u DTO'da yoksa `agreement.periodMonth`'a, o da yoksa
+   * `invoiceDate`'ten türetilen döneme düşürür (Priority 1/2/3 zinciri) — yani
+   * off-invoice importunda bu ALAN gerçekten opsiyonel. On-invoice tarafında
+   * böyle bir düşüş zinciri yok (`on-invoice.service.ts`: `if (!fiscalPeriod)
+   * throw`), bu yüzden orada alan zorunlu. §2.4 gereği bu asimetri
+   * DEĞİŞTİRİLMEDİ — yalnız burada ölçülüp belgelendi.
+   *
+   * Ama BU asimetri, aşağıdaki bug'ı meşrulaştırmıyordu: hücre MEVCUT ama
+   * ayrıştırılamıyorsa (`§2.5` — mevcut-ama-okunamaz, YOK ile aynı şey
+   * değildir) eskiden burası sessizce `undefined` dönüyordu — yani "girdi
+   * yok" ile "girdi var ama çöp" ayrımı kayboluyordu ve satır, agreement'ın
+   * periodMonth'una ya da invoiceDate'ten türetilen döneme SESSİZCE
+   * düşüyordu; kullanıcının yazdığı (muhtemelen yanlış yazılmış) değer
+   * hiç görünmeden atlanıyordu. T-123 madde 3: artık FIRLATIR.
+   */
   private getFiscalPeriod(value: any): string | undefined {
     if (value === null || value === undefined || value === '') return undefined;
 
@@ -366,14 +398,39 @@ export class OffInvoiceFileParserService {
       return result.isoDate.slice(0, 7);
     }
 
-    // Date objesi ise çevir
-    const date = new Date(str);
-    if (!isNaN(date.getTime())) {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      return `${year}-${month}`;
+    // Tam tarih metni ise katı gramer (T-123/T-121) ile çöz, sonra YYYY-MM'e
+    // kısalt — `new Date(str)` yerine.
+    const dateResult = parseDateText(str);
+    if (dateResult.ok) {
+      return dateResult.isoDate.slice(0, 7);
     }
 
+    // ⚠️ BURADA BİLEREK FIRLATMIYORUZ — ve bu bir eksiklik değil, ölçülmüş bir
+    // takas. Geri alındı: T-123, ürün sahibi kararı 2026-08-10.
+    //
+    // T-123 önce buraya bir `BadRequestException` koydu (§2.5: "mevcut ama
+    // okunamaz" ile "hiç verilmemiş" aynı şey değildir — doğru bir kural).
+    // Ölçüldü ki bu importer'da o katılığın gideceği bir yer YOK:
+    //
+    //     A1 fiscal_period = "çöp"  ->  THROW
+    //     A2 sağlam satır           ->  o da reddedildi (TÜM DOSYA)
+    //
+    // `customer` importunda satır-bazlı bir hata kanalı var
+    // (`FieldParseError`/`parseErrors`, T-121); burada YOK — throw `.map()`'ten
+    // `parseCSV`/`parseExcel`'in dış catch'ine çıkıp dosyayı satır numarasız
+    // reddediyor. Yani tek bozuk hücre 500 satırlık bir yüklemeyi düşürüyordu.
+    //
+    // Katılık eklerken teslimi düzeltmemek, §2.5'i bir ucundan uygulayıp
+    // diğerini açık bırakmaktır (T-121'in dersi).
+    //
+    // ⚠️ SESSİZ VARSAYILAN İLE SESSİZ FALLBACK AYNI ŞEY DEĞİLDİR. §2.5 bilgi
+    // UYDURMAYI yasaklıyor; buradaki düşüş zinciri başka bir KAYNAK kullanıyor:
+    // `agreement-transaction.service.ts:109-119` sırayla `agreement.periodMonth`,
+    // sonra `invoiceDate`'ten türetilen dönem. Sessiz, ama kaynaklı.
+    //
+    // GERİ GELECEK: satır-bazlı hata kanalı bu iki importer'a taşındığında
+    // (T-126) bu throw geri konmalı — o zaman bozuk hücre satırı reddeder,
+    // dosyayı değil. İki task birbirini biliyor.
     return undefined;
   }
 

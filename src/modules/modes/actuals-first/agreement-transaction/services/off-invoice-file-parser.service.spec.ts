@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { OffInvoiceFileParserService } from './off-invoice-file-parser.service';
 import { describeExcelSerialDateFailure } from '../../../../../common/date/excel-serial-date';
+import { describeDateTextFailure } from '../../../../../common/date/date-text';
 import * as XLSX from 'xlsx';
 
 /**
@@ -373,5 +374,208 @@ describe('OffInvoiceFileParserService — originalRowData has no leaked null (T-
     const originalRowData = rows[0].originalRowData!;
     expect(Object.values(originalRowData)).not.toContain(null);
     expect(originalRowData.currency).toBeUndefined();
+  });
+});
+
+/**
+ * T-123 — wiring tests for the STRING branch of `getDateValue` /
+ * `getFiscalPeriod` in THIS file, now routed through `date-text.ts` instead
+ * of `new Date(str)`. Companion to the numeric (excel-serial) wiring block
+ * above (T-107 adım 1) and to `date-text.spec.ts` (T-121), which owns the
+ * grammar/calendar-math itself — not re-tested here (§2.7).
+ *
+ * ⚠️ `getFiscalPeriod` in THIS file has a RETRACTED throw — see the
+ * dedicated describe block below ("retraction pinned") for that half of
+ * T-123. This block covers only `getDateValue` (unaffected by the
+ * retraction — see its own doc comment: it still throws, deliberately, same
+ * as `OnInvoiceFileParserService.getDateValue`) plus `getFiscalPeriod`'s
+ * OK-path (a parseable string still truncates to YYYY-MM exactly as before).
+ */
+describe('OffInvoiceFileParserService — date-text string-branch wiring (T-123)', () => {
+  let service: OffInvoiceFileParserService;
+
+  beforeEach(() => {
+    service = new OffInvoiceFileParserService();
+  });
+
+  const getDateValue = (value: unknown): string =>
+    (service as unknown as { getDateValue(v: unknown): string }).getDateValue(
+      value,
+    );
+  const getFiscalPeriod = (value: unknown): string | undefined =>
+    (
+      service as unknown as {
+        getFiscalPeriod(v: unknown): string | undefined;
+      }
+    ).getFiscalPeriod(value);
+
+  describe('getDateValue — string branch (still throws on a bad string, unaffected by the getFiscalPeriod retraction)', () => {
+    it('GG.AA.YYYY ("3.4.2026") resolves to 3 Nisan (2026-04-03), not the old US-order guess (2026-03-04)', () => {
+      expect(getDateValue('3.4.2026')).toBe('2026-04-03');
+    });
+
+    it('a zero-padded Turkish date ("15.01.2026") is accepted and correct — the old branch threw on this exact input (Team Lead measurement)', () => {
+      expect(getDateValue('15.01.2026')).toBe('2026-01-15');
+    });
+
+    it('an ISO date string passes through unchanged', () => {
+      expect(getDateValue('2026-01-15')).toBe('2026-01-15');
+    });
+
+    it('US slash order ("3/4/26") is refused, not silently accepted as March 4th', () => {
+      expect(() => getDateValue('3/4/26')).toThrow(BadRequestException);
+    });
+
+    it('a calendar rollover ("2026-02-30") is refused, not silently rolled into March (new Date\'s fifth silent-failure mode, added per task instruction)', () => {
+      expect(() => getDateValue('2026-02-30')).toThrow(BadRequestException);
+    });
+
+    it('an out-of-range month ("2026-13-01") is refused', () => {
+      expect(() => getDateValue('2026-13-01')).toThrow(BadRequestException);
+    });
+
+    it('the thrown message for a rejected string is exactly what describeDateTextFailure produces, not a locally reworded copy', () => {
+      let caught: BadRequestException | undefined;
+      try {
+        getDateValue('3/4/26');
+      } catch (e) {
+        caught = e as BadRequestException;
+      }
+      expect(caught).toBeInstanceOf(BadRequestException);
+      const response = caught!.getResponse() as { message: string };
+      expect(response.message).toBe(
+        describeDateTextFailure({
+          ok: false,
+          reason: 'UNRECOGNIZED_FORMAT',
+          input: '3/4/26',
+        }),
+      );
+    });
+  });
+
+  describe('getFiscalPeriod — OK path: a parseable full-date string still truncates to YYYY-MM', () => {
+    it('GG.AA.YYYY ("3.4.2026") resolves to 2026-04, not the old guess 2026-03', () => {
+      expect(getFiscalPeriod('3.4.2026')).toBe('2026-04');
+    });
+
+    it('a zero-padded Turkish date ("15.01.2026") truncates to 2026-01', () => {
+      expect(getFiscalPeriod('15.01.2026')).toBe('2026-01');
+    });
+
+    it('a full ISO date string truncates to YYYY-MM', () => {
+      expect(getFiscalPeriod('2026-01-15')).toBe('2026-01');
+    });
+
+    it('a plain YYYY-MM string is accepted directly, unaffected by T-123 (checked before the date-text branch is ever reached)', () => {
+      expect(getFiscalPeriod('2026-04')).toBe('2026-04');
+    });
+  });
+
+  /**
+   * T-123 madde 3, RETRACTED (product owner decision, 2026-08-10) — see the
+   * long rationale in `off-invoice-file-parser.service.ts`'s `getFiscalPeriod`
+   * doc comment. This block pins the CURRENT (reverted) behavior, not the
+   * intermediate throwing version T-123 shipped first:
+   *
+   *   - a genuinely ABSENT cell (`''`/`null`/`undefined`) -> `undefined`,
+   *     no error — legitimate optionality, unaffected by T-123 either way
+   *     (`agreement-transaction.service.ts`'s Priority 1/2/3 fallback chain
+   *     covers this case).
+   *   - a PRESENT but unparseable cell (garbage text, US-order slash, a
+   *     calendar rollover) -> ALSO `undefined`, but for a different reason:
+   *     this importer has no row-level error-accumulation channel (measured
+   *     — `getNumberValue`/`getDateValue` in this same file both throw and
+   *     take the whole file down), so throwing here converts a single bad
+   *     fiscal_period cell into a rejection of every row in the upload.
+   *
+   * ⚠️ Do not "fix" this by reintroducing the throw without ALSO building the
+   * row-level channel T-126 tracks — that reintroduction is exactly what was
+   * measured and reverted here.
+   */
+  describe('getFiscalPeriod — retraction pinned: present-but-unparseable resolves to undefined, does NOT throw (T-123, reverted 2026-08-10, see T-126)', () => {
+    it('a genuinely absent cell resolves to undefined (unaffected either way — legitimate optionality)', () => {
+      expect(getFiscalPeriod('')).toBeUndefined();
+      expect(getFiscalPeriod(null)).toBeUndefined();
+      expect(getFiscalPeriod(undefined)).toBeUndefined();
+    });
+
+    it('a present-but-garbage cell ("çöp") resolves to undefined, does NOT throw', () => {
+      expect(getFiscalPeriod('çöp')).toBeUndefined();
+    });
+
+    it('a present-but-US-order cell ("3/4/26") resolves to undefined, does NOT throw', () => {
+      expect(getFiscalPeriod('3/4/26')).toBeUndefined();
+    });
+
+    it('a present-but-calendar-invalid cell ("2026-02-30", a rollover) resolves to undefined, does NOT throw', () => {
+      expect(getFiscalPeriod('2026-02-30')).toBeUndefined();
+    });
+  });
+
+  describe('end-to-end via mapToTransactionDtos — a broken fiscal_period cell does not drop its row or reject the file (T-123, reverted 2026-08-10)', () => {
+    const mapToTransactionDtos = (
+      rows: unknown[],
+    ): Array<{
+      dto: Record<string, unknown>;
+      fiscalPeriod: string | undefined;
+    }> =>
+      (
+        service as unknown as {
+          mapToTransactionDtos(rows: unknown[]): Array<{
+            dto: Record<string, unknown>;
+            fiscalPeriod: string | undefined;
+          }>;
+        }
+      ).mapToTransactionDtos(rows);
+
+    // MEASURED (Team Lead, 2026-08-10, task body):
+    //   A1 fiscal_period = "çöp"  ->  satır geçiyor, fiscalPeriod = undefined
+    //   A2 sağlam satır           ->  geçiyor
+    //   satır sayısı: 2
+    it('a broken fiscal_period cell on one row does not drop that row and does not reject the file — the sibling row is unaffected', () => {
+      const rows = mapToTransactionDtos([
+        {
+          agreement_id: 'AGR-1',
+          invoice_no: 'INV-1',
+          invoice_date: '2026-01-15',
+          amount: '100.00',
+          fiscal_period: 'çöp',
+        },
+        {
+          agreement_id: 'AGR-2',
+          invoice_no: 'INV-2',
+          invoice_date: '2026-01-16',
+          amount: '200.00',
+          fiscal_period: '2026-01',
+        },
+      ]);
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0].fiscalPeriod).toBeUndefined();
+      expect(rows[0].dto.agreementId).toBe('AGR-1');
+      expect(rows[1].fiscalPeriod).toBe('2026-01');
+      expect(rows[1].dto.agreementId).toBe('AGR-2');
+    });
+
+    it('a broken invoice_date (getDateValue, unaffected by the retraction) on one row still rejects the WHOLE FILE — contrast with fiscal_period above', () => {
+      expect(() =>
+        mapToTransactionDtos([
+          {
+            agreement_id: 'AGR-1',
+            invoice_no: 'INV-1',
+            invoice_date: '3/4/26', // ambiguous US order — getDateValue still throws
+            amount: '100.00',
+            fiscal_period: '2026-01',
+          },
+          {
+            agreement_id: 'AGR-2',
+            invoice_no: 'INV-2',
+            invoice_date: '2026-01-16',
+            amount: '200.00',
+            fiscal_period: '2026-01',
+          },
+        ]),
+      ).toThrow(BadRequestException);
+    });
   });
 });
