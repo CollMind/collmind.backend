@@ -117,8 +117,13 @@ describe('OnInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1
       expect(errors[0].error_type).toBe('INVALID_DATE');
     });
 
+    // T-126 review (B1): `'   '` joins `''`/`null`/`undefined` in the SAME
+    // loop, plus a dedicated identity assertion — before the fix, a
+    // whitespace-only cell fell through into `parseDateText`'s own `EMPTY`
+    // result and pushed a row-level `INVALID_DATE` error the literal `''`
+    // case never got (see `pick-cell.ts`'s `isBlankCellValue` doc).
     describe('genuinely absent input — the only case with zero errors AND an undefined value', () => {
-      it.each([undefined, null, ''])(
+      it.each([undefined, null, '', '   '])(
         '%p returns undefined with NO error pushed',
         (v) => {
           const { value, errors } = getDateValue(v);
@@ -126,6 +131,13 @@ describe('OnInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1
           expect(errors).toHaveLength(0);
         },
       );
+
+      it("'' and '   ' produce the IDENTICAL result — not just individually undefined/error-free (T-126 review B1)", () => {
+        const blank = getDateValue('');
+        const whitespace = getDateValue('   ');
+        expect(whitespace).toEqual(blank);
+        expect(blank).toEqual({ value: undefined, errors: [] });
+      });
     });
   });
 
@@ -143,6 +155,117 @@ describe('OnInvoiceFileParserService — excel-serial-date wiring (T-107 adım 1
     // every numeric input falls through to the excel-serial branch.
     it('a DST-boundary serial converts correctly through the fiscal-period path too', () => {
       expect(getFiscalPeriod(46110)).toBe('2026-03');
+    });
+  });
+
+  /**
+   * T-126 review (B1): `getFiscalPeriod` THROWS for a blank cell (the
+   * required, single-argument variant — see the file header). Before this
+   * fix, the naive `value === ''` check did not match `'   '`, so it fell
+   * through the whole method and hit the FINAL, present-but-unreadable throw
+   * with a DIFFERENT message: `"Geçersiz fiscal period formatı:    ."` — a
+   * whitespace-only cell was reported as GARBAGE, not as MISSING, even
+   * though the literal `''` cell right next to it got the correct
+   * "zorunludur" message. Both must throw the SAME message.
+   */
+  describe('getFiscalPeriod — blank input ("" and "   ") both throw, with the IDENTICAL message (T-126 review B1)', () => {
+    it.each(['', '   '])(
+      '%p throws "Fiscal period değeri zorunludur", not a garbage-format message',
+      (v) => {
+        expect(() => getFiscalPeriod(v)).toThrow('Fiscal period değeri zorunludur');
+      },
+    );
+
+    it("'' and '   ' throw the IDENTICAL message — not just both throwing SOME message", () => {
+      let blankMessage: string | undefined;
+      let whitespaceMessage: string | undefined;
+      try {
+        getFiscalPeriod('');
+      } catch (e) {
+        blankMessage = (e as Error).message;
+      }
+      try {
+        getFiscalPeriod('   ');
+      } catch (e) {
+        whitespaceMessage = (e as Error).message;
+      }
+      expect(whitespaceMessage).toBe(blankMessage);
+      expect(blankMessage).toBe('Fiscal period değeri zorunludur');
+    });
+  });
+
+  /**
+   * T-126 review (B1): `getDiscountType` had NO unit-level coverage before
+   * this turn (only end-to-end, via `parseExcel`, for the unrecognized-enum
+   * case). Before the fix, the naive `value === ''` check let `'   '` fall
+   * through into the enum-mapping branch, match none of the known codes, and
+   * push an `INVALID_ENUM` error ("Geçersiz indirim tipi: '   '.") for what
+   * should have been a silent, legitimate absence — the literal `''` cell
+   * produced zero errors for the identical intent.
+   */
+  describe('getDiscountType — blank input ("" and "   "), no errors, side by side (T-126 review B1)', () => {
+    const getDiscountType = (
+      value: unknown,
+      field = 'discount_type',
+    ): { value: unknown; errors: FieldParseError[] } => {
+      const errors: FieldParseError[] = [];
+      const result = (
+        service as unknown as {
+          getDiscountType(
+            v: unknown,
+            f: string,
+            e: FieldParseError[],
+          ): unknown;
+        }
+      ).getDiscountType(value, field, errors);
+      return { value: result, errors };
+    };
+
+    it.each(['', '   '])('%p returns undefined with NO error pushed', (v) => {
+      const { value, errors } = getDiscountType(v);
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(0);
+    });
+
+    it("'' and '   ' produce the IDENTICAL result", () => {
+      expect(getDiscountType('   ')).toEqual(getDiscountType(''));
+      expect(getDiscountType('')).toEqual({ value: undefined, errors: [] });
+    });
+  });
+
+  /**
+   * T-126 review (B1) — `getNumberValue` was already trim-aware BEFORE this
+   * fix (it delegates straight to `parseNumericText`, which trims — see
+   * `pick-cell.ts`'s `isBlankCellValue` doc). Pinned side by side with the
+   * broken getters above so the contrast is on record.
+   */
+  describe('getNumberValue — blank input, "" and "   " already agree (delegates to parseNumericText, which trims)', () => {
+    const getNumberValue = (
+      value: unknown,
+      field = 'quantity',
+    ): { value: number | undefined; errors: FieldParseError[] } => {
+      const errors: FieldParseError[] = [];
+      const result = (
+        service as unknown as {
+          getNumberValue(
+            v: unknown,
+            f: string,
+            e: FieldParseError[],
+          ): number | undefined;
+        }
+      ).getNumberValue(value, field, errors);
+      return { value: result, errors };
+    };
+
+    it.each(['', '   '])('%p returns undefined with NO error pushed', (v) => {
+      const { value, errors } = getNumberValue(v);
+      expect(value).toBeUndefined();
+      expect(errors).toHaveLength(0);
+    });
+
+    it("'' and '   ' produce the IDENTICAL result", () => {
+      expect(getNumberValue('   ')).toEqual(getNumberValue(''));
+      expect(getNumberValue('')).toEqual({ value: undefined, errors: [] });
     });
   });
 

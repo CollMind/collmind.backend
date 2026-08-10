@@ -133,8 +133,17 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
     // §2.5's three-way split, pinned explicitly at this call site: a
     // genuinely ABSENT value (never given) is not the same as a PRESENT but
     // unreadable one — only the latter produces an error.
+    // T-126 review (B1): `''` and `'   '` MUST produce the identical result
+    // — pinned side by side in the SAME test (not two separate `it`s) so a
+    // regression back to the naive `value === ''` check shows up as a
+    // divergence between two cases in one assertion block, not as one lone
+    // red test elsewhere that a reader has to correlate by hand. Before the
+    // fix, `'   '` fell through into `parseDateText`'s own `EMPTY` result and
+    // pushed a row-level `INVALID_DATE` error ("Tarih değeri boş.") that the
+    // literal `''` case right next to it never got — see `pick-cell.ts`'s
+    // `isBlankCellValue` doc for the measured repro.
     describe('genuinely absent input — the only case with zero errors AND an undefined value', () => {
-      it.each([null, undefined, ''])(
+      it.each([null, undefined, '', '   '])(
         '%p returns undefined with NO error pushed',
         (v) => {
           const { value, errors } = getDateValue(v);
@@ -142,6 +151,13 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
           expect(errors).toHaveLength(0);
         },
       );
+
+      it("'' and '   ' produce the IDENTICAL result — not just individually undefined/error-free (T-126 review B1)", () => {
+        const blank = getDateValue('');
+        const whitespace = getDateValue('   ');
+        expect(whitespace).toEqual(blank);
+        expect(blank).toEqual({ value: undefined, errors: [] });
+      });
     });
   });
 
@@ -172,6 +188,48 @@ describe('OffInvoiceFileParserService — excel-serial-date wiring (T-107 adım 
           }),
         },
       ]);
+    });
+  });
+
+  /**
+   * T-126 review (B1) — `getNumberValue` was already trim-aware BEFORE this
+   * fix (it delegates straight to `parseNumericText`, which trims — see
+   * `pick-cell.ts`'s `isBlankCellValue` doc, this getter is the one NOT
+   * listed among the naive-`=== ''` sites). Pinned here anyway, side by side
+   * with the broken getters above, so the CONTRAST itself is on record: not
+   * every getter in this file carried the bug, and a reader should not
+   * assume a fix here was needed to know it already worked.
+   */
+  describe('getNumberValue — blank input, "" and "   " already agree (delegates to parseNumericText, which trims)', () => {
+    const getNumberValue = (
+      value: unknown,
+      field = 'amount',
+    ): { value: number | undefined; errors: FieldParseError[] } => {
+      const errors: FieldParseError[] = [];
+      const result = (
+        service as unknown as {
+          getNumberValue(
+            v: unknown,
+            f: string,
+            e: FieldParseError[],
+          ): number | undefined;
+        }
+      ).getNumberValue(value, field, errors);
+      return { value: result, errors };
+    };
+
+    it.each(['', '   '])(
+      '%p returns undefined with NO error pushed',
+      (v) => {
+        const { value, errors } = getNumberValue(v);
+        expect(value).toBeUndefined();
+        expect(errors).toHaveLength(0);
+      },
+    );
+
+    it("'' and '   ' produce the IDENTICAL result", () => {
+      expect(getNumberValue('   ')).toEqual(getNumberValue(''));
+      expect(getNumberValue('')).toEqual({ value: undefined, errors: [] });
     });
   });
 
@@ -661,12 +719,22 @@ describe('OffInvoiceFileParserService — date-text string-branch wiring (T-123 
    * produces neither).
    */
   describe('getFiscalPeriod — present-but-unparseable resolves to undefined AND records a parseError (T-123 retraction + T-126)', () => {
+    // T-126 review (B1): `'   '` joins `''`/`null`/`undefined` in the SAME
+    // loop, and a dedicated identity assertion follows — before the fix, a
+    // whitespace-only cell fell through into `parseDateText`'s own `EMPTY`
+    // result and pushed a row-level `INVALID_DATE` error the literal `''`
+    // case never got (see `pick-cell.ts`'s `isBlankCellValue` doc).
     it('a genuinely absent cell resolves to undefined with NO error (legitimate optionality, unaffected by T-123 either way)', () => {
-      for (const v of ['', null, undefined]) {
+      for (const v of ['', '   ', null, undefined]) {
         const { value, errors } = getFiscalPeriod(v);
         expect(value).toBeUndefined();
         expect(errors).toHaveLength(0);
       }
+    });
+
+    it("'' and '   ' produce the IDENTICAL result (T-126 review B1)", () => {
+      expect(getFiscalPeriod('   ')).toEqual(getFiscalPeriod(''));
+      expect(getFiscalPeriod('')).toEqual({ value: undefined, errors: [] });
     });
 
     it('a present-but-garbage cell ("çöp") resolves to undefined AND pushes a parseErrors entry', () => {

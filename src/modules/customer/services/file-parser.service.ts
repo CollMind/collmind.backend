@@ -11,7 +11,11 @@ import {
   parseOptionalDateText,
   describeDateTextFailure,
 } from '../../../common/date/date-text';
-import { pickCell, hasCellValue } from '../../../common/row-parsing/pick-cell';
+import {
+  pickCell,
+  hasCellValue,
+  isBlankCellValue,
+} from '../../../common/row-parsing/pick-cell';
 import { normalizeBlankCells } from '../../../common/row-parsing/normalize-blank-cells';
 import { FieldParseError } from '../../../common/row-parsing/field-parse-error';
 import * as XLSX from 'xlsx';
@@ -591,8 +595,20 @@ export class FileParserService {
     return Number(result.canonical);
   }
 
+  /**
+   * T-126 review (B1 kardeşi — §7.1 "kardeş yolu da ölç"): absence is
+   * `isBlankCellValue`, not the hand-written `value === ''` this used to be.
+   * Measured: this getter has NO `errors` sink (unlike the sibling getters
+   * below), so a whitespace-only cell (`"   "`) used to fall through the old
+   * check, fail every truthy-string comparison, and silently resolve to
+   * `false` — a value INVENTED for an ambiguous input, exactly the shape
+   * §2.5 forbids, and worse than the sibling getters' bug (they at least
+   * produced a reportable row error; this one produced a wrong value with no
+   * trace). `isBlankCellValue` returns `undefined` for the same input,
+   * matching the literal `''` cell right next to it.
+   */
   private getOptionalBoolean(value: any): boolean | undefined {
-    if (value === null || value === undefined || value === '') return undefined;
+    if (isBlankCellValue(value)) return undefined;
     if (typeof value === 'boolean') return value;
     const str = String(value).toLowerCase().trim();
     return str === 'true' || str === '1' || str === 'yes' || str === 'evet';

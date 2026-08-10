@@ -255,9 +255,24 @@ export class OffInvoiceValidationService {
       // T-126: the cell WAS given but could not be parsed — already reported
       // above as a row-level ERROR with the specific reason. Do not ALSO
       // claim it was "not specified" (that warning is for the genuinely
-      // absent case only) and do not fall through to
-      // `agreement-transaction.service.ts`'s `agreement.periodMonth`/
-      // `invoiceDate` fallback chain — this row is invalid, full stop.
+      // absent case only).
+      //
+      // ⚠️ T-126 review (S3): "does not fall through to the fallback chain —
+      // this row is invalid, full stop" is true only WITHIN this method.
+      // Measured: `POST /agreement-transactions/validate-and-import`
+      // (`agreement-transaction.controller.ts`) takes client-supplied
+      // `rows: CreateAgreementTransactionDto[]` straight into
+      // `AgreementTransactionService.batchImport` -> `create`, which does
+      // NOT re-run `validateRow` — `create`'s own `agreement.periodMonth` /
+      // `invoiceDate` fallback chain (`agreement-transaction.service.ts:
+      // 109-119`) decides purely on `dto.fiscalPeriod`'s truthiness, with no
+      // knowledge of this method's `parseErrorFields`. In practice this row
+      // is kept out of the fallback because the frontend only resubmits
+      // `validRows` from `POST /validate` — but that is a CLIENT
+      // convention, not a server-enforced invariant; nothing on the server
+      // re-validates a row this method rejected before `create` runs.
+      // Server-side re-validation on import is a separate, larger question
+      // — not this task's scope.
     } else {
       // Fiscal period zorunlu değil ama uyarı verilebilir
       warnings.push({

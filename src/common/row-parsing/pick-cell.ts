@@ -90,6 +90,51 @@ export function pickCell(row: Record<string, unknown>, ...keys: string[]): any {
 }
 
 /**
+ * "Is this SINGLE, already-resolved value absent" — `null`, `undefined`, or a
+ * string that is empty after trimming. Factored out of `hasCellValue` below
+ * (T-126 review, B1) because the ROW-level filter is not the only caller that
+ * needs this question answered: `OffInvoiceFileParserService.getDateValue` /
+ * `getFiscalPeriod`, `OnInvoiceFileParserService.getDateValue` /
+ * `getFiscalPeriod` / `getDiscountType`, and `CustomerFileParserService
+ * .getOptionalBoolean` each hand-wrote their own FIELD-level absence check as
+ * `value === null || value === undefined || value === ''` — the exact bug
+ * `hasCellValue`'s own doc measured for the ROW-level filter, reproduced at
+ * the field level because a fourth (fifth, sixth…) hand-written copy does not
+ * inherit a fix made to the first one.
+ *
+ * Measured (T-126 review, B1), a single whitespace-only cell (`"   "`,
+ * Excel's "Save As" pads a blank cell with nothing but a human editing the
+ * sheet by hand can easily leave a stray space) against each hand-written
+ * check that used the naive `=== ''` test instead of this one:
+ *
+ *   - `off.getDateValue` / `off.getFiscalPeriod` (optional): the naive check
+ *     does not match `"   "` (it is not literally `''`), so the value falls
+ *     through into `parseDateText`, which DOES trim and reports `EMPTY` —
+ *     but the caller did not expect `EMPTY` to still arrive at this point (it
+ *     believed it had already filtered every empty case) and pushed a
+ *     row-level `INVALID_DATE` error ("Tarih değeri boş.") for what should
+ *     have been a silent, legitimate absence — the literal `''` cell right
+ *     next to it in the same column produces ZERO errors for the identical
+ *     intent.
+ *   - `on.getFiscalPeriod` (the required, throwing variant): same fall-
+ *     through, but this method throws past the row-level channel entirely —
+ *     a single whitespace-only `fiscal_period` cell rejects the WHOLE FILE
+ *     with `"Geçersiz fiscal period formatı:    ."`, not a per-row error.
+ *   - `on.getDiscountType`: same fall-through into the enum-mapping branch,
+ *     which cannot match an empty string against any known code, so it
+ *     reports `INVALID_ENUM` ("Geçersiz indirim tipi: '   '.") for a cell
+ *     that should have been treated as not provided at all.
+ *
+ * `hasCellValue` reuses this so the row-level and field-level absence
+ * questions can never drift apart again.
+ */
+export function isBlankCellValue(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === 'string' && value.trim() === '') return true;
+  return false;
+}
+
+/**
  * "Does this row have anything a user typed under any of these aliases" —
  * the question a blank-row filter actually asks, and a DIFFERENT question
  * from `pickCell`'s "what value should this field resolve to" (T-107 adım 2
@@ -119,10 +164,7 @@ export function hasCellValue(
   ...keys: string[]
 ): boolean {
   for (const key of keys) {
-    const value = row[key];
-    if (value === null || value === undefined) continue;
-    if (typeof value === 'string' && value.trim() === '') continue;
-    return true;
+    if (!isBlankCellValue(row[key])) return true;
   }
   return false;
 }

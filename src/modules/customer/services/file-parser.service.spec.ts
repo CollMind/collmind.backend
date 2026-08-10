@@ -244,6 +244,41 @@ describe('FileParserService — field-level parsing wiring (T-121)', () => {
     });
   });
 
+  /**
+   * T-126 review (B1 kardeşi — §7.1 "kardeş yolu da ölç"). `getOptionalBoolean`
+   * has NO `errors` sink (unlike every other getter in this file), so before
+   * this fix a whitespace-only cell (`'   '`) fell through the naive
+   * `value === ''` check, failed every truthy-string comparison
+   * (`'true'`/`'1'`/`'yes'`/`'evet'`), and silently resolved to `false` — a
+   * value INVENTED for an ambiguous input, exactly the shape §2.5 forbids,
+   * and with NO trace (worse than the sibling getters' bug, which at least
+   * produced a reportable row error). See `pick-cell.ts`'s `isBlankCellValue`
+   * doc for the measured repro.
+   */
+  describe('getOptionalBoolean — blank input ("" and "   ") both undefined, side by side (T-126 review B1)', () => {
+    const getOptionalBoolean = (value: unknown): boolean | undefined =>
+      (
+        service as unknown as {
+          getOptionalBoolean(v: unknown): boolean | undefined;
+        }
+      ).getOptionalBoolean(value);
+
+    it.each(['', '   '])('%p returns undefined, not a guessed false', (v) => {
+      expect(getOptionalBoolean(v)).toBeUndefined();
+    });
+
+    it("'' and '   ' produce the IDENTICAL result — not just individually undefined", () => {
+      expect(getOptionalBoolean('   ')).toBe(getOptionalBoolean(''));
+      expect(getOptionalBoolean('')).toBeUndefined();
+    });
+
+    // Contrast case: a genuinely present, but non-truthy-looking, string
+    // still resolves to `false` — only BLANK input is absent.
+    it('a genuinely present but unrecognized string still resolves to false (unaffected by this fix)', () => {
+      expect(getOptionalBoolean('maybe')).toBe(false);
+    });
+  });
+
   describe('end-to-end via mapToCustomerDtos — the row-level error channel (T-121)', () => {
     const mapToCustomerDtos = (
       rows: unknown[],

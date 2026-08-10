@@ -14,6 +14,7 @@ import {
 import {
   pickCell,
   hasCellValue,
+  isBlankCellValue,
 } from '../../../../../common/row-parsing/pick-cell';
 import { normalizeBlankCells } from '../../../../../common/row-parsing/normalize-blank-cells';
 import { FieldParseError } from '../../../../../common/row-parsing/field-parse-error';
@@ -419,7 +420,14 @@ export class OnInvoiceFileParserService {
     field: string,
     errors: FieldParseError[],
   ): string | undefined {
-    if (value === null || value === undefined || value === '') {
+    // T-126 review (B1): `isBlankCellValue`, not the hand-written
+    // `value === ''` this used to be — see `pick-cell.ts`'s
+    // `isBlankCellValue` doc for the measured repro (a whitespace-only cell
+    // fell through into `parseDateText`'s own `EMPTY` result below and
+    // pushed an `INVALID_DATE` row error for what should have been a
+    // silent, legitimate absence — the literal `''` cell right next to it
+    // got zero errors for the identical intent).
+    if (isBlankCellValue(value)) {
       return undefined;
     }
 
@@ -482,7 +490,15 @@ export class OnInvoiceFileParserService {
    * bir tasarım sorusu — bu task'ın kapsamı değil.
    */
   private getFiscalPeriod(value: any): string {
-    if (value === null || value === undefined || value === '') {
+    // T-126 review (B1): `isBlankCellValue`, not the hand-written
+    // `value === ''` this used to be — measured, a whitespace-only cell
+    // (`"   "`) is not literally `''`, so the old check fell through all the
+    // way to the throw at the bottom of this method and rejected the WHOLE
+    // FILE with `"Geçersiz fiscal period formatı:    ."` (present-but-
+    // unreadable) instead of the correct `"Fiscal period değeri zorunludur"`
+    // (absent) — a worse outcome than the two optional getters above because
+    // this variant throws past the row-level channel entirely.
+    if (isBlankCellValue(value)) {
       throw new BadRequestException('Fiscal period değeri zorunludur');
     }
 
@@ -522,18 +538,31 @@ export class OnInvoiceFileParserService {
   }
 
   /**
-   * T-126: no longer throws — `errors` gets the specific reason, `undefined`
-   * is returned (EMPTY and "not one of the known codes" both — there is no
-   * partial-match state for an enum the way there is for a date or a
-   * number, so both collapse to the same row-level error family). Mirrors
-   * `getDateValue`/`getNumberValue`'s split above.
+   * T-126: no longer throws — `errors` gets the specific reason on an
+   * unrecognized-but-present value, `undefined` is returned either way.
+   *
+   * ⚠️ T-126 review (S4): the claim that used to sit here — that EMPTY and
+   * "not one of the known codes" collapse to the SAME row-level error family
+   * — was checked and is wrong; §2.5 forbids collapsing them, and this
+   * method does not. Measured: `''` returns `undefined` with ZERO errors
+   * (a legitimate absence, same shape as `getDateValue`/`getNumberValue`'s
+   * EMPTY case); `'XYZ'` returns `undefined` WITH an `INVALID_ENUM` error.
+   * The two states stay distinguishable via `parseErrors`, same as every
+   * other getter in this file.
+   *
+   * T-126 review (B1): absence is `isBlankCellValue`, NOT the hand-written
+   * `value === ''` this used to be — a whitespace-only cell (`"   "`) used
+   * to fall through into the mapping below, match none of the known codes,
+   * and push an `INVALID_ENUM` error ("Geçersiz indirim tipi: '   '.") for
+   * what should have been the same silent absence a literal `''` cell
+   * already got.
    */
   private getDiscountType(
     value: any,
     field: string,
     errors: FieldParseError[],
   ): OnInvoiceDiscountType | undefined {
-    if (value === null || value === undefined || value === '') {
+    if (isBlankCellValue(value)) {
       return undefined;
     }
 

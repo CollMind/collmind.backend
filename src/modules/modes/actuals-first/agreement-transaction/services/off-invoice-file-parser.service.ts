@@ -14,6 +14,7 @@ import {
 import {
   pickCell,
   hasCellValue,
+  isBlankCellValue,
 } from '../../../../../common/row-parsing/pick-cell';
 import { normalizeBlankCells } from '../../../../../common/row-parsing/normalize-blank-cells';
 import { FieldParseError } from '../../../../../common/row-parsing/field-parse-error';
@@ -379,13 +380,21 @@ export class OffInvoiceFileParserService {
    * zorunludur" check); present-but-unreadable pushes a specific error and
    * also returns `undefined` — the two states are NEVER collapsed into one
    * (§2.5). Mirrors `OnInvoiceFileParserService.getDateValue` exactly.
+   *
+   * T-126 review (B1): absence is `isBlankCellValue`, NOT the hand-written
+   * `value === ''` this used to be — a whitespace-only cell (`"   "`) is not
+   * literally `''`, so the old check let it fall through into `parseDateText`
+   * (which DOES trim and reports `EMPTY`) and this method pushed an
+   * `INVALID_DATE` row error for what should have been the same silent,
+   * legitimate absence a literal `''` cell already got. See
+   * `pick-cell.ts`'s `isBlankCellValue` doc for the measured repro.
    */
   private getDateValue(
     value: any,
     field: string,
     errors: FieldParseError[],
   ): string | undefined {
-    if (value === null || value === undefined || value === '') {
+    if (isBlankCellValue(value)) {
       return undefined;
     }
 
@@ -476,7 +485,14 @@ export class OffInvoiceFileParserService {
     field: string,
     errors: FieldParseError[],
   ): string | undefined {
-    if (value === null || value === undefined || value === '') return undefined;
+    // T-126 review (B1): `isBlankCellValue`, not the hand-written
+    // `value === ''` this used to be — see `getDateValue` above and
+    // `pick-cell.ts`'s `isBlankCellValue` doc for the measured repro
+    // (a whitespace-only cell used to fall through here, reach
+    // `parseDateText`'s own `EMPTY` result below, and push an `INVALID_DATE`
+    // row error for what should have been the same silent absence a literal
+    // `''` cell already got).
+    if (isBlankCellValue(value)) return undefined;
 
     const str = String(value).trim();
 

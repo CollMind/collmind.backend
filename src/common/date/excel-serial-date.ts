@@ -97,14 +97,31 @@
  *    millisecond offset (`8.64e18`) far past `Date`'s own valid range
  *    (`±8.64e15`), and `new Date(ms).toISOString()` on that THREW a raw,
  *    uncaught `RangeError: Invalid time value` — not the `BadRequestException`
- *    every other refusal in this file produces. Every one of this function's
- *    six call sites (`off-invoice`×2, `on-invoice`×3, `customer`×1) already
- *    wraps `!result.ok` into a 400; none of them expected an exception to
- *    escape a `result.ok === true` branch instead. That made a single
+ *    every other refusal in this file produces. Every call site of this
+ *    function already wraps `!result.ok` into a 400; none of them expected
+ *    an exception to escape a `result.ok === true` branch instead. That made a single
  *    malformed cell a 500, not a 400 — and, upstream of any per-row error
- *    channel, a 500 there takes the WHOLE request down. Checked before
- *    `.toISOString()` is called, so the throw can never happen; refused with
- *    the same shape as the other three cases instead.
+ *    channel, a 500 there takes the WHOLE request down.
+ *
+ *    ⚠️ T-126 review (S1): the bound this case refuses at is `2958465` —
+ *    Excel's serial for `9999-12-31`, the LAST calendar day whose Gregorian
+ *    year still fits the canonical 4-digit `YYYY-MM-DD` this module's own
+ *    `isoDate` field promises ("Canonical `YYYY-MM-DD`"), not `Date`'s own
+ *    much larger representable range. Measured, between those two bounds
+ *    `Date` stays constructible (`Number.isNaN(date.getTime())` is `false`)
+ *    but produces `Date`'s ISO 8601 EXTENDED year format, which is not
+ *    `YYYY-MM-DD`:
+ *
+ *        2958465  -> "9999-12-31"        (last 4-digit year, in range)
+ *        2958466  -> "+010000-01-01"     ok WOULD have read `true` — a
+ *                                         6-digit, sign-prefixed year, not
+ *                                         this module's own contract
+ *        3000000  -> "+010113-09-19"     same shape, further out
+ *
+ *    Refusing the whole band above `2958465` — rather than only the point
+ *    past which `Date` itself gives up — is what keeps `ok: true` and
+ *    "canonical `YYYY-MM-DD`" from silently drifting apart. Checked before
+ *    any `Date` is constructed at all.
  */
 
 export type ExcelSerialDateFailure =
@@ -114,9 +131,12 @@ export type ExcelSerialDateFailure =
   | 'NON_POSITIVE'
   /** `Math.floor(value) === 60` — Excel's fictitious, non-existent 1900-02-29. */
   | 'LEAP_BUG_DAY'
-  /** Computed millisecond offset falls outside `Date`'s own representable
-   *  range — `new Date(ms).toISOString()` would throw `RangeError` rather
-   *  than produce a date at all. */
+  /** Past `MAX_SUPPORTED_SERIAL` (Excel's serial for `9999-12-31`) — either
+   *  because the computed millisecond offset falls outside `Date`'s own
+   *  representable range, or because it stays `Date`-constructible but lands
+   *  past the last 4-digit Gregorian year, where `Date` would format an
+   *  extended-year string (`"+010000-01-01"`) instead of this module's own
+   *  canonical `YYYY-MM-DD` contract (T-126 — see module doc, case 4). */
   | 'OUT_OF_RANGE';
 
 export interface ExcelSerialDateOk {
@@ -163,6 +183,18 @@ const EXCEL_EPOCH_UTC_MS = Date.UTC(1899, 11, 30);
 const MS_PER_DAY = 86400000;
 
 /**
+ * Excel's own serial for `9999-12-31` — the last calendar day whose
+ * Gregorian year still fits this module's `YYYY-MM-DD` contract (4 digits,
+ * no sign). T-126 (S1): measured with `node`, `Date.UTC` stays
+ * constructible (`ok: true` under the OLD, single `Number.isNaN` check)
+ * for a much larger range than this — `2958466` -> `"+010000-01-01"`,
+ * `3000000` -> `"+010113-09-19"` — `Date`'s ISO 8601 EXTENDED year format,
+ * not `YYYY-MM-DD`. Bounding at this constant, not at wherever `Date`
+ * itself gives up, is what keeps the two in sync.
+ */
+const MAX_SUPPORTED_SERIAL = 2958465;
+
+/**
  * Convert an Excel serial-date NUMBER (as SheetJS hands back with
  * `raw: false` disabled from a numeric cell, or `raw: true`) to a canonical
  * `YYYY-MM-DD`. Timezone-independent: computed and formatted on `Date.UTC`
@@ -183,13 +215,26 @@ export function excelSerialToIsoDate(value: number): ExcelSerialDateResult {
   if (Math.floor(value) === 60) {
     return { ok: false, reason: 'LEAP_BUG_DAY', input: value };
   }
+  // T-126 (S1): checked BEFORE any `Date` is built. `Date` itself stays
+  // constructible well past this point (see `MAX_SUPPORTED_SERIAL`'s own
+  // doc) but stops matching this module's `YYYY-MM-DD` contract before
+  // `Date` would ever report `NaN` — the `Number.isNaN` check below alone
+  // let `ok: true` and "canonical `YYYY-MM-DD`" silently drift apart.
+  if (Math.floor(value) > MAX_SUPPORTED_SERIAL) {
+    return { ok: false, reason: 'OUT_OF_RANGE', input: value };
+  }
 
   const ms = EXCEL_EPOCH_UTC_MS + value * MS_PER_DAY;
   const date = new Date(ms);
-  // T-126: checked BEFORE `.toISOString()` runs — that call throws
-  // `RangeError` on an out-of-range `Date`, and `Number.isNaN(date.getTime())`
-  // is `Date`'s own documented signal for "construction did not produce a
-  // representable instant" (see module doc, case 4).
+  // Defense in depth, not the primary bound (see the check above): every
+  // value reaching here is `<= MAX_SUPPORTED_SERIAL` (2,958,465), so `ms` is
+  // at most ~2.56e14 — computed, not assumed — which sits well inside
+  // `Date`'s own documented ±8.64e15 representable range. Kept anyway
+  // because `.toISOString()` below throws a raw `RangeError` on an
+  // out-of-range `Date`, and `Number.isNaN(date.getTime())` is `Date`'s own
+  // documented signal for "construction did not produce a representable
+  // instant" — cheaper to check than to prove this arithmetic can never
+  // change under a future edit to the two constants above.
   if (Number.isNaN(date.getTime())) {
     return { ok: false, reason: 'OUT_OF_RANGE', input: value };
   }

@@ -251,6 +251,38 @@ describe('excelSerialToIsoDate (T-107 adım 1)', () => {
         'OUT_OF_RANGE',
       );
     });
+
+    /**
+     * T-126 review (S1) — `MAX_SUPPORTED_SERIAL`'s own boundary, pinned on
+     * BOTH sides (§2.7: a single-sided pin does not distinguish the
+     * constant's actual value from any other number past `Date`'s much
+     * larger representable range). Before this fix, only `Number.isNaN`
+     * gated this path — `Date` itself stays constructible (`ok: true` under
+     * the OLD check) all the way out to `2958466` -> `"+010000-01-01"` and
+     * `3000000` -> `"+010113-09-19"`, `Date`'s ISO 8601 EXTENDED year
+     * format, which is NOT this module's own `YYYY-MM-DD` contract (see the
+     * module doc, case 4, and `MAX_SUPPORTED_SERIAL`'s own comment).
+     */
+    describe('the MAX_SUPPORTED_SERIAL boundary — pinned on both sides (T-126 review S1)', () => {
+      it('2958465 (9999-12-31, the last 4-digit Gregorian year) is ACCEPTED, canonical YYYY-MM-DD', () => {
+        expect(excelSerialToIsoDate(2958465)).toEqual({
+          ok: true,
+          isoDate: '9999-12-31',
+        });
+      });
+
+      it('2958466 — one past the boundary — is REFUSED as OUT_OF_RANGE, not an extended-year string', () => {
+        const result = excelSerialToIsoDate(2958466);
+        expect(result.ok).toBe(false);
+        expect((result as { reason: string }).reason).toBe('OUT_OF_RANGE');
+      });
+
+      it('3000000 — well past the boundary, but still Date-constructible — is REFUSED as OUT_OF_RANGE', () => {
+        const result = excelSerialToIsoDate(3000000);
+        expect(result.ok).toBe(false);
+        expect((result as { reason: string }).reason).toBe('OUT_OF_RANGE');
+      });
+    });
   });
 
   describe('describeExcelSerialDateFailure — Turkish, user-safe messages', () => {
