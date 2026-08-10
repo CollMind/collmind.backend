@@ -122,7 +122,43 @@ export class KpiEngineService {
     const results: Record<string, CalculationResult> = {};
 
     for (const kpi of kpis) {
-      if (kpi.calculationLevel === CalculationLevel.SKU) {
+      if (
+        kpi.calculationLevel === CalculationLevel.SKU &&
+        kpi.aggregationMethodFu === AggregationMethod.WEIGHTED_AVG
+      ) {
+        // T-177 step 2: a ratio KPI (UPLIFT_PCT, GP_ROI_PCT, GP_MARGIN_PCT —
+        // kpi.seed.ts) is NOT averaged across SKUs. mean(ratio) !=
+        // Σnumerator/Σdenominator — re-run the KPI's own formula against the
+        // ALREADY-aggregated dependency values instead (results[dep] is
+        // guaranteed populated: kpis are processed in calculationOrder ASC
+        // and every dependency of a WEIGHTED_AVG ratio has a lower order —
+        // see recomputeRatioFromAggregatedContext doc comment).
+        const { value, coverageRatio } =
+          this.recomputeRatioFromAggregatedContext(kpi, results, tactics);
+
+        let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
+        if (
+          coverageRatio === 1 &&
+          value !== null &&
+          kpi.ragGreenThreshold !== undefined &&
+          kpi.ragGreenThreshold !== null
+        ) {
+          ragStatus = this.determineRagStatus(
+            value,
+            kpi.ragGreenThreshold,
+            kpi.ragAmberThreshold,
+          );
+        }
+
+        results[kpi.kpiCode] = {
+          kpiCode: kpi.kpiCode,
+          value,
+          displayFormat: kpi.displayFormat,
+          decimalPlaces: kpi.decimalPlaces,
+          ragStatus,
+          coverageRatio,
+        };
+      } else if (kpi.calculationLevel === CalculationLevel.SKU) {
         // T-177: aggregate SKU values to FU. `values` silently drops any
         // SKU whose value is null/undefined (e.g. missing COGS, T-027) —
         // that silence used to be untracked. `coverageRatio` makes it a
@@ -258,6 +294,37 @@ export class KpiEngineService {
           decimalPlaces: kpi.decimalPlaces,
           ragStatus,
         };
+      } else if (kpi.aggregationMethodFu === AggregationMethod.WEIGHTED_AVG) {
+        // T-177 step 2: same re-derivation as calculateFu's WEIGHTED_AVG
+        // branch, one level up — Σ INCR_GP / Σ TOTAL_PLANNED_SPEND across
+        // FUs, not mean(FU-level GP_ROI_PCT). `results` already holds every
+        // FU-summed dependency by the time a ratio KPI's calculationOrder
+        // is reached (same ordering guarantee as calculateFu).
+        const { value, coverageRatio } =
+          this.recomputeRatioFromAggregatedContext(kpi, results, {});
+
+        let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
+        if (
+          coverageRatio === 1 &&
+          value !== null &&
+          kpi.ragGreenThreshold !== undefined &&
+          kpi.ragGreenThreshold !== null
+        ) {
+          ragStatus = this.determineRagStatus(
+            value,
+            kpi.ragGreenThreshold,
+            kpi.ragAmberThreshold,
+          );
+        }
+
+        results[kpi.kpiCode] = {
+          kpiCode: kpi.kpiCode,
+          value,
+          displayFormat: kpi.displayFormat,
+          decimalPlaces: kpi.decimalPlaces,
+          ragStatus,
+          coverageRatio,
+        };
       } else {
         // T-177: aggregate from FU level — same coverage discipline as the
         // SKU→FU rollup in calculateFu (see comment there).
@@ -345,11 +412,71 @@ export class KpiEngineService {
       case AggregationMethod.MAX:
         return Math.max(...values);
       case AggregationMethod.WEIGHTED_AVG:
-        // Default to simple average if no weights
-        return values.reduce((a, b) => a + b, 0) / values.length;
+        // T-177 step 2: WEIGHTED_AVG must never reach here. A ratio KPI
+        // (aggregationMethodFu = WEIGHTED_AVG) is re-derived by
+        // recomputeRatioFromAggregatedContext BEFORE this method is called
+        // — mean(ratio) != Σnum/Σden, and averaging the raw per-child
+        // ratios here (the previous behaviour) is exactly the bug this
+        // task closes. Throwing (instead of silently falling back to a
+        // naive average again) turns any future code path that skips the
+        // recompute step into a loud failure instead of a silently wrong
+        // number (§2.5).
+        throw new Error(
+          `KpiEngineService.aggregate() received WEIGHTED_AVG directly — ` +
+            `this method must be re-derived via ` +
+            `recomputeRatioFromAggregatedContext(), not averaged as raw ` +
+            `values (T-177).`,
+        );
       default:
         return values.reduce((a, b) => a + b, 0);
     }
+  }
+
+  /**
+   * T-177 step 2: re-derive a ratio KPI (calculationLevel SKU,
+   * aggregationMethodFu = WEIGHTED_AVG — UPLIFT_PCT/GP_ROI_PCT/GP_MARGIN_PCT,
+   * kpi.seed.ts) from its own formula run against the ALREADY-aggregated
+   * dependency values, instead of averaging the per-child ratio values.
+   * A ratio's mean is not the ratio of the sums; e.g.
+   * GP_ROI_PCT = INCR_GP / TOTAL_PLANNED_SPEND * 100 must be
+   * Σ INCR_GP / Σ TOTAL_PLANNED_SPEND * 100, not mean(per-SKU GP_ROI_PCT).
+   *
+   * Precondition: `results` already contains every dependency this
+   * formula references. This holds because `getActiveKpis` orders by
+   * `calculationOrder` ASC and every WEIGHTED_AVG ratio KPI's dependencies
+   * have a strictly lower calculationOrder (verified against kpi.seed.ts:
+   * UPLIFT_PCT(21) <- PLAN_VOL(2)/BASE_VOL(1); GP_ROI_PCT(48) <-
+   * INCR_GP(46)/TOTAL_PLANNED_SPEND(9); GP_MARGIN_PCT(49) <-
+   * PLANNED_GP(36)/PLANNED_TO(26)) — so by the time the caller's `kpis`
+   * loop reaches this KPI, every dependency has already been written into
+   * `results` in this same loop.
+   *
+   * `coverageRatio` is the minimum coverage across the formula's own
+   * dependencies (as already aggregated into `results`) — a ratio built
+   * from a numerator with 40% SKU coverage is itself only as trustworthy
+   * as that 40%, even if the denominator has 100%.
+   */
+  private recomputeRatioFromAggregatedContext(
+    kpi: Kpi,
+    results: Record<string, CalculationResult>,
+    extraContext: Record<string, any>,
+  ): { value: number | null; coverageRatio: number | null } {
+    const formula = this.getOrParseFormula(kpi);
+
+    const contextMap: Record<string, any> = { ...extraContext };
+    for (const [code, result] of Object.entries(results)) {
+      contextMap[code] = result.value;
+    }
+
+    const value = formula.execute(contextMap);
+
+    const depCoverages = formula.dependencies
+      .map((dep) => results[dep]?.coverageRatio)
+      .filter((c): c is number => c !== null && c !== undefined);
+    const coverageRatio =
+      depCoverages.length > 0 ? Math.min(...depCoverages) : null;
+
+    return { value, coverageRatio };
   }
 
   /**
