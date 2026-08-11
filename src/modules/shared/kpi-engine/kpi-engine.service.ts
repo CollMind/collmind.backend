@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   Kpi,
-  FormulaType,
   CalculationLevel,
   AggregationMethod,
 } from '../../../database/entities/kpi.entity';
@@ -128,14 +127,34 @@ export class KpiEngineService {
       ) {
         // T-177 step 2: a ratio KPI (UPLIFT_PCT, GP_ROI_PCT, GP_MARGIN_PCT —
         // kpi.seed.ts) is NOT averaged across SKUs. mean(ratio) !=
-        // Σnumerator/Σdenominator — re-run the KPI's own formula against the
-        // ALREADY-aggregated dependency values instead (results[dep] is
-        // guaranteed populated: kpis are processed in calculationOrder ASC
-        // and every dependency of a WEIGHTED_AVG ratio has a lower order —
-        // see recomputeRatioFromAggregatedContext doc comment).
-        const { value, coverageRatio } =
-          this.recomputeRatioFromAggregatedContext(kpi, results, tactics);
+        // Σnumerator/Σdenominator.
+        //
+        // T-177 BLOCKER (2026-08-11): re-deriving it from the
+        // already-aggregated `results` map was ITSELF wrong — each
+        // dependency in `results` was summed over its OWN non-null subset
+        // of SKUs (INCR_GP over the 4/170 SKUs with COGS, TOTAL_PLANNED_SPEND
+        // over all 170), so the ratio divided two different populations
+        // (measured: 42x too low on production-shaped data). Recompute
+        // directly from the raw `skuResults` instead — see
+        // recomputeRatioFromChildren doc comment for the intersection rule.
+        const { value, coverageRatio } = this.recomputeRatioFromChildren(
+          kpi,
+          skuResults,
+          tactics,
+        );
 
+        // T-177 S4 (2026-08-11, documented per code-reviewer/Team Lead
+        // finding — behaviour, not just this comment, predates this note):
+        // a ratio KPI's FU-level RAG is determined by applying the
+        // threshold to ITS OWN recomputed value, not by taking the worst
+        // RAG among its child SKUs (the "FU RAG: use worst-case from SKUs"
+        // rule a few lines below, which is for SUM/AVG-aggregated KPIs).
+        // Worst-of-children is meaningless for a ratio: the FU's GP_ROI_PCT
+        // is Σ INCR_GP / Σ TOTAL_PLANNED_SPEND, a single number with its
+        // own meaning independent of any one SKU's ratio — a SKU can be
+        // RED (low individual ROI, small spend) while the FU as a whole is
+        // GREEN (dominated by a large, high-ROI SKU), and that FU value is
+        // the correct one to grade, not the worst input into it.
         let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
         if (
           coverageRatio === 1 &&
@@ -295,14 +314,20 @@ export class KpiEngineService {
           ragStatus,
         };
       } else if (kpi.aggregationMethodFu === AggregationMethod.WEIGHTED_AVG) {
-        // T-177 step 2: same re-derivation as calculateFu's WEIGHTED_AVG
-        // branch, one level up — Σ INCR_GP / Σ TOTAL_PLANNED_SPEND across
-        // FUs, not mean(FU-level GP_ROI_PCT). `results` already holds every
-        // FU-summed dependency by the time a ratio KPI's calculationOrder
-        // is reached (same ordering guarantee as calculateFu).
-        const { value, coverageRatio } =
-          this.recomputeRatioFromAggregatedContext(kpi, results, {});
+        // T-177 step 2 / BLOCKER: same re-derivation as calculateFu's
+        // WEIGHTED_AVG branch, one level up — Σ INCR_GP /
+        // Σ TOTAL_PLANNED_SPEND across FUs (intersection of FUs where both
+        // resolved), not mean(FU-level GP_ROI_PCT) and not a ratio of two
+        // independently-summed populations.
+        const { value, coverageRatio } = this.recomputeRatioFromChildren(
+          kpi,
+          fuResults,
+          {},
+        );
 
+        // T-177 S4: same rationale as calculateFu's WEIGHTED_AVG branch —
+        // the plan's RAG for a ratio KPI grades the plan's own recomputed
+        // value, not the worst RAG among its FUs (see comment there).
         let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
         if (
           coverageRatio === 1 &&
@@ -414,8 +439,8 @@ export class KpiEngineService {
       case AggregationMethod.WEIGHTED_AVG:
         // T-177 step 2: WEIGHTED_AVG must never reach here. A ratio KPI
         // (aggregationMethodFu = WEIGHTED_AVG) is re-derived by
-        // recomputeRatioFromAggregatedContext BEFORE this method is called
-        // — mean(ratio) != Σnum/Σden, and averaging the raw per-child
+        // recomputeRatioFromChildren BEFORE this method is called —
+        // mean(ratio) != Σnum/Σden, and averaging the raw per-child
         // ratios here (the previous behaviour) is exactly the bug this
         // task closes. Throwing (instead of silently falling back to a
         // naive average again) turns any future code path that skips the
@@ -424,7 +449,7 @@ export class KpiEngineService {
         throw new Error(
           `KpiEngineService.aggregate() received WEIGHTED_AVG directly — ` +
             `this method must be re-derived via ` +
-            `recomputeRatioFromAggregatedContext(), not averaged as raw ` +
+            `recomputeRatioFromChildren(), not averaged as raw ` +
             `values (T-177).`,
         );
       default:
@@ -433,48 +458,89 @@ export class KpiEngineService {
   }
 
   /**
-   * T-177 step 2: re-derive a ratio KPI (calculationLevel SKU,
-   * aggregationMethodFu = WEIGHTED_AVG — UPLIFT_PCT/GP_ROI_PCT/GP_MARGIN_PCT,
-   * kpi.seed.ts) from its own formula run against the ALREADY-aggregated
-   * dependency values, instead of averaging the per-child ratio values.
-   * A ratio's mean is not the ratio of the sums; e.g.
-   * GP_ROI_PCT = INCR_GP / TOTAL_PLANNED_SPEND * 100 must be
-   * Σ INCR_GP / Σ TOTAL_PLANNED_SPEND * 100, not mean(per-SKU GP_ROI_PCT).
+   * T-177 step 2 / BLOCKER (2026-08-11): re-derive a ratio KPI
+   * (calculationLevel SKU, aggregationMethodFu = WEIGHTED_AVG —
+   * UPLIFT_PCT/GP_ROI_PCT/GP_MARGIN_PCT, kpi.seed.ts) by re-running its own
+   * formula against dependency values summed over the INTERSECTION of
+   * children for which every dependency resolved — not against the
+   * independently-aggregated `results` map used by the first cut of this
+   * fix.
    *
-   * Precondition: `results` already contains every dependency this
-   * formula references. This holds because `getActiveKpis` orders by
-   * `calculationOrder` ASC and every WEIGHTED_AVG ratio KPI's dependencies
-   * have a strictly lower calculationOrder (verified against kpi.seed.ts:
-   * UPLIFT_PCT(21) <- PLAN_VOL(2)/BASE_VOL(1); GP_ROI_PCT(48) <-
-   * INCR_GP(46)/TOTAL_PLANNED_SPEND(9); GP_MARGIN_PCT(49) <-
-   * PLANNED_GP(36)/PLANNED_TO(26)) — so by the time the caller's `kpis`
-   * loop reaches this KPI, every dependency has already been written into
-   * `results` in this same loop.
+   * Why the first cut was wrong: `results[dep].value` for each dependency
+   * was summed over THAT dependency's own non-null subset of children
+   * (e.g. INCR_GP over the 4/170 SKUs with COGS configured,
+   * TOTAL_PLANNED_SPEND over all 170 — both are legitimately SUM-aggregated
+   * on their own). Dividing those two sums produces the ratio of two
+   * DIFFERENT populations, not a defined quantity. Measured on
+   * production-shaped data (170 SKUs, 4 with COGS): reported 0.588%,
+   * honest 4-SKU subset 25% — 42x off, and worse than the mean(ratio) bug
+   * this task originally set out to fix.
    *
-   * `coverageRatio` is the minimum coverage across the formula's own
-   * dependencies (as already aggregated into `results`) — a ratio built
-   * from a numerator with 40% SKU coverage is itself only as trustworthy
-   * as that 40%, even if the denominator has 100%.
+   * The product owner's shortcut — "Σ INCR_GP / Σ TOTAL_PLANNED_SPEND
+   * (hesaplanabilen SKU'lar üzerinden)" — reads as one subset, applied to
+   * both sums: a child counts toward numerator and denominator together or
+   * not at all. `coverageRatio = |intersection| / |children|` is then
+   * single-valued and well-defined; `Math.min` over independently-tracked
+   * dependency coverages (the prior approach) is no longer needed because
+   * there is only one coverage to report.
+   *
+   * `extraContext` (FU-wide tactic values, constant across every SKU) is
+   * excluded from the intersection filter — a dependency resolved via
+   * `extraContext` is available to every child by construction and never
+   * gates coverage.
+   *
+   * Precondition (unchanged from the first cut): every per-child
+   * dependency this formula references is already present in `children`
+   * (i.e. either a raw SKU-level KPI result, T-177's earlier SKU→FU
+   * rollup already applied to `sku` fields is NOT relied upon here — this
+   * reads straight off `child[dep].value`, which for a calculationLevel
+   * SKU dependency is exactly what `calculateSku`/an FU's aggregated
+   * result carries). `calculationOrder` ASC ordering (kpi.entity.ts) still
+   * guarantees every dependency has already been computed by the time this
+   * KPI is reached, for whichever level (`skuResults` for calculateFu's
+   * call, `fuResults` for calculatePlan's).
    */
-  private recomputeRatioFromAggregatedContext(
+  private recomputeRatioFromChildren(
     kpi: Kpi,
-    results: Record<string, CalculationResult>,
+    children: Array<Record<string, CalculationResult>>,
     extraContext: Record<string, any>,
   ): { value: number | null; coverageRatio: number | null } {
     const formula = this.getOrParseFormula(kpi);
 
+    // Dependencies already resolved by extraContext (FU-wide tactic
+    // values) are constant across every child — they never gate coverage
+    // and are not summed per-child.
+    const childDeps = formula.dependencies.filter(
+      (dep) => extraContext[dep] === undefined,
+    );
+
+    const totalCount = children.length;
+    if (totalCount === 0) {
+      return { value: null, coverageRatio: null };
+    }
+
+    const validChildren = children.filter((child) =>
+      childDeps.every((dep) => {
+        const v = child[dep]?.value;
+        return v !== null && v !== undefined;
+      }),
+    );
+
+    const coverageRatio = validChildren.length / totalCount;
+
+    if (validChildren.length === 0) {
+      return { value: null, coverageRatio };
+    }
+
     const contextMap: Record<string, any> = { ...extraContext };
-    for (const [code, result] of Object.entries(results)) {
-      contextMap[code] = result.value;
+    for (const dep of childDeps) {
+      contextMap[dep] = validChildren.reduce(
+        (sum, child) => sum + (child[dep]!.value as number),
+        0,
+      );
     }
 
     const value = formula.execute(contextMap);
-
-    const depCoverages = formula.dependencies
-      .map((dep) => results[dep]?.coverageRatio)
-      .filter((c): c is number => c !== null && c !== undefined);
-    const coverageRatio =
-      depCoverages.length > 0 ? Math.min(...depCoverages) : null;
 
     return { value, coverageRatio };
   }

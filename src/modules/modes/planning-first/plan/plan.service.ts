@@ -2541,6 +2541,13 @@ export class PlanService {
       const fuRagStatus = fuKpiResults['GP_ROI_PCT']?.ragStatus ?? null;
 
       // Convert FU KPI results to JSONB format
+      // T-177 S1 (2026-08-11): `coverageRatio` was previously computed by
+      // the KPI engine and then dropped here — the "show coverage" half of
+      // the product owner's decision had no consumer to persist it into,
+      // while the "withdraw the color on partial coverage" half already
+      // landed (kpi-engine.service.ts). Persist it so a future FU/plan grid
+      // has the data to explain a missing/withdrawn RAG (frontend
+      // consumption is out of scope here — [[T-172]]).
       const fuCalculatedKpis: Record<string, any> = {};
       for (const [kpiCode, result] of Object.entries(fuKpiResults)) {
         fuCalculatedKpis[kpiCode] = {
@@ -2548,6 +2555,13 @@ export class PlanService {
           displayFormat: result.displayFormat,
           decimalPlaces: result.decimalPlaces,
           ragStatus: result.ragStatus,
+          // Deliberately not defaulted to `null` when undefined: undefined
+          // means "not an aggregate result at all" (FU-level formula KPI,
+          // computed directly — CalculationResult doc comment), which is a
+          // different fact than `null` ("aggregated over zero children").
+          // JSON.stringify drops the key on `undefined`; the distinction
+          // survives the round-trip as "key present" vs "key absent".
+          coverageRatio: result.coverageRatio,
           calculatedAt: new Date().toISOString(),
         };
       }
@@ -2695,6 +2709,10 @@ export class PlanService {
           displayFormat: (stored as any).displayFormat,
           decimalPlaces: (stored as any).decimalPlaces,
           ragStatus: (stored as any).ragStatus,
+          // T-177 S1: read back what was persisted above — without this,
+          // every reconstructed FU result silently lost its coverage
+          // metadata on this round-trip.
+          coverageRatio: (stored as any).coverageRatio,
         };
       }
 

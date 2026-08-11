@@ -295,6 +295,13 @@ export class PlanFu extends BaseEntity {
       decimalPlaces: number;
       ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
       calculatedAt?: string;
+      // T-177 S1 (2026-08-11): fraction of this KPI's children (SKUs, for
+      // an FU-level rollup) that resolved and contributed to `value`. Only
+      // set for KPIs whose value was produced by aggregating a set of
+      // children (CalculationResult.coverageRatio — see kpi-engine.service.ts).
+      // No schema change: this is a new key inside an existing JSONB
+      // column, not a new column.
+      coverageRatio?: number | null;
     }
   >;
 
