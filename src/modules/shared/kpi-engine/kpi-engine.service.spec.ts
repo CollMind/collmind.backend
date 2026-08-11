@@ -332,9 +332,23 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
       // elle: Σ INCR_GP=3200, Σ SPEND=210000 -> 3200/210000*100
       // = 32/2100 = 32/21/100; 32/21 = 1.523809523809523809... (tekrar "238095")
       // *100'e göre zaten normalize: 1.5238095238095237...
+      // ⛔ BU DEĞER YANLIŞ ve bilerek pinleniyor — "doğru" diye okunmasın.
+      //
+      // 1.5238 = 3200/210000, ve payda FU_X'in ÜÇ SKU'sundan, pay İKİ
+      // SKU'sundan geliyor: yani hâlâ iki bağımsız popülasyonun bölümü
+      // (B1'in ta kendisi, bir seviye yukarıda). Dürüst kesişim değeri
+      // 3200/205000*100 = 1.5610 (6 SKU'nun 5'i çözülüyor).
+      //
+      // Sebep: plan seviyesindeki kesişim FU'lar üzerinde alınıyor, ama B1
+      // SKU'lar üzerindeydi — kpi-engine.service.ts'in calculatePlan
+      // WEIGHTED_AVG dalındaki uzun nota bak. Kapanışı FU sonucunun kendi
+      // kesişim toplamlarını taşımasını gerektiriyor → T-191.
+      //
+      // Bu satır T-191 inince KIRILACAK ve beklenen değer 1.5610 olacak.
+      // Kırıldığında "pinlenmiş sınır" diye geri alınmamalı.
       expect(plan.GP_ROI_PCT.value).toBeCloseTo(1.523809524, 8);
-      // ⚠️ bilinen sınır: min(FU-dep coverageRatio'ları) = min(1,1) = 1,
-      // FU_X'in kendi iç kısmi kapsamasına (0.667) bakmaz — pinlendi.
+      // ⚠️ Aynı sebeple kapsama da 1 görünüyor: FU_X bir değer ürettiği için
+      // "çözüldü" sayılıyor, kendi iç kısmi kapsaması (0.667) taşınmıyor.
       expect(plan.GP_ROI_PCT.coverageRatio).toBe(1);
       // 1.52 -> < green(5), >= amber(1) -> AMBER
       expect(plan.GP_ROI_PCT.ragStatus).toBe('AMBER');
@@ -418,25 +432,24 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
     // -> 12010/120000*100 = 10.008333...% -> green(5) eşiğinin üstünde
     // -> GREEN. worst-of-children olsaydı: skuRags=[RED,GREEN,GREEN] ->
     // RED baskın çıkardı.
-    const oneSkuRedFuGreenSkuResults: Array<
-      Record<string, CalculationResult>
-    > = [
-      {
-        INCR_GP: skuResult(10, null),
-        TOTAL_PLANNED_SPEND: skuResult(100000, null),
-        GP_ROI_PCT: skuResult(0.01, 'RED'),
-      },
-      {
-        INCR_GP: skuResult(6000, null),
-        TOTAL_PLANNED_SPEND: skuResult(10000, null),
-        GP_ROI_PCT: skuResult(60, 'GREEN'),
-      },
-      {
-        INCR_GP: skuResult(6000, null),
-        TOTAL_PLANNED_SPEND: skuResult(10000, null),
-        GP_ROI_PCT: skuResult(60, 'GREEN'),
-      },
-    ];
+    const oneSkuRedFuGreenSkuResults: Array<Record<string, CalculationResult>> =
+      [
+        {
+          INCR_GP: skuResult(10, null),
+          TOTAL_PLANNED_SPEND: skuResult(100000, null),
+          GP_ROI_PCT: skuResult(0.01, 'RED'),
+        },
+        {
+          INCR_GP: skuResult(6000, null),
+          TOTAL_PLANNED_SPEND: skuResult(10000, null),
+          GP_ROI_PCT: skuResult(60, 'GREEN'),
+        },
+        {
+          INCR_GP: skuResult(6000, null),
+          TOTAL_PLANNED_SPEND: skuResult(10000, null),
+          GP_ROI_PCT: skuResult(60, 'GREEN'),
+        },
+      ];
 
     beforeEach(() => {
       kpiRepo.find.mockResolvedValue([

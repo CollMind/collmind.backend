@@ -314,11 +314,23 @@ export class KpiEngineService {
           ragStatus,
         };
       } else if (kpi.aggregationMethodFu === AggregationMethod.WEIGHTED_AVG) {
-        // T-177 step 2 / BLOCKER: same re-derivation as calculateFu's
-        // WEIGHTED_AVG branch, one level up — Σ INCR_GP /
-        // Σ TOTAL_PLANNED_SPEND across FUs (intersection of FUs where both
-        // resolved), not mean(FU-level GP_ROI_PCT) and not a ratio of two
-        // independently-summed populations.
+        // T-177 step 2: same re-derivation as calculateFu's WEIGHTED_AVG
+        // branch, one level up — Σ INCR_GP / Σ TOTAL_PLANNED_SPEND across
+        // FUs (intersection of FUs where both resolved), not
+        // mean(FU-level GP_ROI_PCT).
+        //
+        // ⚠️ B1 IS NOT CLOSED AT THIS LEVEL. The intersection here is over
+        // FUs, but B1 is about SKUs: each `fuResults[i][dep]` was already
+        // summed over that dep's OWN non-null SKU subset (the SUM branch at
+        // :188-191 filters per kpiCode). So this ratio still divides two
+        // independently-summed SKU populations, and an FU whose SKUs are
+        // partially covered contributes a mismatched numerator/denominator
+        // pair that no FU-level intersection can undo.
+        //
+        // Measured 2026-08-11 (single FU, 170 SKUs, 4 with COGS, equal
+        // spend): plan value identical before and after this commit. Closing
+        // it needs the FU result to carry its intersection sums, which it
+        // does not today — see T-191.
         const { value, coverageRatio } = this.recomputeRatioFromChildren(
           kpi,
           fuResults,
