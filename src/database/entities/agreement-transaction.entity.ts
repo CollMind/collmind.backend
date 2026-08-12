@@ -58,15 +58,23 @@ export class AgreementTransaction extends BaseEntity {
   metadata?: Record<string, any>;
 
   // Relations
-  @ManyToOne(() => Agreement)
+  // ADR 0012 / T-188 (migration 1802000000000): finansal kayıt — eskiden CASCADE.
+  @ManyToOne(() => Agreement, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'agreement_id' })
   agreement!: Agreement;
 
+  // 📌 Kapsam dışı (ADR 0012): müşteri finansal kayıt değil — SET NULL korunuyor.
   @ManyToOne(() => Customer, { nullable: true })
   @JoinColumn({ name: 'cpl_id' })
   customer?: Customer;
 
-  @ManyToOne(() => Tenant)
+  // ADR 0012: eskiden CASCADE — offboarding yolu T-195'te tanımlanana kadar RESTRICT.
+  @ManyToOne(() => Tenant, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
+
+  // ⚠️ created_by/updated_by → users FK'ları (RESTRICT, ADR 0012) BaseEntity'nin düz
+  // uuid kolonları üzerinde — TypeORM ilişkisi olarak MODELLENMİYOR (bu migration'dan
+  // önce de öyleydi, `1704067820000-CreateAgreementTransactions.ts` ham SQL ile
+  // eklemişti). Entity/DB parite boşluğu bu migration'ın YARATTIĞI bir şey değil.
 }

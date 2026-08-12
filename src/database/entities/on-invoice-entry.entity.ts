@@ -113,23 +113,31 @@ export class OnInvoiceEntry extends BaseEntity {
   metadata?: Record<string, any>;
 
   // Relations
-  @ManyToOne(() => OnInvoiceBatch, (batch) => batch.entries)
+  // ADR 0012 / T-188 (migration 1802000000000): finansal kayıt — hepsi eskiden CASCADE
+  // (budgetEnvelope hariç, o SET NULL'dı), şimdi RESTRICT.
+  @ManyToOne(() => OnInvoiceBatch, (batch) => batch.entries, {
+    onDelete: 'RESTRICT',
+  })
   @JoinColumn({ name: 'batch_id' })
   batch!: OnInvoiceBatch;
 
-  @ManyToOne(() => Customer)
+  @ManyToOne(() => Customer, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'customer_id' })
   customer!: Customer;
 
-  @ManyToOne(() => Sku)
+  @ManyToOne(() => Sku, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'sku_id' })
   sku!: Sku;
 
-  @ManyToOne(() => BudgetEnvelope, { nullable: true })
+  @ManyToOne(() => BudgetEnvelope, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'budget_envelope_id' })
   budgetEnvelope?: BudgetEnvelope;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne(() => Tenant, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
+
+  // ⚠️ created_by/updated_by → users FK'ları (RESTRICT, ADR 0012) BaseEntity'nin düz
+  // uuid kolonları üzerinde — TypeORM ilişkisi olarak MODELLENMİYOR (ham SQL ile
+  // eklenmişti, bu migration'ın YARATTIĞI bir parite boşluğu değil).
 }

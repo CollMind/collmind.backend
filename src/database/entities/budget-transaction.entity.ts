@@ -99,11 +99,12 @@ export class BudgetTransaction extends BaseEntity {
   metadata?: Record<string, any>;
 
   // Relations
-  @ManyToOne(() => BudgetEnvelope)
+  // ADR 0012 / T-188 (migration 1802000000000): finansal kayıt — eskiden CASCADE.
+  @ManyToOne(() => BudgetEnvelope, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'envelope_id' })
   envelope!: BudgetEnvelope;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne(() => Tenant, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }

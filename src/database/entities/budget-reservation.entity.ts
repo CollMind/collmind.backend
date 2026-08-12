@@ -57,11 +57,13 @@ export class BudgetReservation extends BaseEntity {
   notes?: string;
 
   // Relations
-  @ManyToOne(() => BudgetEnvelope)
+  // ADR 0012 / T-188 (migration 1802000000000): tasarım tekdüzeliği (kardeş
+  // tablolarla aynı kural) — eskiden CASCADE.
+  @ManyToOne(() => BudgetEnvelope, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'envelope_id' })
   envelope!: BudgetEnvelope;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne(() => Tenant, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }

@@ -99,11 +99,19 @@ export class SalesActual extends BaseEntity {
   @Column({ name: 'raw_row', type: 'jsonb' })
   rawRow!: Record<string, string>;
 
-  @ManyToOne(() => SalesActualBatch, (batch) => batch.rows)
+  // ADR 0012 / T-188 (migration 1802000000000): kaynak veri (saklama yükümlülüğü) —
+  // eskiden CASCADE, şimdi RESTRICT.
+  @ManyToOne(() => SalesActualBatch, (batch) => batch.rows, {
+    onDelete: 'RESTRICT',
+  })
   @JoinColumn({ name: 'batch_id' })
   batch!: SalesActualBatch;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne(() => Tenant, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
+
+  // ⚠️ created_by/updated_by → users FK'ları (RESTRICT, ADR 0012) BaseEntity'nin düz
+  // uuid kolonları üzerinde — TypeORM ilişkisi olarak MODELLENMİYOR (ham SQL ile
+  // eklenmişti, bu migration'ın YARATTIĞI bir parite boşluğu değil).
 }

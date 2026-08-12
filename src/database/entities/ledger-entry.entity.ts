@@ -110,7 +110,9 @@ export class LedgerEntry extends BaseEntity {
   metadata?: Record<string, any>;
 
   // Relations
-  @ManyToOne(() => Agreement, { nullable: true })
+  // ADR 0012 / T-188 (migration 1802000000000): finansal kayıt — RESTRICT.
+  // agreement_id: bugüne kadar FK'sız; bu migration ekledi.
+  @ManyToOne(() => Agreement, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'agreement_id' })
   agreement?: Agreement;
 
@@ -119,7 +121,8 @@ export class LedgerEntry extends BaseEntity {
   @JoinColumn({ name: 'reverses_entry_id' })
   reversesEntry?: LedgerEntry;
 
-  @ManyToOne(() => BudgetEnvelope, { nullable: true })
+  // ADR 0012: eskiden SET NULL — tüketilmiş bir zarf artık silinemez.
+  @ManyToOne(() => BudgetEnvelope, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'budget_envelope_id' })
   budgetEnvelope?: BudgetEnvelope;
 
@@ -127,7 +130,9 @@ export class LedgerEntry extends BaseEntity {
   @JoinColumn({ name: 'cpl_id' })
   customer?: Customer;
 
-  @ManyToOne(() => Tenant)
+  // ADR 0012: eskiden CASCADE — tenant offboarding yolu T-195'te tanımlanana kadar
+  // ledger satırları tenant silinerek imha edilemez.
+  @ManyToOne(() => Tenant, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tenant_id' })
   tenant!: Tenant;
 }
