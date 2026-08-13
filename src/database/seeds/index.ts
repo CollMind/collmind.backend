@@ -1,6 +1,9 @@
 import { DataSource } from 'typeorm';
 import { UserRole } from '../entities/user.entity';
 import { seedFiscalPeriods } from './fiscal-period.seed';
+import { seedBudgetPolicies } from './budget-policy.seed';
+import { seedApprovalPolicies } from './approval-policy.seed';
+import { seedRoles } from './role.seed';
 import { seedTenants } from './tenant.seed';
 import { seedUsers } from './user.seed';
 import { seedChannels } from './channel.seed';
@@ -47,10 +50,15 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   console.log(`   Admin: ${adminUser.email}`);
   console.log(`   Planner: ${plannerUser.email}\n`);
 
-  // 2b. Seed fiscal periods (B dalgası / S11 seed item 4) — agreement/budget-
-  // transaction/sales-actual seed'leri period_month/fiscal_period yazıyor ve bu
-  // kolonlar artık fiscal_periods'a FK'lı; bu adım ONLARDAN ÖNCE çalışmalı.
+  // 2b. Seed fiscal periods (B dalgası / S11 seed item 4).
   await seedFiscalPeriods(dataSource, tenant.id, adminUser.id);
+
+  // 2c. Seed B dalgası'nın kalan üç atomik kalemi (seed item 1/2/3 — üçüncü bağlayıcı
+  // kısıt: "seed atomik, kısmi seed yok"). Sıra önemsiz (hiçbiri birbirine bağımlı
+  // değil), ama hepsi kullanıcı/tenant'tan SONRA, agreement/plan'dan ÖNCE.
+  await seedBudgetPolicies(dataSource, tenant.id, adminUser.id);
+  await seedApprovalPolicies(dataSource, tenant.id, adminUser.id);
+  await seedRoles(dataSource, tenant.id, adminUser.id);
 
   // 3. Seed channels (required for CPLs and agreements)
   const channels = await seedChannels(dataSource, tenant.id, adminUser.id);

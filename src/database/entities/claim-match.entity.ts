@@ -18,8 +18,8 @@ export enum ClaimMatchVarianceClass {
 }
 
 @Entity({ name: 'claim_matches', schema: 'main' })
-@Index(['tenantId', 'internalClaimId'])
-@Index(['tenantId', 'externalClaimId'])
+@Index('IDX_claim_matches_tenant_internal', ['tenantId', 'internalClaimId'])
+@Index('IDX_claim_matches_tenant_external', ['tenantId', 'externalClaimId'])
 export class ClaimMatch extends BaseEntity {
   @Column({ name: 'internal_claim_id', type: 'uuid' })
   internalClaimId!: string;

@@ -5,11 +5,16 @@ import { BaseEntity } from './base.entity';
  * FiscalPeriod — `donemler` (B dalgası / S11, `K-2.13.21`, `Ö4`).
  *
  * Sekiz mevcut dönem kolonunun (5× `fiscal_period`, 3× `period_month`, hepsi
- * `varchar(7)`) referans katalogu. `K-2.3.10`: "her anahtar kayıtlı bir biçime
- * uyar, biçim TEK YERDE tanımlıdır" — biçim CHECK'i burada, `kod` üzerinde; sekiz
- * kolonun her biri FK ile buraya bağlanır (migration, ham SQL — composite
- * `(tenant_id, kod)` FK TypeORM ilişkisi olarak MODELLENMEZ, bkz. migration yorumu
- * ve `agreement-transaction.entity.ts`'deki emsal).
+ * `varchar(7)`) referans KATALOGUDUR — `K-2.3.10`: "her anahtar kayıtlı bir biçime
+ * uyar, biçim TEK YERDE tanımlıdır"; biçim CHECK'i burada, `kod` üzerinde.
+ *
+ * ⛔ **FK YOK** (code-reviewer B1, 2026-08-13 — `EK_C § S11'in FK'leri GERİ ÇEKİLDİ`,
+ * `F12` kararının sınırına dönüş). İlk uygulama sekiz kolona + `claims`'e composite FK
+ * eklemişti; FK'ler canlıydı ama dönem YARATAN bir üretim yolu yoktu (controller 0,
+ * servis 0, `TenantService.create` kurmuyor) — yeni bir tenant sıfır dönemle doğar ve
+ * ilk yazma ham `23503`/`500` döner. FK, dönem yaratma bir ürün yeteneği olarak
+ * (`K-2.13.21`) gelene kadar SONRAKİ dalganın işi. Bu tablo bugün yalnız bir KATALOG —
+ * hiçbir tablo ona referans zorunluluğuyla bağlı değil.
  *
  * `K-2.13.21`: kapatılmış bir döneme yeni hareket yazılamaz; dönem yeniden açılabilir
  * (yetki + denetim kaydı gerektirir — denetim kaydı `denetim_kayitlari`/audit log'a
@@ -22,7 +27,7 @@ export enum FiscalPeriodStatus {
 }
 
 @Entity({ name: 'fiscal_periods', schema: 'main' })
-@Index(['tenantId', 'kod'], { unique: true })
+@Index('UQ_fiscal_periods_tenant_kod', ['tenantId', 'kod'], { unique: true })
 export class FiscalPeriod extends BaseEntity {
   /** YYYY-MM. CHECK (migration): `kod ~ '^\d{4}-(0[1-9]|1[0-2])$'`. */
   @Column({ length: 7 })

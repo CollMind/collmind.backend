@@ -74,11 +74,12 @@ export class CreateSkuDto {
   @MaxLength(3)
   currency?: string;
 
-  @ApiPropertyOptional({ description: 'Unit of measure', example: 'EA' })
-  @IsString()
-  @IsOptional()
-  @MaxLength(20)
-  unitOfMeasure?: string;
+  // B dalgası / R3 (K-2.1.12b, ⛔ review B4): `unitOfMeasure` KALDIRILDI — entity'de
+  // (`sku.entity.ts`) ve DB'de (`main.skus.unit_of_measure`) zaten yok; bu alan
+  // `main.ts`'in `forbidNonWhitelisted`'ını GEÇİYORDU (DTO'da tanımlıydı) ama TypeORM
+  // sessizce atıyordu — kullanıcı 201 alıyor, değer hiçbir yere yazılmıyordu.
+  // ⚠️ Yerine S12 (`salesUnit`/`conversionFactor`) bu DTO'ya EKLENMEDİ — API yüzeyi
+  // genişletmesi, bu düzeltmenin kapsamı dışında; ayrı bir backend-engineer task'ı.
 
   @ApiPropertyOptional({ description: 'Is active', default: true })
   @IsBoolean()

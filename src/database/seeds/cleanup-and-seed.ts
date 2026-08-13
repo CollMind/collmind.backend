@@ -16,6 +16,9 @@ import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
 import { seedUserScopes } from './user-scope.seed';
 import { seedFiscalPeriods } from './fiscal-period.seed';
+import { seedBudgetPolicies } from './budget-policy.seed';
+import { seedApprovalPolicies } from './approval-policy.seed';
+import { seedRoles } from './role.seed';
 
 config();
 
@@ -75,9 +78,13 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
     throw new Error('❌ No planner user found. Cannot continue.');
   }
 
-  // 2b. Seed fiscal periods (B dalgası / S11 seed item 4) — agreement/budget-
-  // transaction seed'leri ÖNCE bunu bekler (period_month FK'lı).
+  // 2b. Seed fiscal periods (B dalgası / S11 seed item 4).
   await seedFiscalPeriods(dataSource, tenant.id, adminUser.id);
+
+  // 2c. B dalgası'nın kalan üç atomik seed kalemi (item 1/2/3 — üçüncü bağlayıcı kısıt).
+  await seedBudgetPolicies(dataSource, tenant.id, adminUser.id);
+  await seedApprovalPolicies(dataSource, tenant.id, adminUser.id);
+  await seedRoles(dataSource, tenant.id, adminUser.id);
 
   // 3. Seed channels (required for CPLs and agreements)
   const channels = await seedChannels(dataSource, tenant.id, adminUser.id);

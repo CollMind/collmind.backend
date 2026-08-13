@@ -32,9 +32,9 @@ describe('ReversalGuard', () => {
     );
   });
 
-  it('denies FINANCE (deprecated role label — B dalgası/R2a removed enum key)', () => {
+  it('denies deprecated role label APPROVER (B dalgası/R2a/S6 — replaces stale FINANCE case)', () => {
     expect(() =>
-      guard.canActivate(makeCtx('FINANCE' as unknown as UserRole)),
+      guard.canActivate(makeCtx('APPROVER' as unknown as UserRole)),
     ).toThrow(ForbiddenException);
   });
 

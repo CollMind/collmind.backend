@@ -32,12 +32,11 @@ describe('SettlementGuard', () => {
     );
   });
 
-  it('denies FINANCE (deprecated role label — B dalgası/R2a removed enum key)', () => {
-    expect(() =>
-      guard.canActivate(makeCtx('FINANCE' as unknown as UserRole)),
-    ).toThrow(ForbiddenException);
-  });
-
+  // ⚠️ B dalgası / R2a (code-reviewer S6, 2026-08-13): eski "denies FINANCE (deprecated)"
+  // testi KALDIRILDI — 'FINANCE' artık UserRole.FINANCE_MANAGER'ın TEL değeri (⛔ P0
+  // düzeltmesi), yani bu test aşağıdaki FINANCE_MANAGER testiyle birebir aynı girdiyi
+  // sınıyordu (§2.7 #6 — ayırt etme gücü sıfır). Gerçekten silinmiş bir etiket için
+  // aşağıdaki MANAGER testine bkz.
   it('denies FINANCE_MANAGER', () => {
     expect(() => guard.canActivate(makeCtx(UserRole.FINANCE_MANAGER))).toThrow(
       ForbiddenException,

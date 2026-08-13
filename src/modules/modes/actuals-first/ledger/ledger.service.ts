@@ -6,6 +6,7 @@ import {
   LedgerEntry,
   LedgerEntryDirection,
   SpendType,
+  LedgerAdjustmentSubtype,
 } from '../../../../database/entities/ledger-entry.entity';
 
 @Injectable()
@@ -89,13 +90,11 @@ export class LedgerService {
   /**
    * Create a reversal (credit) entry for the given original DEBIT ledger entry.
    *
-   * Rules:
-   *  - direction = opposite of original (DEBIT → CREDIT)
-   *  - amount = abs(original.amount)
-   *  - copies dimensions / envelope / periodMonth / spendType from original
-   *  - reversesEntryId = original.id
-   *  - idempotencyKey = 'REVERSAL|LEDGER|{originalId}' (NOT NULL unique guaranteed)
-   *
+   * Rules: direction = opposite of original · amount = abs(original.amount) ·
+   * copies dimensions/envelope/periodMonth · spendType = ADJUSTMENT, adjustmentSubtype
+   * = REVERSAL (B dalgası/S2 — NOT original.spendType; aligns with migration backfill,
+   * İlke 4, and avoids CHK_..._bidirectional rejecting a re-reversed adjustment) ·
+   * reversesEntryId = original.id · idempotencyKey = 'REVERSAL|LEDGER|{originalId}'.
    * Must be called inside an active QueryRunner transaction.
    */
   async createReversalEntry(
@@ -122,7 +121,8 @@ export class LedgerService {
       sourceType: original.sourceType,
       sourceId: original.sourceId,
       agreementId: original.agreementId,
-      spendType: original.spendType,
+      spendType: SpendType.ADJUSTMENT,
+      adjustmentSubtype: LedgerAdjustmentSubtype.REVERSAL,
       entryDirection: reversalDirection,
       amount: Math.abs(Number(original.amount)),
       currency: original.currency,

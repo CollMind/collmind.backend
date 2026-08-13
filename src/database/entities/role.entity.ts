@@ -18,7 +18,7 @@ import { User } from './user.entity';
  * migration'da KALDIRILMIYOR — R2a yalnız enum değerlerini değiştiriyor, kolonu değil.
  */
 @Entity({ name: 'roles', schema: 'main' })
-@Index(['tenantId', 'code'], { unique: true })
+@Index('UQ_roles_tenant_code', ['tenantId', 'code'], { unique: true })
 export class Role extends BaseEntity {
   @Column({ length: 50 })
   code!: string;
@@ -34,7 +34,7 @@ export class Role extends BaseEntity {
 }
 
 @Entity({ name: 'capabilities', schema: 'main' })
-@Index(['tenantId', 'code'], { unique: true })
+@Index('UQ_capabilities_tenant_code', ['tenantId', 'code'], { unique: true })
 export class Capability extends BaseEntity {
   @Column({ length: 100 })
   code!: string;
@@ -47,7 +47,9 @@ export class Capability extends BaseEntity {
 }
 
 @Entity({ name: 'role_capabilities', schema: 'main' })
-@Index(['roleId', 'capabilityId'], { unique: true })
+@Index('UQ_role_capabilities_role_capability', ['roleId', 'capabilityId'], {
+  unique: true,
+})
 export class RoleCapability extends BaseEntity {
   @Column({ name: 'role_id', type: 'uuid' })
   roleId!: string;
@@ -65,7 +67,9 @@ export class RoleCapability extends BaseEntity {
 }
 
 @Entity({ name: 'user_role_assignments', schema: 'main' })
-@Index(['userId', 'roleId'], { unique: true })
+@Index('UQ_user_role_assignments_user_role', ['userId', 'roleId'], {
+  unique: true,
+})
 export class UserRoleAssignment extends BaseEntity {
   @Column({ name: 'user_id', type: 'uuid' })
   userId!: string;

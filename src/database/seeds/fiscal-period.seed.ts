@@ -35,29 +35,28 @@ export async function seedFiscalPeriods(
   const repo = dataSource.getRepository(FiscalPeriod);
   const codes = generatePeriodCodes();
 
-  const existing = await repo.find({ where: { tenantId } });
-  const existingCodes = new Set(existing.map((p) => p.kod));
-  const missing = codes.filter((c) => !existingCodes.has(c));
-
-  if (missing.length === 0) {
-    console.log(
-      `   FiscalPeriods: 0 inserted (${codes.length} already present)`,
-    );
-    return;
-  }
-
-  const rows = missing.map((kod) =>
+  // ⚠️ review S7 (2026-08-13, İKİ tur ölçüldü): birinci tur `missing.length`'i (ön-
+  // hesaplanan tahmin) "N inserted" olarak logluyordu — `repo.find()` varsayılan
+  // `deleted_at IS NULL` filtreler, soft-delete edilmiş bir satır "missing"e YANLIŞLIKLA
+  // girerdi ve `.orIgnore()` sessizce atlardı. Düzeltme `result.identifiers.length`'e
+  // geçti — ve BU DA YANLIŞ ÇIKTI: ampirik olarak ölçüldü (probe script, aynı kodu iki
+  // kez INSERT etti), `.orIgnore()` ile TypeORM `identifiers`'ı GİRDİ satırlarından
+  // dolduruyor, gerçek `RETURNING`'den DEĞİL — ikinci koşuda `identifiers.length` hâlâ
+  // 3 derken `raw.length` (ve DB'deki gerçek satır sayısı) 0 idi. Doğru sayaç `raw`
+  // (driver'ın gerçek `RETURNING` sonucu, ON CONFLICT'te atlanan satırları İÇERMEZ).
+  const rows = codes.map((kod) =>
     repo.create({ tenantId, kod, createdBy: createdByUserId }),
   );
-  await repo
+  const result = await repo
     .createQueryBuilder()
     .insert()
     .into(FiscalPeriod)
     .values(rows)
     .orIgnore()
     .execute();
+  const actuallyInserted = result.raw.length;
 
   console.log(
-    `   FiscalPeriods: ${missing.length} inserted (${codes.length} total window: 2025-01..2027-12)`,
+    `   FiscalPeriods: ${actuallyInserted} inserted (${codes.length} total window: 2025-01..2027-12, ${codes.length - actuallyInserted} already present)`,
   );
 }

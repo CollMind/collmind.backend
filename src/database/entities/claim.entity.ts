@@ -38,9 +38,15 @@ export enum ClaimStatus {
 }
 
 @Entity({ name: 'claims', schema: 'main' })
-@Index(['tenantId', 'source', 'status'])
-@Index(['tenantId', 'agreementId'])
-@Index(['tenantId', 'periodMonth', 'cplId', 'categoryId', 'channelId'])
+@Index('IDX_claims_tenant_source_status', ['tenantId', 'source', 'status'])
+@Index('IDX_claims_tenant_agreement', ['tenantId', 'agreementId'])
+@Index('IDX_claims_tenant_grain', [
+  'tenantId',
+  'periodMonth',
+  'cplId',
+  'categoryId',
+  'channelId',
+])
 export class Claim extends BaseEntity {
   @Column({
     type: 'enum',

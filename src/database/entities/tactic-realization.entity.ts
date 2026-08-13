@@ -16,8 +16,8 @@ import { Mechanic, EvidenceClass } from './mechanic.entity';
  * `Σ(taktik gerçekleşmeleri) + FARK = dış talep tutarı`.
  */
 @Entity({ name: 'tactic_realizations', schema: 'main' })
-@Index(['tenantId', 'claimId'])
-@Index(['tenantId', 'mechanicId'])
+@Index('IDX_tactic_realizations_tenant_claim', ['tenantId', 'claimId'])
+@Index('IDX_tactic_realizations_tenant_mechanic', ['tenantId', 'mechanicId'])
 export class TacticRealization extends BaseEntity {
   @Column({ name: 'claim_id', type: 'uuid' })
   claimId!: string;

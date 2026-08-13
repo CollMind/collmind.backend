@@ -17,6 +17,13 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
  *
  * This view provides BRD-compliant computed fields for budget envelopes.
  * The view is the source of truth; stored fields in budget_envelopes are legacy.
+ *
+ * B dalgası / R1 (K-2.3.4, migration `1803000000000`): `ledger_entries.deleted_at`
+ * KALDIRILDI — ledger kayıtları asla soft-delete edilmez. Bu view'ın `expression`'ı
+ * (TypeORM'un `migration:generate` sırasında DB'deki view ile KARŞILAŞTIRDIĞI kaynak)
+ * üç `AND le.deleted_at IS NULL` predikatını da kaybetti — DB view'inin kendisiyle
+ * (migration'ın `vBudgetSummaryViewSql(false)`'i) birebir. `bt.deleted_at IS NULL`
+ * (budget_transactions) DOKUNULMADI — o tablo R1'in kapsamı dışında.
  */
 @ViewEntity({
   name: 'v_budget_summary',
@@ -50,7 +57,6 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
             SUM(CASE WHEN le.entry_direction = 'DEBIT' THEN le.amount ELSE -le.amount END)
           FROM main.ledger_entries le
           WHERE le.budget_envelope_id = be.id
-            AND le.deleted_at IS NULL
         ),
         0
       ) AS consumed_amount,
@@ -73,7 +79,6 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
             SUM(CASE WHEN le.entry_direction = 'DEBIT' THEN le.amount ELSE -le.amount END)
           FROM main.ledger_entries le
           WHERE le.budget_envelope_id = be.id
-            AND le.deleted_at IS NULL
         ),
         0
       ) AS available_amount,
@@ -99,7 +104,6 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
                   SUM(CASE WHEN le.entry_direction = 'DEBIT' THEN le.amount ELSE -le.amount END)
                 FROM main.ledger_entries le
                 WHERE le.budget_envelope_id = be.id
-                  AND le.deleted_at IS NULL
               ),
               0
             )

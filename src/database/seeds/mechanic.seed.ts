@@ -23,6 +23,8 @@ import {
   InputType,
   BudgetType,
   FormulaValidationStatus,
+  EvidenceClass,
+  SettlementCadence,
 } from '../entities/mechanic.entity';
 
 /** Tactic tanımları — her mechanic grubunun ait olduğu tactic. */
@@ -89,6 +91,13 @@ interface MechanicDef {
    * yönlendirilir; bu alan belge amaçlıdır ve admin UI'nda gösterilir.
    */
   calculationFormula?: string;
+  /**
+   * B dalgası / S1 seed item 5 (`K-2.13.14f`, `K-2.1.13`/`14`). Kaynak gerekçesi
+   * her tanımın yanında — K-2.13.14f'nin KENDİ örnekleriyle birebir eşleşenler
+   * işaretli; eşleşmeyenler bir çıkarım olarak not düşülüyor.
+   */
+  evidenceClass: EvidenceClass;
+  settlementCadence: SettlementCadence;
 }
 
 const MECHANICS: MechanicDef[] = [
@@ -112,6 +121,10 @@ const MECHANICS: MechanicDef[] = [
     gridColumnOrder: 10,
     groupHeader: 'On-Invoice Discounts',
     calculationFormula: '(PLANNED_GSV - PLANNED_LTA_ON) * entered_value / 100',
+    // K-2.13.14f örneği birebir: "Fatura-içi indirim" = GÖZLENEN.
+    evidenceClass: EvidenceClass.OBSERVED,
+    // K-2.1.14: "aktivite → tek" — ciro primi (dönemsel) değil, işlem başına indirim.
+    settlementCadence: SettlementCadence.SINGLE,
   },
   {
     code: 'MEC-DISCOUNT',
@@ -131,6 +144,9 @@ const MECHANICS: MechanicDef[] = [
     gridColumnOrder: 11,
     groupHeader: 'On-Invoice Discounts',
     calculationFormula: '(PLANNED_GSV - PLANNED_LTA_ON) * entered_value / 100',
+    // Aynı sınıf: K-2.13.14f "Fatura-içi indirim" = GÖZLENEN.
+    evidenceClass: EvidenceClass.OBSERVED,
+    settlementCadence: SettlementCadence.SINGLE,
   },
   // ── OFF-INVOICE: PERCENT (OFF_INVOICE_DISCOUNT) ───────────────────────────
   {
@@ -152,6 +168,11 @@ const MECHANICS: MechanicDef[] = [
     groupHeader: 'Off-Invoice Discounts',
     calculationFormula:
       '(PLANNED_GSV - PLANNED_LTA_ON - PLANNED_LTA_OFF - total_on_inv_promos) * entered_value / 100',
+    // Çıkarım (K-2.13.14f'nin doğrudan örneği değil): off-invoice indirim herhangi bir
+    // tek belgede DOĞRUDAN gözlenmez, gerçekleşen ciro üzerinden HESAPLANIR (oran ×
+    // tutar) — TÜRETİLEBİLİR'in tanımına ("oran × gerçekleşen hacim/tutar") en yakını.
+    evidenceClass: EvidenceClass.DERIVABLE,
+    settlementCadence: SettlementCadence.SINGLE,
   },
   // ── OFF-INVOICE: LUMPSUM ──────────────────────────────────────────────────
   {
@@ -172,6 +193,9 @@ const MECHANICS: MechanicDef[] = [
     gridColumnOrder: 30,
     groupHeader: 'Off-Invoice Lump Sum',
     calculationFormula: 'entered_value',
+    // K-2.13.14f örneği birebir: "Götürü raf kirası" = SÖZLEŞMESEL.
+    evidenceClass: EvidenceClass.CONTRACTUAL,
+    settlementCadence: SettlementCadence.SINGLE,
   },
   {
     code: 'DISPLAY_FEE',
@@ -190,6 +214,9 @@ const MECHANICS: MechanicDef[] = [
     gridColumnOrder: 31,
     groupHeader: 'Off-Invoice Lump Sum',
     calculationFormula: 'entered_value',
+    // Aynı sınıf: K-2.13.14f "Götürü raf kirası" = SÖZLEŞMESEL (raf/teşhir bedeli).
+    evidenceClass: EvidenceClass.CONTRACTUAL,
+    settlementCadence: SettlementCadence.SINGLE,
   },
   // ── OFF-INVOICE: PER_UNIT_SUPPORT ─────────────────────────────────────────
   {
@@ -210,6 +237,9 @@ const MECHANICS: MechanicDef[] = [
     gridColumnOrder: 40,
     groupHeader: 'Off-Invoice Per Unit',
     calculationFormula: 'entered_value * PLANNED_VOLUME',
+    // K-2.13.14f örneği birebir: "Birim başı destek" = TÜRETİLEBİLİR'in KENDİ örneği.
+    evidenceClass: EvidenceClass.DERIVABLE,
+    settlementCadence: SettlementCadence.SINGLE,
   },
 ];
 
@@ -302,6 +332,8 @@ export async function seedMechanics(
           calculationFormula: def.calculationFormula,
           gridColumnOrder: def.gridColumnOrder,
           groupHeader: def.groupHeader,
+          evidenceClass: def.evidenceClass,
+          settlementCadence: def.settlementCadence,
           formulaValidationStatus: FormulaValidationStatus.VALID,
           isActive: true,
           showInGrid: true,
@@ -327,18 +359,24 @@ export async function seedMechanics(
 
     // Patch: spendingType veya category NULL ise ya da değer yanlışsa güncelle.
     // (Backfill migration DB'de düzeltiyor; bu seed uygulama seviyesi güvencesidir.)
+    // B dalgası / S1 seed item 5: evidenceClass/settlementCadence de aynı patch'e girdi
+    // — bu altı mekanik migration'dan ÖNCE seed edilmişti, yeni kolonlar NULL geldi.
     if (mechanic) {
       const needsUpdate =
         mechanic.spendingType !== def.spendingType ||
         mechanic.category !== def.category ||
         mechanic.mechanicType !== def.mechanicType ||
-        !mechanic.budgetType;
+        !mechanic.budgetType ||
+        !mechanic.evidenceClass ||
+        !mechanic.settlementCadence;
 
       if (needsUpdate) {
         mechanic.spendingType = def.spendingType;
         mechanic.category = def.category;
         mechanic.mechanicType = def.mechanicType;
         mechanic.budgetType = def.budgetType;
+        mechanic.evidenceClass = def.evidenceClass;
+        mechanic.settlementCadence = def.settlementCadence;
         // calculationFormula'yı da düzelt (boşsa)
         if (!mechanic.calculationFormula && def.calculationFormula) {
           mechanic.calculationFormula = def.calculationFormula;

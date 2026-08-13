@@ -684,7 +684,16 @@ export class BDalgasiSemaKalemleri1803000000000 implements MigrationInterface {
 
   // ────────────────────────────────────────────────────────────────────────────────
   // Backfill (b) — S11 dönem referansları: fiscal_periods'u sekiz mevcut dönem
-  // kolonundaki (+ yeni claims.period_month) TÜM ayrık değerlerle doldur, sonra FK ekle.
+  // kolonundaki (+ yeni claims.period_month) TÜM ayrık değerlerle doldur.
+  //
+  // ⛔ B1 (code-reviewer, 2026-08-13 — `EK_C § S11'in FK'leri GERİ ÇEKİLDİ`): FK EKLEME
+  // adımı bu metottan ÇIKARILDI. FK'ler canlıydı (`23503` pozitif kontrollü ölçüldü) ama
+  // dönem YARATAN bir üretim yolu yok — controller 0, servis 0, `TenantService.create`
+  // dönem kurmuyor, pencere yalnız bir seed dosyasında sabit (2025-01..2027-12). API'den
+  // doğan her yeni tenant sıfır dönemle doğuyor, ilk anlaşma/plan/sales-actual yazması
+  // ham `23503` ile `500` dönerdi. `F12` kararının kendi sınırına dönüş: tablo + backfill
+  // BU dalgada, FK **ön koşulu bir ürün yeteneği** (dönem yaratma) olan SONRAKİ dalgada.
+  // `fiscal_periods` tablosu, `CHK_fiscal_periods_kod_format` ve bu backfill KALIYOR.
   // ────────────────────────────────────────────────────────────────────────────────
   private async backfillFiscalPeriodsAndLinkFks(
     queryRunner: QueryRunner,
@@ -720,6 +729,9 @@ export class BDalgasiSemaKalemleri1803000000000 implements MigrationInterface {
     // Ö4: "mevcut satırların temiz olması kural değil, TESADÜF" — CHECK format'ı
     // fiscal_periods.kod'da yaşıyor (tek yer, K-2.3.10); bozuk bir değer INSERT'te
     // reddedilir ve migration İPTAL olur (sessiz atlama YOK).
+    // `nullable` alanı yalnız belgeleme amaçlı kaldı (B1 öncesi FK-ekleme adımında
+    // kullanılıyordu; o adım aşağıda tamamen çıkarıldı, kullanılmadığı için burada
+    // destructure edilmiyor).
     for (const { table, column } of sources) {
       await queryRunner.query(`
         INSERT INTO "main"."fiscal_periods" ("tenant_id", "kod")
@@ -729,31 +741,10 @@ export class BDalgasiSemaKalemleri1803000000000 implements MigrationInterface {
         ON CONFLICT DO NOTHING;
       `);
     }
-
-    // FK'ler — ham SQL, TypeORM ilişkisi olarak MODELLENMEZ (composite tenant-scoped
-    // FK; `agreement-transaction.entity.ts`'deki created_by/updated_by emsaliyle aynı
-    // sınıf — bkz. o dosyadaki yorum). Referans: (tenant_id, kod) → fiscal_periods
-    // (tenant_id, kod), UQ_fiscal_periods_tenant_kod üzerinden.
-    for (const { table, column, nullable } of sources) {
-      const fkName = `FK_${table}_${column}_fiscal_period`;
-      await queryRunner.query(`
-        ALTER TABLE "main"."${table}"
-        ADD CONSTRAINT "${fkName}"
-        FOREIGN KEY ("tenant_id", "${column}")
-        REFERENCES "main"."fiscal_periods" ("tenant_id", "kod");
-      `);
-      // agreement_transactions.fiscal_period NULL kalabilir (ürün sahibi kararı,
-      // T-211) — FK semantiği zaten NULL'ı serbest bırakır, ek işlem gerekmez.
-      void nullable;
-    }
-
-    // claims (brand-new tablo, 0 satır) — aynı desen, backfill'e gerek yok.
-    await queryRunner.query(`
-      ALTER TABLE "main"."claims"
-      ADD CONSTRAINT "FK_claims_period_month_fiscal_period"
-      FOREIGN KEY ("tenant_id", "period_month")
-      REFERENCES "main"."fiscal_periods" ("tenant_id", "kod");
-    `);
+    // ⛔ B1 (code-reviewer, 2026-08-13): burada DOKUZ `ADD CONSTRAINT ... FOREIGN KEY`
+    // çağrısı (8 kaynak kolon + `claims.period_month`) vardı — hepsi ÇIKARILDI.
+    // `fiscal_periods` artık yalnız bir KATALOG: dolduruluyor (yukarı), ama hiçbir tablo
+    // ona referans zorunluluğuyla bağlanmıyor. `claims` tablosu da aynı nedenle FK'siz.
   }
 
   // ────────────────────────────────────────────────────────────────────────────────
@@ -978,6 +969,12 @@ export class BDalgasiSemaKalemleri1803000000000 implements MigrationInterface {
           WHEN 'CATEGORY_MANAGER' THEN 'CATEGORY_MANAGER'
           WHEN 'FINANCE_MANAGER' THEN 'FINANCE'
           WHEN 'READONLY' THEN 'READONLY'
+          -- §2.5 (sessiz sıfır yasağı) / review S3: bu dala ASLA düşülmemeli — yukarıdaki
+          -- ASSERT zaten APPROVER/MANAGER/(eski)FINANCE'ı 0'a getirdi, ve enum'un geri
+          -- kalan tek değeri yok. Yine de sessiz NULL yerine kaynak değeri taşıyan,
+          -- hedef enum'da OLMAYAN bir sentinel döndürür — cast anında Postgres'in kendi
+          -- "invalid input value for enum" hatası hangi değerin kaçtığını adıyla basar.
+          ELSE 'UNMAPPED_ROLE:' || "role"::text
         END
       )::"main"."users_role_enum";
     `);
@@ -990,6 +987,12 @@ export class BDalgasiSemaKalemleri1803000000000 implements MigrationInterface {
 
   // ────────────────────────────────────────────────────────────────────────────────
   // R3 — skus.unit_of_measure KALDIRILIR, yerine S12 (K-2.1.12b, K-2.1.12c)
+  //
+  // ⚠️ ÖLÇÜM SINIRI (code-reviewer B4, 2026-08-13): `R1`/`R2a`'nın aksine bu çıkarma
+  // ÖN SAYIM YAPMAZ — kaç satırda `unit_of_measure` dolu olduğu, hangi değerleri
+  // taşıdığı ÖLÇÜLMEDİ ve kolon düştükten sonra bir daha ÖLÇÜLEMEZ. `down()` kolonu
+  // geri verir, VERİYİ vermez (aşağı). Bir sonraki okuyucu bunu `R1`/`R2a` gibi
+  // assert'li sansın — DEĞİL. Kayıp miktarı bilinmiyor.
   // ────────────────────────────────────────────────────────────────────────────────
   private async applyR3DropSkuUnitOfMeasure(
     queryRunner: QueryRunner,
@@ -1009,6 +1012,41 @@ export class BDalgasiSemaKalemleri1803000000000 implements MigrationInterface {
     `);
 
     // ── R2a'nın tersi ────────────────────────────────────────────────────────────
+    // review S4: up() bir JS-seviyeli ASSERT'le başlıyordu (removedRoleUsers), down()
+    // hiçbir pre-check olmadan direkt ALTER'a giriyordu — asimetrik. Widening (5→8)
+    // veri kaybı riski taşımaz, ama disiplin simetrik olsun diye aynı desende: kaynak
+    // enum'un TAMAMEN 5 değerden ibaret olduğunu (yani up()'un ürettiği hâl dışında bir
+    // şey olmadığını) doğrula.
+    // ⚠️ Ölçüldü: `array_agg(...)` sonucunu TypeORM/pg driver'ın `name[]` için JS array'e
+    // PARSE ETMEDİĞİ görüldü (`currentLabels.filter is not a function` — runtime'da
+    // yakalandı, bu satırın kendisi §2.7'nin "mutasyon/ölçüm doğrulaması" dersinin bir
+    // vakası). Basit `SELECT COUNT(*)` deseni (bu dosyada zaten kanıtlanmış) kullanılıyor.
+    const EXPECTED_UP_LABELS = [
+      'ADMIN',
+      'PLANNER',
+      'CATEGORY_MANAGER',
+      'FINANCE',
+      'READONLY',
+    ];
+    const [{ cnt: unexpectedCount }]: [{ cnt: number }] =
+      await queryRunner.query(
+        `
+        SELECT COUNT(*)::int AS cnt
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        JOIN pg_enum e ON e.enumtypid = t.oid
+        WHERE n.nspname = 'main' AND t.typname = 'users_role_enum'
+          AND e.enumlabel::text != ALL($1::text[]);
+      `,
+        [EXPECTED_UP_LABELS],
+      );
+    if (unexpectedCount !== 0) {
+      throw new Error(
+        `B dalgası down() ASSERT başarısız: main.users_role_enum ${unexpectedCount} ` +
+          `beklenmeyen etiket taşıyor — up()'un ürettiği 5 değerden başka bir şey var. ` +
+          `down() İPTAL edildi, Team Lead'e bildir.`,
+      );
+    }
     await queryRunner.query(`
       ALTER TYPE "main"."users_role_enum" RENAME TO "users_role_enum_new";
     `);
@@ -1031,6 +1069,9 @@ export class BDalgasiSemaKalemleri1803000000000 implements MigrationInterface {
           WHEN 'CATEGORY_MANAGER' THEN 'CATEGORY_MANAGER'
           WHEN 'FINANCE' THEN 'FINANCE_MANAGER'
           WHEN 'READONLY' THEN 'READONLY'
+          -- Simetrik güvenlik (review S3) — yapısal olarak erişilemez (kaynak tip
+          -- yalnız bu 5 değeri taşıyabilir), ama sessiz NULL yerine adlı sentinel.
+          ELSE 'UNMAPPED_ROLE:' || "role"::text
         END
       )::"main"."users_role_enum";
     `);
@@ -1055,25 +1096,8 @@ export class BDalgasiSemaKalemleri1803000000000 implements MigrationInterface {
       ALTER TABLE "main"."ledger_entries" DROP CONSTRAINT "CHK_ledger_entries_adjustment_subtype_bidirectional";
     `);
 
-    // ── Backfill (b)'nin tersi — dönem FK'leri + fiscal_periods verisi ──────────────
-    const sources: Array<{ table: string; column: string }> = [
-      { table: 'agreement_transactions', column: 'fiscal_period' },
-      { table: 'on_invoice_batches', column: 'fiscal_period' },
-      { table: 'on_invoice_entries', column: 'fiscal_period' },
-      { table: 'sales_actual_batches', column: 'fiscal_period' },
-      { table: 'sales_actuals', column: 'fiscal_period' },
-      { table: 'agreements', column: 'period_month' },
-      { table: 'ledger_entries', column: 'period_month' },
-      { table: 'plans', column: 'period_month' },
-    ];
-    await queryRunner.query(`
-      ALTER TABLE "main"."claims" DROP CONSTRAINT "FK_claims_period_month_fiscal_period";
-    `);
-    for (const { table, column } of sources) {
-      await queryRunner.query(`
-        ALTER TABLE "main"."${table}" DROP CONSTRAINT "FK_${table}_${column}_fiscal_period";
-      `);
-    }
+    // ── Backfill (b)'nin tersi ───────────────────────────────────────────────────
+    // ⛔ B1: FK'ler bu migration'da hiç eklenmedi (yukarı) — düşürecek bir FK yok.
     // fiscal_periods'un backfill'i geri alınmaz — tablo bir sonraki adımda tamamen
     // düşer, satır düzeyinde geri almaya gerek yok.
 
