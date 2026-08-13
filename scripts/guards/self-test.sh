@@ -85,6 +85,54 @@ else
   FAIL_RATCHET=0
 fi
 
+# ---------------------------------------------------------------- mode-split
+# E1 guard'ı bir RATCHET'tir: "0 bulgu" hem "temiz" hem "kör" anlamına gelebilir.
+# Bu yüzden dört durumun dördü de ayrı ayrı sınanır — ve biri POZİTİF KONTROL
+# değil, NEGATİF kontroldür (küçülme kırmızı vermemeli).
+SP="$TMP/split"
+mkdir -p "$SP/inner" "$TMP/refs"
+printf 'satir1\nsatir2\n' > "$SP/inner/existing.ts"
+printf "import { X } from '../split/inner/existing';\n" > "$TMP/refs/referrer.ts"
+
+ms() { GUARD_MODE=report GUARD_SPLIT_DIR="$SP" GUARD_SPLIT_REF_ROOTS="$TMP/refs" \
+         MODE_SPLIT_BASELINE="$TMP/ms-baseline.txt" bash "$DIR/mode-split.sh" 2>&1; }
+ms_count() { ms | grep -c '^\[mode-split\]' || true; }
+
+GUARD_SPLIT_DIR="$SP" GUARD_SPLIT_REF_ROOTS="$TMP/refs" \
+  bash "$DIR/mode-split.sh" --baseline > "$TMP/ms-baseline.txt"
+
+FAIL_MS=0
+ms_expect() { # <beklenen> <etiket> [desen]
+  local want="$1" label="$2" pat="${3:-}" got
+  got="$(ms_count)"
+  if [ "$got" != "$want" ]; then
+    echo "!! self-test BAŞARISIZ: mode-split × $label → beklenen $want, bulunan $got" >&2
+    ms >&2; FAIL_MS=1; return
+  fi
+  if [ -n "$pat" ] && ! ms | grep -q "$pat"; then
+    echo "!! self-test BAŞARISIZ: mode-split × $label → bulgu var ama '$pat' değil" >&2
+    ms >&2; FAIL_MS=1
+  fi
+}
+
+ms_expect 0 "dokunulmamış ağaç"
+
+echo 'yeni' > "$SP/inner/yeni.ts";               ms_expect 1 "yeni dosya" "YENİ DOSYA"
+rm "$SP/inner/yeni.ts"
+
+printf 'satir1\nsatir2\nsatir3\n' > "$SP/inner/existing.ts"
+ms_expect 1 "büyüme" "BÜYÜDÜ"
+printf 'satir1\nsatir2\n' > "$SP/inner/existing.ts"
+
+printf "import { Y } from '../split/inner/existing';\n" > "$TMP/refs/yeni-ref.ts"
+ms_expect 1 "yeni referans" "YENİ REFERANS"
+rm "$TMP/refs/yeni-ref.ts"
+
+# Negatif kontrol: ratchet AŞAĞI dönerken susmalı. Bir ratchet'in her değişikliğe
+# kırmızı vermesi, hiç vermemesi kadar işe yaramazdır.
+printf 'satir1\n' > "$SP/inner/existing.ts";     ms_expect 0 "küçülme (sessiz geçmeli)"
+rm "$SP/inner/existing.ts";                      ms_expect 0 "silme (sessiz geçmeli)"
+
 FAIL=0
 while IFS='|' read -r guard fixture want; do
   [ -z "${guard:-}" ] && continue
@@ -105,6 +153,10 @@ while IFS='|' read -r guard fixture want; do
 done <<< "$EXPECTED"
 
 if [ "${FAIL_RATCHET:-0}" -ne 0 ]; then
+  FAIL=1
+fi
+
+if [ "${FAIL_MS:-0}" -ne 0 ]; then
   FAIL=1
 fi
 
