@@ -53,8 +53,23 @@ export class Sku extends BaseEntity {
   @Column({ length: 3, default: 'TRY' })
   currency!: string;
 
-  @Column({ name: 'unit_of_measure', length: 20, nullable: true })
-  unitOfMeasure?: string; // "EA", "CS", "KG", "LT"
+  // B dalgası / R3 (K-2.1.12b): serbest `unit_of_measure` alanı KALDIRILDI — çekirdek
+  // tablolarda birim alanı olmaması "en iyi doğrulama". Yerine S12 (K-2.1.12c): bilgi
+  // amaçlı satış birimi + adete çevrim çarpanı.
+
+  /** B dalgası / S12 (K-2.1.12c): bilgi amaçlı — "koli". Hesaba katılmaz. */
+  @Column({ name: 'sales_unit', length: 20, nullable: true })
+  salesUnit?: string;
+
+  /** B dalgası / S12 (K-2.1.12c, K-2.1.12d): koli → adet, varsayılan 1. */
+  @Column({
+    name: 'conversion_factor',
+    type: 'decimal',
+    precision: 9,
+    scale: 4,
+    default: 1,
+  })
+  conversionFactor!: number;
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive!: boolean;

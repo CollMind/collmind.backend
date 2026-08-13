@@ -5,6 +5,7 @@ import { Sku } from './sku.entity';
 import { BudgetEnvelope } from './budget-envelope.entity';
 import { OnInvoiceBatch } from './on-invoice-batch.entity';
 import { Tenant } from './tenant.entity';
+import { Agreement } from './agreement.entity';
 
 export enum OnInvoiceDiscountType {
   CPP_ON = 'CPP_ON', // CPP On-Invoice %
@@ -104,6 +105,13 @@ export class OnInvoiceEntry extends BaseEntity {
   @Column({ name: 'budget_envelope_id', type: 'uuid', nullable: true })
   budgetEnvelopeId?: string;
 
+  /**
+   * B dalgası / S9 (K-2.13.14l): kanıt merdiveninin ilk basamağı — gözlenen fatura-içi
+   * kaydını hangi anlaşmaya bağlıyoruz. Nullable: geçmiş satırlar bağlanmamış kalabilir.
+   */
+  @Column({ name: 'agreement_id', type: 'uuid', nullable: true })
+  agreementId?: string;
+
   // Idempotency
   @Column({ name: 'idempotency_key', length: 200 })
   idempotencyKey!: string; // Format: '{customer_code}|{invoice_no}|{invoice_date}|{sku_code}|{row_number}'
@@ -132,6 +140,11 @@ export class OnInvoiceEntry extends BaseEntity {
   @ManyToOne(() => BudgetEnvelope, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'budget_envelope_id' })
   budgetEnvelope?: BudgetEnvelope;
+
+  // B dalgası / S9: finansal-bitişik referans — RESTRICT (ADR 0012 deseniyle tutarlı).
+  @ManyToOne(() => Agreement, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'agreement_id' })
+  agreement?: Agreement;
 
   @ManyToOne(() => Tenant, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tenant_id' })

@@ -43,6 +43,31 @@ export enum FormulaValidationStatus {
   ERROR = 'error',
 }
 
+// B dalgası / S1 (K-2.13.14f, K-2.13.14g): kanıt sınıfı — mekanik tanımının bir alanı.
+export enum EvidenceClass {
+  OBSERVED = 'OBSERVED', // GÖZLENEN
+  DERIVABLE = 'DERIVABLE', // TÜRETİLEBİLİR
+  CONTRACTUAL = 'CONTRACTUAL', // SÖZLEŞMESEL
+}
+
+// B dalgası / S1 (K-2.1.13, K-2.1.14): hesaplaşma davranışını kadans belirler, süre değil.
+export enum SettlementCadence {
+  SINGLE = 'SINGLE', // TEK
+  PERIODIC = 'PERIODIC', // DÖNEMSEL
+}
+
+// B dalgası / S1 (K-2.1.13): kadans PERIODIC ise tahakkuk takvimi.
+export enum AccrualSchedule {
+  NONE = 'NONE', // YOK
+  MONTHLY = 'MONTHLY', // AYLIK
+}
+
+// B dalgası / S1 (K-2.13.14h3): oran bazlı mekaniklerin tabanı. Varsayılan NET.
+export enum MechanicBase {
+  GROSS = 'GROSS', // BRÜT
+  NET = 'NET', // NET
+}
+
 @Entity({ name: 'mechanics', schema: 'main' })
 @Index(['tenantId', 'code'], { unique: true })
 @Index(['tacticId'])
@@ -242,6 +267,50 @@ export class Mechanic extends BaseEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
+
+  // ── B dalgası / S1 (K-2.1.13, K-2.13.14f, K-2.13.14h3, K-2.1.16) ────────────────────
+  // Kanıt sınıfı, kadans ve taban nullable: mevcut mekanikler için per-mekanik kategorizasyon
+  // (K-2.1.14 "her mekanik görüşlü bir varsayılanla gelir") bir sonraki, servis/seed
+  // tarafı task'ıdır — bu migration yalnız kolonu açar (S13 emsali).
+  @Column({
+    name: 'evidence_class',
+    type: 'enum',
+    enum: EvidenceClass,
+    enumName: 'evidence_class_enum',
+    nullable: true,
+  })
+  evidenceClass?: EvidenceClass;
+
+  @Column({
+    name: 'settlement_cadence',
+    type: 'enum',
+    enum: SettlementCadence,
+    enumName: 'settlement_cadence_enum',
+    nullable: true,
+  })
+  settlementCadence?: SettlementCadence;
+
+  @Column({
+    name: 'accrual_schedule',
+    type: 'enum',
+    enum: AccrualSchedule,
+    enumName: 'accrual_schedule_enum',
+    default: AccrualSchedule.NONE,
+  })
+  accrualSchedule!: AccrualSchedule;
+
+  @Column({
+    name: 'base',
+    type: 'enum',
+    enum: MechanicBase,
+    enumName: 'mechanic_base_enum',
+    default: MechanicBase.NET,
+  })
+  base!: MechanicBase;
+
+  /** K-2.1.16: doğrular, sınıflandırmaz. */
+  @Column({ name: 'max_duration_days', type: 'int', nullable: true })
+  maxDurationDays?: number;
 
   // Relations
   @ManyToOne(() => Tactic, (tactic) => tactic.mechanics)

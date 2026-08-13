@@ -3,13 +3,20 @@ import { BaseEntity } from './base.entity';
 import { BudgetEnvelope, BudgetSpendType } from './budget-envelope.entity';
 import { Tenant } from './tenant.entity';
 
+// B dalgası / S10 (K-2.3.13): "işlem tipi" (defter kaydının ne yaptığı) — bu enum sekiz
+// kanonik değerin altısını taşıyordu (TAHSİS/REZERVE/TAAHHÜT/İADE/TRANSFER/DÜZELTME ↔
+// ALLOCATE/RESERVE/COMMIT/RELEASE/TRANSFER/ADJUST, birebir). `ACCRUE`/`CONSUME`
+// (TAHAKKUK/TÜKETİM) EKLENDİ — sekizi tamamlıyor. ⚠️ Yorum, ölçüm: bu iki değer bugün
+// hiçbir yazma yolunda kullanılmıyor (0 satır) — kolon açık, üretici servis ayrı iş.
 export enum BudgetTransactionType {
-  ALLOCATE = 'ALLOCATE', // Initial envelope creation
-  COMMIT = 'COMMIT', // Planning-First: Plan approved
-  RESERVE = 'RESERVE', // Actuals-First: Agreement approved
-  RELEASE = 'RELEASE', // Agreement cancelled (free reserved budget)
-  TRANSFER = 'TRANSFER', // Move budget between envelopes
-  ADJUST = 'ADJUST', // Manual correction (admin only)
+  ALLOCATE = 'ALLOCATE', // Initial envelope creation — TAHSİS
+  COMMIT = 'COMMIT', // Planning-First: Plan approved — TAAHHÜT
+  RESERVE = 'RESERVE', // Actuals-First: Agreement approved — REZERVE
+  RELEASE = 'RELEASE', // Agreement cancelled (free reserved budget) — İADE
+  TRANSFER = 'TRANSFER', // Move budget between envelopes — TRANSFER
+  ADJUST = 'ADJUST', // Manual correction (admin only) — DÜZELTME
+  ACCRUE = 'ACCRUE', // Periodic obligation accrues (K-2.13.25) — TAHAKKUK
+  CONSUME = 'CONSUME', // Realized spend finalizes — TÜKETİM
 }
 
 export enum BudgetTransactionStatus {

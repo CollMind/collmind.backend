@@ -30,6 +30,17 @@ import {
   Region,
   Sku,
   Tactic,
+  // B dalgası (T-211)
+  BudgetPolicy,
+  ApprovalPolicy,
+  Role,
+  Capability,
+  RoleCapability,
+  UserRoleAssignment,
+  Claim,
+  ClaimMatch,
+  TacticRealization,
+  FiscalPeriod,
 } from '../database/entities';
 import { Kpi } from '../database/entities/kpi.entity';
 import { UserScope } from '../database/entities/user-scope.entity';
@@ -125,6 +136,17 @@ export const dataSourceOptions: DataSourceOptions = {
     BudgetTransactionLog,
     BudgetAlertConfiguration,
     PlanApprovalHistory,
+    // B dalgası (T-211)
+    BudgetPolicy,
+    ApprovalPolicy,
+    Role,
+    Capability,
+    RoleCapability,
+    UserRoleAssignment,
+    Claim,
+    ClaimMatch,
+    TacticRealization,
+    FiscalPeriod,
   ],
   migrations: (() => {
     // Use glob pattern for both development and production
@@ -148,7 +170,10 @@ export const dataSourceOptions: DataSourceOptions = {
       );
       console.log(`🔍 Config: __dirname=${__dirname}`);
 
-      // Verify migrations directory exists (for debugging)
+      // Verify migrations directory exists (for debugging). Pre-existing (HEAD,
+      // unrelated to T-211) — this file entered lint's changed-file scope only
+      // because of the B dalgası entity import additions above.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const fs = require('fs');
       const migrationsDir = join(__dirname, '..', 'database', 'migrations');
       if (fs.existsSync(migrationsDir)) {

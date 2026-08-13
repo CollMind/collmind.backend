@@ -22,6 +22,13 @@ export enum PlanStatus {
   PENDING_FINANCE_REVIEW = 'PENDING_FINANCE_REVIEW',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
+  /**
+   * B dalgası / S15 (K-2.5.10b, K-2.5.10e): enum değeri BUGÜN eklenir, davranışı
+   * (otomatik zaman aşımı) Faz 2'de gelir. Geçiş: `PENDING_APPROVAL → EXPIRED` →
+   * yeniden gönderilebilir (içerik değişmeden). Bu migration yalnız enum değerini açar;
+   * geçiş tetikleyicisi (zamanlanmış iş) servis/Faz-2 tarafı işidir.
+   */
+  EXPIRED = 'EXPIRED',
 }
 
 @Entity({ name: 'plans', schema: 'main' })

@@ -32,10 +32,10 @@ describe('ReversalGuard', () => {
     );
   });
 
-  it('denies FINANCE', () => {
-    expect(() => guard.canActivate(makeCtx(UserRole.FINANCE))).toThrow(
-      ForbiddenException,
-    );
+  it('denies FINANCE (deprecated role label — B dalgası/R2a removed enum key)', () => {
+    expect(() =>
+      guard.canActivate(makeCtx('FINANCE' as unknown as UserRole)),
+    ).toThrow(ForbiddenException);
   });
 
   it('denies FINANCE_MANAGER', () => {

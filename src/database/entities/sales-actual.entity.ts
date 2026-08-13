@@ -6,10 +6,28 @@ import { DecimalTransformer } from '../transformers/decimal.transformer';
 
 /**
  * SalesActual — CPL x Kategori x Kanal x Dönem granülaritesinde gerçekleşen
- * satış TUTAR agregası (T-020). FU/SKU ve hacim boyutu YOKTUR — Wella actuals
- * CSV'sinde `fu_code`/`volume` kolonları bulunmuyor (bkz. tasarım doküman §
- * "Kritik bulgu").
+ * satış TUTAR agregası (T-020).
  *
+ * ⚠️ B dalgası / S14 (K-2.1.8a, K-2.1.8a1, [[T-206]]): FU/SKU ve hacim kolonları
+ * eklendi — hepsi NULLABLE. Wella (bugünkü pilot) actuals CSV'sinde `fu_code`/`volume`
+ * yok, ama bu ürün kuralı DEĞİL, ölçülmüş bir MÜŞTERİ PROFİLİ (`İlke 5`): kardeş ürün
+ * (TTM) aynı veriyi `validateRow`'da zorunlu tutuyor ve kanonik şablonuyla topluyor
+ * (`docs/analysis/0070 §B1`). Hacimsiz alım tenant'a özgü kalabilir; kolonun kendisi
+ * yeni tenant'lar için zorunlu OLMALI değil, yalnız MÜMKÜN olmalı.
+ *
+ * `A2`/`K-2.1.8a`'nın dağıtım tabanı bu kolonlar doluyken çalışır; boşken (bugünkü
+ * pilot) devre dışı kalır — sessiz sıfır üretmez, veri yoksa dağıtım da yoktur.
+ *
+ * `volume` = converted adet; `rawVolumeInput`/`volumeConversionFactor` çevrim izidir
+ * (K-2.1.12d) — ham değer + çarpan sonuçla birlikte saklanır.
+ *
+ * ⚠️ `sku_id`/`fu_id` `cplId`/`categoryId`/`channelId` ile AYNI stili izler: salt UUID
+ * kolonu, TypeORM `@ManyToOne` ilişkisi YOK, ve — ölçüldü, `1785000000000-
+ * CreateSalesActualsTables.ts` — DB seviyesinde FK de YOK. Bu tablo bilinçli olarak
+ * diğer modüllerden yalıtık (bkz. yukarı, `SalesActualsModule` import sınırı); yeni
+ * kolonlar bu yalıtımı BOZMAZ.
+ *
+
  * ⚠️ LEDGER/BÜTÇE SINIRI: `budgetEnvelopeId`/`ledgerEntryId`/`agreementId`
  * kolonu YOKTUR. `discountAmount` satış iskontosudur — asla bütçeye/ledger'a/
  * spend'e yazılmaz, salt bilgi amaçlıdır. On-invoice indirimiyle ekonomik
@@ -91,6 +109,51 @@ export class SalesActual extends BaseEntity {
 
   @Column({ length: 3, default: 'TRY' })
   currency!: string;
+
+  /**
+   * B dalgası / S14 (K-2.1.8a, K-2.1.8a1): SKU kırılımı + hacim. Nullable —
+   * `A2`'nin dağıtım tabanının önkoşuludur, ama pilot profili (hacimsiz tenant)
+   * hâlâ meşru (`İlke 5`); kolon var olmak zorunda, dolu olmak zorunda değil.
+   */
+  @Column({ name: 'fu_id', type: 'uuid', nullable: true })
+  fuId?: string;
+
+  @Column({ name: 'sku_id', type: 'uuid', nullable: true })
+  skuId?: string;
+
+  @Column({
+    name: 'volume',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    nullable: true,
+    transformer: DecimalTransformer,
+  })
+  volume?: number;
+
+  /**
+   * B dalgası / S2 (K-2.1.12d): çevrim izi — ham değer ve uygulanan çarpan, sonuçla
+   * (yukarıdaki `volume`) BİRLİKTE saklanır. Satış birimi zaten adetse çarpan 1,
+   * ham değer = sonuç.
+   */
+  @Column({
+    name: 'raw_volume_input',
+    type: 'decimal',
+    precision: 18,
+    scale: 3,
+    nullable: true,
+    transformer: DecimalTransformer,
+  })
+  rawVolumeInput?: number;
+
+  @Column({
+    name: 'volume_conversion_factor',
+    type: 'decimal',
+    precision: 9,
+    scale: 4,
+    nullable: true,
+  })
+  volumeConversionFactor?: number;
 
   @Column({ name: 'source_row_number', type: 'int' })
   sourceRowNumber!: number;

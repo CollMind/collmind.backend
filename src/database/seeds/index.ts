@@ -1,4 +1,6 @@
 import { DataSource } from 'typeorm';
+import { UserRole } from '../entities/user.entity';
+import { seedFiscalPeriods } from './fiscal-period.seed';
 import { seedTenants } from './tenant.seed';
 import { seedUsers } from './user.seed';
 import { seedChannels } from './channel.seed';
@@ -30,8 +32,12 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   if (!users || users.length === 0) {
     throw new Error('❌ No users were seeded. Cannot continue.');
   }
-  const adminUser = users.find((u) => u.role === 'ADMIN') || users[0];
-  const plannerUser = users.find((u) => u.role === 'PLANNER') || users[0];
+  // B dalgası / R2a: enum DEĞERLERİ ASCII kalır (⛔ P0 düzeltmesi — bkz. user.entity.ts
+  // üst yorumu); `UserRole.ADMIN` üzerinden karşılaştırmak yine de doğru ve tercih
+  // edilen yol (string literal yerine enum key'e bağlanır).
+  const adminUser = users.find((u) => u.role === UserRole.ADMIN) || users[0];
+  const plannerUser =
+    users.find((u) => u.role === UserRole.PLANNER) || users[0];
   if (!adminUser) {
     throw new Error('❌ No admin user found. Cannot continue.');
   }
@@ -40,6 +46,11 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
   }
   console.log(`   Admin: ${adminUser.email}`);
   console.log(`   Planner: ${plannerUser.email}\n`);
+
+  // 2b. Seed fiscal periods (B dalgası / S11 seed item 4) — agreement/budget-
+  // transaction/sales-actual seed'leri period_month/fiscal_period yazıyor ve bu
+  // kolonlar artık fiscal_periods'a FK'lı; bu adım ONLARDAN ÖNCE çalışmalı.
+  await seedFiscalPeriods(dataSource, tenant.id, adminUser.id);
 
   // 3. Seed channels (required for CPLs and agreements)
   const channels = await seedChannels(dataSource, tenant.id, adminUser.id);

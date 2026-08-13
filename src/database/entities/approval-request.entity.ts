@@ -2,6 +2,7 @@ import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Tenant } from './tenant.entity';
 import { User } from './user.entity';
+import { ApprovalPolicy } from './approval-policy.entity';
 
 export enum ApprovalRequestType {
   AGREEMENT = 'AGREEMENT',
@@ -50,6 +51,9 @@ export class ApprovalRequest extends BaseEntity {
   requestedAt!: Date;
 
   // Policy & routing
+  // B dalgası / S5 (K-2.5.13f): `approval_policies` artık var — ölçüldü (2026-08-13,
+  // migration 1803000000000 öncesi): main.approval_requests 0 satır, bu kolonu
+  // dangling bırakan bir veri yoktu. FK RESTRICT eklendi.
   @Column({ name: 'approval_policy_id', type: 'uuid', nullable: true })
   approvalPolicyId?: string;
 
@@ -117,4 +121,8 @@ export class ApprovalRequest extends BaseEntity {
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'rejected_by_id' })
   rejectedBy?: User;
+
+  @ManyToOne(() => ApprovalPolicy, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'approval_policy_id' })
+  approvalPolicy?: ApprovalPolicy;
 }

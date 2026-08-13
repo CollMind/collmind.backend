@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   LedgerEntry,
   LedgerEntryDirection,
@@ -18,9 +18,12 @@ export class LedgerRepository {
     return this.repo.save(entry);
   }
 
+  // B dalgası / R1 (K-2.3.4): `ledger_entries.deleted_at` KALDIRILDI — defter kayıtları
+  // asla soft-delete edilmez (immutability invariant). `deletedAt: IsNull()` filtreleri
+  // aşağıda ÇIKARILDI; entity artık bu alanı taşımıyor (ImmutableBaseEntity).
   async findById(id: string, tenantId: string): Promise<LedgerEntry | null> {
     return this.repo.findOne({
-      where: { id, tenantId, deletedAt: IsNull() },
+      where: { id, tenantId },
     });
   }
 
@@ -29,7 +32,7 @@ export class LedgerRepository {
     tenantId: string,
   ): Promise<LedgerEntry | null> {
     return this.repo.findOne({
-      where: { idempotencyKey: key, tenantId, deletedAt: IsNull() },
+      where: { idempotencyKey: key, tenantId },
     });
   }
 
@@ -38,7 +41,7 @@ export class LedgerRepository {
     tenantId: string,
   ): Promise<LedgerEntry[]> {
     return this.repo.find({
-      where: { agreementId, tenantId, deletedAt: IsNull() },
+      where: { agreementId, tenantId },
       order: { createdAt: 'DESC' },
     });
   }
@@ -48,7 +51,7 @@ export class LedgerRepository {
     tenantId: string,
   ): Promise<LedgerEntry[]> {
     return this.repo.find({
-      where: { budgetEnvelopeId: envelopeId, tenantId, deletedAt: IsNull() },
+      where: { budgetEnvelopeId: envelopeId, tenantId },
       order: { createdAt: 'DESC' },
     });
   }
@@ -64,8 +67,7 @@ export class LedgerRepository {
   ): Promise<LedgerEntry[]> {
     const query = this.repo
       .createQueryBuilder('ledger')
-      .where('ledger.tenantId = :tenantId', { tenantId })
-      .andWhere('ledger.deletedAt IS NULL');
+      .where('ledger.tenantId = :tenantId', { tenantId });
 
     if (filters?.agreementId) {
       query.andWhere('ledger.agreementId = :agreementId', {
@@ -118,7 +120,6 @@ export class LedgerRepository {
       )
       .where('ledger.agreementId = :agreementId', { agreementId })
       .andWhere('ledger.tenantId = :tenantId', { tenantId })
-      .andWhere('ledger.deletedAt IS NULL')
       .getRawOne();
     return parseFloat(result.total) || 0;
   }
@@ -142,7 +143,6 @@ export class LedgerRepository {
       )
       .where('ledger.budgetEnvelopeId = :envelopeId', { envelopeId })
       .andWhere('ledger.tenantId = :tenantId', { tenantId })
-      .andWhere('ledger.deletedAt IS NULL')
       .getRawOne();
     return parseFloat(result.total) || 0;
   }
@@ -165,7 +165,6 @@ export class LedgerRepository {
         tenantId,
         entryDirection: LedgerEntryDirection.DEBIT,
         isReversed: false,
-        deletedAt: IsNull(),
       },
       order: { createdAt: 'ASC' },
     });
@@ -194,7 +193,6 @@ export class LedgerRepository {
         tenantId,
         entryDirection: LedgerEntryDirection.DEBIT,
         isReversed: false,
-        deletedAt: IsNull(),
       },
     });
   }
@@ -211,7 +209,6 @@ export class LedgerRepository {
       where: {
         reversesEntryId: originalEntryId,
         tenantId,
-        deletedAt: IsNull(),
       },
     });
   }

@@ -20,3 +20,12 @@ export * from './sku.entity';
 export * from './tactic.entity';
 export * from './sales-actual.entity';
 export * from './sales-actual-batch.entity';
+// B dalgası (T-211)
+export * from './immutable-base.entity';
+export * from './budget-policy.entity';
+export * from './approval-policy.entity';
+export * from './role.entity';
+export * from './claim.entity';
+export * from './claim-match.entity';
+export * from './tactic-realization.entity';
+export * from './fiscal-period.entity';

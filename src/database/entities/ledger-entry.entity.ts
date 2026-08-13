@@ -1,5 +1,5 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
-import { BaseEntity } from './base.entity';
+import { ImmutableBaseEntity } from './immutable-base.entity';
 import { Agreement } from './agreement.entity';
 import { BudgetEnvelope } from './budget-envelope.entity';
 import { Customer } from './customer.entity';
@@ -10,11 +10,23 @@ export enum LedgerEntryDirection {
   CREDIT = 'CREDIT',
 }
 
+// B dalgası / S10 (K-2.3.14): harcama tipi ÜÇ değer alır. `ACCRUAL` (TAHAKKUK) BURADAN
+// ÇIKARILDI — bir işlem tipidir (bkz. `budget-transaction.entity.ts` `BudgetTransactionType`
+// `ACCRUE`), bir harcama tipi değil. `ACCRUAL` DB'de 0 satırda kullanılıyordu (ölçüldü,
+// migration 1803000000000 öncesi) — veri göçü gerekmedi.
 export enum SpendType {
   ON_INVOICE = 'ON_INVOICE',
   OFF_INVOICE = 'OFF_INVOICE',
   ADJUSTMENT = 'ADJUSTMENT',
-  ACCRUAL = 'ACCRUAL',
+}
+
+// B dalgası / S10 (K-2.3.13a, K-2.3.13b, K-2.3.13c): `DÜZELTME` (spend_type=ADJUSTMENT)
+// bir alt tür taşır, ayrı bir kolonda. Çift yönlü CHECK: ADJUSTMENT ⇔ alt tür dolu.
+export enum LedgerAdjustmentSubtype {
+  REVERSAL = 'REVERSAL', // TERS_KAYIT
+  VARIANCE = 'VARIANCE', // FARK
+  CAP_OVERAGE = 'CAP_OVERAGE', // TAVAN_AŞIMI
+  TOLERANCE_VARIANCE = 'TOLERANCE_VARIANCE', // TOLERANS_FARKI
 }
 
 @Entity({ name: 'ledger_entries', schema: 'main' })
@@ -23,7 +35,8 @@ export enum SpendType {
 @Index(['tenantId', 'budgetEnvelopeId'])
 @Index(['tenantId', 'periodMonth'])
 @Index(['tenantId', 'spendType'])
-export class LedgerEntry extends BaseEntity {
+// B dalgası / R1 (K-2.3.4): `BaseEntity` DEĞİL — `deletedAt` yok (aşağıya bkz.).
+export class LedgerEntry extends ImmutableBaseEntity {
   // Source reference
   @Column({ name: 'source_type', length: 50 })
   sourceType!: string; // 'AGREEMENT', 'PLAN', 'MANUAL'
@@ -42,6 +55,25 @@ export class LedgerEntry extends BaseEntity {
     enum: SpendType,
   })
   spendType!: SpendType;
+
+  /**
+   * B dalgası / S10 (K-2.3.13a/b/c). Çift yönlü CHECK (migration `1803000000000`):
+   * `spend_type = 'ADJUSTMENT'` ⇔ bu kolon dolu. Backfill: bugün mevcut ters kayıtlar
+   * (`reverses_entry_id IS NOT NULL`) `REVERSAL` ile işaretlenir VE `spend_type`
+   * `ADJUSTMENT`'a çekilir — bu ortamda `ledger_entries` BOŞ (0 satır), yani backfill
+   * bu migration'da no-op; ölçüldü, aşağıya bkz. migration yorumu.
+   * ⚠️ Servis tarafı (`ledger.service.ts:125`, reversal `spendType: original.spendType`
+   * kopyalıyor) bu kolonu HENÜZ yazmıyor — S13 emsaliyle aynı: şema açık, servis ayrı
+   * task (Team Lead'e rapor edildi, bkz. T-211 dönüşü).
+   */
+  @Column({
+    name: 'adjustment_subtype',
+    type: 'enum',
+    enum: LedgerAdjustmentSubtype,
+    enumName: 'ledger_adjustment_subtype_enum',
+    nullable: true,
+  })
+  adjustmentSubtype?: LedgerAdjustmentSubtype;
 
   // Entry direction
   @Column({

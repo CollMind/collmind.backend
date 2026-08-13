@@ -64,6 +64,19 @@ export class OnInvoiceBatch extends BaseEntity {
   @Column({ name: 'file_size', type: 'int', nullable: true })
   fileSize?: number; // bytes
 
+  /**
+   * B dalgası / S2 (K-2.13.12b): içe aktarma köken bloğunun "dosya özeti" alanı.
+   * `kim`/`ne zaman` zaten BaseEntity üzerinden var (createdBy/createdAt); bu kolon
+   * `sales_actual_batches.file_hash` ile parite kurar (sha256 hex).
+   */
+  @Column({
+    name: 'file_content_hash',
+    type: 'char',
+    length: 64,
+    nullable: true,
+  })
+  fileContentHash?: string;
+
   @Column({ type: 'jsonb', nullable: true })
   validationSummary?: {
     lineAnalysis?: {

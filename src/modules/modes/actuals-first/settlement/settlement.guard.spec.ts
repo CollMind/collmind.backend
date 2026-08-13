@@ -32,10 +32,10 @@ describe('SettlementGuard', () => {
     );
   });
 
-  it('denies FINANCE', () => {
-    expect(() => guard.canActivate(makeCtx(UserRole.FINANCE))).toThrow(
-      ForbiddenException,
-    );
+  it('denies FINANCE (deprecated role label — B dalgası/R2a removed enum key)', () => {
+    expect(() =>
+      guard.canActivate(makeCtx('FINANCE' as unknown as UserRole)),
+    ).toThrow(ForbiddenException);
   });
 
   it('denies FINANCE_MANAGER', () => {
@@ -50,13 +50,10 @@ describe('SettlementGuard', () => {
     );
   });
 
-  // Deprecated/frozen role (migration 1775 -> MANAGER, migration 1791
-  // MANAGER -> CATEGORY_MANAGER). No user should carry this value anymore,
-  // but the guard must not accidentally allow it if one somehow does.
-  it('denies deprecated UserRole.MANAGER', () => {
-    expect(() => guard.canActivate(makeCtx(UserRole.MANAGER))).toThrow(
-      ForbiddenException,
-    );
+  it('denies deprecated role label MANAGER (removed from enum by B dalgası/R2a)', () => {
+    expect(() =>
+      guard.canActivate(makeCtx('MANAGER' as unknown as UserRole)),
+    ).toThrow(ForbiddenException);
   });
 
   it('denies unauthenticated (no user)', () => {

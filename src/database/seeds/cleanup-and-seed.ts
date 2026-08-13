@@ -1,6 +1,7 @@
 import { DataSource } from 'typeorm';
 import { config } from 'dotenv';
 import { SnakeCaseNamingStrategy } from '../strategies/snake-case-naming.strategy';
+import { UserRole } from '../entities/user.entity';
 import { cleanupAgreementsBudgetPlans } from './cleanup-data';
 import { seedTenants } from './tenant.seed';
 import { seedUsers } from './user.seed';
@@ -14,6 +15,7 @@ import { seedAgreements } from './agreement.seed';
 import { seedBudgetTransactions } from './budget-transaction.seed';
 import { seedKpis } from './kpi.seed';
 import { seedUserScopes } from './user-scope.seed';
+import { seedFiscalPeriods } from './fiscal-period.seed';
 
 config();
 
@@ -50,12 +52,21 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
   });
   console.log();
 
-  const adminUser = users.find((u) => u.role === 'ADMIN') || users[0];
-  const plannerUser = users.find((u) => u.role === 'PLANNER') || users[0];
+  // B dalgası / R2a: enum DEĞERLERİ ASCII kalır (⛔ P0 düzeltmesi — bkz. user.entity.ts
+  // üst yorumu). Yalnız `FINANCE_MANAGER`'ın tel değeri `FINANCE_MANAGER` → `FINANCE`
+  // oldu; `UserRole.FINANCE_MANAGER` üzerinden karşılaştırmak (enum key'e bağlı) yine
+  // otomatik doğru kalır.
+  const adminUser = users.find((u) => u.role === UserRole.ADMIN) || users[0];
+  const plannerUser =
+    users.find((u) => u.role === UserRole.PLANNER) || users[0];
   const financeManagerUser =
-    users.find((u) => u.role === 'FINANCE_MANAGER') || users[0];
-  const categoryManagerUser =
-    users.find((u) => u.role === 'CATEGORY_MANAGER') || users[0];
+    users.find((u) => u.role === UserRole.FINANCE_MANAGER) || users[0];
+  // ⚠️ `categoryManagerUser` KALDIRILDI (kullanılmayan değişken).
+  // Ölçüldü (2026-08-13, T-211 dönüşü): HEAD'de de bu değişken tanımlıydı ama hiçbir
+  // yerde kullanılmıyordu (tek geçiş, tanım satırının kendisi) — B dalgası
+  // öncesinden kalma ölü kod, bu migration'ın YARATTIĞI bir şey değil. Bu dosyaya
+  // dokunmam onu lint kapsamına soktu (CLAUDE.md §"kapsam kendini boşaltıyor"),
+  // kaldırmak davranışı DEĞİŞTİRMİYOR.
 
   if (!adminUser) {
     throw new Error('❌ No admin user found. Cannot continue.');
@@ -63,6 +74,10 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
   if (!plannerUser) {
     throw new Error('❌ No planner user found. Cannot continue.');
   }
+
+  // 2b. Seed fiscal periods (B dalgası / S11 seed item 4) — agreement/budget-
+  // transaction seed'leri ÖNCE bunu bekler (period_month FK'lı).
+  await seedFiscalPeriods(dataSource, tenant.id, adminUser.id);
 
   // 3. Seed channels (required for CPLs and agreements)
   const channels = await seedChannels(dataSource, tenant.id, adminUser.id);
