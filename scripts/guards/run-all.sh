@@ -71,6 +71,34 @@ for g in "${GUARDS[@]}"; do
     exit 2
   fi
 
+  # SIFIRDAN FARKLI HER RC BİR KURULUM HATASIDIR — ve bu satır 2026-08-13'te
+  # ÖLÇÜLMÜŞ bir delik yüzünden var.
+  #
+  # Alt guard'lar `GUARD_MODE=report` ile koşuyor: sözleşme gereği bulgu VARKEN
+  # bile 0 dönerler (beşi de ölçüldü, hepsi 0). Yani sıfırdan farklı bir kod
+  # "bulgu" demek değil, "guard KOŞAMADI" demektir.
+  #
+  # Delik neydi: yalnız `RC -eq 2` sınanıyordu. Çöken bir guard (RC=1, çıktı yok)
+  #   → COUNT=0 → "(bulgu yok)" → TOPLAM değişmez → RUNNER exit 0.
+  # Ampirik kanıt (mutasyon: guard yalnız GERÇEK repoda çöksün, fixture'da değil):
+  #   self-test EXIT=0   ·   guard çıplak EXIT=1   ·   RUNNER EXIT=0  ⛔
+  #
+  # Self-test bunu yakalayamaz ÇÜNKÜ guard'ları fixture env değişkeniyle çağırır
+  # (`GUARD_SRC_DIR=...`), runner ise çıplak — ikisi farklı girdi kümesini ölçer.
+  # Runner'ın kendi yorumu (yukarıda) tam bu sınıfa karşı yazılmıştı ve sınıf
+  # yine de açıktı: savunma self-test'e devredilmişti, self-test ise başka bir
+  # şey ölçüyordu.
+  #
+  # exit 2 seçildi, 1 değil: bu bir bulgu değil, ÖLÇÜMÜN YAPILMAMASI. 1 dönmek
+  # birini var olmayan bir borcu aramaya gönderirdi (frontend runner'ın aynı
+  # gerekçesi).
+  if [ "$RC" -ne 0 ]; then
+    echo "=== $g ==="
+    echo "!! guard KOŞAMADI (exit $RC) — bulgu sayısı anlamsız, ölçüm yapılmadı"
+    echo "!! report modunda sıfırdan farklı çıkış bir kurulum hatasıdır."
+    exit 2
+  fi
+
   COUNT="$(printf "%s" "$OUT" | grep -c "^\[$g\]" || true)"
   SKIPPED="$(printf "%s" "$OUT" | grep -c "^-- \[$g\] SKIPPED" || true)"
   SUP="$(printf "%s" "$OUT" | sed -n "s/^-- \[$g\] SUPPRESSED: \([0-9]*\) .*/\1/p")"
