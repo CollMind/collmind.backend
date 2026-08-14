@@ -47,6 +47,20 @@ import { BudgetTransactionLog } from './entities/budget-transaction-log.entity';
 import { BudgetAlertConfiguration } from './entities/budget-alert-configuration.entity';
 import { PlanApprovalHistory } from './entities/plan-approval-history.entity';
 
+// ⚠️ T-219: `B` dalgası (S4–S12·S14) ON entity ekledi ve `typeorm.config.ts`'i
+// güncelledi — ama BU listeyi güncellemedi. İki entity listesi var ve BU olan
+// prod (`main.ts`) ve TÜM e2e'nin kullandığı; `typeorm.config.ts` yalnız CLI
+// migration komutlarının. `ApprovalRequest` zaten kayıtlıydı ve `ApprovalPolicy`'ye
+// bir ilişki kazandı → metadata inşası çöktü → 17/17 e2e dosyası bootstrap'ta
+// düştü. `İlke 4`: aynı yeteneğin iki listesi, biri KARANLIKTA.
+import { BudgetPolicy } from './entities/budget-policy.entity';
+import { ApprovalPolicy } from './entities/approval-policy.entity';
+import { Role, Capability, RoleCapability, UserRoleAssignment } from './entities/role.entity';
+import { Claim } from './entities/claim.entity';
+import { ClaimMatch } from './entities/claim-match.entity';
+import { TacticRealization } from './entities/tactic-realization.entity';
+import { FiscalPeriod } from './entities/fiscal-period.entity';
+
 @Module({
   imports: [
     TypeOrmModule.forRootAsync({
@@ -83,6 +97,17 @@ import { PlanApprovalHistory } from './entities/plan-approval-history.entity';
         return {
           ...dbConfig,
           entities: [
+            // `B` dalgası (T-219) — bu satırlar eksikti, bkz. üstteki import notu
+            BudgetPolicy,
+            ApprovalPolicy,
+            Role,
+            Capability,
+            RoleCapability,
+            UserRoleAssignment,
+            Claim,
+            ClaimMatch,
+            TacticRealization,
+            FiscalPeriod,
             // Shared entities
             User,
             Tenant,
