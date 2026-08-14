@@ -2547,7 +2547,9 @@ export class PlanService {
       // while the "withdraw the color on partial coverage" half already
       // landed (kpi-engine.service.ts). Persist it so a future FU/plan grid
       // has the data to explain a missing/withdrawn RAG (frontend
-      // consumption is out of scope here — [[T-172]]).
+      // consumption is out of scope here — grid-level → [[T-216a]],
+      // plan-level → [[T-216b]]; [[T-172]] covers `overallRoi`'s collapse,
+      // not `coverageRatio` consumption — corrected T-218, 2026-08-14).
       const fuCalculatedKpis: Record<string, any> = {};
       for (const [kpiCode, result] of Object.entries(fuKpiResults)) {
         fuCalculatedKpis[kpiCode] = {
@@ -2620,6 +2622,13 @@ export class PlanService {
     // Overall ROI and RAG come exclusively from engine (config-driven, no fallback)
     const overallRoi = planKpiResults['GP_ROI_PCT']?.value ?? null;
     const planRagStatus = planKpiResults['GP_ROI_PCT']?.ragStatus ?? null;
+    // T-218: fraction of FUs that resolved into the value above
+    // (recomputeRatioFromChildren's coverageRatio for GP_ROI_PCT —
+    // kpi-engine.service.ts). Previously computed by the engine and
+    // dropped here, same gap INV-N-004 records for the FU level (T-177
+    // S1's comment a few lines up) — `plans` had no column to persist it
+    // into until this migration.
+    const planCoverageRatio = planKpiResults['GP_ROI_PCT']?.coverageRatio ?? null;
 
     // T-034: deliberate CAS bypass — derived plan-level aggregate, not a
     // user edit (same rationale as updatePlanSkuUnversioned above); also
@@ -2653,6 +2662,10 @@ export class PlanService {
         // value.
         overallRoi,
         ragStatus: planRagStatus,
+        // T-218: same explicit-null discipline as overallRoi/ragStatus
+        // above — a recalc that newly loses full FU coverage must clear a
+        // stale 1.0 rather than leave it behind.
+        coverageRatio: planCoverageRatio,
       },
       manager,
       true,

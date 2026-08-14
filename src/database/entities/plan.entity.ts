@@ -186,6 +186,22 @@ export class Plan extends BaseEntity {
   @Column({ name: 'rag_status', type: 'varchar', length: 10, nullable: true })
   ragStatus?: string | null; // 'RED' | 'AMBER' | 'GREEN' | null
 
+  // T-218: fraction of FUs that resolved into `overallRoi`'s GP_ROI_PCT
+  // value (KpiEngineService.calculatePlan -> recomputeRatioFromChildren's
+  // coverageRatio for that KPI). `null` = engine reported no ratio (no FUs
+  // to aggregate, or the KPI is not a rolled-up result) — same explicit-null
+  // discipline as `overallRoi`/`ragStatus` above (T-027), never a stale
+  // leftover value. Carrier only; presentation (K-2.4.22a grey/badge) reads
+  // this and stays a display-layer concern (K-2.4.22a1).
+  @Column({
+    name: 'coverage_ratio',
+    type: 'decimal',
+    precision: 9,
+    scale: 4,
+    nullable: true,
+  })
+  coverageRatio?: number | null;
+
   // T-034: manual optimistic-locking version (NOT @VersionColumn — every
   // mutation here goes through repo.update()/queryRunner.manager.update(),
   // which @VersionColumn never checks/bumps; see
