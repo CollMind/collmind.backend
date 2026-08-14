@@ -1,6 +1,9 @@
 # E1 · modes/ bölmesi envanteri — mode-split.sh --baseline ile üretildi
-# F <satır> <dosya>   bölme içi
-# R <referans> <dosya>  bölmeye dışarıdan işaret eden dosya
+# F <satır> <dosya>   bölme içi — SATIR BİLGİ AMAÇLIDIR, ratchet KARŞILAŞTIRMAZ
+#   (T-212: yalnız dosyanın VARLIĞI karşılaştırılır; mevcut bir F dosyasının
+#    satır sayısı büyümesi artık bulgu değil — --report-count için tutulur)
+# R <referans> <dosya>  bölmeye dışarıdan işaret eden dosya — SAYI karşılaştırılır
+#   (yeni referans VE referans artışı ikisi de ihlal; F'den FARKLI davranır)
 # Bu dosya KENDİNİ YAZMAZ: azalma ölçüldükten SONRA ayrı bir commit'te güncellenir.
 F 428 src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts
 F 31 src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.module.ts

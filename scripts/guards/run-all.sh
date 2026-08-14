@@ -24,11 +24,19 @@ source "$DIR/lib.sh"
 # shellcheck disable=SC2206
 GUARDS=($GUARD_NAMES_VALID)
 
-# Guards that are INFORMATIONAL for now: their RAW finding count (168 pre-
-# existing findings across 28 Domain A files, measured 2026-08-07) is printed
+# Guards that are INFORMATIONAL for now: their RAW finding count is printed
 # and counted in the summary, but never turns `npm run guards` red by itself.
 # Making the raw count blocking today would block every commit until the whole
 # conversion lands — the "big-bang or never" trap Karar 3b rejects.
+#
+# N2 (T-212 code-review): the exact count is NOT written here on purpose — an
+# earlier version said "119 findings across 22 files" while the measured
+# reality was already 168/28. A number in a comment goes stale the moment
+# someone repays debt; it never turns red to say so. The live count is
+# whatever `money-float-baseline.txt`'s `# total:` line says (regenerate with
+# `money-float.sh --baseline`), and the `money-float: N bulgu` line this
+# runner prints below is the current measurement — read that, not this
+# comment.
 #
 # T-212 (2026-08-14): this does NOT mean money-float is unenforced. The
 # RATCHET (`money-float.sh --ratchet`, invoked below as a separate gate) IS
@@ -163,6 +171,22 @@ else
   echo "(ratchet: baseline aşılmadı)"
 fi
 echo
+
+# B3 (T-212 code-review, ölçüldü): SKIPPED bir "temiz" DEĞİLDİR.
+# money-float.sh iki yerde --ratchet dispatch'ine hiç ULAŞMADAN SKIPPED ile
+# exit 0 döner: domain listesi bulunamazsa (money-float.sh:59) ya da liste
+# sıfır dosyaya çözülürse (money-float.sh:180). İkisinde de RATCHET_RC=0 ve
+# RATCHET_OUT bir bulgu satırı içermez — bu satır olmadan aşağıdaki özet
+# "money-float --ratchet: temiz" yazardı, ÖLÇÜM HİÇ YAPILMAMIŞKEN.
+#   Ampirik: MONEY_FLOAT_DOMAIN_LIST=/nonexistent money-float.sh --ratchet
+#            → EXIT 0, "-- [money-float] SKIPPED: domain list not found"
+# money-float.sh:57-58 bunu zaten yazıyor: "SKIPPED is not a pass." Runner'ın
+# kendisi de aynı ilkeyi döngüdeki SKIPPED_BAD ile başka guard'lara uyguluyor
+# — burada uygulanmıyordu.
+if printf '%s\n' "$RATCHET_OUT" | grep -q 'SKIPPED'; then
+  echo "!! money-float --ratchet SKIPPED oldu — KURULUM HATASI, ölçüm yapılmadı (özet 'temiz' DİYEMEZ)" >&2
+  exit 2
+fi
 
 if [ "$RATCHET_RC" -eq 2 ]; then
   echo "!! money-float --ratchet KOŞAMADI (kurulum hatası) — ölçüm yapılmadı" >&2

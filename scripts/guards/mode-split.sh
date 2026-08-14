@@ -107,8 +107,11 @@ scan_split() {
 
 if [ "${1:-}" = "--baseline" ]; then
   echo "# E1 · modes/ bölmesi envanteri — mode-split.sh --baseline ile üretildi"
-  echo "# F <satır> <dosya>   bölme içi"
-  echo "# R <referans> <dosya>  bölmeye dışarıdan işaret eden dosya"
+  echo "# F <satır> <dosya>   bölme içi — SATIR BİLGİ AMAÇLIDIR, ratchet KARŞILAŞTIRMAZ"
+  echo "#   (T-212: yalnız dosyanın VARLIĞI karşılaştırılır; mevcut bir F dosyasının"
+  echo "#    satır sayısı büyümesi artık bulgu değil — --report-count için tutulur)"
+  echo "# R <referans> <dosya>  bölmeye dışarıdan işaret eden dosya — SAYI karşılaştırılır"
+  echo "#   (yeni referans VE referans artışı ikisi de ihlal; F'den FARKLI davranır)"
   echo "# Bu dosya KENDİNİ YAZMAZ: azalma ölçüldükten SONRA ayrı bir commit'te güncellenir."
   scan_split
   exit 0
