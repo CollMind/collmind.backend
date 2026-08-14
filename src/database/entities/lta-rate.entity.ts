@@ -27,7 +27,7 @@ export class LTARate extends BaseEntity {
   category!: string; // Dairy, Beverages, etc. or "ALL"
 
   // ⛔ Transformer YOK — bilerek. Alan B (oran/yüzde 0-100, ADR 0007 Karar 1):
-  // float tolere edilir. T-220'ye rapor edildi, bu turun kapsamı dışında.
+  // float tolere edilir. T-228'ye rapor edildi, bu turun kapsamı dışında.
   @Column({
     name: 'on_invoice_percentage',
     type: 'decimal',

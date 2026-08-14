@@ -49,7 +49,7 @@ export class PlanMechanicValue extends BaseEntity {
   // eager-load) — `overall_roi`/`gp_roi`'yi çökerten sınıfın AYNISI. Beşi burada
   // düzeltildi; `enteredRatePct` KASITLI OLARAK dokunulmadı (aşağıya bkz.) — Alan B
   // (oran), ADR 0007'ye göre transformer gerektirmiyor; `.toFixed()` tüketim tarafı
-  // riski ayrı bulgu (T-220).
+  // riski ayrı bulgu (T-228).
 
   /**
    * Rate in percent notation, 0-100. PERCENT mechanics.
@@ -57,7 +57,7 @@ export class PlanMechanicValue extends BaseEntity {
    * ⚠️ Transformer YOK — kasıtlı. Alan B (oran/yüzde, ADR 0007 Karar 1): float
    * tolere edilir, DB transformer gerektirmez. Sürücü bunu da string döndürür ve
    * bir tüketici `.toFixed()` çağırırsa çöker — o, bu kolonun DEĞİL, tüketicinin
-   * kusurudur (T-220'ye rapor edildi, bu turun kapsamı dışında).
+   * kusurudur (T-228'ye rapor edildi, bu turun kapsamı dışında).
    */
   @Column({
     name: 'entered_rate_pct',

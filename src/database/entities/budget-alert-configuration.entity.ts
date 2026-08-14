@@ -60,7 +60,7 @@ export class BudgetAlertConfiguration extends BaseEntity {
   // a TypeORM validator here — the CHECK is the single source of truth.
   //
   // ⛔ Transformer YOK — bilerek. Alan B (oran/yüzde, ADR 0007 Karar 1/2):
-  // bloklamıyor, float tolere edilir. T-220'ye rapor edildi (T-197/T-221
+  // bloklamıyor, float tolere edilir. T-228'ye rapor edildi (T-197/T-221
   // ikinci yarı).
   @Column({
     name: 'threshold_percent',
