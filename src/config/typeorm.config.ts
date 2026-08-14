@@ -19,29 +19,29 @@ import { OnInvoiceBatch } from '../database/entities/on-invoice-batch.entity';
 import { SalesActual } from '../database/entities/sales-actual.entity';
 import { SalesActualBatch } from '../database/entities/sales-actual-batch.entity';
 import { BudgetSummaryView } from '../database/entities/budget-summary.view-entity';
+import { Brand } from '../database/entities/brand.entity';
+import { Category } from '../database/entities/category.entity';
+import { Channel } from '../database/entities/channel.entity';
+import { Cpl } from '../database/entities/cpl.entity';
+import { ForecastingUnit } from '../database/entities/forecasting-unit.entity';
+import { GenericUnit } from '../database/entities/generic-unit.entity';
+import { Mechanic } from '../database/entities/mechanic.entity';
+import { Region } from '../database/entities/region.entity';
+import { Sku } from '../database/entities/sku.entity';
+import { Tactic } from '../database/entities/tactic.entity';
+// B dalgası (T-211)
+import { BudgetPolicy } from '../database/entities/budget-policy.entity';
+import { ApprovalPolicy } from '../database/entities/approval-policy.entity';
 import {
-  Brand,
-  Category,
-  Channel,
-  Cpl,
-  ForecastingUnit,
-  GenericUnit,
-  Mechanic,
-  Region,
-  Sku,
-  Tactic,
-  // B dalgası (T-211)
-  BudgetPolicy,
-  ApprovalPolicy,
   Role,
   Capability,
   RoleCapability,
   UserRoleAssignment,
-  Claim,
-  ClaimMatch,
-  TacticRealization,
-  FiscalPeriod,
-} from '../database/entities';
+} from '../database/entities/role.entity';
+import { Claim } from '../database/entities/claim.entity';
+import { ClaimMatch } from '../database/entities/claim-match.entity';
+import { TacticRealization } from '../database/entities/tactic-realization.entity';
+import { FiscalPeriod } from '../database/entities/fiscal-period.entity';
 import { Kpi } from '../database/entities/kpi.entity';
 import { UserScope } from '../database/entities/user-scope.entity';
 import { Plan, PlanFu, PlanSku } from '../database/entities/plan.entity';
@@ -67,6 +67,74 @@ function getEnvVar(key: string, defaultValue?: string): string | undefined {
   return process.env[key] || configService.get(key) || defaultValue;
 }
 
+// T-224: bu, uygulamanın entity kaynağı için TEK KAYNAKTIR. CLI migration
+// (`dataSourceOptions.entities` — aşağıda) VE runtime (`DatabaseModule`,
+// `../database/database.module.ts`) buradan okur. `typeorm.config.ts` kanonik
+// seçildi çünkü CLI'ın eksik bir entity'yi kaçırması sessizdir (şema eksik
+// kalır), `DatabaseModule`'ün kaçırması gürültülüdür (bootstrap çöker) —
+// ADR/ürün sahibi kararı: [[T-224]]. AYRI BİR SABİT olarak ihraç edilir,
+// `dataSource.options.entities`'ten DEĞİL — yoksa tüketici bir `DataSource`
+// örneği kurmak zorunda kalırdı.
+export const ALL_ENTITIES = [
+  // Shared entities
+  User,
+  Tenant,
+  Customer,
+  BudgetEnvelope,
+  BudgetTransaction,
+  Notification,
+  AdminAuditLog,
+  // View entities
+  BudgetSummaryView,
+  // Actuals-First entities
+  Agreement,
+  ApprovalRequest,
+  LedgerEntry,
+  AgreementTransaction,
+  OnInvoiceEntry,
+  OnInvoiceBatch,
+  SalesActual,
+  SalesActualBatch,
+  // Master Data entities
+  Brand,
+  Category,
+  Channel,
+  Cpl,
+  ForecastingUnit,
+  GenericUnit,
+  Mechanic,
+  Region,
+  Sku,
+  Tactic,
+  // KPI and User Scope entities
+  Kpi,
+  UserScope,
+  // Planning-First entities
+  Plan,
+  PlanFu,
+  PlanSku,
+  PlanMechanicValue,
+  MechanicSpendBreakdown,
+  LTAAgreement,
+  LTARate,
+  LTAPlanOverride,
+  BudgetAllocation,
+  BudgetTransactionLog,
+  BudgetAlertConfiguration,
+  PlanApprovalHistory,
+  // B dalgası (T-211)
+  BudgetPolicy,
+  ApprovalPolicy,
+  Role,
+  Capability,
+  RoleCapability,
+  UserRoleAssignment,
+  Claim,
+  ClaimMatch,
+  TacticRealization,
+  FiscalPeriod,
+];
+
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
   host: getEnvVar('DB_HOST') || 'localhost',
@@ -89,65 +157,8 @@ export const dataSourceOptions: DataSourceOptions = {
     return false;
   })(),
   // Use explicit entity imports instead of path pattern for better reliability
-  entities: [
-    // Shared entities
-    User,
-    Tenant,
-    Customer,
-    BudgetEnvelope,
-    BudgetTransaction,
-    Notification,
-    AdminAuditLog,
-    // View entities
-    BudgetSummaryView,
-    // Actuals-First entities
-    Agreement,
-    ApprovalRequest,
-    LedgerEntry,
-    AgreementTransaction,
-    OnInvoiceEntry,
-    OnInvoiceBatch,
-    SalesActual,
-    SalesActualBatch,
-    // Master Data entities
-    Brand,
-    Category,
-    Channel,
-    Cpl,
-    ForecastingUnit,
-    GenericUnit,
-    Mechanic,
-    Region,
-    Sku,
-    Tactic,
-    // KPI and User Scope entities
-    Kpi,
-    UserScope,
-    // Planning-First entities
-    Plan,
-    PlanFu,
-    PlanSku,
-    PlanMechanicValue,
-    MechanicSpendBreakdown,
-    LTAAgreement,
-    LTARate,
-    LTAPlanOverride,
-    BudgetAllocation,
-    BudgetTransactionLog,
-    BudgetAlertConfiguration,
-    PlanApprovalHistory,
-    // B dalgası (T-211)
-    BudgetPolicy,
-    ApprovalPolicy,
-    Role,
-    Capability,
-    RoleCapability,
-    UserRoleAssignment,
-    Claim,
-    ClaimMatch,
-    TacticRealization,
-    FiscalPeriod,
-  ],
+  // T-224: kaynak `ALL_ENTITIES` — bu dosyanın üstünde ihraç edilen tek liste.
+  entities: ALL_ENTITIES,
   migrations: (() => {
     // Use glob pattern for both development and production
     // Development: src/database/migrations/**/*.ts

@@ -4,19 +4,17 @@ import { CommonModule } from '../../common/common.module';
 import { CustomerModule } from '../customer/customer.module';
 import { PlanModule } from '../modes/planning-first/plan/plan.module';
 import { KpiEngineModule } from '../shared/kpi-engine/kpi-engine.module';
-import {
-  Brand,
-  Category,
-  Channel,
-  Cpl,
-  ForecastingUnit,
-  GenericUnit,
-  Kpi,
-  Mechanic,
-  Region,
-  Sku,
-  Tactic,
-} from '../../database/entities';
+import { Brand } from '../../database/entities/brand.entity';
+import { Category } from '../../database/entities/category.entity';
+import { Channel } from '../../database/entities/channel.entity';
+import { Cpl } from '../../database/entities/cpl.entity';
+import { ForecastingUnit } from '../../database/entities/forecasting-unit.entity';
+import { GenericUnit } from '../../database/entities/generic-unit.entity';
+import { Kpi } from '../../database/entities/kpi.entity';
+import { Mechanic } from '../../database/entities/mechanic.entity';
+import { Region } from '../../database/entities/region.entity';
+import { Sku } from '../../database/entities/sku.entity';
+import { Tactic } from '../../database/entities/tactic.entity';
 
 // Controllers
 import { BrandController } from './brand/brand.controller';
