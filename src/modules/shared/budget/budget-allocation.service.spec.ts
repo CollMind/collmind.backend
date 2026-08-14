@@ -526,6 +526,108 @@ describe('BudgetAllocationService', () => {
   });
 
   /* ================================================================ *
+   * T-221 — commitBudget(): pin the `String()` + moneyFromNumericString`
+   * conversion (budget-allocation.service.ts:523-528) ITSELF, independent
+   * of what `budget_transaction_logs` produces today.
+   *
+   * The T-091 block above now feeds NUMBER reservation amounts, because
+   * that is what `BudgetTransactionLog.onInvoiceAmount`/`offInvoiceAmount`
+   * actually deliver today (`MoneyTransformer`, as of T-197/T-221 — see the
+   * doc comment on the conversion block in the service). A mutation that
+   * replaces the conversion with a raw passthrough
+   * (`reservation.onInvoiceAmount as unknown as number`) is INVISIBLE to
+   * T-091's number fixtures: for a finite number, `x` and
+   * `moneyToMajorUnits(moneyFromNumericString(String(x)))` agree, so `+=`
+   * and `-=` behave identically either way. Measured independently
+   * (review, 2026-08-15): T-091's three tests all stayed green under that
+   * exact mutation, and only the unrelated `T-094` "commits normally …
+   * (owning) tenantId" test (which happens to still use string fixtures)
+   * caught it.
+   *
+   * The service's own doc comment on that block says the wrapping is kept
+   * DELIBERATELY, "so it stays safe if a future column on this path ever
+   * loses its transformer" — i.e. STRING input is a supported contract, not
+   * a stale assumption. This block pins that contract directly, with its
+   * own two-consecutive-commits, non-zero-baseline shape (T-091's own
+   * reasoning: a single commit against a zero baseline hides
+   * `0 + "100.00" -> "0100.00" -> Number(...)` reading back as 100 by
+   * accident), so the conversion cannot be quietly deleted without a test
+   * noticing — kept separate from T-091 so neither block can be
+   * "simplified" into the other without losing what it pins.
+   * ================================================================ */
+  describe('commitBudget — T-221 (String() conversion contract, string reservation amounts)', () => {
+    function makeAllocation(): BudgetAllocation {
+      return {
+        id: mockAllocationId,
+        onInvoiceUtilized: 500,
+        onInvoiceReserved: 300,
+        offInvoiceUtilized: 200,
+        offInvoiceReserved: 150,
+      } as BudgetAllocation;
+    }
+
+    function mockStringReservation(
+      planId: string,
+      allocation: BudgetAllocation,
+      onInvoiceAmount: string,
+      offInvoiceAmount: string,
+    ): BudgetTransactionLog {
+      return {
+        id: `tx-${planId}`,
+        planId,
+        onInvoiceAmount: onInvoiceAmount as unknown as number,
+        offInvoiceAmount: offInvoiceAmount as unknown as number,
+        budgetAllocation: allocation,
+      } as unknown as BudgetTransactionLog;
+    }
+
+    it('accumulates numerically (as a NUMBER, not by string concatenation) across two consecutive commits, on the saved snapshot, when reservation.onInvoiceAmount/offInvoiceAmount arrive as STRINGS', async () => {
+      const allocation = makeAllocation();
+      const savedSnapshots: BudgetAllocation[] = [];
+      budgetAllocationRepo.save.mockImplementation(async (a: any) => {
+        savedSnapshots.push({ ...a });
+        return a;
+      });
+      budgetTransactionLogRepo.create.mockReturnValue({} as any);
+      budgetTransactionLogRepo.save.mockResolvedValue({} as any);
+
+      budgetTransactionLogRepo.findOne.mockResolvedValueOnce(
+        mockStringReservation('plan-a', allocation, '100.00', '40.00'),
+      );
+      await service.commitBudget(mockTenantId, mockUserId, 'plan-a');
+
+      budgetTransactionLogRepo.findOne.mockResolvedValueOnce(
+        mockStringReservation('plan-b', allocation, '75.50', '10.25'),
+      );
+      await service.commitBudget(mockTenantId, mockUserId, 'plan-b');
+
+      expect(savedSnapshots).toHaveLength(2);
+
+      // After commit 1: 500 + "100.00" = 600, not "500100.00".
+      expect(savedSnapshots[0].onInvoiceUtilized).toBe(600);
+      expect(typeof savedSnapshots[0].onInvoiceUtilized).toBe('number');
+      // After commit 2: 600 + "75.50" = 675.5, not a concatenated string.
+      expect(savedSnapshots[1].onInvoiceUtilized).toBe(675.5);
+      expect(typeof savedSnapshots[1].onInvoiceUtilized).toBe('number');
+      expect(Number.isNaN(savedSnapshots[1].onInvoiceUtilized)).toBe(false);
+
+      // After commit 1: 200 + "40.00" = 240.
+      expect(savedSnapshots[0].offInvoiceUtilized).toBe(240);
+      expect(typeof savedSnapshots[0].offInvoiceUtilized).toBe('number');
+      // After commit 2: 240 + "10.25" = 250.25.
+      expect(savedSnapshots[1].offInvoiceUtilized).toBe(250.25);
+      expect(typeof savedSnapshots[1].offInvoiceUtilized).toBe('number');
+      expect(Number.isNaN(savedSnapshots[1].offInvoiceUtilized)).toBe(false);
+
+      // The `-=` side, moving in lockstep with the shared conversion.
+      expect(savedSnapshots[0].onInvoiceReserved).toBe(200);
+      expect(savedSnapshots[0].offInvoiceReserved).toBe(110);
+      expect(savedSnapshots[1].onInvoiceReserved).toBe(124.5);
+      expect(savedSnapshots[1].offInvoiceReserved).toBe(99.75);
+    });
+  });
+
+  /* ================================================================ *
    * T-094 — tenant isolation (INV-T-001)
    *
    * `commitBudget`, `releaseBudget`, `adjustUtilization` all received

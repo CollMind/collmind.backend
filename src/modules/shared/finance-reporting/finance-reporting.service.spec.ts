@@ -350,4 +350,90 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
       expect(report.totalOnInvoice).toBe(150);
     });
   });
+
+  /* ================================================================ *
+   * T-221 — spendOf(): pin the String()+moneyFromNumericString
+   * conversion ITSELF, independent of what today's columns produce.
+   *
+   * The five T-093 tests above now feed NUMBER fixtures, because that is
+   * what `calculatedSpend` / `plannedLtaOnInvoiceSpend` /
+   * `plannedLtaOffInvoiceSpend` actually deliver today (MoneyTransformer /
+   * DecimalTransformer — see the module comment above and `spendOf()`'s own
+   * doc comment in finance-reporting.service.ts). A mutation that deletes
+   * `spendOf()`'s conversion and returns its input unchanged is INVISIBLE to
+   * those five tests: for a finite number, `x` and
+   * `moneyToMajorUnits(moneyFromNumericString(String(x)))` agree, so nothing
+   * distinguishes correct code from a raw passthrough. Measured
+   * independently (review, 2026-08-15): the five T-093 tests all stayed
+   * green under that exact mutation.
+   *
+   * `spendOf`'s signature (`number | string`) is kept "so it stays safe if a
+   * future column on this path ever loses its transformer" — per its own
+   * doc comment — i.e. STRING input is a DELIBERATELY supported contract,
+   * not a stale assumption left over from before the transformers existed.
+   * This test feeds strings directly to pin that contract, so the
+   * conversion cannot be quietly deleted without a test noticing —
+   * independent of whatever shape the live entities happen to produce this
+   * week.
+   * ================================================================ */
+  describe('getSpendTrend — spendOf() String() conversion contract (T-221)', () => {
+    it('sums two mechanic rows + two SKU LTA rows into correct numbers, not concatenated strings, when the repository hands back STRING money values (a supported non-number input shape for spendOf())', async () => {
+      const plan = buildPlan({
+        id: 'plan-1',
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2026-01-31'),
+      });
+      const qb = buildQueryBuilder({ getMany: jest.fn().mockResolvedValue([plan]) });
+      planRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const planFu = buildPlanFu(
+        [
+          buildPmv('100.00' as any, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
+          buildPmv('50.00' as any, MechanicCategory.OFF_INVOICE_DISCOUNT, 'OFF-MECH'),
+        ],
+        [
+          buildPlanSku('20.00' as any, '5.00' as any),
+          buildPlanSku('10.00' as any, '15.00' as any),
+        ],
+      );
+      planFuRepository.find.mockResolvedValue([planFu]);
+
+      const report = await service.getSpendTrend(
+        TENANT,
+        { startDate: '2026-01-01', endDate: '2026-01-01' },
+        ReportGranularity.DAILY,
+      );
+
+      expect(report.dataPoints).toHaveLength(1);
+      const dp = report.dataPoints[0];
+
+      for (const field of [
+        'onInvoice',
+        'offInvoice',
+        'total',
+        'ltaOnInvoice',
+        'ltaOffInvoice',
+        'promoOnInvoice',
+        'promoOffInvoice',
+      ] as const) {
+        expect(typeof dp[field]).toBe('number');
+        expect(Number.isNaN(dp[field] as number)).toBe(false);
+      }
+
+      // onInvoice = pmv(100) + ltaOn(20) + ltaOn(10) = 130 — three additions
+      // to the same accumulator; a `raw as unknown as number` passthrough
+      // (no String()/parse) would concatenate these into a non-numeric or
+      // wrong-value result instead.
+      expect(dp.onInvoice).toBe(130);
+      expect(dp.offInvoice).toBe(70);
+      expect(dp.total).toBe(200);
+      expect(dp.ltaOnInvoice).toBe(30);
+      expect(dp.ltaOffInvoice).toBe(20);
+      expect(dp.promoOnInvoice).toBe(100);
+      expect(dp.promoOffInvoice).toBe(50);
+
+      expect(report.totalOnInvoice).toBe(130);
+      expect(report.totalOffInvoice).toBe(70);
+    });
+  });
 });
