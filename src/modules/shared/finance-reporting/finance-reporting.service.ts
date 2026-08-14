@@ -59,6 +59,24 @@ import {
 /**
  * A `numeric(18,2)` column value as a number in TRY — T-093.
  *
+ * ⚠️ STALE PREMISE, CORRECTED (review, 2026-08-15): this comment used to say
+ * "these columns declare no transformer, so TypeORM hands back a STRING". That
+ * is no longer true for any of the three columns `spendOf` is called on —
+ * `pmv.calculatedSpend` now carries `MoneyTransformer`
+ * (`plan-mechanic-value.entity.ts`), and `planSku.plannedLtaOnInvoiceSpend` /
+ * `plannedLtaOffInvoiceSpend` already carried `DecimalTransformer`
+ * (`plan.entity.ts`) — the latter two were WRONG about the entity even before
+ * this turn, not newly changed by it. All three now arrive as `number`.
+ *
+ * `spendOf` is kept rather than removed: its signature (`number | string`) and
+ * its `String(raw)` conversion make it correct for EITHER shape, so it stays
+ * safe if a future column on this path ever loses its transformer, and its 7
+ * call sites do not need to change. What follows below is the ORIGINAL defect
+ * this function was written to close, kept for the historical record — it is
+ * no longer reachable through these three columns, but the reasoning (why
+ * `Number()`-based concatenation is a live-route defect, not a Domain B
+ * excuse) still applies to any column that DOES arrive as a string.
+ *
  * These columns declare no transformer, so TypeORM hands back a STRING even
  * though TypeScript types them `number`. `0 + "100.00"` is concatenation, and
  * with two rows an accumulator became `"0100.0050.00"` — a string in a numeric

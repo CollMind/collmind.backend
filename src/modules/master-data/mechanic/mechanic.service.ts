@@ -50,10 +50,23 @@ import { CombinationCheckResult } from './dto/combination-check-result.dto';
  * values and that `number < string` coerces numerically. **That was wrong, and
  * it was wrong because it was asserted instead of measured.** `enteredValue`
  * there comes from `readEnteredRaw`, i.e. straight off `plan_mechanic_values`,
- * whose `entered_*` columns are ALSO `decimal` with no transformer. Both sides
- * are strings, so it is the same lexicographic comparison — on a production
- * route (`GET /spend-calculation/validate-inputs/:planFuId`), where it silently
- * misses real min violations and reports max violations that do not exist.
+ * whose `entered_*` columns were (AT THE TIME) ALSO `decimal` with no
+ * transformer, on both sides — the same lexicographic comparison, on a
+ * production route (`GET /spend-calculation/validate-inputs/:planFuId`), where
+ * it silently missed real min violations and reported max violations that did
+ * not exist.
+ *
+ * ⚠️ "BOTH SIDES ARE STRINGS" IS ITSELF NOW STALE (review, T-197/T-221,
+ * 2026-08-15). `entered_unit_amount` carries `UnitPriceTransformer` and
+ * `entered_total_amount` carries `MoneyTransformer` as of this turn — only
+ * `entered_rate_pct` remains transformer-less (deliberately: Alan B/oran,
+ * ADR 0007 Karar 1). So `enteredValue` is a `string` for a PERCENT mechanic and
+ * a `number` for AMOUNT_PER_UNIT/AMOUNT — it depends on `mechanic.mechanicType`,
+ * not a repo-wide fact. `numericTextToNumber` (called at
+ * `spend-validation.service.ts:176`) already handles both: `typeof value ===
+ * 'number' ? value : …parse…`, so the comparison itself was already correct for
+ * either shape before this turn — it is the PREMISE of this paragraph, not the
+ * fix, that needed correcting.
  *
  * The wrong claim is left visible rather than quietly deleted: it had been
  * written into the code as a normative "must not be fixed to match", which
@@ -61,11 +74,13 @@ import { CombinationCheckResult } from './dto/combination-check-result.dto';
  *
  * The rule this file follows: a decimal column reaches JS as a string unless a
  * transformer says otherwise — and whether one does is a PER-COLUMN question,
- * not a per-repo one. The repo DOES have `DecimalTransformer`
- * (`src/database/transformers/decimal.transformer.ts`), applied to the budget
- * and sales-actual entities. It is simply not declared on `mechanics.min_value`
- * / `max_value` (this file's entity, lines 88-105) or on
- * `plan_mechanic_values.entered_*`. So: check the column, then normalise.
+ * not a per-repo one, nor (per the correction above) a per-entity one. The repo
+ * DOES have `DecimalTransformer` (`src/database/transformers/decimal.transformer.ts`),
+ * applied to the budget and sales-actual entities, and its `MoneyTransformer`/
+ * `UnitPriceTransformer` siblings, applied to most (not all — see above)
+ * `plan_mechanic_values.entered_*` columns. It is simply not declared on
+ * `mechanics.min_value` / `max_value` (this file's entity, lines 88-105) or on
+ * `plan_mechanic_values.entered_rate_pct`. So: check the column, then normalise.
  *
  * (An earlier revision of this paragraph said "this repo has no transformers".
  * That was measured on the two entities in front of me and generalised to the

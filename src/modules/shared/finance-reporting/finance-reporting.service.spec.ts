@@ -18,14 +18,24 @@ import { AccessScopeService } from '../access-scope/access-scope.service';
 import { ReportGranularity } from './dto/report-filters.dto';
 
 /**
- * T-093 — coverage for the transformer-less `decimal` columns fixed via
- * `spendOf()` in finance-reporting.service.ts. Every fixture here deliberately
- * uses STRING money values (the real pg-driver shape for `numeric` columns
- * without a TypeORM transformer) and deliberately feeds AT LEAST TWO rows
- * into every accumulator under test — a single row cannot expose
- * `0 + "100.00"` string-concatenation, only a second addition can
- * (`"0100.00" + "50.00"` → `"0100.0050.00"`). See doc comment on `spendOf()`
- * and T-089/T-091 for the same defect shape.
+ * T-093 — coverage for `spendOf()` in finance-reporting.service.ts.
+ *
+ * ⚠️ STALE PREMISE, CORRECTED (review, 2026-08-15): this used to say the
+ * fixtures "deliberately use STRING money values (the real pg-driver shape for
+ * `numeric` columns without a TypeORM transformer)". As of T-197/T-221 that
+ * shape is no longer real for any of the three columns under test —
+ * `calculated_spend` now carries `MoneyTransformer` and both LTA spend columns
+ * already carried `DecimalTransformer` before this turn — so TypeORM always
+ * hands back a `number` here. See the corrected comment on `spendOf()` itself
+ * for the full account; this fixture is updated to match (`number`, not
+ * `string`), which is what production actually delivers.
+ *
+ * `spendOf()`'s own `String()`+`moneyFromNumericString` conversion still runs
+ * regardless of the input's type, so it does not need a string input to be
+ * exercised — the accumulation behaviour these tests check (AT LEAST TWO rows
+ * per accumulator, since a single row cannot expose `0 + x` string-concatenation
+ * even when it WAS reachable) is unaffected by the type change. See T-089/T-091
+ * for the original defect shape this class of test guards against.
  */
 
 const TENANT = 'tenant-1';
@@ -54,15 +64,23 @@ function buildMechanic(category: MechanicCategory, code = 'MECH'): any {
   return { code, category };
 }
 
-/** A `plan_mechanic_values.calculated_spend` row as the pg driver hands it back: a STRING. */
-function buildPmv(calculatedSpend: string, category: MechanicCategory, code = 'MECH'): any {
+/**
+ * A `plan_mechanic_values.calculated_spend` row as TypeORM hands it back:
+ * a `number`, via `MoneyTransformer` (was a STRING before T-197/T-221; see
+ * the module comment above).
+ */
+function buildPmv(calculatedSpend: number, category: MechanicCategory, code = 'MECH'): any {
   return { calculatedSpend, mechanic: buildMechanic(category, code) };
 }
 
-/** A `plan_skus` row with STRING LTA spend columns (also transformer-less `numeric`). */
+/**
+ * A `plan_skus` row with the LTA spend columns as TypeORM hands them back:
+ * `number`, via `DecimalTransformer` (was a STRING before this entity picked
+ * up a transformer; see the module comment above).
+ */
 function buildPlanSku(
-  plannedLtaOnInvoiceSpend: string,
-  plannedLtaOffInvoiceSpend: string,
+  plannedLtaOnInvoiceSpend: number,
+  plannedLtaOffInvoiceSpend: number,
 ): any {
   return { plannedLtaOnInvoiceSpend, plannedLtaOffInvoiceSpend };
 }
@@ -144,10 +162,10 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
 
       const planFu = buildPlanFu(
         [
-          buildPmv('100.00', MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
-          buildPmv('50.00', MechanicCategory.OFF_INVOICE_DISCOUNT, 'OFF-MECH'),
+          buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
+          buildPmv(50.00, MechanicCategory.OFF_INVOICE_DISCOUNT, 'OFF-MECH'),
         ],
-        [buildPlanSku('20.00', '5.00'), buildPlanSku('10.00', '15.00')],
+        [buildPlanSku(20.00, 5.00), buildPlanSku(10.00, 15.00)],
       );
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -202,8 +220,8 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu([
-        buildPmv('100.00', MechanicCategory.ON_INVOICE_DISCOUNT),
-        buildPmv('50.00', MechanicCategory.OFF_INVOICE_DISCOUNT),
+        buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT),
+        buildPmv(50.00, MechanicCategory.OFF_INVOICE_DISCOUNT),
       ]);
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -235,8 +253,8 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu([
-        buildPmv('100.00', MechanicCategory.ON_INVOICE_DISCOUNT),
-        buildPmv('50.00', MechanicCategory.OFF_INVOICE_DISCOUNT),
+        buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT),
+        buildPmv(50.00, MechanicCategory.OFF_INVOICE_DISCOUNT),
       ]);
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -272,8 +290,8 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu([
-        buildPmv('100.00', MechanicCategory.ON_INVOICE_DISCOUNT),
-        buildPmv('50.00', MechanicCategory.OFF_INVOICE_DISCOUNT),
+        buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT),
+        buildPmv(50.00, MechanicCategory.OFF_INVOICE_DISCOUNT),
       ]);
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -314,8 +332,8 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu([
-        buildPmv('100.00', MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
-        buildPmv('50.00', MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
+        buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
+        buildPmv(50.00, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
       ]);
       planFuRepository.find.mockResolvedValue([planFu]);
 

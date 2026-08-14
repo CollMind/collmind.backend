@@ -157,10 +157,11 @@ export class SpendValidationService {
 
       // Min/Max validation.
       //
-      // T-085: BOTH SIDES are normalised before comparing. `enteredValue` comes
+      // T-085: BOTH SIDES are normalised before comparing, regardless of which
+      // shape either one arrives in. AT THE TIME OF THE FIX, `enteredValue` came
       // straight off a transformer-less `numeric` column and `mechanic.minValue`
-      // / `maxValue` are `numeric(18,4)` with no transformer either — so this
-      // used to be a STRING comparison, and it was wrong in both directions:
+      // / `maxValue` — `numeric(18,4)`, still transformer-less today — were the
+      // same, so this used to be a STRING comparison, wrong in both directions:
       //
       //   "5.0000"  < "10.0000"   ->  false   a real min violation, MISSED
       //   "50.0000" > "100.0000"  ->  true    a valid value, REPORTED
@@ -168,6 +169,17 @@ export class SpendValidationService {
       // Lexicographic order, on a live route (GET /spend-calculation/
       // validate-inputs/:planFuId). The missed violation is the worse half: it
       // is silent, on a financial validation path (CLAUDE.md §2.5).
+      //
+      // ⚠️ "`enteredValue` comes straight off a transformer-less numeric column"
+      // IS NOW ONLY TRUE FOR A PERCENT MECHANIC (review, T-197/T-221,
+      // 2026-08-15). `entered_unit_amount`/`entered_total_amount` carry
+      // `UnitPriceTransformer`/`MoneyTransformer` as of this turn, so
+      // `enteredValue` is a `number` for AMOUNT_PER_UNIT/AMOUNT mechanics and a
+      // `string` for PERCENT — `numericTextToNumber` below handles either
+      // (`typeof value === 'number' ? value : …parse…`), which is why this gate
+      // needed no code change, only this comment's premise corrected.
+      // `mechanic.minValue`/`maxValue` remain transformer-less on BOTH sides of
+      // this comparison regardless of mechanic type.
       //
       // The sibling comparisons in this method are NOT affected and were checked
       // rather than assumed: `enteredValue < 0`, `> 100` and the combined-discount
@@ -249,16 +261,27 @@ export class SpendValidationService {
         // arithmetic.
         //
         // T-085: the zero half of that never worked. The predicate read
-        // `v !== 0`, and `v` is a transformer-less `numeric` column, so it is
-        // the STRING "0.0000" — and `"0.0000" !== 0` is always true because
-        // strict inequality never coerces across types. Every zero-valued
-        // mechanic stayed in `activeMechanics`.
+        // `v !== 0` against `v` from a transformer-less `numeric` column at the
+        // time (`entered_rate_pct` — a PERCENT mechanic in the reported case),
+        // so `v` was the STRING "0.0000" — and `"0.0000" !== 0` is always true
+        // because strict inequality never coerces across types. Every
+        // zero-valued mechanic stayed in `activeMechanics`.
         //
         // What that produced downstream: two mutually-exclusive mechanics both
         // entered as 0% were reported as a CONFLICT, and the per-mechanic
         // combined-discount ceiling counted mechanics contributing nothing. The
         // decision ADR 0008 records was correct and the code was written to
         // apply it — a type mismatch simply meant it never did.
+        //
+        // ⚠️ `v` is not always a string today (review, T-197/T-221, 2026-08-15):
+        // `readEnteredRaw` reads whichever column `enteredColumnFor(mechanic)`
+        // selects, and only `entered_rate_pct` remains transformer-less;
+        // `entered_unit_amount`/`entered_total_amount` now arrive as `number`.
+        // `numericTextToNumber(v) !== 0` below is unaffected either way — it is
+        // a type-check-then-parse, not a fix scoped to strings — so this
+        // predicate is still correct for the mechanic types it did not
+        // originally have to handle; only the "so it is the STRING" premise
+        // above was mechanic-type-specific and is corrected here, not the code.
         //
         // `readEnteredRaw` (not `readEnteredValue`) is still the right read: the
         // null check below is the semantics here, and `?? 0` would erase the
@@ -317,9 +340,15 @@ export class SpendValidationService {
       // T-089: ONE conversion point, and it produces a NUMBER.
       //
       // This used to be `totalOnInvoiceDiscount += entered` inside each branch.
-      // `entered` comes off a transformer-less `decimal` column, i.e. it is a
-      // STRING, so `0 + "10.0000"` was concatenation, not addition. The
-      // accumulator turned into a string on the first PERCENT mechanic:
+      // `entered` is used below ONLY inside the PERCENT branch (`entered_rate_pct`,
+      // which remains transformer-less today — review, T-197/T-221, 2026-08-15;
+      // `entered_unit_amount`/`entered_total_amount` now carry a transformer and
+      // arrive as `number`, but neither reaches this line: the non-PERCENT branch
+      // recomputes its contribution from `pmv.calculatedSpend` instead). For a
+      // PERCENT mechanic `entered` comes off that transformer-less `decimal`
+      // column, i.e. it is a STRING, so `0 + "10.0000"` was concatenation, not
+      // addition. The accumulator turned into a string on the first PERCENT
+      // mechanic:
       //
       //   %10 then %5  ->  "010.00005.0000"
       //   combined     ->  "010.00005.00000"   ->  Number(...) is NaN
@@ -462,10 +491,13 @@ export class SpendValidationService {
 
         // T-091: ONE conversion point, and it produces a NUMBER.
         //
-        // `calculatedSpend` is a `numeric(18,2)` column with no transformer, so
-        // it arrives as a STRING and `0 + "100.00"` was concatenation. Two or
-        // more mechanics turned the total into "0100.0050.00", which then went
-        // out as `estimatedOnInvoiceSpend` and reached `checkAvailability`,
+        // ⚠️ STALE PREMISE, CORRECTED (review, T-197/T-221, 2026-08-15):
+        // `calculatedSpend` now carries `transformer: MoneyTransformer`
+        // (`plan-mechanic-value.entity.ts`) and arrives as a `number`, not a
+        // STRING. AT THE TIME OF THE ORIGINAL FIX it was a `numeric(18,2)`
+        // column with no transformer, so `0 + "100.00"` was concatenation. Two
+        // or more mechanics turned the total into "0100.0050.00", which then
+        // went out as `estimatedOnInvoiceSpend` and reached `checkAvailability`,
         // where `available >= "0100.0050.00"` is a NaN comparison and therefore
         // always false: every plan reported "Insufficient On-Invoice budget",
         // and the shortfall message rendered the literal text "Shortfall: NaN".
@@ -473,12 +505,17 @@ export class SpendValidationService {
         // Same shape as T-089: with a SINGLE mechanic it worked by accident
         // (`Number("0100.00")` is 100) and only broke once a second appeared.
         //
-        // `moneyFromNumericString` parses the numeric(18,2) text digit-wise
-        // instead of routing it through `Number()`, and throws rather than
-        // yielding a quiet NaN (§2.5). The column is scale 2 — measured — so it
-        // cannot throw on legitimate data. `moneyToMajorUnits` returns TRY,
-        // which is the representation these accumulators already use: this is a
-        // correctness fix, not a representation change (ADR 0007 K9).
+        // The conversion below is KEPT even though the column is transformer'd
+        // now: `moneyFromNumericString(String(...))` is correct for either a
+        // `number` or a `string` input (`String()` normalises first), so this
+        // stays a no-op-shaped safety net rather than a live defect path — the
+        // same reasoning as `finance-reporting.service.ts`'s `spendOf()`. It
+        // parses the numeric(18,2) text digit-wise instead of routing it
+        // through `Number()`, and throws rather than yielding a quiet NaN
+        // (§2.5). The column is scale 2 — measured — so it cannot throw on
+        // legitimate data. `moneyToMajorUnits` returns TRY, which is the
+        // representation these accumulators already use: this is a correctness
+        // fix, not a representation change (ADR 0007 K9).
         const spend = moneyToMajorUnits(
           moneyFromNumericString(String(pmv.calculatedSpend)),
         );

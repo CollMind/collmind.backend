@@ -43,6 +43,57 @@ export class InvalidDecimalError extends Error {
   }
 }
 
+/**
+ * T-221: the STRUCTURAL primitives shared by every decimal-column transformer
+ * in this file (finite/NaN guard on write, `Number()` parse + finite guard on
+ * read). Factored out so `DecimalTransformer`, `MoneyTransformer` and
+ * `UnitPriceTransformer` each own a DISTINCT `to`/`from` function — not the
+ * same function reference, and not the same object — while still sharing one
+ * implementation of the part that must not diverge between them: refusing to
+ * hand a money-or-quantity path a NaN or an Infinity.
+ *
+ * This split exists because of a measured defect, not as a precaution:
+ *
+ *     UnitPrice.to === Decimal.to    // was TRUE before this split
+ *     UnitPrice.from === Decimal.from // was TRUE before this split
+ *
+ * A comment on this file used to claim object identity kept
+ * `UnitPriceTransformer` safe from a future edit to `MoneyTransformer.to`
+ * (ADR 0007 Karar 6's kuruş/half-away-from-zero rounding, not yet written).
+ * That claim was false: `to`/`from` were literally the same function
+ * reference across all three exports, so editing the ONE arrow function body
+ * that all three pointed at would have rounded unit prices too — silently
+ * reversing `K-2.1.12` (`AMOUNT_PER_UNIT` is a unit price, not a money amount,
+ * and is exempt from the kuruş rule).
+ *
+ * The fix is not "give `UnitPriceTransformer` its own copy of the finite
+ * check" — that would just move the duplication T-097/T-098 already paid for
+ * (narrow `typeof value === 'number'` guard on write, `Number.isFinite` +
+ * `InvalidDecimalError` with the value kept out of the message on both sides)
+ * into three places that would drift. Karar 6's rounding is a MONEY-SPECIFIC
+ * rule layered ON TOP of this structural guard, not a replacement for it: when
+ * it lands, it composes inside `MoneyTransformer.to`'s OWN arrow body
+ * (`roundToKurus(guardFiniteOnWrite(value))` or equivalent) — a body
+ * `UnitPriceTransformer.to` does not share and does not call.
+ */
+function guardFiniteOnWrite(
+  value?: number | null,
+): number | null | undefined {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new InvalidDecimalError(value);
+  }
+  return value;
+}
+
+function parseFiniteOnRead(
+  value?: string | null,
+): number | null | undefined {
+  if (value === null || value === undefined) return value;
+  const num = Number(value);
+  if (!Number.isFinite(num)) throw new InvalidDecimalError(value);
+  return num;
+}
+
 export const DecimalTransformer: ValueTransformer = {
   /**
    * T-097: the WRITE side rejects a non-finite number instead of storing it.
@@ -78,12 +129,8 @@ export const DecimalTransformer: ValueTransformer = {
    * false — a bare guard would make every nullable money column unwritable. The
    * narrowing protects more than the string case that motivated it.
    */
-  to: (value?: number | null): number | null | undefined => {
-    if (typeof value === 'number' && !Number.isFinite(value)) {
-      throw new InvalidDecimalError(value);
-    }
-    return value;
-  },
+  to: (value?: number | null): number | null | undefined =>
+    guardFiniteOnWrite(value),
 
   /**
    * T-097: unconvertible input THROWS. It used to return `null`, which handed a
@@ -148,16 +195,13 @@ export const DecimalTransformer: ValueTransformer = {
    * rethrown, stored — and a sweep of one of them proves nothing about the others
    * (CLAUDE.md §7.1).
    */
-  from: (value?: string | null): number | null | undefined => {
-    if (value === null || value === undefined) return value;
-    const num = Number(value);
-    if (!Number.isFinite(num)) throw new InvalidDecimalError(value);
-    return num;
-  },
+  from: (value?: string | null): number | null | undefined =>
+    parseFiniteOnRead(value),
 };
 
 /**
- * MoneyTransformer / UnitPriceTransformer — T-197/T-221 ikinci yarı (2026-08-14).
+ * MoneyTransformer / UnitPriceTransformer — T-197/T-221 ikinci yarı (2026-08-14),
+ * blocker düzeltmesi T-221 review turu (2026-08-15).
  *
  * Ürün sahibi kararı: **İKİ transformer**, ayrım kolonun ÖLÇEĞİYLE değil
  * SEMANTİĞİYLE:
@@ -166,25 +210,55 @@ export const DecimalTransformer: ValueTransformer = {
  *   UnitPriceTransformer  birim fiyat        dört ondalık, kuruş kuralından
  *                                            MUAF (`K-2.1.12`)
  *
- * BUGÜN İKİSİ AYNI DAVRANIYOR — ve bu bilerek böyle. `to`/`from` yalnız pg
+ * BUGÜN ÜÇÜ DE AYNI DAVRANIYOR — ve bu bilerek böyle. `to`/`from` yalnız pg
  * sürücüsünün string↔number sınırını kapatıyor (Number()/finite-check); ADR
  * 0007 Karar 6'nın kuruş yuvarlama yardımcısı henüz yazılmadı (Uygulama sırası
- * adım 3, tamamlanmadı). Yardımcı yazıldığında yalnız `MoneyTransformer.to`
- * değişecek — `UnitPriceTransformer` K-2.1.12 gereği o değişikliğin dışında
- * kalmak ZORUNDA, bu yüzden ayrı bir nesne (aynı fonksiyonların referansı olsa
- * bile `DecimalTransformer`'ın kendisiyle aynı obje DEĞİL): `MoneyTransformer`
- * bir noktada kendi `to`'sunu değiştirdiğinde `UnitPriceTransformer`'ın onu
- * sessizce miras almaması gerekiyor, ve bunu obje kimliği garanti ediyor.
+ * adım 3, tamamlanmadı).
+ *
+ * ⚠️ Bu bloğun ÖNCEKİ hâli burada bir garanti iddia ediyordu ve o iddia
+ * YANLIŞ ölçüldü (Team Lead, 2026-08-15):
+ *
+ *     UnitPrice.to === Decimal.to     -> true
+ *     UnitPrice.from === Decimal.from -> true
+ *     MoneyTransformer                -> `= DecimalTransformer` (TAM obje takma adı)
+ *
+ * "Ayrı bir nesne ... obje kimliği garanti ediyor" cümlesi `UnitPriceTransformer`
+ * için ikinci bir yanlıştı: nesne ayrıydı, ama `to`/`from` PROPERTY'LERİ aynı
+ * fonksiyon REFERANSIYDI. Karar 6 geldiğinde doğal düzenleme yeri o fonksiyonun
+ * TANIMLANDIĞI yerdir — ve o yer üçü için de aynıydı. `MoneyTransformer` daha
+ * kötüydü: obje kimliği bile yoktu, `DecimalTransformer`'ın ta kendisiydi. Yani
+ * "yalnız `MoneyTransformer.to`'yu değiştireceğiz" niyeti, o satır aynen
+ * uygulansaydı 49 `DecimalTransformer` kolonunu da (plan `overall_roi`/`gp_roi`
+ * ×2/`coverage_ratio`, üç hacim kolonu, `budget-allocation`, `budget-envelope`,
+ * `budget-summary`, `sales-actual*` dahil) sessizce değiştirecekti — bir ROI
+ * yüzdesini ya da bir hacim rakamını kuruşa yuvarlamak.
+ *
+ * DÜZELTME: üçü de KENDİ `to`/`from` gövdesini taşır (üç ayrı fonksiyon
+ * referansı — üçü de aynı yapısal `guardFiniteOnWrite`/`parseFiniteOnRead`
+ * birincillerini çağırıyor olsa da, kompozisyon her birinin KENDİ arrow
+ * body'sinde). Karar 6 geldiğinde yuvarlama `MoneyTransformer.to`'nun kendi
+ * gövdesine eklenir (`guardFiniteOnWrite`'ın SONRASINA, örn.
+ * `roundToKurus(guardFiniteOnWrite(value))`) — `guardFiniteOnWrite`'ın
+ * gövdesine değil. Bu satır `DecimalTransformer`'ı da `UnitPriceTransformer`'ı
+ * da değiştirmeden dokunulabilecek TEK yerdir.
  *
  * `DecimalTransformer` adı KORUNUYOR — 49 kolonda (`plan`, `budget-allocation`,
  * `budget-envelope`, `budget-summary`, `sales-actual*`) hâlihazırda kullanılan,
  * T-097/T-098'in sertleştirdiği isim. Yeniden adlandırmak o dosyaları
- * gerekçesiz değiştirir (§7: "yeniden icat etme"). `MoneyTransformer` onun
- * ADR 0007'nin istediği isimle takma adıdır — YENİ bir implementasyon değil.
+ * gerekçesiz değiştirir (§7: "yeniden icat etme"). `MoneyTransformer` artık bir
+ * takma ad DEĞİL — kendi gövdesi olan, bugün `DecimalTransformer` ile aynı
+ * davranan üçüncü bir isim.
  */
-export const MoneyTransformer: ValueTransformer = DecimalTransformer;
+export const MoneyTransformer: ValueTransformer = {
+  to: (value?: number | null): number | null | undefined =>
+    guardFiniteOnWrite(value),
+  from: (value?: string | null): number | null | undefined =>
+    parseFiniteOnRead(value),
+};
 
 export const UnitPriceTransformer: ValueTransformer = {
-  to: DecimalTransformer.to,
-  from: DecimalTransformer.from,
+  to: (value?: number | null): number | null | undefined =>
+    guardFiniteOnWrite(value),
+  from: (value?: string | null): number | null | undefined =>
+    parseFiniteOnRead(value),
 };

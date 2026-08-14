@@ -394,11 +394,17 @@ describe('BudgetAllocationService', () => {
    *
    * `allocation.onInvoiceUtilized` / `offInvoiceUtilized` load through
    * DecimalTransformer as NUMBERS. `reservation.onInvoiceAmount` /
-   * `offInvoiceAmount` (budget_transaction_logs, no transformer) load as
-   * STRINGS. Under the old code `allocation.onInvoiceUtilized +=
-   * reservation.onInvoiceAmount` was string concatenation, not addition.
+   * `offInvoiceAmount` (budget_transaction_logs) load as NUMBERS too, as of
+   * T-197/T-221 — `budget-transaction-log.entity.ts` now declares
+   * `transformer: MoneyTransformer` on both columns (was: no transformer,
+   * STRINGS; see `mockReservation`'s own comment below for the fixture-side
+   * correction). Under the ORIGINAL code — before either fix —
+   * `allocation.onInvoiceUtilized += reservation.onInvoiceAmount` was string
+   * concatenation, not addition; today `commitBudget` does not rely on the
+   * column type either way, converting through
+   * `moneyFromNumericString(String(reservation.onInvoiceAmount))` first.
    *
-   * A SINGLE commit against a zero baseline hides this
+   * A SINGLE commit against a zero baseline hides the ORIGINAL defect
    * (`0 + "100.00" -> "0100.00" -> Number(...)` happens to read back as 100).
    * These tests start from a NON-ZERO baseline and run TWO CONSECUTIVE
    * commits — the shape in which the defect cannot hide — and assert on
@@ -418,24 +424,42 @@ describe('BudgetAllocationService', () => {
     }
 
     /**
-     * `onInvoiceAmount`/`offInvoiceAmount` are typed `number` on
-     * `BudgetTransactionLog`, but the column carries no transformer, so the
-     * pg driver returns STRINGS at runtime. Passing a JS number here would
-     * not exercise the defect this test exists to catch (T-091 task note;
-     * mirrors the T-089/T-080 lesson already documented in
+     * `onInvoiceAmount`/`offInvoiceAmount` were typed `number` on
+     * `BudgetTransactionLog` while the column carried NO transformer, so the
+     * pg driver returned STRINGS at runtime and this fixture matched that
+     * (T-091 task note; mirrored the T-089/T-080 lesson documented in
      * spend-validation.service.spec.ts).
+     *
+     * ⚠️ STALE AS OF T-197/T-221 (review, 2026-08-15): `budget-transaction-log.entity.ts`
+     * now declares `transformer: MoneyTransformer` on both columns, so TypeORM's
+     * `.from()` ALWAYS returns a `number` here — a string can no longer reach this
+     * point through the repository. Passing a string kept the fixture testing a
+     * shape production cannot produce (§2.7 mock-drift: "the mock, not the
+     * assertion, had drifted from the type it mimics").
+     *
+     * The fixture now takes `number`, matching what TypeORM actually hands back.
+     * This does NOT remove coverage of the original string-concatenation defect
+     * class: `commitBudget` still converts every amount through
+     * `moneyFromNumericString(String(reservation.onInvoiceAmount))` before
+     * accumulating (`budget-allocation.service.ts`) rather than trusting the
+     * column type, and that conversion's string-parsing path is covered directly
+     * by `moneyFromNumericString`'s own suite
+     * (`src/common/numeric/numeric.property.spec.ts`). What THIS test still
+     * verifies — and is the reason it exists — is unchanged: that TWO
+     * CONSECUTIVE commits accumulate numerically rather than hiding a
+     * regression the way a single commit against a zero baseline would.
      */
     function mockReservation(
       planId: string,
       allocation: BudgetAllocation,
-      onInvoiceAmount: string,
-      offInvoiceAmount: string,
+      onInvoiceAmount: number,
+      offInvoiceAmount: number,
     ): BudgetTransactionLog {
       return {
         id: `tx-${planId}`,
         planId,
-        onInvoiceAmount: onInvoiceAmount as unknown as number,
-        offInvoiceAmount: offInvoiceAmount as unknown as number,
+        onInvoiceAmount,
+        offInvoiceAmount,
         budgetAllocation: allocation,
       } as unknown as BudgetTransactionLog;
     }
@@ -451,12 +475,12 @@ describe('BudgetAllocationService', () => {
       budgetTransactionLogRepo.save.mockResolvedValue({} as any);
 
       budgetTransactionLogRepo.findOne.mockResolvedValueOnce(
-        mockReservation('plan-a', allocation, '100.00', '40.00'),
+        mockReservation('plan-a', allocation, 100.0, 40.0),
       );
       await service.commitBudget(mockTenantId, mockUserId, 'plan-a');
 
       budgetTransactionLogRepo.findOne.mockResolvedValueOnce(
-        mockReservation('plan-b', allocation, '75.50', '10.25'),
+        mockReservation('plan-b', allocation, 75.5, 10.25),
       );
       await service.commitBudget(mockTenantId, mockUserId, 'plan-b');
 

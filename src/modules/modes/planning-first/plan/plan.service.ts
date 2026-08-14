@@ -2841,11 +2841,21 @@ export class PlanService {
       : Number(plan.totalGp) - baseGp;
 
     // T-172: was `plan.overallRoi ? Number(...) : null` — a truthy check on
-    // a DB-decimal value. It happened to work only because this column has
-    // no transformer and Postgres hands back a non-empty numeric STRING
-    // (e.g. "0.0000"), which is truthy; a real JS `0` would have silently
-    // collapsed to `null` too. Explicit null/undefined check removes that
-    // fragility regardless of representation.
+    // a DB-decimal value. AT THE TIME OF THE FIX it happened to work only
+    // because this column had no transformer and Postgres handed back a
+    // non-empty numeric STRING (e.g. "0.0000"), which is truthy; a real JS `0`
+    // would have silently collapsed to `null` too.
+    //
+    // ⚠️ STALE PREMISE, CORRECTED (review, T-197/T-221, 2026-08-15):
+    // `plan.overall_roi` now carries `transformer: DecimalTransformer`
+    // (`plan.entity.ts`, commit 2ee4358, T-221 — all 24 decimal columns on
+    // this entity, including `gp_roi` ×2, `coverage_ratio` and three volume
+    // columns, not only this field). The `Number(plan.overallRoi)` call below
+    // is still correct — `Number()` on an already-`number` value is a
+    // no-op — but the explicit null/undefined check (not a truthy check) is
+    // what actually removes the fragility, and it does so regardless of
+    // representation, which is why no code change was needed here — only this
+    // comment's premise.
     const currentRoi =
       plan.overallRoi !== null && plan.overallRoi !== undefined
         ? Number(plan.overallRoi)

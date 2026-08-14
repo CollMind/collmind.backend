@@ -65,11 +65,25 @@ function makeMechanic(overrides: Partial<Mechanic> = {}): Mechanic {
 
 /**
  * PlanMechanicValue fixture. `entered` is written into whatever
- * `entered_*` column matches `mechanic.mechanicType`, and — critically — is
- * accepted as a STRING by callers, because that is the real shape a
- * transformer-less `decimal` column returns from Postgres. Passing a JS
- * `number` here would silently skip the defect this file exists to catch
- * (T-089 task note; T-080 lost 11 tests to exactly this shortcut).
+ * `entered_*` column matches `mechanic.mechanicType`, and its type
+ * (`string | number | null`) is left to the CALLER to choose deliberately.
+ *
+ * WHICH SHAPE TO PASS DEPENDS ON THE MECHANIC TYPE (review, T-197/T-221,
+ * 2026-08-15 — this comment used to say `entered` is unconditionally "accepted
+ * as a STRING… because that is the real shape a transformer-less `decimal`
+ * column returns from Postgres", which is now only true for PERCENT):
+ *
+ *   PERCENT          entered_rate_pct     STRING  — still no transformer
+ *   AMOUNT_PER_UNIT  entered_unit_amount  NUMBER  — UnitPriceTransformer
+ *   AMOUNT           entered_total_amount NUMBER  — MoneyTransformer
+ *
+ * Passing a STRING for PERCENT (the default `makeMechanic()` type, and what
+ * most tests in this file exercise) is still load-bearing: it is the real
+ * shape a transformer-less `decimal` column returns from Postgres, and
+ * passing a JS number there would silently skip the defect this file exists
+ * to catch (T-089 task note; T-080 lost 11 tests to exactly this shortcut).
+ * For AMOUNT_PER_UNIT/AMOUNT tests, pass a NUMBER — passing a string there
+ * now tests a shape production cannot produce (§2.7 mock-drift).
  */
 function buildPmv(
   mechanic: Mechanic,
@@ -447,14 +461,24 @@ describe('SpendValidationService', () => {
    * T-091 — validateBudgetImpact: `totalOnInvoiceSpend` /
    * `totalOffInvoiceSpend` accumulator string-concat fix
    *
-   * `pmv.calculatedSpend` is a `numeric(18,2)` column with NO transformer —
-   * a STRING at runtime despite the TS type on `PlanMechanicValue` saying
-   * `number` (same shape as the T-089 `entered` defect, different field).
-   * Under the old code `totalOnInvoiceSpend += pmv.calculatedSpend` was
-   * string concatenation. A SINGLE mechanic per category hides this
-   * (`0 + "100.00" -> "0100.00" -> Number(...)` reads back as 100 by
-   * accident); these fixtures use TWO+ mechanics per category so the
-   * revealing second `+=` executes.
+   * AT THE TIME OF THE FIX, `pmv.calculatedSpend` was a `numeric(18,2)`
+   * column with NO transformer — a STRING at runtime despite the TS type on
+   * `PlanMechanicValue` saying `number` (same shape as the T-089 `entered`
+   * defect, different field) — and `totalOnInvoiceSpend +=
+   * pmv.calculatedSpend` was string concatenation under the old code.
+   *
+   * ⚠️ STALE PREMISE, CORRECTED (review, T-197/T-221, 2026-08-15):
+   * `calculated_spend` now carries `transformer: MoneyTransformer`
+   * (`plan-mechanic-value.entity.ts`), so TypeORM always returns a `number`
+   * here — a string can no longer reach this point through the repository.
+   * The fixtures below are updated to match. This does not remove the
+   * accumulation coverage: `validateBudgetImpact` still converts through
+   * `moneyFromNumericString(String(pmv.calculatedSpend))` before summing
+   * rather than trusting the column type (see the doc comment on that call
+   * site), and TWO+ mechanics per category still exercises accumulation
+   * across more than one addition — the shape that would reveal a naive `+=`
+   * regression regardless of whether the addend started as a string or a
+   * number.
    * ================================================================ */
   describe('validateBudgetImpact — T-091 (accumulator string-concat fix)', () => {
     let h: ServiceHarness;
@@ -476,7 +500,7 @@ describe('SpendValidationService', () => {
       };
     }
 
-    it('sums calculatedSpend (STRING, numeric(18,2) shape) into correct NUMBERS for estimatedOnInvoiceSpend / estimatedOffInvoiceSpend — not NaN, not concatenated strings', async () => {
+    it('sums calculatedSpend (NUMBER, MoneyTransformer shape) into correct NUMBERS for estimatedOnInvoiceSpend / estimatedOffInvoiceSpend — not NaN, not concatenated strings', async () => {
       const onMechanic = makeMechanic({
         code: 'ON_SPEND',
         category: MechanicCategory.ON_INVOICE_DISCOUNT,
@@ -491,16 +515,16 @@ describe('SpendValidationService', () => {
       // accident, per the T-089/T-091 lesson documented above).
       const pmvs = [
         buildPmv(onMechanic, null, {
-          calculatedSpend: '100.00' as unknown as number,
+          calculatedSpend: 100.0,
         }),
         buildPmv(onMechanic, null, {
-          calculatedSpend: '50.25' as unknown as number,
+          calculatedSpend: 50.25,
         }),
         buildPmv(offMechanic, null, {
-          calculatedSpend: '20.00' as unknown as number,
+          calculatedSpend: 20.0,
         }),
         buildPmv(offMechanic, null, {
-          calculatedSpend: '15.75' as unknown as number,
+          calculatedSpend: 15.75,
         }),
       ];
       const planFu = buildPlanFu(pmvs);
@@ -605,10 +629,10 @@ describe('SpendValidationService', () => {
       // concatenated the strings, producing NaN for totalOnInvoiceSpend.
       const pmvs = [
         buildPmv(onMechanic1, null, {
-          calculatedSpend: '600.00' as unknown as number,
+          calculatedSpend: 600.0,
         }),
         buildPmv(onMechanic2, null, {
-          calculatedSpend: '500.00' as unknown as number,
+          calculatedSpend: 500.0,
         }),
       ];
       const planFu = buildPlanFu(pmvs);
@@ -708,6 +732,11 @@ describe('SpendValidationService', () => {
     it('still reports a genuine max violation once compared numerically', async () => {
       // AMOUNT/currency here (not percentage) so the assertion isolates the
       // min/max gate from the separate 0-100 range check on percentages.
+      // `entered` is a NUMBER here (not a string like the PERCENT cases
+      // above): `mechanicType: AMOUNT` reads through `entered_total_amount`,
+      // which carries `MoneyTransformer` as of T-197/T-221 — see `buildPmv`'s
+      // doc comment. `mechanic.maxValue` stays a string: `mechanics.max_value`
+      // remains transformer-less regardless of mechanic type.
       const mechanic = makeMechanic({
         code: 'MAX_REAL',
         inputType: InputType.CURRENCY,
@@ -715,7 +744,7 @@ describe('SpendValidationService', () => {
         category: MechanicCategory.LUMPSUM_SPEND,
         maxValue: '100.0000' as unknown as number,
       });
-      const pmv = buildPmv(mechanic, '150.0000');
+      const pmv = buildPmv(mechanic, 150.0);
       h.planFuRepo.findOne.mockResolvedValue(buildPlanFu([pmv]));
 
       const result = await h.service.validateInputs(TENANT_ID, FU_ID);
@@ -763,13 +792,16 @@ describe('SpendValidationService', () => {
     });
 
     it('does not produce a decimal-place error for a PRICE_SUP-shaped units/AMOUNT_PER_UNIT mechanic with a 4-decimal entry (consistent with C3\'s unit-amount exemption)', async () => {
+      // `entered` is a NUMBER here: `mechanicType: AMOUNT_PER_UNIT` reads
+      // through `entered_unit_amount`, which carries `UnitPriceTransformer`
+      // as of T-197/T-221 — see `buildPmv`'s doc comment.
       const mechanic = makeMechanic({
         code: 'PRICE_SUP',
         inputType: InputType.UNITS,
         mechanicType: MechanicType.AMOUNT_PER_UNIT,
         category: MechanicCategory.PER_UNIT_SUPPORT,
       });
-      const pmv = buildPmv(mechanic, '0.0125');
+      const pmv = buildPmv(mechanic, 0.0125);
       h.planFuRepo.findOne.mockResolvedValue(buildPlanFu([pmv]));
 
       const result = await h.service.validateInputs(TENANT_ID, FU_ID);
