@@ -24,15 +24,19 @@ source "$DIR/lib.sh"
 # shellcheck disable=SC2206
 GUARDS=($GUARD_NAMES_VALID)
 
-# Guards that are INFORMATIONAL for now: their findings are printed and counted
-# in the summary, but they never turn `npm run guards` red.
+# Guards that are INFORMATIONAL for now: their RAW finding count (168 pre-
+# existing findings across 28 Domain A files, measured 2026-08-07) is printed
+# and counted in the summary, but never turns `npm run guards` red by itself.
+# Making the raw count blocking today would block every commit until the whole
+# conversion lands — the "big-bang or never" trap Karar 3b rejects.
 #
-# money-float is F0 of ADR 0007. It reports 119 pre-existing findings across 22
-# Domain A files — that is the measured starting point, not a regression. Making
-# it blocking today would block every commit until the whole conversion lands,
-# which is precisely the "big-bang or never" trap Karar 3b rejects. Enforcement
-# is the RATCHET (`money-float.sh --ratchet`), not this runner: a touched file's
-# count must not increase. When Domain A reaches zero, move it out of this list.
+# T-212 (2026-08-14): this does NOT mean money-float is unenforced. The
+# RATCHET (`money-float.sh --ratchet`, invoked below as a separate gate) IS
+# blocking: a touched/new Domain A file's finding count must not exceed its
+# baseline. Before T-212 the ratchet's only invocation path was a human
+# remembering the BACKLOG.md Done checklist — "doğrulama bir kapıdır, çıkışı
+# durdurmuyorsa doğrulama değildir" (CLAUDE.md). When Domain A reaches zero,
+# move money-float out of this list entirely (raw count becomes blocking too).
 REPORT_ONLY_GUARDS="money-float"
 
 is_report_only() {
@@ -56,6 +60,7 @@ TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0
 SKIPPED_BAD=0
+RATCHET_FAILED=0
 SUMMARY=""
 
 for g in "${GUARDS[@]}"; do
@@ -138,11 +143,45 @@ for g in "${GUARDS[@]}"; do
   fi
 done
 
+# --- money-float ratchet: KAPI (T-212 Kalem 2) ------------------------------
+# money-float TOPLAM bulgu sayısı (168) REPORT_ONLY_GUARDS'ta kalmaya devam
+# ediyor — "big-bang or never" tuzağı hâlâ geçerli, tüm dosyalar dönüştürülene
+# kadar her PR'ı kırmak istemiyoruz. Ama RATCHET artık farklı bir şey ölçüyor:
+# dokunulan/yeni bir dosyanın baseline'ı AŞIP AŞMADIĞI. Bu, "doğrulama bir
+# kapıdır" kuralının uygulanışı — önceden yalnız BACKLOG.md'nin Done
+# checklist'i (bir insanın hatırlaması) buna bağlıydı; artık bu runner bağlı.
+#
+# money-float-baseline.txt zaten LİSTE biçiminde (<dosya> <sayı>, mode-split
+# ile aynı aile) — ölçüldü, format değişikliği gerekmedi. Bu yüzden doğrudan
+# --ratchet'e bağlanabilir.
+echo "=== money-float --ratchet (kapı) ==="
+RATCHET_OUT="$(bash "$DIR/money-float.sh" --ratchet 2>&1)"
+RATCHET_RC=$?
+if [ -n "$RATCHET_OUT" ]; then
+  printf "%s\n" "$RATCHET_OUT"
+else
+  echo "(ratchet: baseline aşılmadı)"
+fi
+echo
+
+if [ "$RATCHET_RC" -eq 2 ]; then
+  echo "!! money-float --ratchet KOŞAMADI (kurulum hatası) — ölçüm yapılmadı" >&2
+  exit 2
+fi
+if [ "$RATCHET_RC" -ne 0 ]; then
+  RATCHET_FAILED=1
+fi
+
 echo "=== ÖZET (GUARD_MODE=$GUARD_MODE) ==="
 printf "%b" "$SUMMARY"
 echo "  TOPLAM: $TOTAL bulgu"
 [ "$TOTAL_SUP" -gt 0 ] && echo "  SUSTURULAN: $TOTAL_SUP (gerekçeleri: scripts/guards/allowlist.txt)"
 [ "$SKIPPED_OK" -gt 0 ] && echo "  ÖLÇÜLMEYEN (DB erişimi yok): $SKIPPED_OK guard"
+if [ "$RATCHET_FAILED" -eq 1 ]; then
+  echo "  money-float --ratchet: İHLAL — bir dosya baseline'ı aştı (yukarıya bak)"
+else
+  echo "  money-float --ratchet: temiz"
+fi
 
 if [ "$GUARD_MODE" = "block" ]; then
   if [ "$SKIPPED_BAD" -gt 0 ]; then
@@ -151,6 +190,10 @@ if [ "$GUARD_MODE" = "block" ]; then
   fi
   if [ "$TOTAL" -gt 0 ]; then
     echo "  → GUARD_MODE=block ve bulgu var: exit 1"
+    exit 1
+  fi
+  if [ "$RATCHET_FAILED" -eq 1 ]; then
+    echo "  → GUARD_MODE=block ve money-float --ratchet ihlali var: exit 1"
     exit 1
   fi
 fi

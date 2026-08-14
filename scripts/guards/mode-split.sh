@@ -4,12 +4,29 @@
 #
 # NE YAPAR: `src/modules/modes/` bölmesini DONDURUR.
 #
-#   bölme altına yeni dosya            → kırmızı
-#   bölmeye yeni import/referans       → kırmızı
-#   mevcut bir dosyanın BÜYÜMESİ       → kırmızı
-#   silme · küçülme · referans azalması→ sessizce geçer (ratchet aşağı döner)
+#   bölme altına YENİ dosya                     → kırmızı
+#   bölmeye YENİ import/referans                 → kırmızı
+#   bölmeye işaret eden dosyada REFERANS SAYISI artışı → kırmızı
+#   mevcut bir bölme-içi dosyanın BÜYÜMESİ       → sessizce geçer (T-212)
+#   silme · küçülme · referans azalması          → sessizce geçer (ratchet aşağı döner)
 #
 # Mevcut dosyalara dokunmak SERBEST. Amaç büyümeyi durdurmak, çalışmayı değil.
+# Ratchet DOSYA KİMLİĞİNİ tutar (F <dosya> bölmede var mı), SATIR SAYISINI
+# karşılaştırmaz. Baseline dosyası yine `F <satır> <dosya>` biçiminde üretilir
+# (satır sayısı bilgi amaçlı kalır, `--report-count` onu kullanır) ama ratchet
+# karşılaştırması F satırları için SADECE varlık/yokluğa bakar.
+#
+# NEDEN (T-212, 2026-08-14 — üç ampirik vaka, üçüncüsü bir işi ENGELLEDİ)
+#   1. `B` dalgası: bir alt-ajan satır bütçesine sığmak için gerekçe yorumunu
+#      SİLDİ — guard içeriği bozmaya itti.
+#   2. `B` dalgası: aynı sınıf, ikinci bir yorum sıkıştırması.
+#   3. `T-218`: `plan.service.ts` 2977 → 2990 (zorunlu +14 satır, meşru iş) —
+#      guard DOĞRU İŞİ durdurdu, baseline elle güncellenerek "ödendi" (c255405).
+# Guard'ın kendi yorumu ("mevcut dosyalara dokunmak SERBEST") zaten bunu
+# söylüyordu; ratchet tutmuyordu. `R` (referans) sayımı BU değişikliğin dışında
+# — bir dosyanın bölmeye YENİ bağ kurması ya da var olan bağın SIKLAŞMASI hâlâ
+# anlamlı bir sinyal, çünkü o dosyalar bölmenin İÇİNDE değil, normal geliştirme
+# akışında rastgele büyümüyor.
 #
 # NEDEN BUGÜN
 # `A1` bölmeyi ölü ilan etti ve üç adım koydu: (1) ölü ilan ✅ · (2) yeni kod
@@ -119,6 +136,10 @@ if [ ! -f "$BASELINE" ]; then
   exit 0
 fi
 
+# T-212 Kalem 1: F (bölme içi dosya) yalnız KİMLİK olarak karşılaştırılır —
+# satır sayısı büyümesi artık bulgu değil. R (bölme dışından referans) hâlâ
+# SAYI olarak karşılaştırılır — yeni referans VE referans artışı ikisi de
+# ihlaldir. İki tür için farklı davranış BİLEREK: gerekçe dosya başında.
 RAW="$(awk '
   NR==FNR {
     if ($1 == "F" || $1 == "R") base[$1 SUBSEP $3] = $2
@@ -126,15 +147,14 @@ RAW="$(awk '
   }
   {
     k = $1 SUBSEP $3
-    if (!(k in base)) {
-      if ($1 == "F")
+    if ($1 == "F") {
+      if (!(k in base))
         printf "[%s] %s: YENİ DOSYA — bölmeye yeni kod eklenemez (E1 · A1 md.2)\n", G, $3
-      else
+      # Mevcut F dosyasının satır sayısı büyümesi ARTIK bulgu değil (T-212).
+    } else {
+      if (!(k in base))
         printf "[%s] %s: YENİ REFERANS — bölmeye yeni bağ kurulamaz (E1 · A1 md.2)\n", G, $3
-    } else if ($2 + 0 > base[k] + 0) {
-      if ($1 == "F")
-        printf "[%s] %s: BÜYÜDÜ — %s → %s satır\n", G, $3, base[k], $2
-      else
+      else if ($2 + 0 > base[k] + 0)
         printf "[%s] %s: REFERANS ARTTI — %s → %s\n", G, $3, base[k], $2
     }
   }

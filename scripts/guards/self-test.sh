@@ -87,8 +87,8 @@ fi
 
 # ---------------------------------------------------------------- mode-split
 # E1 guard'ı bir RATCHET'tir: "0 bulgu" hem "temiz" hem "kör" anlamına gelebilir.
-# Bu yüzden dört durumun dördü de ayrı ayrı sınanır — ve biri POZİTİF KONTROL
-# değil, NEGATİF kontroldür (küçülme kırmızı vermemeli).
+# Bu yüzden her durum ayrı ayrı sınanır — ve ikisi POZİTİF KONTROL değil,
+# NEGATİF kontroldür (küçülme ve F büyümesi artık kırmızı vermemeli — T-212).
 SP="$TMP/split"
 mkdir -p "$SP/inner" "$TMP/refs"
 printf 'satir1\nsatir2\n' > "$SP/inner/existing.ts"
@@ -120,13 +120,25 @@ ms_expect 0 "dokunulmamış ağaç"
 echo 'yeni' > "$SP/inner/yeni.ts";               ms_expect 1 "yeni dosya" "YENİ DOSYA"
 rm "$SP/inner/yeni.ts"
 
+# T-212: mevcut bir F (bölme içi) dosyanın satır sayısı BÜYÜMESİ artık bulgu
+# DEĞİL — üç ampirik vaka (B dalgası × 2, T-218) guard'ın bunu yanlış
+# ölçtüğünü gösterdi. Bu artık NEGATİF kontrol: büyüme sessiz geçmeli.
 printf 'satir1\nsatir2\nsatir3\n' > "$SP/inner/existing.ts"
-ms_expect 1 "büyüme" "BÜYÜDÜ"
+ms_expect 0 "F büyümesi (artık sessiz geçmeli — T-212)"
 printf 'satir1\nsatir2\n' > "$SP/inner/existing.ts"
 
 printf "import { Y } from '../split/inner/existing';\n" > "$TMP/refs/yeni-ref.ts"
 ms_expect 1 "yeni referans" "YENİ REFERANS"
 rm "$TMP/refs/yeni-ref.ts"
+
+# R (bölme dışından referans) T-212'nin KAPSAMI DIŞINDA — sayı olarak
+# karşılaştırılmaya devam eder. Var olan referrer.ts'e YENİ bir referans
+# satırı eklemek (yeni dosya değil, var olan dosyada artış) hâlâ kırmızı
+# vermeli; bu ikisinin farklı davrandığını POZİTİF kontrol eder.
+printf "import { X } from '../split/inner/existing';\nimport { Z } from '../split/inner/existing';\n" \
+  > "$TMP/refs/referrer.ts"
+ms_expect 1 "referans artışı (hâlâ kırmızı — R, F'den farklı)" "REFERANS ARTTI"
+printf "import { X } from '../split/inner/existing';\n" > "$TMP/refs/referrer.ts"
 
 # Negatif kontrol: ratchet AŞAĞI dönerken susmalı. Bir ratchet'in her değişikliğe
 # kırmızı vermesi, hiç vermemesi kadar işe yaramazdır.

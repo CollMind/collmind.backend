@@ -16,6 +16,7 @@
     "start:prod": "node dist/main",
     "lint": "bash scripts/changed-ts.sh | xargs -r eslint --fix",
     "guards": "bash scripts/guards/run-all.sh",
+    "guard:money-float:ratchet": "bash scripts/guards/money-float.sh --ratchet",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
