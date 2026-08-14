@@ -10,6 +10,7 @@ import { ForecastingUnit } from './forecasting-unit.entity';
 import { Tactic } from './tactic.entity';
 import { Mechanic } from './mechanic.entity';
 import { Region } from './region.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum AgreementType {
   STA = 'STA', // Short-Term Agreement (≤30 days)
@@ -101,6 +102,10 @@ export class Agreement extends BaseEntity {
   mechanicId!: string;
 
   // Financial terms
+  // ⛔ Transformer YOK — bilerek. ADR 0007 errata A4: polimorfik (input_type'a
+  // bağlı olarak birim fiyat ya da oran), Karar 4'ün `entered_value` ile aynı
+  // sınıf, "dondurulur" kararı hâlâ geçerli. T-197/T-221 ikinci yarı bunu
+  // BÖLMEDEN transformer eklenemeyeceği için dokunmadı.
   @Column({
     name: 'mechanic_value',
     type: 'decimal',
@@ -127,6 +132,7 @@ export class Agreement extends BaseEntity {
     type: 'decimal',
     precision: 18,
     scale: 2,
+    transformer: MoneyTransformer,
   })
   capTotalAmount!: number; // Budget ceiling for this agreement
 
@@ -204,9 +210,15 @@ export class Agreement extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: MoneyTransformer,
   })
   consumedAmount!: number; // Sum of ledger entries
 
+  // ⛔ Transformer YOK — bilerek (T-197/T-221 ikinci yarı, DUR listesi).
+  // `current_price`/`expected_price`/`competitor_price` para mı birim fiyat mı
+  // ayırt edilemedi ("Price simulation (STA only)" yorumu ikisini de andırıyor,
+  // scale 2 para ölçeğinde ama isim "price"). Team Lead'e bildirildi — ürün
+  // sahibi kararı bekleniyor, seçilmedi.
   // Price simulation (STA only)
   @Column({
     name: 'current_price',

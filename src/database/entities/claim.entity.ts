@@ -4,6 +4,7 @@ import { Agreement } from './agreement.entity';
 import { Cpl } from './cpl.entity';
 import { Category } from './category.entity';
 import { Channel } from './channel.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 /**
  * Claim — `talepler` (B dalgası / S7, `K-2.13.3`–`K-2.13.9`, `K-2.13.5`–`5g`).
@@ -71,7 +72,12 @@ export class Claim extends BaseEntity {
   @Column({ name: 'channel_id', type: 'uuid' })
   channelId!: string;
 
-  @Column({ type: 'decimal', precision: 18, scale: 2 })
+  @Column({
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    transformer: MoneyTransformer,
+  })
   amount!: number;
 
   @Column({

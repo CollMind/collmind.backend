@@ -2,6 +2,7 @@ import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Claim } from './claim.entity';
 import { User } from './user.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 /**
  * ClaimMatch — `eslestirmeler` (B dalgası / S8, `K-2.13.5f`).
@@ -27,7 +28,13 @@ export class ClaimMatch extends BaseEntity {
   @Column({ name: 'external_claim_id', type: 'uuid' })
   externalClaimId!: string;
 
-  @Column({ name: 'variance_amount', type: 'decimal', precision: 18, scale: 2 })
+  @Column({
+    name: 'variance_amount',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    transformer: MoneyTransformer,
+  })
   varianceAmount!: number;
 
   @Column({

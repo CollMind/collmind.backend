@@ -146,6 +146,9 @@ export class SalesActual extends BaseEntity {
   })
   rawVolumeInput?: number;
 
+  // ⛔ Transformer YOK — bilerek. Ne para ne birim fiyat: saf çarpan
+  // (`sku.conversionFactor` ile aynı sınıf, K-2.1.12c/d). İki transformer
+  // kararının kapsamı dışında (T-197/T-221 ikinci yarı).
   @Column({
     name: 'volume_conversion_factor',
     type: 'decimal',

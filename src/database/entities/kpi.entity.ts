@@ -98,6 +98,12 @@ export class Kpi extends BaseEntity {
   aggregationMethodFu?: AggregationMethod;
 
   // RAG Configuration (for KPIs that use thresholds)
+  //
+  // ⛔ Transformer YOK — DUR (T-197/T-221 ikinci yarı, Team Lead'e bildirildi).
+  // Para mı birim fiyat mı oran mı belirsiz: `displayFormat` NUMBER/CURRENCY/
+  // PERCENTAGE olabilir (yukarıdaki `DisplayFormat` enum), yani eşiğin
+  // semantiği KPI'ya göre değişir — Karar 4'ün polimorfizmiyle aynı sınıf.
+  // Ürün sahibi kararı bekleniyor, seçilmedi.
   @Column({
     name: 'rag_green_threshold',
     type: 'decimal',

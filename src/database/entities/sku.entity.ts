@@ -2,6 +2,7 @@ import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { GenericUnit } from './generic-unit.entity';
 import { ForecastingUnit } from './forecasting-unit.entity';
+import { UnitPriceTransformer } from '../transformers/decimal.transformer';
 
 @Entity({ name: 'skus', schema: 'main' })
 @Index(['tenantId', 'code'], { unique: true })
@@ -38,6 +39,7 @@ export class Sku extends BaseEntity {
     precision: 18,
     scale: 4,
     nullable: true,
+    transformer: UnitPriceTransformer,
   })
   unitPrice?: number;
 
@@ -47,8 +49,9 @@ export class Sku extends BaseEntity {
     precision: 18,
     scale: 4,
     nullable: true,
+    transformer: UnitPriceTransformer,
   })
-  cogs?: number; // Cost of Goods Sold
+  cogs?: number; // Cost of Goods Sold — per-unit, same scale as unit_price
 
   @Column({ length: 3, default: 'TRY' })
   currency!: string;
@@ -61,7 +64,14 @@ export class Sku extends BaseEntity {
   @Column({ name: 'sales_unit', length: 20, nullable: true })
   salesUnit?: string;
 
-  /** B dalgası / S12 (K-2.1.12c, K-2.1.12d): koli → adet, varsayılan 1. */
+  /**
+   * B dalgası / S12 (K-2.1.12c, K-2.1.12d): koli → adet, varsayılan 1.
+   *
+   * ⛔ Transformer YOK — bilerek. Ne para ne birim fiyat: saf çarpan/oran
+   * (K-2.1.12c). İki transformer kararının (Money/UnitPrice) kapsamı dışında —
+   * `sales_actuals.volume_conversion_factor` de aynı sınıf, aynı gerekçeyle
+   * dokunulmadı (T-197/T-221 ikinci yarı).
+   */
   @Column({
     name: 'conversion_factor',
     type: 'decimal',

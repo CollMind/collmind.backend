@@ -155,3 +155,36 @@ export const DecimalTransformer: ValueTransformer = {
     return num;
   },
 };
+
+/**
+ * MoneyTransformer / UnitPriceTransformer — T-197/T-221 ikinci yarı (2026-08-14).
+ *
+ * Ürün sahibi kararı: **İKİ transformer**, ayrım kolonun ÖLÇEĞİYLE değil
+ * SEMANTİĞİYLE:
+ *
+ *   MoneyTransformer      Alan A para        iki ondalık, kuruş kuralı
+ *   UnitPriceTransformer  birim fiyat        dört ondalık, kuruş kuralından
+ *                                            MUAF (`K-2.1.12`)
+ *
+ * BUGÜN İKİSİ AYNI DAVRANIYOR — ve bu bilerek böyle. `to`/`from` yalnız pg
+ * sürücüsünün string↔number sınırını kapatıyor (Number()/finite-check); ADR
+ * 0007 Karar 6'nın kuruş yuvarlama yardımcısı henüz yazılmadı (Uygulama sırası
+ * adım 3, tamamlanmadı). Yardımcı yazıldığında yalnız `MoneyTransformer.to`
+ * değişecek — `UnitPriceTransformer` K-2.1.12 gereği o değişikliğin dışında
+ * kalmak ZORUNDA, bu yüzden ayrı bir nesne (aynı fonksiyonların referansı olsa
+ * bile `DecimalTransformer`'ın kendisiyle aynı obje DEĞİL): `MoneyTransformer`
+ * bir noktada kendi `to`'sunu değiştirdiğinde `UnitPriceTransformer`'ın onu
+ * sessizce miras almaması gerekiyor, ve bunu obje kimliği garanti ediyor.
+ *
+ * `DecimalTransformer` adı KORUNUYOR — 49 kolonda (`plan`, `budget-allocation`,
+ * `budget-envelope`, `budget-summary`, `sales-actual*`) hâlihazırda kullanılan,
+ * T-097/T-098'in sertleştirdiği isim. Yeniden adlandırmak o dosyaları
+ * gerekçesiz değiştirir (§7: "yeniden icat etme"). `MoneyTransformer` onun
+ * ADR 0007'nin istediği isimle takma adıdır — YENİ bir implementasyon değil.
+ */
+export const MoneyTransformer: ValueTransformer = DecimalTransformer;
+
+export const UnitPriceTransformer: ValueTransformer = {
+  to: DecimalTransformer.to,
+  from: DecimalTransformer.from,
+};

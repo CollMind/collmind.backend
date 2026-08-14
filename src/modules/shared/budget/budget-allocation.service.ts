@@ -6,13 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  Repository,
-  Between,
-  DataSource,
-  EntityManager,
-  IsNull,
-} from 'typeorm';
+import { Repository, DataSource, EntityManager, IsNull } from 'typeorm';
 import {
   BudgetAllocation,
   PeriodType,
@@ -221,7 +215,11 @@ export class BudgetAllocationService {
     // wrong order becomes a real defect again.
     return this.dataSource.transaction(async (m) => {
       // Apply the field changes, capturing what each one adjusts.
-      const adjustments: Array<{ onInvoice: number; offInvoice: number; label: string }> = [];
+      const adjustments: Array<{
+        onInvoice: number;
+        offInvoice: number;
+        label: string;
+      }> = [];
 
       if (dto.onInvoiceBudget !== undefined) {
         const adjustment = dto.onInvoiceBudget - allocation.onInvoiceBudget;
@@ -491,9 +489,9 @@ export class BudgetAllocationService {
     // T-091: ONE conversion per amount, shared by the `-=` and the `+=`.
     //
     // `allocation.*` carry a DecimalTransformer and arrive as NUMBERS.
-    // `reservation.*` (budget_transaction_logs) carry none and arrive as
-    // STRINGS. That mismatch made the two lines below behave differently
-    // despite looking identical:
+    // `reservation.*` (budget_transaction_logs) carried none and arrived as
+    // STRINGS at the time this was written. That mismatch made the two lines
+    // below behave differently despite looking identical:
     //
     //   number - string  ->  numeric coercion   ->  `-=` was CORRECT
     //   number + string  ->  concatenation      ->  `+=` was BROKEN
@@ -513,6 +511,15 @@ export class BudgetAllocationService {
     //
     // Converting ONCE and using the result for both operations is what makes
     // that asymmetry impossible to reintroduce.
+    //
+    // T-197/T-221 ikinci yarı (2026-08-14): `budget_transaction_logs.on_invoice_amount`/
+    // `off_invoice_amount` now carry MoneyTransformer too (`BudgetTransactionLog`
+    // entity), so `reservation.*` arrives as a NUMBER as well. This wrapping is no
+    // longer load-bearing for that reason, but it is left in place: `String(number)`
+    // round-trips cleanly through `moneyFromNumericString` (verified —
+    // `decimalPlaces`-style digit-wise parse handles both `"100"` and `"100.00"`),
+    // so removing it would only be a cosmetic simplification, not a correctness
+    // fix, and touching it is out of this task's scope (entity-level only).
     const committedOnInvoice = moneyToMajorUnits(
       moneyFromNumericString(String(reservation.onInvoiceAmount)),
     );

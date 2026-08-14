@@ -58,6 +58,10 @@ export class BudgetAlertConfiguration extends BaseEntity {
   // DB-enforced range (migration 1799000000000, CHK_BUDGET_ALERT_CONFIG_
   // THRESHOLD_PERCENT_RANGE): 0 < threshold_percent <= 100. Not restated as
   // a TypeORM validator here — the CHECK is the single source of truth.
+  //
+  // ⛔ Transformer YOK — bilerek. Alan B (oran/yüzde, ADR 0007 Karar 1/2):
+  // bloklamıyor, float tolere edilir. T-220'ye rapor edildi (T-197/T-221
+  // ikinci yarı).
   @Column({
     name: 'threshold_percent',
     type: 'decimal',

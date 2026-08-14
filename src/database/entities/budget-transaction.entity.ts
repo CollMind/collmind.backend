@@ -2,6 +2,7 @@ import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { BudgetEnvelope, BudgetSpendType } from './budget-envelope.entity';
 import { Tenant } from './tenant.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 // B dalgası / S10 (K-2.3.13): "işlem tipi" (defter kaydının ne yaptığı) — bu enum sekiz
 // kanonik değerin altısını taşıyordu (TAHSİS/REZERVE/TAAHHÜT/İADE/TRANSFER/DÜZELTME ↔
@@ -72,7 +73,12 @@ export class BudgetTransaction extends BaseEntity {
   sourceId?: string; // Agreement.id for RESERVE type
 
   // Amount
-  @Column({ type: 'decimal', precision: 18, scale: 2 })
+  @Column({
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    transformer: MoneyTransformer,
+  })
   amount!: number;
 
   @Column({ length: 3, default: 'TRY' })

@@ -3,6 +3,7 @@ import { BaseEntity } from './base.entity';
 import { LTAAgreement } from './lta-agreement.entity';
 import { Channel } from './channel.entity';
 import { Category } from './category.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 @Entity({ name: 'lta_rates', schema: 'main' })
 @Index(['ltaAgreementId', 'channel', 'category'], { unique: true })
@@ -25,6 +26,8 @@ export class LTARate extends BaseEntity {
   @Column({ name: 'category', length: 100 })
   category!: string; // Dairy, Beverages, etc. or "ALL"
 
+  // ⛔ Transformer YOK — bilerek. Alan B (oran/yüzde 0-100, ADR 0007 Karar 1):
+  // float tolere edilir. T-220'ye rapor edildi, bu turun kapsamı dışında.
   @Column({
     name: 'on_invoice_percentage',
     type: 'decimal',
@@ -41,6 +44,9 @@ export class LTARate extends BaseEntity {
   })
   offInvoicePercentage!: number; // 0-100
 
+  // ⛔ Transformer YOK — bilerek. Ne para ne birim fiyat: hacim (K-2.1.12a
+  // "tek hacim birimi: adet"). İki transformer kararının (Money/UnitPrice)
+  // kapsamı dışında — bu turda dokunulmadı, ayrı bulgu olarak raporlandı.
   @Column({
     name: 'minimum_volume_commitment',
     type: 'decimal',
@@ -56,6 +62,7 @@ export class LTARate extends BaseEntity {
     precision: 18,
     scale: 2,
     nullable: true,
+    transformer: MoneyTransformer,
   })
   maximumDiscountCap?: number; // Optional maximum discount cap
 

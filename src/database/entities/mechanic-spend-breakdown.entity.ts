@@ -3,6 +3,7 @@ import { BaseEntity } from './base.entity';
 import { PlanSku } from './plan.entity';
 import { Mechanic } from './mechanic.entity';
 import { PlanMechanicValue } from './plan-mechanic-value.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum DistributionBasis {
   BASE_VOLUME_RATIO = 'base_volume_ratio',
@@ -32,6 +33,7 @@ export class MechanicSpendBreakdown extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: MoneyTransformer,
   })
   calculatedAmount!: number;
 

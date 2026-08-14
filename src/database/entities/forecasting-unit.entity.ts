@@ -9,6 +9,7 @@ import {
 import { BaseEntity } from './base.entity';
 import { GenericUnit } from './generic-unit.entity';
 import { Sku } from './sku.entity';
+import { UnitPriceTransformer } from '../transformers/decimal.transformer';
 
 @Entity({ name: 'forecasting_units', schema: 'main' })
 @Index(['tenantId', 'code'], { unique: true })
@@ -35,6 +36,8 @@ export class ForecastingUnit extends BaseEntity {
   @Column({ name: 'is_plannable', type: 'boolean', default: true })
   isPlannable!: boolean;
 
+  // ⛔ Transformer YOK — bilerek. Ne para ne birim fiyat: hacim (K-2.1.12a).
+  // İki transformer kararının kapsamı dışında (T-197/T-221 ikinci yarı).
   @Column({
     name: 'default_base_volume',
     type: 'decimal',
@@ -50,6 +53,7 @@ export class ForecastingUnit extends BaseEntity {
     precision: 18,
     scale: 4,
     nullable: true,
+    transformer: UnitPriceTransformer,
   })
   basePrice?: number;
 

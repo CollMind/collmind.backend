@@ -9,6 +9,7 @@ import {
 import { BaseEntity } from './base.entity';
 import { Tenant } from './tenant.entity';
 import { OnInvoiceEntry } from './on-invoice-entry.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum OnInvoiceBatchStatus {
   PENDING = 'PENDING',
@@ -52,6 +53,7 @@ export class OnInvoiceBatch extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: MoneyTransformer,
   })
   totalDiscountAmount!: number;
 

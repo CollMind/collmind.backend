@@ -2,6 +2,7 @@ import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Claim } from './claim.entity';
 import { Mechanic, EvidenceClass } from './mechanic.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 /**
  * TacticRealization — `taktik_gerceklesmeleri` (B dalgası / S8, `K-2.13.14e`–`14k`).
@@ -30,6 +31,7 @@ export class TacticRealization extends BaseEntity {
     type: 'decimal',
     precision: 18,
     scale: 2,
+    transformer: MoneyTransformer,
   })
   calculatedAmount!: number;
 

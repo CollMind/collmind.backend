@@ -1,6 +1,7 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Tactic } from './tactic.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum MechanicType {
   PERCENT = 'PERCENT',
@@ -111,6 +112,11 @@ export class Mechanic extends BaseEntity {
   @Column({ name: 'input_constraints', type: 'jsonb', nullable: true })
   inputConstraints?: Record<string, any>; // min/max değerler, validasyon kuralları
 
+  // ⛔ Transformer YOK — bilerek, dört kolon birden (min/max/default_value,
+  // step_increment). ADR 0007 Karar 4: `entered_value` ile AYNI polimorfizm —
+  // `mechanics.input_type`'a bağlı olarak oran ya da birim fiyat. Kolon
+  // bölünmeden (Karar 4'ün kendisi gibi) transformer eklenemez; bu turun
+  // kapsamı dışında (T-197/T-221 ikinci yarı, DUR listesi maddesi 1).
   @Column({
     name: 'min_value',
     type: 'decimal',
@@ -238,6 +244,7 @@ export class Mechanic extends BaseEntity {
     precision: 18,
     scale: 2,
     nullable: true,
+    transformer: MoneyTransformer,
   })
   requiresApprovalThreshold?: number; // Amount threshold requiring approval
 
@@ -253,6 +260,10 @@ export class Mechanic extends BaseEntity {
   })
   mutuallyExclusiveWith?: string[]; // Mechanic codes that cannot be used together
 
+  // ⛔ Transformer YOK — bilerek. ADR 0007 Errata E8: bu bir ORANDIR (Karar 5
+  // kapsamına alındı, `entered_value` oran toplamıyla DOĞRUDAN karşılaştırılıyor
+  // — `spend-validation.service.ts:325`), scale'i para değil. Alan B, T-220'ye
+  // rapor edildi.
   @Column({
     name: 'max_combined_discount_percentage',
     type: 'decimal',

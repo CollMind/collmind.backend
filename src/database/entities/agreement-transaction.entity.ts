@@ -3,6 +3,7 @@ import { BaseEntity } from './base.entity';
 import { Agreement } from './agreement.entity';
 import { Customer } from './customer.entity';
 import { Tenant } from './tenant.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 @Entity({ name: 'agreement_transactions', schema: 'main' })
 @Index(['tenantId', 'idempotencyKey'], { unique: true })
@@ -25,7 +26,12 @@ export class AgreementTransaction extends BaseEntity {
   fiscalPeriod?: string; // YYYY-MM format, used for budget deduction
 
   // Amount
-  @Column({ type: 'decimal', precision: 18, scale: 2 })
+  @Column({
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    transformer: MoneyTransformer,
+  })
   amount!: number;
 
   @Column({ length: 3, default: 'TRY' })

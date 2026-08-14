@@ -6,6 +6,10 @@ import { BudgetEnvelope } from './budget-envelope.entity';
 import { OnInvoiceBatch } from './on-invoice-batch.entity';
 import { Tenant } from './tenant.entity';
 import { Agreement } from './agreement.entity';
+import {
+  MoneyTransformer,
+  UnitPriceTransformer,
+} from '../transformers/decimal.transformer';
 
 export enum OnInvoiceDiscountType {
   CPP_ON = 'CPP_ON', // CPP On-Invoice %
@@ -58,16 +62,37 @@ export class OnInvoiceEntry extends BaseEntity {
   skuCode!: string; // Denormalized for display
 
   // Quantity and pricing
+  //
+  // ⛔ `quantity` — transformer YOK, bilerek. Ne para ne birim fiyat: adet
+  // (K-2.1.12a). İki transformer kararının (Money/UnitPrice) kapsamı dışında —
+  // bu turda dokunulmadı, ayrı bulgu olarak raporlandı (T-197/T-221 ikinci yarı).
   @Column({ type: 'decimal', precision: 18, scale: 3 })
   quantity!: number;
 
-  @Column({ name: 'list_price', type: 'decimal', precision: 18, scale: 4 })
+  @Column({
+    name: 'list_price',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    transformer: UnitPriceTransformer,
+  })
   listPrice!: number; // Liste fiyatı
 
-  @Column({ name: 'actual_price', type: 'decimal', precision: 18, scale: 4 })
+  @Column({
+    name: 'actual_price',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    transformer: UnitPriceTransformer,
+  })
   actualPrice!: number; // İndirimli birim fiyat
 
-  @Column({ type: 'decimal', precision: 18, scale: 2 })
+  @Column({
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    transformer: MoneyTransformer,
+  })
   discount!: number; // Satır bazlı toplam indirim (₺)
 
   @Column({

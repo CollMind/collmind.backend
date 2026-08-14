@@ -2,6 +2,7 @@ import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { BudgetAllocation } from './budget-allocation.entity';
 import { User } from './user.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum BudgetTransactionType {
   ALLOCATION = 'allocation',
@@ -36,6 +37,7 @@ export class BudgetTransactionLog extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: MoneyTransformer,
   })
   onInvoiceAmount!: number;
 
@@ -45,6 +47,7 @@ export class BudgetTransactionLog extends BaseEntity {
     precision: 15,
     scale: 2,
     default: 0,
+    transformer: MoneyTransformer,
   })
   offInvoiceAmount!: number;
 

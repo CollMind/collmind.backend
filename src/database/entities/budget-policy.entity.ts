@@ -28,6 +28,9 @@ export class BudgetPolicy extends BaseEntity {
   @Column({ name: 'category_id', type: 'uuid', nullable: true })
   categoryId?: string;
 
+  // ⛔ Transformer YOK — bilerek, üç kolon (warning/finance_review/block).
+  // Alan B (oran/yüzde %80/90/100, ADR 0007 Karar 1 + Karar 2): bloklamıyor,
+  // float tolere edilir. T-220'ye rapor edildi (T-197/T-221 ikinci yarı).
   @Column({
     name: 'warning_threshold_pct',
     type: 'decimal',

@@ -114,6 +114,9 @@ export class Tenant {
   @Column({ name: 'max_storage_gb', type: 'int', default: 10 })
   maxStorageGB!: number;
 
+  // ⛔ Transformer YOK — bilerek. Para/oran/birim-fiyat DOMAIN'İNİN tamamen
+  // dışında: altyapı kotası (GB). İki transformer kararının (Money/UnitPrice)
+  // kapsamına hiç girmiyor (T-197/T-221 ikinci yarı).
   @Column({
     name: 'current_storage_gb',
     type: 'decimal',

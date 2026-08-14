@@ -18,6 +18,8 @@ export class LTAPlanOverride extends BaseEntity {
   @Column({ name: 'lta_agreement_id', type: 'uuid' })
   ltaAgreementId!: string;
 
+  // ⛔ Transformer YOK — bilerek, iki kolon. Alan B (oran/yüzde, ADR 0007
+  // Karar 1). T-220'ye rapor edildi (T-197/T-221 ikinci yarı).
   @Column({
     name: 'override_on_invoice_pct',
     type: 'decimal',

@@ -4,6 +4,7 @@ import { Agreement } from './agreement.entity';
 import { BudgetEnvelope } from './budget-envelope.entity';
 import { Customer } from './customer.entity';
 import { Tenant } from './tenant.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum LedgerEntryDirection {
   DEBIT = 'DEBIT',
@@ -85,7 +86,12 @@ export class LedgerEntry extends ImmutableBaseEntity {
   entryDirection!: LedgerEntryDirection;
 
   // Amount
-  @Column({ type: 'decimal', precision: 18, scale: 2 })
+  @Column({
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    transformer: MoneyTransformer,
+  })
   amount!: number;
 
   @Column({ length: 3, default: 'TRY' })

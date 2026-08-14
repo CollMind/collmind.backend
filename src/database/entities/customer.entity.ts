@@ -2,6 +2,7 @@ import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Tenant } from './tenant.entity';
 import { Cpl } from './cpl.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum CustomerChannel {
   NKA = 'NKA',
@@ -113,6 +114,7 @@ export class Customer extends BaseEntity {
     precision: 15,
     scale: 2,
     nullable: true,
+    transformer: MoneyTransformer,
   })
   creditLimit?: number;
 
@@ -145,6 +147,7 @@ export class Customer extends BaseEntity {
     precision: 15,
     scale: 2,
     nullable: true,
+    transformer: MoneyTransformer,
   })
   annualRevenue?: number;
 

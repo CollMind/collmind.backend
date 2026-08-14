@@ -1,5 +1,6 @@
 import { Entity, Column } from 'typeorm';
 import { BaseEntity } from './base.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 /**
  * ApprovalPolicy — `onay_politikalari` (B dalgası / S5, `K-2.5.13`–`13f`).
@@ -39,6 +40,7 @@ export class ApprovalPolicy extends BaseEntity {
     precision: 18,
     scale: 2,
     nullable: true,
+    transformer: MoneyTransformer,
   })
   amountThreshold?: number;
 

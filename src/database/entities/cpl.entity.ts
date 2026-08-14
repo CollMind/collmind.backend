@@ -9,6 +9,7 @@ import {
 import { BaseEntity } from './base.entity';
 import { Customer } from './customer.entity';
 import { Channel } from './channel.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 @Entity({ name: 'cpls', schema: 'main' })
 @Index(['tenantId', 'code'], { unique: true })
@@ -56,6 +57,7 @@ export class Cpl extends BaseEntity {
     precision: 15,
     scale: 2,
     nullable: true,
+    transformer: MoneyTransformer,
   })
   annualRevenue?: number;
 

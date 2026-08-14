@@ -25,6 +25,11 @@ export class BudgetReservation extends BaseEntity {
   @Column({ name: 'agreement_name', length: 200, nullable: true })
   agreementName?: string;
 
+  // ⛔ Transformer YOK — bilerek, bu turun kapsamı dışında (T-197/T-221 ikinci
+  // yarı). Bu entity `ALL_ENTITIES`'te YOK (bkz. entity başlığı yoksa
+  // typeorm.config.ts) — [[T-225]] onun ölü mü unutulmuş bir bağlantı mı
+  // olduğuna karar verene kadar transformer eklemek anlamsız: kayıt hiçbir
+  // repository üzerinden hydrate edilmiyor.
   @Column({ name: 'reserved_amount', type: 'decimal', precision: 15, scale: 2 })
   reservedAmount!: number;
 

@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Cpl } from './cpl.entity';
+import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum LTAAgreementStatus {
   DRAFT = 'draft',
@@ -51,6 +52,7 @@ export class LTAAgreement extends BaseEntity {
     precision: 18,
     scale: 2,
     nullable: true,
+    transformer: MoneyTransformer,
   })
   totalAgreementValue?: number; // Optional total agreement value
 

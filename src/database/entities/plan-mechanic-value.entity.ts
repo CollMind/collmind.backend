@@ -9,6 +9,10 @@ import {
 import { BaseEntity } from './base.entity';
 import { PlanFu } from './plan.entity';
 import { Mechanic } from './mechanic.entity';
+import {
+  MoneyTransformer,
+  UnitPriceTransformer,
+} from '../transformers/decimal.transformer';
 
 export enum DistributionMethod {
   PERCENTAGE = 'percentage',
@@ -39,8 +43,22 @@ export class PlanMechanicValue extends BaseEntity {
   // These stay `number` here on purpose: this is an EXISTING Domain A entity and
   // converting its representation to MoneyMinor/RateMicro is ratchet work
   // (ADR 0007 K9), not F2. The number-slot rule applies to new modules only.
+  //
+  // T-197/T-221 ikinci yarı (2026-08-14): bu ALTI kolonun tamamı `GET /plans/:id`
+  // ile aynı gövdede ham çıkıyordu (`plan.repository.ts` `planFus.planMechanicValues`
+  // eager-load) — `overall_roi`/`gp_roi`'yi çökerten sınıfın AYNISI. Beşi burada
+  // düzeltildi; `enteredRatePct` KASITLI OLARAK dokunulmadı (aşağıya bkz.) — Alan B
+  // (oran), ADR 0007'ye göre transformer gerektirmiyor; `.toFixed()` tüketim tarafı
+  // riski ayrı bulgu (T-220).
 
-  /** Rate in percent notation, 0-100. PERCENT mechanics. */
+  /**
+   * Rate in percent notation, 0-100. PERCENT mechanics.
+   *
+   * ⚠️ Transformer YOK — kasıtlı. Alan B (oran/yüzde, ADR 0007 Karar 1): float
+   * tolere edilir, DB transformer gerektirmez. Sürücü bunu da string döndürür ve
+   * bir tüketici `.toFixed()` çağırırsa çöker — o, bu kolonun DEĞİL, tüketicinin
+   * kusurudur (T-220'ye rapor edildi, bu turun kapsamı dışında).
+   */
   @Column({
     name: 'entered_rate_pct',
     type: 'decimal',
@@ -57,6 +75,7 @@ export class PlanMechanicValue extends BaseEntity {
     precision: 18,
     scale: 4,
     nullable: true,
+    transformer: UnitPriceTransformer,
   })
   enteredUnitAmount?: number;
 
@@ -67,6 +86,7 @@ export class PlanMechanicValue extends BaseEntity {
     precision: 18,
     scale: 2,
     nullable: true,
+    transformer: MoneyTransformer,
   })
   enteredTotalAmount?: number;
 
@@ -77,6 +97,7 @@ export class PlanMechanicValue extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: MoneyTransformer,
   })
   calculatedSpend!: number;
 
@@ -87,6 +108,7 @@ export class PlanMechanicValue extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: MoneyTransformer,
   })
   onInvoiceAmount!: number;
 
@@ -96,6 +118,7 @@ export class PlanMechanicValue extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: MoneyTransformer,
   })
   offInvoiceAmount!: number;
 
