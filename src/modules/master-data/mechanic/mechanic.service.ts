@@ -63,8 +63,10 @@ import { CombinationCheckResult } from './dto/combination-check-result.dto';
  * ADR 0007 Karar 1). So `enteredValue` is a `string` for a PERCENT mechanic and
  * a `number` for AMOUNT_PER_UNIT/AMOUNT — it depends on `mechanic.mechanicType`,
  * not a repo-wide fact. `numericTextToNumber` (called at
- * `spend-validation.service.ts:176`) already handles both: `typeof value ===
- * 'number' ? value : …parse…`, so the comparison itself was already correct for
+ * `spend-validation.service.ts:188`, `const entered =
+ * numericTextToNumber(enteredValue);` — line re-verified this turn, review
+ * measured `:176` as stale, that line is a comment) already handles both:
+ * `typeof value === 'number' ? value : …parse…`, so the comparison itself was already correct for
  * either shape before this turn — it is the PREMISE of this paragraph, not the
  * fix, that needed correcting.
  *
@@ -79,7 +81,10 @@ import { CombinationCheckResult } from './dto/combination-check-result.dto';
  * applied to the budget and sales-actual entities, and its `MoneyTransformer`/
  * `UnitPriceTransformer` siblings, applied to most (not all — see above)
  * `plan_mechanic_values.entered_*` columns. It is simply not declared on
- * `mechanics.min_value` / `max_value` (this file's entity, lines 88-105) or on
+ * `mechanics.min_value` / `max_value` (this file's entity — `@Column({ name:
+ * 'min_value', ... })` at `:121`, `@Column({ name: 'max_value', ... })` at
+ * `:130`; line re-verified this turn, review measured `lines 88-105` as
+ * stale, that range is `mechanic_type`/`calculation_rules`) or on
  * `plan_mechanic_values.entered_rate_pct`. So: check the column, then normalise.
  *
  * (An earlier revision of this paragraph said "this repo has no transformers".

@@ -262,8 +262,10 @@ export class Mechanic extends BaseEntity {
 
   // ⛔ Transformer YOK — bilerek. ADR 0007 Errata E8: bu bir ORANDIR (Karar 5
   // kapsamına alındı, `entered_value` oran toplamıyla DOĞRUDAN karşılaştırılıyor
-  // — `spend-validation.service.ts:325`), scale'i para değil. Alan B, T-228'ye
-  // rapor edildi.
+  // — `spend-validation.service.ts:436`, `if (combinedDiscount >
+  // mechanic.maxCombinedDiscountPercentage)`; satır bu turda yeniden
+  // doğrulandı, review `:325`'i bayat ölçtü — orası `const planSkus = …`),
+  // scale'i para değil. Alan B, T-228'ye rapor edildi.
   @Column({
     name: 'max_combined_discount_percentage',
     type: 'decimal',

@@ -583,9 +583,18 @@ export class BudgetAllocationService {
     const allocation = reservation.budgetAllocation;
 
     // Release reserved amounts. T-091: these two are `-=` and were therefore
-    // already correct (subtraction coerces the string numerically), but they go
-    // through the same conversion so the file has ONE rule rather than two —
-    // "correct by coincidence of the operator" is not a property worth keeping.
+    // already correct historically (subtraction coerces a string numerically),
+    // but they go through the same conversion so the file has ONE rule rather
+    // than two — "correct by coincidence of the operator" is not a property
+    // worth keeping.
+    //
+    // ⚠️ STALE PREMISE, CORRECTED (review, T-197/T-221, 2026-08-15):
+    // `reservation.*` is no longer a string either way — see the note on
+    // `commitBudget` above (`budget_transaction_logs.on/off_invoice_amount`
+    // now carry `MoneyTransformer`). "Subtraction coerces the string" describes
+    // what USED TO make this correct, not what makes it correct today; the
+    // conversion is kept for the same reason as `commitBudget`'s — removing it
+    // would only be a cosmetic simplification, out of this task's scope.
     allocation.onInvoiceReserved -= moneyToMajorUnits(
       moneyFromNumericString(String(reservation.onInvoiceAmount)),
     );

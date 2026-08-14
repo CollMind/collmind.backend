@@ -509,13 +509,21 @@ export class SpendValidationService {
         // now: `moneyFromNumericString(String(...))` is correct for either a
         // `number` or a `string` input (`String()` normalises first), so this
         // stays a no-op-shaped safety net rather than a live defect path — the
-        // same reasoning as `finance-reporting.service.ts`'s `spendOf()`. It
-        // parses the numeric(18,2) text digit-wise instead of routing it
-        // through `Number()`, and throws rather than yielding a quiet NaN
-        // (§2.5). The column is scale 2 — measured — so it cannot throw on
-        // legitimate data. `moneyToMajorUnits` returns TRY, which is the
-        // representation these accumulators already use: this is a correctness
-        // fix, not a representation change (ADR 0007 K9).
+        // same reasoning as `finance-reporting.service.ts`'s `spendOf()`.
+        //
+        // ⚠️ STALE PREMISE, CORRECTED (review, T-197/T-221, 2026-08-15): the
+        // "parses the text digit-wise instead of routing it through `Number()`"
+        // rationale below no longer applies at THIS call site.
+        // `pmv.calculatedSpend` already passed through `Number()` once, inside
+        // `MoneyTransformer.from`, before this line runs — the pg driver's
+        // exact decimal string is gone by this point, so parsing
+        // `String(pmv.calculatedSpend)` digit-wise recovers no precision that
+        // was not already settled. What survives, and is why the call is
+        // kept: an explicit throw instead of a quiet NaN (§2.5) and the
+        // branded `MoneyMinor` conversion. The column is scale 2 — measured —
+        // so it cannot throw on legitimate data. `moneyToMajorUnits` returns
+        // TRY, which is the representation these accumulators already use:
+        // this is a correctness fix, not a representation change (ADR 0007 K9).
         const spend = moneyToMajorUnits(
           moneyFromNumericString(String(pmv.calculatedSpend)),
         );

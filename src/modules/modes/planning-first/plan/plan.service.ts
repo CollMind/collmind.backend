@@ -2848,8 +2848,8 @@ export class PlanService {
     //
     // ⚠️ STALE PREMISE, CORRECTED (review, T-197/T-221, 2026-08-15):
     // `plan.overall_roi` now carries `transformer: DecimalTransformer`
-    // (`plan.entity.ts`, commit 2ee4358, T-221 — all 24 decimal columns on
-    // this entity, including `gp_roi` ×2, `coverage_ratio` and three volume
+    // (`plan.entity.ts`, commit 2ee4358, T-221 — all decimal columns on
+    // this entity, including `gp_roi` ×2, `coverage_ratio` and the volume
     // columns, not only this field). The `Number(plan.overallRoi)` call below
     // is still correct — `Number()` on an already-`number` value is a
     // no-op — but the explicit null/undefined check (not a truthy check) is

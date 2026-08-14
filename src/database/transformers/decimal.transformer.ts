@@ -229,7 +229,7 @@ export const DecimalTransformer: ValueTransformer = {
  * kötüydü: obje kimliği bile yoktu, `DecimalTransformer`'ın ta kendisiydi. Yani
  * "yalnız `MoneyTransformer.to`'yu değiştireceğiz" niyeti, o satır aynen
  * uygulansaydı 49 `DecimalTransformer` kolonunu da (plan `overall_roi`/`gp_roi`
- * ×2/`coverage_ratio`, üç hacim kolonu, `budget-allocation`, `budget-envelope`,
+ * ×2/`coverage_ratio`, hacim kolonları, `budget-allocation`, `budget-envelope`,
  * `budget-summary`, `sales-actual*` dahil) sessizce değiştirecekti — bir ROI
  * yüzdesini ya da bir hacim rakamını kuruşa yuvarlamak.
  *
@@ -240,7 +240,23 @@ export const DecimalTransformer: ValueTransformer = {
  * gövdesine eklenir (`guardFiniteOnWrite`'ın SONRASINA, örn.
  * `roundToKurus(guardFiniteOnWrite(value))`) — `guardFiniteOnWrite`'ın
  * gövdesine değil. Bu satır `DecimalTransformer`'ı da `UnitPriceTransformer`'ı
- * da değiştirmeden dokunulabilecek TEK yerdir.
+ * da değiştirmeden dokunulabilecek TEK yerdir — bu **kimlik olarak doğru**.
+ *
+ * ⚠️ AMA **kapsam olarak yanıltıcı** (Team Lead, 2026-08-15 — ölçülmüş
+ * kırılım, `collmind.team:.claude/backlog/tasks/T-229.md`):
+ *
+ *     49 DecimalTransformer kolonu  =  7 hacim  +  5 oran  +  37 PARA
+ *
+ * Bu satırın var oluş nedeni "yalnız buraya dokun, komşu 12 kolonu (7 hacim +
+ * 5 oran) etkileme" idi — ve o iş bitti. Ama **37 PARA kolonunun hiçbiri bugün
+ * `MoneyTransformer`'ı kullanmıyor**, hepsi hâlâ `DecimalTransformer`
+ * üzerinde. Yani `roundToKurus`'u yalnızca `MoneyTransformer.to`'ya koymak
+ * kuralı YARIM uygular: o 37 kolon Karar 6'nın yuvarlamasını ATLAR, ve aynı
+ * toplam iki yoldan iki farklı kuruşta kalıcılaşabilir (mutabakat farkı gibi
+ * görünen bir yuvarlama hatası). Hangi yolun seçileceği (37 kolonu
+ * `MoneyTransformer`'a taşımak / `DecimalTransformer`'ı da yuvarlamak — YASAK,
+ * bu bloğun kapattığı blocker'ın ta kendisi / yuvarlamayı servis katmanında
+ * uygulamak) `T-229`'da tartışılıyor; karar burada VERİLMEDİ.
  *
  * `DecimalTransformer` adı KORUNUYOR — 49 kolonda (`plan`, `budget-allocation`,
  * `budget-envelope`, `budget-summary`, `sales-actual*`) hâlihazırda kullanılan,

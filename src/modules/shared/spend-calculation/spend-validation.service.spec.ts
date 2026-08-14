@@ -676,13 +676,26 @@ describe('SpendValidationService', () => {
   /* ================================================================ *
    * T-085 — validateInputs: min/max STRING comparison fix
    *
-   * `enteredValue` (off a transformer-less `numeric` column) and
-   * `mechanic.minValue`/`maxValue` (also transformer-less `numeric(18,4)`)
-   * were compared directly, i.e. as STRINGS: lexicographic order, not
-   * numeric order. "5.0000" < "10.0000" is false (a real min violation went
-   * unreported); "50.0000" > "100.0000" is true (a valid value was flagged).
-   * All fixtures below pass min/max as STRINGS — passing numbers here would
-   * not exercise the bug (per the FIXTURE KURALI note in the task).
+   * AT THE TIME OF THE FIX, `enteredValue` (off a transformer-less `numeric`
+   * column) and `mechanic.minValue`/`maxValue` (also transformer-less
+   * `numeric(18,4)`) were compared directly, i.e. as STRINGS: lexicographic
+   * order, not numeric order. "5.0000" < "10.0000" is false (a real min
+   * violation went unreported); "50.0000" > "100.0000" is true (a valid
+   * value was flagged).
+   *
+   * ⚠️ STALE PREMISE, CORRECTED (review, T-197/T-221, 2026-08-15):
+   * `enteredValue` is transformer-less ONLY for PERCENT (`entered_rate_pct`).
+   * AMOUNT_PER_UNIT/AMOUNT now carry `UnitPriceTransformer`/
+   * `MoneyTransformer` and arrive as a `number` (`buildPmv`'s doc comment
+   * above has the full table). The PERCENT fixtures below still pass min/max
+   * as STRINGS — that stays load-bearing, it is the real shape a
+   * transformer-less column returns. `mechanic.minValue`/`maxValue` stay
+   * transformer-less on BOTH sides regardless of mechanic type (ADR 0007
+   * Karar 4 — the min/max/default_value/step_increment split has not
+   * landed), so the "MAX_REAL" test below deliberately passes a NUMBER for
+   * `entered` (AMOUNT) against a STRING `maxValue`, exercising the
+   * number-vs-string leg `numericTextToNumber` normalises — not a fixture
+   * left over from before this correction.
    * ================================================================ */
   describe('validateInputs — T-085 (min/max string-comparison fix)', () => {
     let h: ServiceHarness;

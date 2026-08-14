@@ -268,13 +268,23 @@ describe('MoneyTransformer / UnitPriceTransformer — behavioural pin (T-221)', 
  * distinct references again while remaining coupled — the reference check
  * would stay green and the isolation would still be gone.
  *
- * The behavioural test below is the one that actually pins the property that
- * matters: mutating ONE transformer's `to`/`from` at runtime must not change
- * what the other two return for the same input. It reproduces the exact shape
- * of the defect this task fixes — Karar 6's future kuruş rounding landing in
- * `MoneyTransformer.to` and silently reaching `DecimalTransformer`'s 49
- * columns (or `UnitPriceTransformer`'s, which K-2.1.12 exempts) — by actually
- * installing a rounding function and measuring the other two.
+ * The behavioural test below adds coverage the reference check cannot give:
+ * mutating ONE transformer's `to`/`from` at runtime and measuring that the
+ * other two do not move. It reproduces the shared-body shape of the defect —
+ * Karar 6's future kuruş rounding landing in `MoneyTransformer.to` and
+ * silently reaching `DecimalTransformer`'s 49 columns (or
+ * `UnitPriceTransformer`'s, which K-2.1.12 exempts) — by actually installing
+ * a rounding function and measuring the other two.
+ *
+ * ⚠️ IT IS NOT "THE ONE THAT ACTUALLY MATTERS" — an earlier revision of this
+ * comment said so, and the measured matrix below it CONTRADICTS that: the
+ * behavioural/patch test is BLIND to the `UnitPrice.to = Decimal.to` static
+ * function-reference shape (2 red only under the reference check, 0 under
+ * patch), while the reference-identity check is BLIND to a shared-primitive
+ * shape (0 red under reference, 4 red under patch). Neither test subsumes the
+ * other; both are needed to cover the shapes measured so far. Read the matrix
+ * below before deciding which check "matters" — this paragraph does not
+ * decide that.
  */
 /**
  * ⚡ BU BLOĞUN NEYİ YAKALADIĞI — ÖLÇÜLDÜ (Team Lead, 2026-08-15).

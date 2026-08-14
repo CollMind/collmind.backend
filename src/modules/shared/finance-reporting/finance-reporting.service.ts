@@ -95,10 +95,21 @@ import {
  * it was dead code in the shape CLAUDE.md §2.5 forbids, quietly promising a
  * default that no path could reach.
  *
- * Parsed via `moneyFromNumericString` rather than `Number()`: it reads the
- * decimal text digit-wise and throws on anything it cannot represent instead of
- * yielding a silent NaN. All three columns are scale 2 (measured), so it cannot
- * throw on legitimate data.
+ * `moneyFromNumericString` is still used here, but not for the reason this
+ * paragraph originally gave.
+ *
+ * ⚠️ STALE PREMISE, CORRECTED (review, T-197/T-221, 2026-08-15): this used to
+ * say the point of routing through `moneyFromNumericString` "rather than
+ * `Number()`" was to avoid IEEE-754 on the way in. That is no longer true for
+ * any of the three columns above — `raw` already passed through `Number()`
+ * once, inside the entity's transformer (see the correction above), before
+ * `spendOf` ever sees it; the pg driver's exact decimal string is gone by
+ * this point, so parsing `String(raw)` digit-wise here recovers nothing that
+ * was not already settled. What this call still does, and the reason it is
+ * kept: reject anything that is not a clean `-?\d+(\.\d*)?` with an explicit
+ * throw instead of a silent NaN (§2.5), and produce a branded `MoneyMinor`
+ * integer for the accumulator. All three columns are scale 2 (measured), so
+ * it cannot throw on legitimate data.
  */
 function spendOf(raw: number | string): number {
   return moneyToMajorUnits(moneyFromNumericString(String(raw)));
