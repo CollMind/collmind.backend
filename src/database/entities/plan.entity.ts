@@ -15,6 +15,7 @@ import { Category } from './category.entity';
 import { Region } from './region.entity';
 import { ForecastingUnit } from './forecasting-unit.entity';
 import { Sku } from './sku.entity';
+import { DecimalTransformer } from '../transformers/decimal.transformer';
 
 export enum PlanStatus {
   DRAFT = 'DRAFT',
@@ -134,6 +135,7 @@ export class Plan extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   onInvoiceSpend!: number;
 
@@ -143,6 +145,7 @@ export class Plan extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   offInvoiceSpend!: number;
 
@@ -153,6 +156,7 @@ export class Plan extends BaseEntity {
     precision: 18,
     scale: 3,
     default: 0,
+    transformer: DecimalTransformer,
   })
   totalPlannedVolume!: number;
 
@@ -162,6 +166,7 @@ export class Plan extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   totalSpend!: number;
 
@@ -171,6 +176,7 @@ export class Plan extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   totalGp!: number; // Gross Profit
 
@@ -180,6 +186,7 @@ export class Plan extends BaseEntity {
     precision: 18,
     scale: 4,
     nullable: true,
+    transformer: DecimalTransformer,
   })
   overallRoi?: number | null; // Overall GP ROI %; null when a dependency (e.g. COGS) is missing
 
@@ -199,6 +206,7 @@ export class Plan extends BaseEntity {
     precision: 9,
     scale: 4,
     nullable: true,
+    transformer: DecimalTransformer,
   })
   coverageRatio?: number | null;
 
@@ -275,6 +283,7 @@ export class PlanFu extends BaseEntity {
     precision: 18,
     scale: 3,
     default: 0,
+    transformer: DecimalTransformer,
   })
   totalPlannedVolume!: number;
 
@@ -284,6 +293,7 @@ export class PlanFu extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   totalSpend!: number;
 
@@ -293,6 +303,7 @@ export class PlanFu extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   totalGp!: number;
 
@@ -302,6 +313,7 @@ export class PlanFu extends BaseEntity {
     precision: 18,
     scale: 4,
     nullable: true,
+    transformer: DecimalTransformer,
   })
   gpRoi?: number | null; // null when a dependency (e.g. COGS) is missing
 
@@ -368,6 +380,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 3,
     nullable: true,
+    transformer: DecimalTransformer,
   })
   baseVolume?: number; // Historical baseline
 
@@ -377,6 +390,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 3,
     nullable: true,
+    transformer: DecimalTransformer,
   })
   plannedVolume?: number; // Planned volume for this SKU
 
@@ -387,6 +401,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 3,
     default: 0,
+    transformer: DecimalTransformer,
   })
   incrementalVolume!: number; // plannedVolume - baseVolume
 
@@ -397,6 +412,7 @@ export class PlanSku extends BaseEntity {
     scale: 2,
     default: 0,
     nullable: true,
+    transformer: DecimalTransformer,
   })
   plannedTurnover?: number | null; // PLANNED_TO from KPI engine; null when a
   // required master/user input (e.g. BPTT/unit price) is missing (T-027)
@@ -407,6 +423,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   tacticSpend!: number; // Distributed from FU level
 
@@ -417,6 +434,7 @@ export class PlanSku extends BaseEntity {
     scale: 2,
     default: 0,
     nullable: true,
+    transformer: DecimalTransformer,
   })
   plannedGp?: number | null; // PLANNED_GP from KPI engine; null when a
   // required master input (e.g. COGS) is missing — BRD: missing data → null,
@@ -428,6 +446,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 4,
     nullable: true,
+    transformer: DecimalTransformer,
   })
   gpRoi?: number | null; // GP ROI %; null when a dependency (e.g. COGS) is missing
 
@@ -454,6 +473,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   baseLtaOnInvoiceSpend!: number;
 
@@ -463,6 +483,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   baseLtaOffInvoiceSpend!: number;
 
@@ -472,6 +493,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   plannedLtaOnInvoiceSpend!: number;
 
@@ -481,6 +503,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   plannedLtaOffInvoiceSpend!: number;
 
@@ -491,6 +514,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   promoOnInvoiceSpend!: number;
 
@@ -500,6 +524,7 @@ export class PlanSku extends BaseEntity {
     precision: 18,
     scale: 2,
     default: 0,
+    transformer: DecimalTransformer,
   })
   promoOffInvoiceSpend!: number;
 
