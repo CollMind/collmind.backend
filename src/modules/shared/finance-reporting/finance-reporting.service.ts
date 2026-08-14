@@ -579,7 +579,9 @@ export class FinanceReportingService {
           offInvoiceSpend,
           onInvoicePercent,
           offInvoicePercent,
-          gpRoi: plan.overallRoi || 0,
+          // T-172: `null` ROI bir İŞ YARGISINA çökmez. `|| 0` "hesaplanamadı"yı
+          // "%0, hedefin altında" diye gösteriyordu — INV-N-004 ailesi.
+          gpRoi: plan.overallRoi ?? null,
           // T-215 / INV-N-004 / K-2.4.22c: a null ragStatus is the engine's
           // deliberate "coverage was not full, no colour is safe to show"
           // signal (kpi-engine.service.ts fullCoverage guard, T-177). Coercing
@@ -588,6 +590,15 @@ export class FinanceReportingService {
           // one. The carrier stays `null`; no `GRAY` value is introduced
           // (K-2.4.22a1 — meaning is read from coverage ratio, not the enum).
           ragStatus: plan.ragStatus ?? null,
+          // T-216b / INV-N-004 / K-2.4.22c: plans.coverage_ratio (T-218) —
+          // explicit-null discipline, same reasoning as ragStatus above.
+          // Domain B here (shared/finance-reporting, money-float-domain-a.txt),
+          // plain Number() is the established parse for this field elsewhere
+          // (plan.service.ts's overallRoi reads).
+          coverageRatio:
+            plan.coverageRatio !== null && plan.coverageRatio !== undefined
+              ? Number(plan.coverageRatio)
+              : null,
           status: plan.status,
           startDate: plan.startDate.toISOString().split('T')[0],
           endDate: plan.endDate.toISOString().split('T')[0],
@@ -645,8 +656,16 @@ export class FinanceReportingService {
         // falsification does not silently return if that filter is ever
         // loosened.
         ragStatus: plan.ragStatus ?? null,
+        // T-216b / INV-N-004 / K-2.4.22c: same field/rationale as
+        // getPlanPerformance above.
+        coverageRatio:
+          plan.coverageRatio !== null && plan.coverageRatio !== undefined
+            ? Number(plan.coverageRatio)
+            : null,
         totalSpend,
-        gpRoi: plan.overallRoi || 0,
+        // T-172: `null` ROI bir İŞ YARGISINA çökmez. `|| 0` "hesaplanamadı"yı
+          // "%0, hedefin altında" diye gösteriyordu — INV-N-004 ailesi.
+          gpRoi: plan.overallRoi ?? null,
         riskLevel: plan.ragStatus === 'RED' ? 'HIGH' : 'MEDIUM',
       };
 

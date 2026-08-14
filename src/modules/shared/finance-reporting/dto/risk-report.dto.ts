@@ -31,13 +31,26 @@ export class RiskPlan {
   @IsEnum(['RED', 'AMBER', 'GREEN'])
   ragStatus!: string | null;
 
+  // T-216b / INV-N-004 / K-2.4.22c: same field/rationale as
+  // PlanPerformanceRow.coverageRatio (plan-performance.dto.ts) — plans.
+  // coverage_ratio (T-218), null = nothing to aggregate.
+  @ApiProperty({
+    description:
+      'Fraction of FUs whose GP_ROI_PCT resolved into gpRoi (0-1). null = nothing to aggregate.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsNumber()
+  coverageRatio!: number | null;
+
   @ApiProperty({ description: 'Total spend' })
   @IsNumber()
   totalSpend!: number;
 
   @ApiProperty({ description: 'GP ROI' })
   @IsNumber()
-  gpRoi!: number;
+  // T-172: `null` = hesaplanamadı. `0` DEĞİL — sıfır bir iş yargısıdır.
+  gpRoi!: number | null;
 
   @ApiProperty({ description: 'Risk level' })
   @IsString()

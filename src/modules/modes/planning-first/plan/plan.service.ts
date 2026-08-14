@@ -2758,7 +2758,13 @@ export class PlanService {
       currentRoi: number | null;
       targetRoi: number;
       incrementalGp: number;
-      status: 'BELOW_TARGET' | 'ON_TARGET' | 'ABOVE_TARGET';
+      // T-172: 'NOT_COMPUTABLE' is a fourth, distinct value — "no ROI could
+      // be computed" (currentRoi === null) is a different fact from "ROI
+      // computed and is below target" (BELOW_TARGET). Collapsing the two
+      // was the measured bug (docs/analysis/0051 §4): a plan missing a
+      // dependency (e.g. COGS) read as "below target" — a business
+      // judgement the engine never made. See doc comment below.
+      status: 'BELOW_TARGET' | 'ON_TARGET' | 'ABOVE_TARGET' | 'NOT_COMPUTABLE';
     };
     financialSummary: {
       totalSpend: number;
@@ -2834,7 +2840,16 @@ export class PlanService {
       ? (storedIncrGp ?? 0)
       : Number(plan.totalGp) - baseGp;
 
-    const currentRoi = plan.overallRoi ? Number(plan.overallRoi) : null;
+    // T-172: was `plan.overallRoi ? Number(...) : null` — a truthy check on
+    // a DB-decimal value. It happened to work only because this column has
+    // no transformer and Postgres hands back a non-empty numeric STRING
+    // (e.g. "0.0000"), which is truthy; a real JS `0` would have silently
+    // collapsed to `null` too. Explicit null/undefined check removes that
+    // fragility regardless of representation.
+    const currentRoi =
+      plan.overallRoi !== null && plan.overallRoi !== undefined
+        ? Number(plan.overallRoi)
+        : null;
 
     // B-1: Target ROI from GP_ROI_PCT KPI config (ragGreenThreshold) — NOT hardcoded.
     const gpRoiKpi = await this.kpiEngine.getKpiConfig(tenantId, 'GP_ROI_PCT');
@@ -2843,9 +2858,27 @@ export class PlanService {
       gpRoiKpi?.ragGreenThreshold !== undefined
         ? Number(gpRoiKpi.ragGreenThreshold)
         : 20.0; // safe fallback only when KPI record is absent
-    const status =
+    // T-172 / INV-N-004: `currentRoi === null` means the engine could not
+    // compute a value at all (missing dependency, e.g. COGS — §2.3 edge
+    // case) — a DIFFERENT fact from "computed and below target". The
+    // previous code returned 'BELOW_TARGET' for both, so a Finance Manager
+    // could not tell "this plan performs badly" from "this plan has
+    // incomplete data" — opposite actions, same red badge. See the
+    // `status` field's doc comment above.
+    //
+    // ⚠️ Known downstream consumer NOT updated in this change (backend-only
+    // scope): collmind.frontend PlanAnalysis.tsx's `getRoiStatusBadge()`
+    // only branches on 'BELOW_TARGET' / 'ON_TARGET', else renders the
+    // ABOVE_TARGET (green "Hedef Üstü") badge — an unhandled
+    // 'NOT_COMPUTABLE' will fall into that branch. This must land together
+    // with a frontend fix (not assigned this turn) before deploy.
+    const status:
+      | 'BELOW_TARGET'
+      | 'ON_TARGET'
+      | 'ABOVE_TARGET'
+      | 'NOT_COMPUTABLE' =
       currentRoi === null
-        ? 'BELOW_TARGET'
+        ? 'NOT_COMPUTABLE'
         : currentRoi >= targetRoi
           ? 'ABOVE_TARGET'
           : currentRoi >= targetRoi * 0.5

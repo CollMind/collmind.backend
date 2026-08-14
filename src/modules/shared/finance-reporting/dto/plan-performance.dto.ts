@@ -55,7 +55,8 @@ export class PlanPerformanceRow {
 
   @ApiProperty({ description: 'GP ROI percentage' })
   @IsNumber()
-  gpRoi!: number;
+  // T-172: `null` = hesaplanamadı. `0` DEĞİL — sıfır bir iş yargısıdır.
+  gpRoi!: number | null;
 
   // T-215 / INV-N-004 / K-2.4.22a1: `null` means "coverage was not full —
   // no colour is safe to show" (kpi-engine.service.ts fullCoverage guard).
@@ -70,6 +71,21 @@ export class PlanPerformanceRow {
   @IsOptional()
   @IsEnum(['RED', 'AMBER', 'GREEN'])
   ragStatus!: string | null;
+
+  // T-216b / INV-N-004 / K-2.4.22c: the fraction of FUs that resolved into
+  // `gpRoi` (plans.coverage_ratio — T-218). `null` = engine reported no
+  // ratio (no FUs to aggregate). This is what lets a client render the
+  // K-2.4.22a grey badge honestly ("4/170 kapsama") instead of a bare
+  // withdrawn colour with no explanation — the second measured INV-N-004
+  // violation ("kapsama oranı istemciye ulaşmıyor").
+  @ApiProperty({
+    description:
+      'Fraction of FUs whose GP_ROI_PCT resolved into gpRoi (0-1). null = nothing to aggregate.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsNumber()
+  coverageRatio!: number | null;
 
   @ApiProperty({ description: 'Plan status' })
   @IsString()
