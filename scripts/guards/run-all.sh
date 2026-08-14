@@ -9,7 +9,17 @@
 #
 #   GUARD_MODE=block (varsayılan) → bulgu varsa exit 1
 #   GUARD_MODE=report             → bulguları bas, exit 0 (triyaj için)
-#   Allowlist parse hatası        → exit 2 (her iki modda da)
+#   exit 2                        → KURULUM HATASI / ÖLÇÜM YAPILMADI, bulgu
+#                                    DEĞİL — dört üretici var, hepsi aynı
+#                                    anlama gelir ("bu koşumun sonucuna
+#                                    güvenme"): allowlist parse hatası (:84) ·
+#                                    bir alt guard koşamadı (:112) · money-float
+#                                    SKIPPED (domain listesi yok/boş — :188,
+#                                    T-212 S-1) · money-float --ratchet
+#                                    koşamadı (:193, baseline yok/bozuk).
+#                                    Mesaj bunların HANGİSİ olduğunu ayırt
+#                                    etmeye çalışmaz; stderr'deki guard'ın
+#                                    kendi satırı ayırt eder.
 #
 # CI yok (CLAUDE.md §5: manuel promote, pipeline yok). Çağrı yolları:
 #   - `/qa` komutu            → .claude/commands/qa.md
@@ -76,11 +86,17 @@ for g in "${GUARDS[@]}"; do
   OUT="$(GUARD_MODE=report bash "$DIR/$g.sh")"
   RC=$?
 
-  # exit 2 = allowlist parse hatası. Bu bir yapılandırma hatasıdır, bulgu değil;
-  # sessizce yutulamaz — mod ne olursa olsun koşumu durdurur.
+  # exit 2 = kurulum hatası / ölçüm yapılmadı — bulgu DEĞİL. Bu tek bir nedene
+  # (yalnız allowlist) bağlı değil: allowlist parse hatası, self-test
+  # başarısızlığı, ya da (money-float için) SKIPPED — domain listesi yok/boş
+  # (T-212 S-1). Hepsi aynı tepkiyi gerektirir: sessizce yutulamaz, mod ne
+  # olursa olsun koşumu durdurur. Hangisi olduğunu bu blok İDDİA ETMEZ — $OUT
+  # (guard'ın kendi stdout'u, ör. "SKIPPED: domain list not found") aşağıda
+  # basılır; ayırt eden odur, stderr'deki guard mesajı da ayrıca görünür.
   if [ "$RC" -eq 2 ]; then
     echo "=== $g ==="
-    echo "!! allowlist parse hatası (detay stderr'de) — guard koşumu durduruldu"
+    [ -n "$OUT" ] && printf '%s\n' "$OUT"
+    echo "!! guard KURULUM HATASI / ÖLÇÜM YAPILMADI (exit 2, detay yukarıda/stderr'de) — koşum durduruldu"
     exit 2
   fi
 
@@ -172,24 +188,30 @@ else
 fi
 echo
 
-# B3 (T-212 code-review, ölçüldü): SKIPPED bir "temiz" DEĞİLDİR.
-# money-float.sh iki yerde --ratchet dispatch'ine hiç ULAŞMADAN SKIPPED ile
-# exit 0 döner: domain listesi bulunamazsa (money-float.sh:59) ya da liste
-# sıfır dosyaya çözülürse (money-float.sh:180). İkisinde de RATCHET_RC=0 ve
-# RATCHET_OUT bir bulgu satırı içermez — bu satır olmadan aşağıdaki özet
-# "money-float --ratchet: temiz" yazardı, ÖLÇÜM HİÇ YAPILMAMIŞKEN.
-#   Ampirik: MONEY_FLOAT_DOMAIN_LIST=/nonexistent money-float.sh --ratchet
-#            → EXIT 0, "-- [money-float] SKIPPED: domain list not found"
-# money-float.sh:57-58 bunu zaten yazıyor: "SKIPPED is not a pass." Runner'ın
-# kendisi de aynı ilkeyi döngüdeki SKIPPED_BAD ile başka guard'lara uyguluyor
-# — burada uygulanmıyordu.
-if printf '%s\n' "$RATCHET_OUT" | grep -q 'SKIPPED'; then
-  echo "!! money-float --ratchet SKIPPED oldu — KURULUM HATASI, ölçüm yapılmadı (özet 'temiz' DİYEMEZ)" >&2
-  exit 2
-fi
-
+# B3 (T-212 code-review, ölçüldü) → S-1 (T-212, 2026-08-14): SKIPPED bir
+# "temiz" DEĞİLDİR. money-float.sh iki yerde --ratchet dispatch'ine hiç
+# ULAŞMADAN SKIPPED döner: domain listesi bulunamazsa (money-float.sh:~59)
+# ya da liste sıfır dosyaya çözülürse (money-float.sh:~183).
+#
+# B3'ün ilk düzeltmesi burada RATCHET_OUT'u `grep -q 'SKIPPED'` ile metin
+# olarak arıyordu. Mutasyon testi (T-212 S-1) bunun kör noktasını gösterdi:
+# money-float.sh'daki "SKIPPED" kelimesini "ATLANDI" yapmak — guard mantığına
+# hiç dokunmadan, yalnız bir insan mesajını değiştirerek — BU satırı VE
+# döngüdeki yapılandırılmış eşdeğerini (aşağıdaki RC==2 kontrolünün üstü)
+# aynı anda kör etti: RATCHET_RC yine 0'dı (o zamanki money-float.sh SKIPPED
+# durumunda exit 0 dönüyordu), metin eşleşmedi, özet "money-float --ratchet:
+# temiz" yazdı — ÖLÇÜM HİÇ YAPILMAMIŞKEN.
+#   Ampirik (mutasyon öncesi/kanıt): MONEY_FLOAT_DOMAIN_LIST=/nonexistent
+#     + money-float.sh:59 "SKIPPED"->"ATLANDI" → RUNNER EXIT 0 (önce)
+#
+# Yapısal düzeltme metin aramayı GEREKSİZ kıldı: money-float.sh artık SKIPPED
+# durumunda (her modda, --ratchet dispatch'ine ulaşmadan) exit 2 dönüyor —
+# yani aşağıdaki RATCHET_RC==2 kontrolü SKIPPED'i de, self-test/allowlist
+# kurulum hatalarını da, eksik/bozuk baseline'ı da AYNI koddan yakalar. Metin
+# eşleşmesi yerine exit kodu okunuyor; iki kapı artık AYNI kaynağı okuyor
+# (ürün sahibinin tercih sırası: (1) ayırt edici çıkış kodu — bu uygulandı).
 if [ "$RATCHET_RC" -eq 2 ]; then
-  echo "!! money-float --ratchet KOŞAMADI (kurulum hatası) — ölçüm yapılmadı" >&2
+  echo "!! money-float --ratchet KOŞAMADI / SKIPPED (kurulum hatası, exit 2) — ölçüm yapılmadı, özet 'temiz' DİYEMEZ" >&2
   exit 2
 fi
 if [ "$RATCHET_RC" -ne 0 ]; then

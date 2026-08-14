@@ -33,7 +33,10 @@
 #
 # GUARD_MODE=block   → findings cause exit 1
 # GUARD_MODE=report  → print findings, exit 0 (F0 runs in report mode)
-# allowlist parse error → exit 2 (both modes)
+# allowlist parse error, self-test failure, SKIPPED (no/empty domain list),
+# missing/malformed --ratchet baseline → exit 2, all modes (T-212 S-1: SKIPPED
+# used to be exit 0 + a grep'able string; see the SKIPPED branches below for
+# the mutation evidence that forced the change to a dedicated exit code).
 set -uo pipefail
 
 GUARD_NAME="money-float"
@@ -56,8 +59,20 @@ DOMAIN_B_RE="finance-reporting|kpi-engine|dashboard"
 if [ ! -f "$DOMAIN_LIST" ]; then
   # SKIPPED is not a pass — run-all.sh counts a skipped source guard as a
   # setup failure, not as green.
+  #
+  # T-212 S-1 (2026-08-14): this used to exit 0 and rely on callers grepping
+  # the literal string "SKIPPED" out of stdout to detect the condition.
+  # Mutation testing showed that a single-word change to that string (e.g.
+  # "SKIPPED" -> "ATLANDI") silently blinded BOTH of run-all.sh's consumers
+  # at once — the per-guard loop's categorisation AND the dedicated ratchet
+  # gate — because they were reading the SAME fragile text. Exit 2 is the
+  # fix: it is the existing "kurulum hatası / ölçüm yapılmadı" contract
+  # (self_test failure, allowlist parse error, missing/malformed baseline
+  # all already use it) and callers dispatch on the CODE, not the message.
+  # The message text remains for humans reading the log; it is no longer
+  # load-bearing for control flow.
   echo "-- [$GUARD_NAME] SKIPPED: domain list not found ($DOMAIN_LIST)"
-  exit 0
+  exit 2
 fi
 
 # EXACTNESS PRIMITIVES — ADR 0007 errata E15.
@@ -176,8 +191,10 @@ self_test || exit 2
 FILES="$(domain_files)"
 
 if [ -z "$FILES" ]; then
+  # T-212 S-1: same reasoning as the domain-list-not-found branch above —
+  # exit 2, not 0. See that comment for the mutation evidence.
   echo "-- [$GUARD_NAME] SKIPPED: domain list resolved to zero files"
-  exit 0
+  exit 2
 fi
 
 # Detection.

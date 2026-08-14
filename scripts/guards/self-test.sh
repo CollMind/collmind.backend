@@ -85,6 +85,36 @@ else
   FAIL_RATCHET=0
 fi
 
+# SKIPPED exit code control (T-212 S-1): SKIPPED must be exit 2, not exit 0 —
+# both callers in run-all.sh (the per-guard loop and the dedicated ratchet
+# gate) dispatch on this CODE, not on grepping the word "SKIPPED" out of
+# stdout. That grep-based version existed once and a one-word mutation
+# ("SKIPPED" -> "ATLANDI") silently blinded both callers at once (measured,
+# T-212 code-review). This pins the exit code directly so a regression back
+# to `exit 0` on either SKIPPED branch turns this self-test red, independent
+# of the message text.
+GUARD_MODE=report MONEY_FLOAT_DOMAIN_LIST="$TMP/does-not-exist.txt" \
+  bash "$DIR/money-float.sh" >/dev/null 2>&1
+RC_SKIP_NOFILE=$?
+GUARD_MODE=report MONEY_FLOAT_DOMAIN_LIST="$TMP/does-not-exist.txt" \
+  bash "$DIR/money-float.sh" --ratchet >/dev/null 2>&1
+RC_SKIP_NOFILE_RATCHET=$?
+printf '%s\n' "$TMP/no-such-domain-dir" > "$TMP/empty-domain-list.txt"
+GUARD_MODE=report MONEY_FLOAT_DOMAIN_LIST="$TMP/empty-domain-list.txt" \
+  bash "$DIR/money-float.sh" >/dev/null 2>&1
+RC_SKIP_ZEROFILES=$?
+
+FAIL_SKIPPED_CODE=0
+for pair in "domain list not found (plain mode)|$RC_SKIP_NOFILE" \
+            "domain list not found (--ratchet)|$RC_SKIP_NOFILE_RATCHET" \
+            "domain list resolves to zero files|$RC_SKIP_ZEROFILES"; do
+  label="${pair%%|*}"; rc="${pair##*|}"
+  if [ "$rc" != 2 ]; then
+    echo "!! self-test FAILED: money-float SKIPPED ($label) → exit 2 bekleniyordu, $rc bulundu" >&2
+    FAIL_SKIPPED_CODE=1
+  fi
+done
+
 # ---------------------------------------------------------------- mode-split
 # E1 guard'ı bir RATCHET'tir: "0 bulgu" hem "temiz" hem "kör" anlamına gelebilir.
 # Bu yüzden her durum ayrı ayrı sınanır — ve ikisi POZİTİF KONTROL değil,
@@ -165,6 +195,10 @@ while IFS='|' read -r guard fixture want; do
 done <<< "$EXPECTED"
 
 if [ "${FAIL_RATCHET:-0}" -ne 0 ]; then
+  FAIL=1
+fi
+
+if [ "${FAIL_SKIPPED_CODE:-0}" -ne 0 ]; then
   FAIL=1
 fi
 
