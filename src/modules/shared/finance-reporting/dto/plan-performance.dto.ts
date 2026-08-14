@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsUUID,
   IsDateString,
+  IsOptional,
 } from 'class-validator';
 
 export class PlanPerformanceRow {
@@ -56,9 +57,19 @@ export class PlanPerformanceRow {
   @IsNumber()
   gpRoi!: number;
 
-  @ApiProperty({ description: 'RAG status', enum: ['RED', 'AMBER', 'GREEN'] })
+  // T-215 / INV-N-004 / K-2.4.22a1: `null` means "coverage was not full —
+  // no colour is safe to show" (kpi-engine.service.ts fullCoverage guard).
+  // It is a distinct, legitimate value, not an absent field — `@IsOptional`
+  // here means "skip enum validation when null", not "field may be missing".
+  @ApiProperty({
+    description:
+      'RAG status. null = partial/zero KPI coverage — no full-coverage colour may be shown (K-2.4.22c)',
+    enum: ['RED', 'AMBER', 'GREEN'],
+    nullable: true,
+  })
+  @IsOptional()
   @IsEnum(['RED', 'AMBER', 'GREEN'])
-  ragStatus!: string;
+  ragStatus!: string | null;
 
   @ApiProperty({ description: 'Plan status' })
   @IsString()

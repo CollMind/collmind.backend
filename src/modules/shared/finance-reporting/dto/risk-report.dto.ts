@@ -5,6 +5,7 @@ import {
   IsArray,
   IsObject,
   IsOptional,
+  IsEnum,
 } from 'class-validator';
 
 export class RiskPlan {
@@ -16,9 +17,19 @@ export class RiskPlan {
   @IsString()
   planName!: string;
 
-  @ApiProperty({ description: 'RAG status' })
-  @IsString()
-  ragStatus!: string;
+  // T-215 / INV-N-004 / K-2.4.22a1: `null` means "coverage was not full —
+  // no colour is safe to show" (kpi-engine.service.ts fullCoverage guard).
+  // See plan-performance.dto.ts PlanPerformanceRow.ragStatus for the same
+  // fix and rationale.
+  @ApiProperty({
+    description:
+      'RAG status. null = partial/zero KPI coverage — no full-coverage colour may be shown (K-2.4.22c)',
+    enum: ['RED', 'AMBER', 'GREEN'],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsEnum(['RED', 'AMBER', 'GREEN'])
+  ragStatus!: string | null;
 
   @ApiProperty({ description: 'Total spend' })
   @IsNumber()

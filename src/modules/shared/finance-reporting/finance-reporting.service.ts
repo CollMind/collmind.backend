@@ -580,7 +580,14 @@ export class FinanceReportingService {
           onInvoicePercent,
           offInvoicePercent,
           gpRoi: plan.overallRoi || 0,
-          ragStatus: plan.ragStatus || 'GREEN',
+          // T-215 / INV-N-004 / K-2.4.22c: a null ragStatus is the engine's
+          // deliberate "coverage was not full, no colour is safe to show"
+          // signal (kpi-engine.service.ts fullCoverage guard, T-177). Coercing
+          // it to 'GREEN' here falsified that signal on a live route — with
+          // today's data (COGS 4/170) this was the majority case, not an edge
+          // one. The carrier stays `null`; no `GRAY` value is introduced
+          // (K-2.4.22a1 — meaning is read from coverage ratio, not the enum).
+          ragStatus: plan.ragStatus ?? null,
           status: plan.status,
           startDate: plan.startDate.toISOString().split('T')[0],
           endDate: plan.endDate.toISOString().split('T')[0],
@@ -630,7 +637,14 @@ export class FinanceReportingService {
       const riskPlan: RiskPlan = {
         planId: plan.id,
         planName: plan.planName,
-        ragStatus: plan.ragStatus || 'GREEN',
+        // T-215 / INV-N-004 / K-2.4.22c: same fix as getPlanPerformance —
+        // see the comment there. `getFilteredPlans` above already restricts
+        // this query to `ragStatuses: ['RED', 'AMBER']`, so a `null` value
+        // cannot reach this line today (a plan with partial coverage never
+        // matches that filter); the fallback is removed anyway so the
+        // falsification does not silently return if that filter is ever
+        // loosened.
+        ragStatus: plan.ragStatus ?? null,
         totalSpend,
         gpRoi: plan.overallRoi || 0,
         riskLevel: plan.ragStatus === 'RED' ? 'HIGH' : 'MEDIUM',
