@@ -17,6 +17,7 @@
     "lint": "bash scripts/changed-ts.sh | xargs -r eslint --fix",
     "guards": "bash scripts/guards/run-all.sh",
     "guard:money-float:ratchet": "bash scripts/guards/money-float.sh --ratchet",
+    "guard:lint:ratchet": "bash scripts/guards/lint-ratchet-self-test.sh && bash scripts/guards/lint-ratchet.sh --ratchet",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",

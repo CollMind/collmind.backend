@@ -55,7 +55,13 @@ GUARDS=($GUARD_NAMES_VALID)
 # remembering the BACKLOG.md Done checklist — "doğrulama bir kapıdır, çıkışı
 # durdurmuyorsa doğrulama değildir" (CLAUDE.md). When Domain A reaches zero,
 # move money-float out of this list entirely (raw count becomes blocking too).
-REPORT_ONLY_GUARDS="money-float"
+#
+# lint-ratchet (T-113) joins for the SAME reason, measured the same way:
+# `npm run lint:check` is 1087 problems / 183 files today (see lint-ratchet.sh
+# header) and making the raw count blocking would fail every commit until the
+# whole repo is lint-clean — the same "big-bang or never" trap. Its RATCHET
+# (below, alongside money-float's) is the actual blocking gate.
+REPORT_ONLY_GUARDS="money-float lint-ratchet"
 
 is_report_only() {
   case " $REPORT_ONLY_GUARDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
@@ -74,11 +80,29 @@ else
   exit 1
 fi
 
+# lint-ratchet'in kendi self-test'i AYRI bir dosyadır (self-test.sh'in awk/
+# fixture-copy mekanizmasından farklı bir mekanizma kullanır: gerçek eslint'i
+# fixture'lara karşı koşturur — bkz. lint-ratchet-self-test.sh başlığı).
+# Frontend'de bu ayrım `npm run guard:lint` = "self-test && ratchet" zinciriyle
+# sağlanıyordu; backend'in gerçek giriş noktası bu runner olduğu için aynı
+# zincirleme burada kurulmalı — yoksa self-test dosyası VAR ama hiçbir gerçek
+# kapı yolu onu ÇAĞIRMIYOR olurdu (CLAUDE.md: "doğrulama bir kapıdır,
+# durdurmuyorsa doğrulama değildir").
+echo "=== self-test (lint-ratchet) ==="
+if bash "$DIR/lint-ratchet-self-test.sh"; then
+  echo "(lint-ratchet fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! lint-ratchet kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0
 SKIPPED_BAD=0
 RATCHET_FAILED=0
+LINT_RATCHET_FAILED=0
 SUMMARY=""
 
 for g in "${GUARDS[@]}"; do
@@ -218,6 +242,34 @@ if [ "$RATCHET_RC" -ne 0 ]; then
   RATCHET_FAILED=1
 fi
 
+# --- lint-ratchet: KAPI (T-113) ----------------------------------------------
+# Aynı desen, money-float'ın birebir yanında: TOPLAM (1087 problem / 183
+# dosya) REPORT_ONLY_GUARDS'ta bilgi amaçlı kalıyor, RATCHET dokunulan/yeni
+# bir (dosya, kural) çiftinin baseline'ı AŞIP AŞMADIĞINI ölçüyor ve bloklayan
+# odur. exit kodu sözleşmesi money-float ile AYNI kaynaktan okunuyor —
+# ayırt edici metin arama YOK (T-212 S-1'in dersi buraya da uygulandı,
+# yeniden keşfedilmedi): 2 = kurulum hatası/ölçüm yapılmadı (bkz.
+# lint-ratchet.sh: node yok, eslint fatal, JSON parse hatası, sıfır dosya
+# tarandı, baseline yok/bozuk), sıfırdan farklı ama 2 değilse = ratchet
+# ihlali.
+echo "=== lint-ratchet --ratchet (kapı) ==="
+LINT_RATCHET_OUT="$(bash "$DIR/lint-ratchet.sh" --ratchet 2>&1)"
+LINT_RATCHET_RC=$?
+if [ -n "$LINT_RATCHET_OUT" ]; then
+  printf "%s\n" "$LINT_RATCHET_OUT"
+else
+  echo "(ratchet: baseline aşılmadı)"
+fi
+echo
+
+if [ "$LINT_RATCHET_RC" -eq 2 ]; then
+  echo "!! lint-ratchet --ratchet KOŞAMADI (kurulum hatası, exit 2) — ölçüm yapılmadı, özet 'temiz' DİYEMEZ" >&2
+  exit 2
+fi
+if [ "$LINT_RATCHET_RC" -ne 0 ]; then
+  LINT_RATCHET_FAILED=1
+fi
+
 echo "=== ÖZET (GUARD_MODE=$GUARD_MODE) ==="
 printf "%b" "$SUMMARY"
 echo "  TOPLAM: $TOTAL bulgu"
@@ -227,6 +279,11 @@ if [ "$RATCHET_FAILED" -eq 1 ]; then
   echo "  money-float --ratchet: İHLAL — bir dosya baseline'ı aştı (yukarıya bak)"
 else
   echo "  money-float --ratchet: temiz"
+fi
+if [ "$LINT_RATCHET_FAILED" -eq 1 ]; then
+  echo "  lint-ratchet --ratchet: İHLAL — bir (dosya, kural) çifti baseline'ı aştı (yukarıya bak)"
+else
+  echo "  lint-ratchet --ratchet: temiz"
 fi
 
 if [ "$GUARD_MODE" = "block" ]; then
@@ -240,6 +297,10 @@ if [ "$GUARD_MODE" = "block" ]; then
   fi
   if [ "$RATCHET_FAILED" -eq 1 ]; then
     echo "  → GUARD_MODE=block ve money-float --ratchet ihlali var: exit 1"
+    exit 1
+  fi
+  if [ "$LINT_RATCHET_FAILED" -eq 1 ]; then
+    echo "  → GUARD_MODE=block ve lint-ratchet --ratchet ihlali var: exit 1"
     exit 1
   fi
 fi
