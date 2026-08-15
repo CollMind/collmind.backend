@@ -60,8 +60,10 @@ export async function cleanupAgreementsBudgetPlans(
     await queryRunner.query(`DELETE FROM main.budget_transaction_logs`);
     console.log('   ✅ Deleted budget_transaction_logs');
 
-    await queryRunner.query(`DELETE FROM main.budget_reservations`);
-    console.log('   ✅ Deleted budget_reservations');
+    // T-225: `main.budget_reservations` düşürüldü (migration
+    // 1805000000000-DropBudgetReservations) — ölü iskeleydi, hiç yazılmamıştı.
+    // Bu DELETE satırı KASITLI olarak kaldırıldı; tablo artık yok, kalsaydı
+    // `42P01 relation does not exist` ile patlardı.
 
     await queryRunner.query(`DELETE FROM main.budget_allocations`);
     console.log('   ✅ Deleted budget_allocations');

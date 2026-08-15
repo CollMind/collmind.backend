@@ -1601,8 +1601,10 @@ export class BudgetService {
    * Finance-only operation that splits an UNSPLIT (legacy, `spend_type IS
    * NULL`) envelope into two typed envelopes:
    *  - the ORIGINAL row keeps its id (FK safety: `budget_transactions
-   *    .envelope_id`, `ledger_entries.budget_envelope_id`,
-   *    `budget_reservations.envelope_id` never dangle) and becomes
+   *    .envelope_id`, `ledger_entries.budget_envelope_id` never dangle —
+   *    ölçüldü T-225, 2026-08-15: bu ikisi `envelope_id`/`budget_envelope_id`
+   *    üzerinden hâlâ canlı FK taşıyor, `budget_reservations` migration
+   *    1805000000000 ile düşürüldü ve bu listeden çıkarıldı) and becomes
    *    ON_INVOICE;
    *  - a NEW row (`code`+`-OFF`) is created as OFF_INVOICE;
    *  - any encumbrance already tagged `spend_type='OFF_INVOICE'` on the

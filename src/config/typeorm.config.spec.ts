@@ -156,22 +156,13 @@ describe('entity list — tek kaynak pini (T-224)', () => {
     expect(onlyInB).toEqual(['GHOST']);
   });
 
-  // ⏸️ SKIP: [[T-225]] — `BudgetReservation` ÜÇ LİSTEDE DE yok (eski `typeorm.config`,
-  // `database.module`, `entities/index.ts`), ama `@Entity({ name: 'budget_reservations' })`
-  // gerçek, tablo DB'de VAR (0 satır), ve entity'yi import eden HİÇBİR yol yok.
-  //
-  // ⚠️ ASKI, KUSURUN KABULÜ DEĞİL: pin DOĞRU, kod EKSİK. Bu testin ilk koşumu üç
-  // listenin birden kaçırdığı bir entity buldu — varlık gerekçesinin kendisi.
-  // `T-219`'un "fark 0" ölçümü onu görmemişti çünkü listeleri BİRBİRİNE karşı
-  // ölçüyordu, DİSKE karşı değil. Üç kopyanın tutarlı olması doğru olmaları
-  // anlamına gelmiyor.
-  //
-  // ⛔ `it.failing()` KULLANILMADI bilerek: o "başarısızlık bekleniyor" demektir ve
-  // semantiği ters — başarısız olan TEST değil, KOD. Ayrıca `T-225` kapanınca test
-  // beklenmedik şekilde geçer ve yine kırmızı verirdi.
-  //
-  // `T-225` kapanınca bu `skip` KALKAR — ve o, `T-225`'in Done şartıdır.
-  it.skip('PİN: diskteki @Entity/@ViewEntity sınıfları == ALL_ENTITIES (typeorm.config.ts)', () => {
+  // [[T-225]] — KARAR VERİLDİ: `BudgetReservation` ölü iskeleydi (üç listede de
+  // hiç geçmemişti, entity sınıfını import eden üretim kodu 0, `INSERT` yolu 0,
+  // TTM'de karşılığı yok) — canlandırılmadı, SİLİNDİ
+  // (`src/database/entities/budget-reservation.entity.ts` kaldırıldı,
+  // `main.budget_reservations` migration 1805000000000 ile düşürüldü). Disk artık
+  // `ALL_ENTITIES` ile senkron; aşağıdaki pin bu yüzden `it.skip` değil, aktif.
+  it('PİN: diskteki @Entity/@ViewEntity sınıfları == ALL_ENTITIES (typeorm.config.ts)', () => {
     const diskNames = scanDiskEntityClassNames();
     const canonicalNames = ALL_ENTITIES.map((e) => e.name).sort();
 
