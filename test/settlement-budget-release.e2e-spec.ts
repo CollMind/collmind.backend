@@ -41,6 +41,7 @@ import {
   cleanupTestAgreements,
   E2EFixture,
 } from './helpers/seed-e2e';
+import { closeAdminDataSource } from './helpers/admin-datasource';
 import { BudgetReservationService } from '../src/modules/shared/budget/budget-reservation.service';
 
 describe('Settlement — Budget Reservation Release (T-030, E2E)', () => {
@@ -117,6 +118,11 @@ describe('Settlement — Budget Reservation Release (T-030, E2E)', () => {
     expect(afterNkaQ2.consumed).toBeCloseTo(baselineNkaQ2.consumed, 2);
 
     await closeTestApp();
+    // M-2 (2026-08-16): `cleanupTestAgreements` (burada) ve
+    // `cleanupTestTransactions` (bazı `it()` gövdelerinde, örn. BR-E2E-02/06)
+    // `getAdminDataSource()`'ı tetikler. Bu dosyanın tek/en-dış `afterAll`'ı,
+    // hiçbir nested describe'ın kendi `afterAll`'ı yok — kapatmak güvenli.
+    await closeAdminDataSource();
   });
 
   async function newApprovedAgreement(

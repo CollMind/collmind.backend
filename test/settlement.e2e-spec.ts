@@ -45,6 +45,7 @@ import {
   cleanupTestAgreements,
   E2EFixture,
 } from './helpers/seed-e2e';
+import { closeAdminDataSource } from './helpers/admin-datasource';
 
 describe('Settlement (E2E)', () => {
   let app: INestApplication;
@@ -91,6 +92,10 @@ describe('Settlement (E2E)', () => {
       console.warn('Cleanup (settlement agreement) başarısız:', e);
     }
     await closeTestApp();
+    // M-2 (2026-08-16): `cleanupTestAgreements` yukarıda `getAdminDataSource()`
+    // tetikledi. Bu dosyanın tek/en-dış `afterAll`'ı, hiçbir nested
+    // describe'ın kendi `afterAll`'ı yok — kapatmak güvenli.
+    await closeAdminDataSource();
   });
 
   async function newApprovedAgreement(capTotalAmount = 4000) {

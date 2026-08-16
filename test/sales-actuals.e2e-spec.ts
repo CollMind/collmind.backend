@@ -25,6 +25,7 @@ import {
   E2EFixture,
   cleanupSalesActuals,
 } from './helpers/seed-e2e';
+import { closeAdminDataSource } from './helpers/admin-datasource';
 import { BudgetRepository } from '../src/modules/shared/budget/budget.repository';
 
 function csv(lines: string[]): Buffer {
@@ -54,6 +55,10 @@ describe('Sales Actuals (E2E)', () => {
     // (2026-*) dokunmaz, yalnızca 2027-* test batch/satır/audit kayıtlarını siler.
     await cleanupSalesActuals(app, fixture.tenantId);
     await closeTestApp();
+    // M-2 (2026-08-16): `cleanupSalesActuals` (burada + `beforeAll`'da)
+    // `getAdminDataSource()`'ı tetikler. Bu dosyanın tek/en-dış `afterAll`'ı,
+    // hiçbir nested describe'ın kendi `afterAll`'ı yok — kapatmak güvenli.
+    await closeAdminDataSource();
   });
 
   async function getCplCode(): Promise<{ cplId: string; cplCode: string }> {

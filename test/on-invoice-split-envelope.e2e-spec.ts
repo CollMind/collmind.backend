@@ -27,7 +27,10 @@ import { randomUUID } from 'crypto';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache } from './helpers/auth';
 import { loadE2EFixture, E2EFixture } from './helpers/seed-e2e';
-import { getAdminDataSource } from './helpers/admin-datasource';
+import {
+  getAdminDataSource,
+  closeAdminDataSource,
+} from './helpers/admin-datasource';
 
 describe('T-057 — uçtan uca (split dimension, items 1/3/5)', () => {
   let app: INestApplication;
@@ -192,6 +195,10 @@ describe('T-057 — uçtan uca (split dimension, items 1/3/5)', () => {
       console.warn('T-057 cleanup failed:', e);
     }
     await closeTestApp();
+    // M-2 (2026-08-16): bu, dosyanın tek/en-dış `afterAll`'ı — yukarıdaki
+    // temizlik `adminDataSource`'ı zaten kullanmış bitirmiş durumda, bu
+    // yüzden burada kapatmak güvenli (bkz. admin-datasource.ts JSDoc'u).
+    await closeAdminDataSource();
   });
 
   it('0) fresh envelope + split — dedicated, unused dimension', async () => {

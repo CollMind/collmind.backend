@@ -37,7 +37,10 @@ import {
   resolveIdByCode,
   E2EFixture,
 } from './helpers/seed-e2e';
-import { getAdminDataSource } from './helpers/admin-datasource';
+import {
+  getAdminDataSource,
+  closeAdminDataSource,
+} from './helpers/admin-datasource';
 
 describe('Mechanic min/max bound guard — live route (T-084, E2E)', () => {
   let app: INestApplication;
@@ -62,6 +65,11 @@ describe('Mechanic min/max bound guard — live route (T-084, E2E)', () => {
 
   afterAll(async () => {
     await closeTestApp();
+    // M-2 (2026-08-16): bu dosya `getAdminDataSource()`'ı yukarıdaki
+    // `it()`'in `finally` bloğunda çağırıyor — test gövdeleri HER ZAMAN
+    // herhangi bir `afterAll`'dan önce biter, bu yüzden bu en-dış (ve tek)
+    // `afterAll`'ın SON satırı olarak kapatmak güvenli sıralamayı garantiler.
+    await closeAdminDataSource();
   });
 
   it("PATCH with max_value=NULL mechanic: {isActive:false} → 200 (regression: old code 400'd because open upper bound was coerced to 0)", async () => {

@@ -68,7 +68,10 @@ import {
   cleanupTestPlans,
   E2EFixture,
 } from './helpers/seed-e2e';
-import { getAdminDataSource } from './helpers/admin-datasource';
+import {
+  getAdminDataSource,
+  closeAdminDataSource,
+} from './helpers/admin-datasource';
 
 describe('C3 — write-side scale validation, live route (E2E)', () => {
   let app: INestApplication;
@@ -102,6 +105,12 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       // best-effort
     }
     await closeTestApp();
+    // M-2 (2026-08-16): bu, dosyanın EN-DIŞ `afterAll`'ı. İç içe
+    // 'mechanic deactivated...' describe'ının kendi `afterAll`'ı
+    // `getAdminDataSource()`'ı DOĞRUDAN çağırıyor — jest-circus'ta nested
+    // `afterAll` her zaman outer'dan ÖNCE biter (ölçüldü), bu yüzden burada
+    // kapatmak o kullanımı da güvenle kapsar.
+    await closeAdminDataSource();
   });
 
   async function createDraftPlanWithFu(

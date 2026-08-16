@@ -40,6 +40,7 @@ import {
   cleanupTestAgreements,
   cleanupTestUsers,
 } from './helpers/seed-e2e';
+import { closeAdminDataSource } from './helpers/admin-datasource';
 // T-056 adım 5, A18 fixture düzeltmesi (Team Lead onaylı, 2026-08-03):
 // canlı `/submit` artık hiçbir zaman TOTAL kova yazmıyor (K1/§3.3) — A18'in
 // "legacy TOTAL RESERVE'li plan" ön koşulunu kurmak için gerçek servisleri
@@ -265,6 +266,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     console.table(results);
 
     await closeTestApp();
+    // M-2 (2026-08-16): bu dosyanın tek/en-dış `afterAll`'ı (`beforeAll`'daki
+    // `cleanupSalesActuals` çağrısı da dahil, admin bağlantısı bu dosyanın
+    // ömrü boyunca burada açılır). E), E2), F) describe'larının kendi
+    // `afterAll`'ları yalnız HTTP çağrısı yapıyor (admin datasource
+    // KULLANMIYOR) ve nested oldukları için jest-circus'ta bu outer
+    // `afterAll`'dan ÖNCE bitmiş olurlar (ölçüldü) — kapatmak güvenli.
+    await closeAdminDataSource();
   }, 60000);
 
   // ══════════════════════════════════════════════════════════════════════

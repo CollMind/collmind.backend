@@ -145,6 +145,18 @@ $outer$, :'schema')
 --    ucuz (birkaç satır, no-op) ve #4'ün izlediği deseni bozmuyor.
 --    `ALTER ROUTINE` (PG11+) hem FUNCTION hem PROCEDURE'ü kapsar, `prokind`
 --    ayrımı gerektirmez.
+--
+--    M-3(m-5) DÜZELTMESİ (2026-08-16, code-reviewer kapanış review'u):
+--    aşağıdaki rutin döngüsü ÖNCEDEN yalnız `n.nspname = schema_name`
+--    filtreliyordu — `main`'de bugün 0 rutin olduğu için no-op, ama
+--    `CREATE EXTENSION ... WITH SCHEMA main` çalıştırılırsa (main şemasına
+--    kurulan bir extension fonksiyon/prosedür yaratabilir) bu döngü o
+--    fonksiyonların sahipliğini SESSİZCE app_migrate'e taşırdı — extension'ın
+--    KENDİ sahipliğinden (genelde superuser/extension sahibi) çalar ve
+--    `DROP EXTENSION`/`ALTER EXTENSION` gibi sonraki işlemleri bozabilirdi.
+--    `pg_depend.deptype = 'e'` (extension bağımlılığı) taşıyan nesneler artık
+--    HARİÇ tutuluyor — betik hâlâ idempotent (iki koşum birebir aynı: filtre
+--    yalnızca kümeyi DARALTIYOR, döngünün kendisini değiştirmiyor).
 SELECT format($outer$
 DO $do$
 DECLARE
@@ -164,6 +176,10 @@ BEGIN
     FROM pg_proc p
     JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = schema_name
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_depend d
+        WHERE d.objid = p.oid AND d.deptype = 'e'
+      )
   LOOP
     EXECUTE format('ALTER ROUTINE %%s OWNER TO app_migrate', r.sig);
   END LOOP;

@@ -42,6 +42,7 @@ import {
   cleanupTestAgreements,
   E2EFixture,
 } from './helpers/seed-e2e';
+import { closeAdminDataSource } from './helpers/admin-datasource';
 
 describe('Reversal (E2E)', () => {
   let app: INestApplication;
@@ -113,6 +114,10 @@ describe('Reversal (E2E)', () => {
     expect(leftoverTx).toHaveLength(0);
 
     await closeTestApp();
+    // M-2 (2026-08-16): `cleanupTestAgreements` yukarıda `getAdminDataSource()`
+    // tetikledi. Bu dosyanın tek/en-dış `afterAll`'ı, aşağıdaki nested
+    // describe'ların hiçbirinin kendi `afterAll`'ı yok — kapatmak güvenli.
+    await closeAdminDataSource();
   });
 
   describe('BRD invaryantı: APPROVED agreement net rezervasyon > 0', () => {

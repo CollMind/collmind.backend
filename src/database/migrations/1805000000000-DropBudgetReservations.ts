@@ -120,7 +120,7 @@ export class DropBudgetReservations1805000000000 implements MigrationInterface {
     // K-2.6.13(c) — koşullu şema yaratma (tam gerekçe:
     // CreateTenants1704067200000, aynı görev). `CREATE SCHEMA IF NOT EXISTS`
     // PostgreSQL'de DATABASE-düzeyi CREATE iznini şemanın var olup
-    // olmadığına BAKMADAN denetler; DDL-yetkili rol yalnız şema-içi CREATE alır
+    // olmadığına BAKMADAN denetler; app_migrate yalnız şema-içi CREATE alır
     // (KARAR 2, scripts/db-roles/01-roles-and-ownership.sql). Sonuç aynı
     // kalır — yalnız izin denetimi şema zaten varken yolun dışına çıkar.
     // Bu satır bir down() içinde: bu revert'in şema hiç yokken çalışması

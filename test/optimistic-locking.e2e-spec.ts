@@ -37,6 +37,7 @@ import {
   cleanupTestAgreements,
   E2EFixture,
 } from './helpers/seed-e2e';
+import { closeAdminDataSource } from './helpers/admin-datasource';
 
 describe('Optimistic locking — version CAS (T-034, E2E)', () => {
   let app: INestApplication;
@@ -95,6 +96,12 @@ describe('Optimistic locking — version CAS (T-034, E2E)', () => {
       // best-effort
     }
     await closeTestApp();
+    // M-2 (2026-08-16): `cleanupTestAgreements` yukarıda `getAdminDataSource()`
+    // tetikledi (K-2.6.13 KARAR 1 — üç defter/denetim tablosu app_migrate ile
+    // silinir). Bu dosyanın tek/en-dış `afterAll`'ı — iç içe 'cross-tenant
+    // isolation' describe'ının kendi `afterAll`'ı (admin datasource
+    // KULLANMIYOR) nested olduğu için bundan ÖNCE zaten bitmiş olur.
+    await closeAdminDataSource();
   });
 
   async function createDraftPlan(namePrefix: string): Promise<string> {

@@ -4,7 +4,7 @@ export class CreateTenants1704067200000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // K-2.6.13(c): `CREATE SCHEMA IF NOT EXISTS` PostgreSQL'de `CREATE`
     // hakkını şemanın zaten var olup olmadığına BAKMADAN denetler — yani
-    // migration'ları koşturan DDL-yetkili role yalnız `main` şeması içinde
+    // migration'ları koşturan app_migrate'e yalnız `main` şeması içinde
     // DDL izni verilen (veritabanı seviyesinde `CREATE` izni olmayan) bir
     // ortamda, şema zaten mevcutken bile bu satır "permission denied for
     // database" ile düşer (ölçüldü, gerçek dev DB, ADR/ürün sahibi kararı).
@@ -16,10 +16,12 @@ export class CreateTenants1704067200000 implements MigrationInterface {
     // belgelenmiş bir ön koşuldur, atlandığında sessiz başarı değil,
     // gürültülü hata istenir.
     //
-    // ⚠️ Bu dosyaya (K-2.6.13d/AC#8(a) guard'ı) DDL-yetkili rolün adını
-    // LİTERAL olarak yazma — guard `src/` içindeki dosyaları bu ada göre
-    // tarar ve yalnız dört dosyaya izin verir (migration'lar ONLARDAN biri
-    // DEĞİL). Yukarıdaki paragraf bilerek o adı kullanmıyor.
+    // M-3(a) (2026-08-16): bu paragraf önceden `app_migrate` adını literal
+    // yazmaktan kaçınıyordu (eski guard ham metin tarıyordu). Guard artık
+    // yalnız bir kimliğin bir BAĞLANTI yapılandırmasına beslendiği yerleri
+    // arıyor (`test/helpers/privileged-connection-scan.ts`) — bir migration
+    // dosyası içinde geçen rol adı bunun dışında, isim burada güvenle
+    // yazılabilir.
     await queryRunner.query(`
       DO $$ BEGIN
         IF NOT EXISTS (

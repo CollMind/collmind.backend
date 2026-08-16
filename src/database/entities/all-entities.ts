@@ -4,27 +4,31 @@
 //
 // K-2.6.13(B4): bu liste BİLEREK `typeorm.config.ts`'İN DIŞINDA, yan etkisiz
 // (side-effect-free) bir dosyada tutulur. `typeorm.config.ts` modül
-// seviyesinde, CLI/seed'in DDL-yetkili rol kimliğini eksikse AÇIK hata ile
-// durdurmak için bir kimlik-çözümleme çağrısı çalıştırır (K-2.6.13d). Bu
-// dosyayı import eden HERKES (yalnız CLI değil) o modülü baştan sona
-// çalıştırır — JS/TS modül sistemi "yalnız kullandığım export'u çalıştır"
-// yapmaz, TÜM dosyayı değerlendirir. `ALL_ENTITIES` önceden
-// `typeorm.config.ts`'te tanımlıydı ve `database.module.ts` (NestJS RUNTIME
-// süreci) onu oradan import ediyordu — yani üretim uygulaması, kendi
-// bağlantısında hiç kullanmadığı DDL-yetkili rolün kimlik bilgilerini
-// yalnızca bu import zinciri yüzünden ortamında taşımak ZORUNDAYDI (ölçüldü:
-// K-2.6.13(B4) task raporu — ampirik komut + çıktı orada).
+// seviyesinde, CLI/seed'in `app_migrate` (DDL-yetkili) rol kimliğini
+// eksikse AÇIK hata ile durdurmak için bir kimlik-çözümleme çağrısı
+// çalıştırır (K-2.6.13d, `migrateDbCredentials()`). Bu dosyayı import eden
+// HERKES (yalnız CLI değil) o modülü baştan sona çalıştırır — JS/TS modül
+// sistemi "yalnız kullandığım export'u çalıştır" yapmaz, TÜM dosyayı
+// değerlendirir. `ALL_ENTITIES` önceden `typeorm.config.ts`'te tanımlıydı
+// ve `database.module.ts` (NestJS RUNTIME süreci) onu oradan import
+// ediyordu — yani üretim uygulaması, kendi bağlantısında hiç kullanmadığı
+// `app_migrate` kimlik bilgilerini yalnızca bu import zinciri yüzünden
+// ortamında taşımak ZORUNDAYDI (ölçüldü: K-2.6.13(B4) task raporu —
+// ampirik komut + çıktı orada).
 //
 // Bu dosya entity sınıflarını import etmek dışında HİÇBİR ŞEY yapmaz —
 // env okumaz, kimlik doğrulamaz, dotenv çağırmaz. `database.module.ts`
 // artık `typeorm.config.ts`'e HİÇ dokunmaz; runtime grafiği CLI'ın
 // kimlik-çözümleme yan etkisinden tamamen ayrıştı.
 //
-// ⚠️ Bu dosyaya (K-2.6.13d/AC#8(a) guard'ı — `db-role-sessiz-fallback.
-// e2e-spec.ts`) DDL-yetkili rol/kimlik adlarını LİTERAL olarak YAZMA — guard
-// `src/` içindeki dosyaları bu desenler için tarar ve yalnız dört dosyaya
-// izin verir (bu dosya ONLARDAN biri DEĞİL). Yukarıdaki paragraflar bilerek
-// o desenleri kullanmıyor.
+// M-3(a) (2026-08-16): önceden bu dosyaya `app_migrate`/
+// `migrateDbCredentials` adlarını LİTERAL yazmama talimatı vardı — eski
+// guard (`db-role-sessiz-fallback.e2e-spec.ts`) HAM METİN tarıyordu ve
+// bir açıklayıcı yorumu koddan ayırt edemiyordu. Guard artık `test/
+// helpers/privileged-connection-scan.ts` ile "bu kimlik bir bağlantı
+// yapılandırmasına BESLENİYOR mu" soruyor, "bu metin geçiyor mu" değil —
+// bu dosya hiçbir bağlantı kurmadığı için (yalnız entity import eder)
+// isimleri açıkça yazmak artık güvenli.
 import { User } from './user.entity';
 import { Tenant } from './tenant.entity';
 import { Customer } from './customer.entity';

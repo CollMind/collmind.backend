@@ -26,9 +26,41 @@
  * `entities: []` bilinçli: bir entity listesi taşımak hem gereksiz hem de
  * `typeorm.config.ts`'in `ALL_ENTITIES`'iyle senkron kalma yükü getirirdi.
  *
- * Paylaşılan tek bağlantı (module-level singleton, lazy init) — jest
- * `--runInBand` tek process'te koştuğu için her spec dosyasının kendi
- * bağlantısını açıp kapatması yerine bunu paylaşır.
+ * ⚡ M-2 DÜZELTMESİ (2026-08-16, code-reviewer kapanış review'u): bu yorum
+ * ÖNCEDEN "paylaşılan TEK bağlantı (module-level singleton), jest
+ * `--runInBand` tek process'te koştuğu için ..." diyordu — ÖLÇÜLMEDEN
+ * yazılmış, YANLIŞ bir iddiaydı. Ölçüm (2026-08-16): jest her test
+ * DOSYASINA taze bir modül kaydı (module registry) verir — `--runInBand`
+ * yalnız aynı OS *process*'ini paylaştırır, modül durumunu DEĞİL. Yani bu
+ * "singleton" DOSYA BAŞINADIR: her `.e2e-spec.ts` dosyası bu modülün
+ * KENDİ kopyasını import eder ve `adminDataSource` değişkeni o dosyanın
+ * ömrü boyunca yaşar — dosyalar arasında PAYLAŞILMAZ.
+ *
+ * Sonucu: `closeAdminDataSource()`'u çağıran YOKTU — bu fonksiyonu
+ * (doğrudan ya da `cleanupTestTransactions`/`cleanupTestAgreements`/
+ * `cleanupSalesActuals` üzerinden) tetikleyen 9 `.e2e-spec.ts` dosyası
+ * kendi `app_migrate` bağlantısını suite sonuna kadar (worker process
+ * çıkana kadar) AÇIK bırakıyordu. Bugün fatal değil (`max_connections=100`,
+ * ölçülen taban 6 bağlantı) ama spec sayısıyla BÜYÜR.
+ *
+ * ⚠️ ÖLÇÜLDÜ VE ELENDİ: bir `setupFilesAfterEnv` global `afterAll`'ı ("her
+ * dosyanın kendi hook'larından sonra çalışır" varsayımıyla) İLK denemeydi.
+ * Ampirik sıra testi (iç içe `describe` + `setupFilesAfterEnv`) GERÇEK sırayı
+ * gösterdi: `[iç describe'in afterAll'ı] → [setupFilesAfterEnv'in
+ * afterAll'ı] → [dosyanın KENDİ en-dış afterAll'ı]`. Yani global hook, HER
+ * DOSYANIN kendi en-dış seviye `afterAll`'ından ÖNCE çalışır (jest test
+ * dosyasını değerlendirmeden ÖNCE `setupFilesAfterEnv` çalıştığı için o
+ * hook önce KAYDEDİLİR, ve aynı seviyedeki hook'lar KAYIT SIRASIYLA
+ * çalışır — ölçüldü, ayrı bir sıra testiyle). Bu düzenin ÇOĞU dosyada
+ * (temizlik en-dış `afterAll`'da yapılıyor) global kapatmayı ERKEN
+ * ateşlerdi: dosyanın kendi `afterAll`'ı sonra tekrar `getAdminDataSource()`
+ * çağırınca (lazy re-init) YENİ bir bağlantı açardı ve o bir daha
+ * KAPANMAZDI — sızıntı gerçekte KAPANMAZ, yalnızca yer değiştirirdi.
+ *
+ * Düzeltme bu yüzden merkezi bir hook DEĞİL: `closeAdminDataSource()`
+ * her dosyanın KENDİ en-dış (en-son çalışan) `afterAll`'ının SON satırı
+ * olarak, doğrudan o dosyada çağrılır — aynı callback içinde sıralı
+ * `await`, hook sırası belirsizliğine bağımlı değil.
  */
 
 import { DataSource } from 'typeorm';

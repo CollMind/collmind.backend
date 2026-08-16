@@ -10,18 +10,22 @@ import { SnakeCaseNamingStrategy } from './strategies/snake-case-naming.strategy
 //
 // K-2.6.13(B4): kaynak `../config/typeorm.config.ts` DEĞİL, doğrudan
 // `./entities/all-entities.ts`. `typeorm.config.ts` modül seviyesinde
-// CLI/seed'in DDL-yetkili rol kimliğini eksikse durdurmak için bir
-// kimlik-çözümleme çağrısı çalıştırır; bu dosyadan import etmek, RUNTIME
-// sürecini (NestJS uygulaması) yalnız kendi DML rolünü kullanırken o
-// DDL-yetkili kimlik bilgilerini de ortamında taşımaya ZORLUYORDU — ölçüldü
-// (K-2.6.13(B4) task raporu, ampirik komut + çıktı orada). `all-entities.ts`
-// yan etkisiz; bu satır artık o yan etkiyi tetiklemiyor.
+// CLI/seed'in `app_migrate` (DDL-yetkili) rol kimliğini eksikse durdurmak
+// için bir kimlik-çözümleme çağrısı çalıştırır; bu dosyadan import etmek,
+// RUNTIME sürecini (NestJS uygulaması) yalnız kendi `app_runtime` (DML)
+// rolünü kullanırken `app_migrate`'in kimlik bilgilerini de ortamında
+// taşımaya ZORLUYORDU — ölçüldü (K-2.6.13(B4) task raporu, ampirik komut +
+// çıktı orada). `all-entities.ts` yan etkisiz; bu satır artık o yan etkiyi
+// tetiklemiyor.
 //
-// ⚠️ Bu dosyaya (K-2.6.13d/AC#8(a) guard'ı — `db-role-sessiz-fallback.
-// e2e-spec.ts`) DDL-yetkili rol/kimlik adlarını LİTERAL olarak YAZMA —
-// guard `src/` içindeki dosyaları bu desenler için tarar ve yalnız dört
-// dosyaya izin verir (bu dosya ONLARDAN biri DEĞİL). Yukarıdaki paragraf
-// bilerek o desenleri kullanmıyor.
+// M-3(a) (2026-08-16): bu dosya `app_migrate`/`migrateDbCredentials`
+// kimliğine SIFIR referans veriyor (`test/db-role-sessiz-fallback.
+// e2e-spec.ts` AC#8(a)'nın kanıtladığı şey) — çünkü hiçbir bağlantı
+// yapılandırması o kimliği KULLANMIYOR, yorumun literal isim taşıması
+// DEĞİL. Guard artık metne değil, kimliğin bir DataSource/Client
+// seçeneğine BESLENİP BESLENMEDİĞİNE bakıyor (`test/helpers/
+// privileged-connection-scan.ts`) — bu yüzden yukarıdaki iki paragraf
+// isimleri açıkça yazabiliyor.
 import { ALL_ENTITIES } from './entities/all-entities';
 import { runtimeDbCredentials } from '../config/db-role-env';
 
