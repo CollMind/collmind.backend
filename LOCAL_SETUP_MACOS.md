@@ -339,13 +339,19 @@ Bu betik:
   RLS'e tabi, DDL yok, hiçbir tablonun sahibi değil).
 - `app_migrate` rolünü yaratır — migration/seed bağlantısı (DDL yetkili,
   tablo sahibi).
-- Var olan tüm tabloların/sequence'ların/view'ların sahipliğini
-  `app_migrate`'e taşır (yerel DB'de daha önce `postgres` ile yaratılmış
-  olabilirler).
+- Var olan tüm tabloların/sequence'ların/view'ların/enum-domain tiplerinin/
+  fonksiyonların sahipliğini `app_migrate`'e taşır (yerel DB'de daha önce
+  `postgres` ile yaratılmış olabilirler). Enum sahipliği önemlidir: bir
+  `ALTER TYPE ... ADD VALUE` göçü (ör. yeni bir rol eklemek) sahiplik
+  ister — yalnız `USAGE` yetmez.
 
 Bu adım atlanırsa `migration:run`/`seed`/`start:dev` bağlantı kimliği
 eksik hatasıyla durur (K-2.6.13d: sessiz geri dönüş yok, ayrıcalıklı
 `postgres`'e düşülmez).
+
+⚠️ Bu adım **yalnız rolleri ve sahipliği** kurar — `app_runtime`'ın tablo/
+sütun bazlı GRANT'leri BURADA YOK. O adım migration'lardan SONRA gelir
+(`Adım 2a`, aşağıda) — GRANT verdiği tabloların önce var olması gerekir.
 
 ### Adım 2: Migration'ları Çalıştırma
 
@@ -359,6 +365,24 @@ Bu komut:
 - Tüm migration dosyalarını çalıştırır
 - Veritabanı tablolarını oluşturur
 - Gerekli indeksleri ve constraint'leri ekler
+
+### Adım 2a: `app_runtime` GRANT Setini Uygulama (K-2.6.13f — ZORUNLU, idempotent)
+
+Migration'lardan SONRA çalıştırılmalıdır — bu adım `app_runtime`'ın (uygulamanın
+çalışma zamanı rolü) tablo/sütun bazlı GRANT'lerini uygular ve GRANT verdiği
+tabloların VAR OLMASINI gerektirir. `Adım 1a`'nın tersine, migration'lardan
+ÖNCE çalıştırılırsa "relation ... does not exist" ile düşer.
+
+```bash
+npm run db:roles:grants
+```
+
+Tekrar çalıştırmak güvenlidir VE YAKINSAKTIR: betik önce `app_runtime`'ın tüm
+nesne haklarını geri alır (`REVOKE ALL`), sonra ölçülmüş asgari seti yeniden
+kurar — elle verilmiş fazladan bir hak bir sonraki koşumda geri alınır.
+
+Bu adım atlanırsa uygulama ve e2e testleri `permission denied for table ...`
+hatalarıyla durur.
 
 ### Adım 3: Seed Verilerini Yükleme (Opsiyonel)
 
@@ -566,8 +590,16 @@ cp .env.example .env
 # 4. PostgreSQL'i Docker ile başlat
 docker compose up -d postgres
 
+# 4a. Veritabanı rollerini kur (K-2.6.13 — migration'lardan ÖNCE)
+DB_RUNTIME_PASSWORD=<.env'deki DB_RUNTIME_PASSWORD> \
+DB_MIGRATE_PASSWORD=<.env'deki DB_MIGRATE_PASSWORD> \
+  bash scripts/db-roles-setup.sh
+
 # 5. Migration'ları çalıştır
 npm run migration:run
+
+# 5a. app_runtime GRANT setini uygula (K-2.6.13f — migration'lardan SONRA)
+npm run db:roles:grants
 
 # 6. (Opsiyonel) Seed verilerini yükle
 npm run seed:run

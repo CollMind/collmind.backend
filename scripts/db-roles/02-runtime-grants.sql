@@ -15,6 +15,29 @@
 
 \set ON_ERROR_STOP on
 
+-- ── M1 (code-reviewer, 2026-08-16) — betik YAKINSAK değildi: yalnız
+--    EKLİYORDU, hiçbir REVOKE yoktu. Elle verilmiş fazladan bir hak
+--    (ör. yanlışlıkla `GRANT DELETE ON main.plans`) betiği tekrar
+--    çalıştırarak asla geri alınmıyordu — dosya "tek doğruluk kaynağı"
+--    olma iddiasını taşıyordu (bkz. başlık) ama bunu ZORLAMIYORDU.
+--
+--    Önce app_runtime'ın TÜM tablo/sequence/fonksiyon haklarını geri al,
+--    sonra aşağıdaki ölçülmüş seti yeniden kur. Idempotent: hiç hakkı
+--    yoksa REVOKE no-op'tur (hata vermez). Kolon-düzeyi GRANT'ler de
+--    (`UPDATE (alert_sent)` gibi) tablo-düzeyi REVOKE ALL ile geri alınır
+--    (Postgres kolon ayrıcalıklarını tablo ayrıcalığının bir alt kümesi
+--    olarak tutar) — aşağıdaki ölçülmüş kolon-düzeyi GRANT'ler yeniden
+--    uygulanınca aynı dar kapsamla geri gelir.
+--
+--    Bilinçli olarak DAHİL EDİLMEYEN: `REVOKE ... ON SCHEMA` ve
+--    `REVOKE CREATE`/`USAGE ON SCHEMA` — bunlar `01-roles-and-ownership.sql`
+--    tarafından yönetiliyor (şema düzeyi, bu dosyanın kapsamı DEĞİL,
+--    K-2.6.13a). Bu dosya yalnız app_runtime'ın NESNE düzeyi (tablo/
+--    sequence/fonksiyon) haklarını yakınsatır.
+REVOKE ALL ON ALL TABLES IN SCHEMA :"schema" FROM app_runtime;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA :"schema" FROM app_runtime;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA :"schema" FROM app_runtime;
+
 -- ── S3 tur 1 — globalSetup/globalTeardown (test/global-setup.js,
 --    test/global-teardown.js → test/helpers/e2e-row-count.js) app_runtime
 --    ile bağlanıp T-047/T-060 satır-sayısı invaryantını okuyor; bu sekiz

@@ -129,22 +129,33 @@ JWT_EXPIRES_IN=1d
 docker-compose up -d
 ```
 
-4a. **Veritabanı rollerini kurun (K-2.6.13 — idempotent, tekrar çalıştırılabilir):**
+4a. **Veritabanı rollerini kurun (K-2.6.13 — idempotent, tekrar çalıştırılabilir, MİGRASYONLARDAN ÖNCE):**
 ```bash
 DB_RUNTIME_PASSWORD=<.env'deki DB_RUNTIME_PASSWORD> \
 DB_MIGRATE_PASSWORD=<.env'deki DB_MIGRATE_PASSWORD> \
   bash scripts/db-roles-setup.sh
 ```
 Bu betik `app_runtime` (uygulamanın çalışma zamanı rolü — DML, RLS'e tabi,
-DDL yok) ve `app_migrate` (migration/seed rolü — DDL yetkili, tablo sahibi)
-rollerini yaratır. Uygulama artık ayrıcalıklı `postgres` rolüyle
-BAĞLANMAZ — bu adım atlanırsa `npm run start:dev` / `migration:run` /
+DDL yok) ve `app_migrate` (migration/seed rolü — DDL yetkili, tablo/enum/
+fonksiyon sahibi) rollerini yaratır. Uygulama artık ayrıcalıklı `postgres`
+rolüyle BAĞLANMAZ — bu adım atlanırsa `npm run start:dev` / `migration:run` /
 `seed` bağlantı hatasıyla durur (K-2.6.13d: sessiz geri dönüş yok).
 
 5. **Migration'ları çalıştırın (`app_migrate` ile):**
 ```bash
 npm run migration:run
 ```
+
+5a. **`app_runtime` GRANT setini uygulayın (K-2.6.13f — idempotent, tekrar
+çalıştırılabilir, MİGRASYONLARDAN SONRA):**
+```bash
+npm run db:roles:grants
+```
+⚠️ Bu adım `4a`'dan **ayrıdır ve sıralaması önemlidir**: `02-runtime-grants.sql`
+tablolara GRANT verir ve tablolar bu adımdan önce (migration'lar koşmadan)
+yoksa "relation ... does not exist" ile düşer — bu yüzden `4a` şemadan önce,
+`5a` şemadan sonra çalışır. Atlanırsa uygulama `permission denied for table
+...` hatalarıyla durur.
 
 6. **Seed verilerini yükleyin (opsiyonel, `app_migrate` ile):**
 ```bash
