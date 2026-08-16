@@ -15,6 +15,24 @@
 
 \set ON_ERROR_STOP on
 
+-- ⚡ TEK İŞLEM (2026-08-16, code-reviewer B-1 · ölçüldü).
+--    ON_ERROR_STOP altında her ifade AUTOCOMMIT'tir: aşağıdaki `REVOKE ALL`
+--    commit olur, sonraki bir GRANT düşerse betik çıkar ve GERİ ALINAN HAKLAR
+--    GERİ GELMEZ — `app_runtime` SIFIR hakla kalır, her rota
+--    `permission denied` döner.
+--
+--    ⚠️ Ve bu, M1'in (yakınsaklık) kapattığı sınıfın YENİ bir vakasıydı, üstelik
+--    YÖNÜ DAHA KÖTÜ: M1 öncesi betik yalnız EKLİYORDU → hata = no-op, önceki
+--    durum sağlam. M1 sonrası hata = YIKICI ve KALICI.
+--
+--    Tetikleyici uydurma değil, BELGELİ: db-roles-grants.sh · README 5a ·
+--    LOCAL_SETUP "Adım 2a" üçü de "göçlerden ÖNCE koşulursa
+--    `relation ... does not exist` ile düşer" diyor.
+--
+--    PostgreSQL'de GRANT/REVOKE işlemseldir — ölçüldü (Team Lead, canlı DB,
+--    ROLLBACK'li): işlem içinde hak 0'a düştü, ROLLBACK sonrası 1'e döndü.
+BEGIN;
+
 -- ── M1 (code-reviewer, 2026-08-16) — betik YAKINSAK değildi: yalnız
 --    EKLİYORDU, hiçbir REVOKE yoktu. Elle verilmiş fazladan bir hak
 --    (ör. yanlışlıkla `GRANT DELETE ON main.plans`) betiği tekrar
@@ -317,6 +335,8 @@ GRANT INSERT ON :"schema".plan_approval_history TO app_runtime;
 --    `agreement_transactions` INSERT — off-invoice transaction oluşturma
 --      (POST /agreement-transactions, createOffInvoiceTransaction) —
 --      SELECT/DELETE zaten vardı, INSERT hiç granted değildi.
+--      ⚠️ BAYAT (2026-08-16, KARAR 1): o DELETE KALDIRILDI — bu tablo bir
+--      defter kaydıdır (K-2.3.4 · INV-L-003). Bugün: SELECT + INSERT.
 --    `admin_audit_logs` UPDATE — YALNIZ `alert_sent` SÜTUNU (BRD "audit
 --      immutable" ilkesiyle çelişmez: bu satırın OLAY İÇERİĞİNİ (action,
 --      entity, timestamp) değil, bir bildirim teslim bayrağını günceller —
@@ -353,4 +373,9 @@ GRANT UPDATE (is_reversed, updated_at) ON :"schema".agreement_transactions TO ap
 --    ile yakalanmış OLMALIYDI, tur 3'te bu dosya henüz taranmamıştı).
 --    Aynı sınıf: `admin_audit_logs` (entity_type='mechanic') DELETE'i
 --    zaten vardı (tur 5, genel DELETE).
+--    ⚠️ BAYAT (2026-08-16, KARAR 1): o DELETE de KALDIRILDI (K-2.11.6 ·
+--    K-2.11.7 — denetim kaydı DB seviyesinde korunur). İlgili test temizliği
+--    artık DDL-yetkili bağlantı üzerinden koşuyor.
 GRANT DELETE ON :"schema".mechanics TO app_runtime;
+
+COMMIT;

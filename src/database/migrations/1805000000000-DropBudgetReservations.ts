@@ -23,7 +23,8 @@ import {
  * yoktur") doğrudan ihlal eder — canlandırmak bir port değil bir kural ihlali
  * olurdu.
  *
- * `BudgetReservation` entity'si `ALL_ENTITIES`'te (src/config/typeorm.config.ts)
+ * `BudgetReservation` entity'si `ALL_ENTITIES`'te (src/database/entities/
+ * all-entities.ts — liste 8f65826'da typeorm.config.ts'ten BURAYA taşındı)
  * KAYITLI DEĞİL — ölçüldü, grep 0 sonuç. Yani bu DROP bir `migration:generate`
  * diff'ini tetiklemez; entity dosyasına (src/database/entities/budget-reservation
  * .entity.ts) ayrıca (backend-engineer tarafından, aynı dalgada) dokunulmalı.

@@ -81,6 +81,16 @@ SELECT
 --    — ürün sahibi REDDETTİ, (b) migration dosyasının kendisini değiştirmek
 --    — `src/database/migrations/`, bu task'ın "src/'ye DOKUNMA" sınırının
 --    içinde (ayrı bir B4 turu gerektirir). **Team Lead'e bildirildi — DUR.**
+--
+-- ⚡ GÜNCELLEME (2026-08-16, commit 8f65826): şık (b) UYGULANDI ve bu blok
+--    ARTIK BAYAT — yukarıdaki "EXIT 1" tarifi bugün geçerli DEĞİL.
+--    21 göç dosyasının hepsinde koşulsuz `CREATE SCHEMA` bir koşullu bloğa
+--    çevrildi; grep'lenebilir token: `pg_namespace WHERE nspname`.
+--    Böylece şema VARKEN izin denetimi hiç tetiklenmiyor, ve `app_migrate`
+--    veritabanı düzeyi CREATE hakkını ALMIYOR.
+--
+--    ⚠️ Blok silinmedi (F12/0006-R): "neden bu karar verilmişti" kayıtta
+--    kalsın. Ama okuyan kişi DURMAMALI — iş yapıldı.
 CREATE SCHEMA IF NOT EXISTS :"schema";
 
 -- 3) Şema düzeyi haklar. app_migrate şemada nesne yaratabilir (CREATE);
