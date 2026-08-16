@@ -178,10 +178,6 @@ export class User extends BaseEntity {
     theme?: 'light' | 'dark' | 'auto';
   };
 
-  // Permissions (for fine-grained access control)
-  @Column({ type: 'jsonb', nullable: true })
-  permissions?: string[];
-
   // Relations
   @ManyToOne(() => Tenant, (tenant) => tenant.users)
   @JoinColumn({ name: 'tenant_id' })

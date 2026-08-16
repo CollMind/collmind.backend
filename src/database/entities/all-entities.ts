@@ -58,12 +58,7 @@ import { Tactic } from './tactic.entity';
 // B dalgası (T-211)
 import { BudgetPolicy } from './budget-policy.entity';
 import { ApprovalPolicy } from './approval-policy.entity';
-import {
-  Role,
-  Capability,
-  RoleCapability,
-  UserRoleAssignment,
-} from './role.entity';
+import { Role, UserRoleAssignment } from './role.entity';
 import { Claim } from './claim.entity';
 import { ClaimMatch } from './claim-match.entity';
 import { TacticRealization } from './tactic-realization.entity';
@@ -132,8 +127,6 @@ export const ALL_ENTITIES = [
   BudgetPolicy,
   ApprovalPolicy,
   Role,
-  Capability,
-  RoleCapability,
   UserRoleAssignment,
   Claim,
   ClaimMatch,
