@@ -106,6 +106,31 @@ describe('K-2.6.13 AC#3 — app_runtime negatif yetki testleri', () => {
     expect(result).toBeDefined();
   });
 
+  it.each(['ledger_entries', 'admin_audit_logs', 'agreement_transactions'])(
+    'K-2.6.13 KARAR 1: %s üzerinde DELETE reddedilir (defter/denetim kaydı — K-2.3.4/K-2.11.6/K-2.11.7/INV-L-003, DB seviyesinde korunur)',
+    async (table) => {
+      // WHERE false: yukarıdaki UPDATE testleriyle aynı desen — yalnızca
+      // izin denetimini tetikler, satır değiştirmeyi amaçlamaz.
+      await expect(
+        runtimeDs.query(`DELETE FROM ${SCHEMA}.${table} WHERE false`),
+      ).rejects.toThrow(
+        new RegExp(`permission denied for table ${table}`, 'i'),
+      );
+    },
+  );
+
+  it("POZİTİF KONTROL: DELETE hakkı BÜTÜN app_runtime'dan değil, YALNIZ bu üç tablodan kaldırıldı (agreements hâlâ DELETE edilebilir)", async () => {
+    // Bir önceki testin iddiasının anlamlı olması için: DELETE verb'inin
+    // app_runtime'dan TÜMÜYLE kaldırılmadığını, yalnız K-2.6.13 KARAR 1'in
+    // hedeflediği üç defter/denetim tablosundan kaldırıldığını göstermek
+    // gerekir — yoksa "app_runtime'ın DELETE'i genel olarak bozuk" olasılığı
+    // elenmemiş olur (§2.7 — negatif sonuç, pozitif kontrolsüz raporlanamaz).
+    const result = await runtimeDs.query(
+      `DELETE FROM ${SCHEMA}.agreements WHERE false`,
+    );
+    expect(result).toBeDefined();
+  });
+
   it('POZİTİF KONTROL: app_migrate AYNI CREATE TABLE işlemini başarıyla çalıştırabilir', async () => {
     // İzin farkının ROL'e özgü olduğunu (şemanın kendisi bozuk/erişilemez
     // olmadığını) doğrular — aynı ifade app_migrate ile başarır.

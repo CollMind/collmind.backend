@@ -43,38 +43,51 @@ SELECT
   END AS ddl
 \gexec
 
+-- 2b) K-2.6.13 KARAR 2 (ürün sahibi, 2026-08-16) — ŞEMAYI BU BETİK YARATIR,
+--    app_migrate'e VERİTABANI DÜZEYİ CREATE VERİLMEZ.
+--
+--    Bulgu (B2'nin kendi düzeltmesinden SONRA bile ölçülmüştü): göç
+--    zincirinin İLK adımı (`CreateTenants1704067200000`,
+--    `CREATE SCHEMA IF NOT EXISTS "main"`) DATABASE düzeyinde CREATE ister;
+--    şema-düzeyi CREATE (aşağıdaki #3) bunu KARŞILAMAZ.
+--
+--    Ürün sahibinin kararı: (a) app_migrate'e `GRANT CREATE ON DATABASE`
+--    verMEK yerine (b) şema yaratma ihtiyacını zaten AYRICALIKLI bağlantıyla
+--    çalışan bu betiğe TAŞI (desen `K-2.6.13c`'nin aynısı — "roller bir
+--    kurulum betiğinde tanımlanır, bir göçte değil"). Aşağıdaki satır bunu
+--    yapıyor ve İZOLE, TEK KULLANIMLIK bir container'da doğrulandı (gerçek
+--    dev DB'ye dokunulmadı): şema burada (superuser ile) başarıyla
+--    yaratılıyor, `has_database_privilege('app_migrate', db, 'CREATE')`
+--    sonrasında da hâlâ `f`.
+--
+--    ⚠️ AMA bu KARAR 2'nin TAMAMINI KAPATMIYOR — aynı izole container'da
+--    RE-ÖLÇÜLDÜ (2026-08-16, devam turu) ve önceki "olası düzeltme" notunun
+--    varsaydığının AKSİNE, şemanın ÖNCEDEN VAR OLMASI migration'ı KURTARMIYOR:
+--      app_migrate: CREATE SCHEMA IF NOT EXISTS "main"  → HÂLÂ
+--                   "permission denied for database" (şema zaten VARKEN de)
+--    PostgreSQL `CREATE SCHEMA IF NOT EXISTS` için DATABASE-düzeyi CREATE
+--    denetimini şemanın var olup olmadığına BAKMADAN yapıyor — "IF NOT
+--    EXISTS" yalnız "already exists" hatasını bastırıyor, izin denetimini
+--    DEĞİL. Sonuç, tam bir taze-DB koşumunda ölçüldü:
+--      taze şema (init-schema.sql YOK) → bu betik (schema+roller) → EXIT 0
+--      → `npm run migration:run` (app_migrate)                    → EXIT 1
+--        (`CreateTenants1704067200000.up()`'ın İLK satırı, 42501)
+--    Gerçek dev DB'de bu görünmüyor SADECE çünkü o migration zaten
+--    `migrations` tablosuna KAYITLI (superuser'la, app_migrate var olmadan
+--    önce uygulanmıştı — ölçüldü, `id=133`) ve TypeORM onu bir daha
+--    ÇALIŞTIRMIYOR. Tamamen taze bir kurulumda (Cloud SQL / yeni ortam,
+--    `migrations` tablosu boş) `migration:run` İLK ADIMDA hâlâ düşer.
+--    Kalan iki yol da bu turun KAPSAMI DIŞI: (a) `GRANT CREATE ON DATABASE`
+--    — ürün sahibi REDDETTİ, (b) migration dosyasının kendisini değiştirmek
+--    — `src/database/migrations/`, bu task'ın "src/'ye DOKUNMA" sınırının
+--    içinde (ayrı bir B4 turu gerektirir). **Team Lead'e bildirildi — DUR.**
+CREATE SCHEMA IF NOT EXISTS :"schema";
+
 -- 3) Şema düzeyi haklar. app_migrate şemada nesne yaratabilir (CREATE);
 --    app_runtime yalnız var olan nesnelere erişebilir (USAGE) — CREATE YOK.
 --    Bunlar üst seviyede (DO/$$ içinde DEĞİL) — `:"schema"` burada çalışır.
 GRANT USAGE, CREATE ON SCHEMA :"schema" TO app_migrate;
 GRANT USAGE ON SCHEMA :"schema" TO app_runtime;
-
--- ⚠️ 3b — B1/B2/M1'İN DIŞINDA, bu turda TESADÜFEN ölçülmüş DÖRDÜNCÜ bir
---    bulgu (Team Lead'e raporlandı, henüz ONAYLI DEĞİL — bu yüzden burada
---    AKTİF bir GRANT YOK, yalnız ölçüm notu):
---
---    `CREATE SCHEMA IF NOT EXISTS "main"` (`CreateTenants1704067200000`,
---    göç zincirinin İLK adımı) — şema ZATEN VARKEN bile (docker/
---    init-schema.sql onu superuser'la önceden yaratmış olsa dahi) bu
---    ifade DATABASE düzeyinde CREATE ister; şema-düzeyi CREATE (#3
---    yukarısı) bunu KARŞILAMIYOR. Ölçüldü (izole, tek kullanımlık
---    container — gerçek dev DB'ye dokunulmadı):
---      app_migrate: CREATE SCHEMA IF NOT EXISTS "main" → permission denied
---                   for database ‹db›  (schema zaten vardı, no-op OLACAKTI)
---      app_migrate: CREATE TABLE main.x (...)          → başarılı (§3 yeterli)
---    Gerçek dev DB'de bu görünmüyor çünkü o migration zaten `app_migrate`
---    var olmadan önce (superuser'la) uygulanmıştı — ölçüldü:
---    `has_database_privilege('app_migrate','collmind_tpm','CREATE')` = f.
---    Yani TAMAMEN taze bir kurulumda (migrations tablosu boş) `app_migrate`
---    ile `migration:run` İLK ADIMDA düşer — B2'nin "taze şemada kurulum
---    çökmemeli" kabul ölçütü, B2'nin kendi düzeltmesinden SONRA bile bu
---    yüzden hâlâ karşılanmıyor.
---    Olası düzeltme (uygulanmadı, kapsam onayı bekliyor):
---      SELECT format('GRANT CREATE ON DATABASE %I TO app_migrate', current_database()) \gexec
---    ⚠️ Bu, app_migrate'e veritabanında YENİ ŞEMA yaratma hakkı verir —
---    yalnız `:"schema"` içinde nesne yaratmaktan (§3) daha GENİŞ bir
---    yetki; "ölçülmüş asgari GRANT" ilkesiyle (K-2.6.13f) gerilimli —
---    bilinçli bir onay ister, sessizce genişletilmedi.
 
 -- 4) Var olan nesnelerin sahipliğini app_migrate'e taşı. Idempotent — zaten
 --    sahipse no-op, hata vermez. Bugüne kadar `postgres` (superuser) ile

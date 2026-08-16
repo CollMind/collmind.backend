@@ -68,6 +68,7 @@ import {
   cleanupTestPlans,
   E2EFixture,
 } from './helpers/seed-e2e';
+import { getAdminDataSource } from './helpers/admin-datasource';
 
 describe('C3 — write-side scale validation, live route (E2E)', () => {
   let app: INestApplication;
@@ -734,7 +735,14 @@ describe('C3 — write-side scale validation, live route (E2E)', () => {
       // same pattern as cleanupTestPlans/cleanupTestAgreements) so a partial
       // failure never leaves the mechanics row deleted but its audit trail
       // dangling with no way to re-target it.
-      await dataSource.query(
+      //
+      // K-2.6.13 KARAR 1 (2026-08-16): `app_runtime`'ın `admin_audit_logs`
+      // üzerinde artık DELETE hakkı yok (K-2.11.6/K-2.11.7) — bu satır
+      // `app_migrate` bağlantısı (`getAdminDataSource()`) üzerinden çalışır.
+      // `main.mechanics` DELETE'i (aşağıda) etkilenmedi, `dataSource`
+      // (app_runtime) üzerinde kalır.
+      const adminDataSource = await getAdminDataSource();
+      await adminDataSource.query(
         `DELETE FROM main.admin_audit_logs
           WHERE tenant_id = $1 AND entity_type = 'mechanic'
             AND entity_id = ANY($2::uuid[])`,

@@ -27,6 +27,7 @@ import { randomUUID } from 'crypto';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache } from './helpers/auth';
 import { loadE2EFixture, E2EFixture } from './helpers/seed-e2e';
+import { getAdminDataSource } from './helpers/admin-datasource';
 
 describe('T-057 — uçtan uca (split dimension, items 1/3/5)', () => {
   let app: INestApplication;
@@ -90,6 +91,13 @@ describe('T-057 — uçtan uca (split dimension, items 1/3/5)', () => {
 
   afterAll(async () => {
     try {
+      // K-2.6.13 KARAR 1 (2026-08-16): `app_runtime`'ın `ledger_entries`/
+      // `agreement_transactions`/`admin_audit_logs` üzerinde artık DELETE
+      // hakkı YOK (K-2.3.4/K-2.11.6/K-2.11.7/INV-L-003 — defter/denetim
+      // kaydı, DB seviyesinde korunur). Bu üç tabloyu hedefleyen satırlar
+      // aşağıda `adminDataSource` (app_migrate) kullanır; geri kalanı
+      // `dataSource` (app_runtime, hâlâ DELETE'e sahip) üzerinden yürür.
+      const adminDataSource = await getAdminDataSource();
       for (const planId of createdPlanIds) {
         await dataSource.query(
           `DELETE FROM main.plan_approval_history WHERE plan_id = $1`,
@@ -119,11 +127,11 @@ describe('T-057 — uçtan uca (split dimension, items 1/3/5)', () => {
         ]);
       }
       for (const agreementId of createdAgreementIds) {
-        await dataSource.query(
+        await adminDataSource.query(
           `DELETE FROM main.ledger_entries WHERE source_id = $1`,
           [agreementId],
         );
-        await dataSource.query(
+        await adminDataSource.query(
           `DELETE FROM main.agreement_transactions WHERE agreement_id = $1`,
           [agreementId],
         );
@@ -141,13 +149,13 @@ describe('T-057 — uçtan uca (split dimension, items 1/3/5)', () => {
       }
       const allEntityIds = [...createdPlanIds, ...createdAgreementIds];
       if (allEntityIds.length > 0) {
-        await dataSource.query(
+        await adminDataSource.query(
           `DELETE FROM main.admin_audit_logs WHERE entity_id = ANY($1::uuid[])`,
           [allEntityIds],
         );
       }
       for (const batchId of createdBatchIds) {
-        await dataSource.query(
+        await adminDataSource.query(
           `DELETE FROM main.ledger_entries WHERE source_id IN (SELECT id FROM main.on_invoice_entries WHERE batch_id = $1)`,
           [batchId],
         );
@@ -170,7 +178,7 @@ describe('T-057 — uçtan uca (split dimension, items 1/3/5)', () => {
           `DELETE FROM main.budget_transactions WHERE envelope_id = ANY($1::uuid[])`,
           [envIds],
         );
-        await dataSource.query(
+        await adminDataSource.query(
           `DELETE FROM main.ledger_entries WHERE budget_envelope_id = ANY($1::uuid[])`,
           [envIds],
         );

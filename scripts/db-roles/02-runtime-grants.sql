@@ -141,9 +141,9 @@ GRANT SELECT ON :"schema".sales_actuals TO app_runtime;
 --    - `agreements` DELETE: cleanupTestAgreements son adım.
 --    - `approval_requests` DELETE: cleanupTestPlans + cleanupTestAgreements
 --      (entity_type='PLAN'|'AGREEMENT', polimorfik — T-060).
---    - `ledger_entries` DELETE: cleanupTestTransactions + cleanupTestAgreements.
---    - `agreement_transactions` DELETE: cleanupTestTransactions +
---      cleanupTestAgreements.
+--    - `ledger_entries`/`agreement_transactions`/`admin_audit_logs` DELETE:
+--      bkz. K-2.6.13 KARAR 1 notu aşağıda — bu üç tablo için app_runtime'a
+--      artık DELETE VERİLMİYOR, test temizliği app_migrate'e taşındı.
 --    - `plan_fus`/`plan_skus`/`plan_mechanic_values`/`plan_approval_history`
 --      DELETE: cleanupTestPlans (FK sırası).
 --    - `plans` DELETE: cleanupTestPlans son adım.
@@ -151,7 +151,6 @@ GRANT SELECT ON :"schema".sales_actuals TO app_runtime;
 --    - `users` DELETE: cleanupTestUsers (T-060, hard-delete, DELETE
 --      /users endpoint'i olmadığı için testin kendi ürettiği kullanıcıyı
 --      DB'den siler).
-GRANT DELETE ON :"schema".admin_audit_logs TO app_runtime;
 GRANT DELETE ON :"schema".budget_transactions TO app_runtime;
 GRANT DELETE ON :"schema".plan_approval_history TO app_runtime;
 GRANT SELECT, INSERT ON :"schema".agreements TO app_runtime;
@@ -162,8 +161,51 @@ GRANT INSERT ON :"schema".sales_actual_batches TO app_runtime;
 GRANT SELECT ON :"schema".skus TO app_runtime;
 GRANT DELETE ON :"schema".agreements TO app_runtime;
 GRANT DELETE ON :"schema".approval_requests TO app_runtime;
-GRANT DELETE ON :"schema".ledger_entries TO app_runtime;
-GRANT DELETE ON :"schema".agreement_transactions TO app_runtime;
+
+-- ── K-2.6.13 KARAR 1 (ürün sahibi, 2026-08-16) — `app_runtime`'ın
+--    `ledger_entries` / `admin_audit_logs` / `agreement_transactions`
+--    üzerindeki DELETE hakkı BİLİNÇLİ OLARAK KALDIRILDI (yukarıda tur 5
+--    bloğunda önceden veriliyordu — bkz. bu dosyanın git geçmişi).
+--
+--    Gerekçe (kural dayanağı, ürün sahibinin verdiği):
+--      K-2.3.4   "Hiçbir defter kaydı silinemez — ne kalıcı ne mantıksal"
+--      K-2.11.6  "Denetim kaydı değiştirilemez ve silinemez"
+--      K-2.11.7  "Bu, uygulama katmanında DEĞİL veritabanı seviyesinde
+--                 korunur"
+--      INV-L-003 ledger_entries şemasında `deleted_at` HİÇ YOK (soft-delete
+--                 mekanizması yok — silme, silmedir)
+--    `app_runtime`'ın bu üç tabloda DELETE taşıması, K-2.11.7'nin
+--    "veritabanı seviyesinde korunur" iddiasını yapı gereği ihlal
+--    ediyordu: uygulama kodu hiçbir defter/denetim satırını silmese bile,
+--    DB düzeyinde hak var olduğu sürece kural yalnızca UYGULAMA
+--    DAVRANIŞINA (kod incelemesine) bağlıydı, DB'ye değil.
+--
+--    Ölçüm (2026-08-16, data-engineer, K-2.6.13 ADIM devam turu): bu üç
+--    DELETE hakkının TEK tüketicisi test temizliğiydi — üretim çağrı
+--    yolunda bu üç tabloya hard-DELETE eden HİÇBİR rota yok (ölçüldü:
+--    `grep -rn '\.delete(\|\.remove(\|DELETE FROM' src/modules/ledger
+--    src/modules/audit src/modules/agreement-transactions` → 0 üretim
+--    yolu; tüm silme çağrıları `softRemove`/`deleted_at` üzerinden başka
+--    tablolara gidiyor). GRANT kaldırıldığında `npm run test:e2e` kırıldı
+--    (permission denied for table ledger_entries/admin_audit_logs/
+--    agreement_transactions), ve kırılan HER nokta `test/helpers/
+--    seed-e2e.ts`'in cleanup fonksiyonları + üç e2e spec dosyasının
+--    (`on-invoice-split-envelope`, `mechanic-bound-guard`,
+--    `plan-scale-validation`) kendi inline temizlik sorgularıydı — üçü de
+--    `app.get<DataSource>(getDataSourceToken())` (yani app_runtime bağlantısı)
+--    kullanıyordu. Düzeltme test tarafında yapıldı: bu üç tablo için
+--    DELETE artık `test/helpers/admin-datasource.ts`'in sağladığı AYRI bir
+--    `app_migrate` bağlantısıyla çalışıyor (bkz. o dosyanın başlığı) —
+--    app_runtime'ın GRANT seti genişletilmedi, test ihtiyacı taşındı
+--    (`§2.5`'in sınırı: "sessiz fallback" değil, açık ve gerekçeli bir
+--    yeniden yönlendirme).
+--
+--    ⚠️ Bir sonraki S3/genişletme turu bu üç tabloda YENİDEN bir DELETE
+--    ihtiyacı ÖLÇERSE (docker log'da "permission denied for DELETE"), bu
+--    bir REGRESYON İHTİMALİDİR, otomatik bir GRANT değil — önce üretim
+--    yolu mu test yolu mu olduğu ayırt edilmeli (yöntem: bu envanterin S3
+--    döngüsü + `git blame`/stack trace). Üretim yoluysa bu bir K-2.11.7
+--    İHLALİDİR ve Team Lead'e bildirilir, sessizce GRANT edilmez.
 GRANT DELETE ON :"schema".plan_fus TO app_runtime;
 GRANT DELETE ON :"schema".plan_skus TO app_runtime;
 GRANT DELETE ON :"schema".plan_mechanic_values TO app_runtime;

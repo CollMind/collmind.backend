@@ -37,6 +37,7 @@ import {
   resolveIdByCode,
   E2EFixture,
 } from './helpers/seed-e2e';
+import { getAdminDataSource } from './helpers/admin-datasource';
 
 describe('Mechanic min/max bound guard — live route (T-084, E2E)', () => {
   let app: INestApplication;
@@ -114,7 +115,13 @@ describe('Mechanic min/max bound guard — live route (T-084, E2E)', () => {
         .map((r) => r.id)
         .filter((id) => !auditIdsBefore.has(id));
       if (newAuditIds.length > 0) {
-        await dataSource.query(
+        // K-2.6.13 KARAR 1 (2026-08-16): `app_runtime`'ın `admin_audit_logs`
+        // üzerinde artık DELETE hakkı yok (K-2.11.6/K-2.11.7 — denetim
+        // kaydı DB seviyesinde silinemez korunur). Bu test-scoped temizlik
+        // `app_migrate` bağlantısıyla yürür (bkz. test/helpers/
+        // admin-datasource.ts).
+        const adminDataSource = await getAdminDataSource();
+        await adminDataSource.query(
           `DELETE FROM main.admin_audit_logs WHERE id = ANY($1::uuid[])`,
           [newAuditIds],
         );

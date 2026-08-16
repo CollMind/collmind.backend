@@ -15,6 +15,7 @@ import { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { loginAs } from './auth';
+import { getAdminDataSource } from './admin-datasource';
 
 export interface E2EFixture {
   tenantId: string;
@@ -169,12 +170,19 @@ export async function loadE2EFixture(
  * kapsam dışı bıraktı) burada bir seviye daha erken tekrarlamıştı. Şimdi bu
  * fonksiyon da transaction id'lerini silmeden ÖNCE yakalayıp kendi
  * admin_audit_logs izlerini temizliyor.
+ *
+ * K-2.6.13 KARAR 1 (2026-08-16): `app_runtime`'ın `ledger_entries` /
+ * `admin_audit_logs` / `agreement_transactions` üzerinde artık DELETE hakkı
+ * YOK (kural: K-2.3.4/K-2.11.6/K-2.11.7/INV-L-003 — bu üç tablo bir
+ * defter/denetim kaydıdır). Bu fonksiyon yalnızca bu üç tabloya dokunduğu
+ * için TAMAMEN `app_migrate` bağlantısına (`getAdminDataSource()`) taşındı
+ * — app'in kendi (app_runtime) DataSource'u artık burada KULLANILMIYOR.
  */
 export async function cleanupTestTransactions(
-  app: INestApplication,
+  _app: INestApplication,
   agreementId: string,
 ): Promise<void> {
-  const dataSource = app.get<DataSource>(getDataSourceToken());
+  const dataSource = await getAdminDataSource();
 
   const targetTx = await dataSource.query(
     `SELECT id FROM main.agreement_transactions
@@ -248,13 +256,23 @@ export async function cleanupTestTransactions(
  * yoktu). Kök neden `cleanupTestPlans`/`cleanupTestAgreements`'ın bu iki
  * tabloyu hiç kapsamamasıydı (FK cascade eksikliği + temizlik sorgusunun
  * kapsam dışı bırakması, ikisi birden).
+ *
+ * K-2.6.13 KARAR 1 (2026-08-16): bu fonksiyon `ledger_entries`/
+ * `admin_audit_logs`/`agreement_transactions`'ı da sildiği için (ki
+ * `app_runtime`'ın artık bu üç tabloda DELETE hakkı yok — bkz.
+ * `cleanupTestTransactions`'ın JSDoc'u) TAMAMEN `app_migrate` bağlantısına
+ * taşındı. `budget_transactions`/`approval_requests`/`agreements` hâlâ
+ * `app_runtime`'da DELETE'e sahip olsa da, tek bir FK-sıralı zincir içinde
+ * iki farklı bağlantı arasında geçiş yapmak yerine TÜMÜ aynı (app_migrate)
+ * bağlantı üzerinden yürütülüyor — daha basit, ve app_migrate zaten bu
+ * tabloların hepsinin SAHİBİ.
  */
 export async function cleanupTestAgreements(
-  app: INestApplication,
+  _app: INestApplication,
   tenantId: string,
   namePrefix: string = 'E2E-',
 ): Promise<void> {
-  const dataSource = app.get<DataSource>(getDataSourceToken());
+  const dataSource = await getAdminDataSource();
 
   const agreements = await dataSource.query(
     `SELECT id FROM main.agreements
@@ -335,13 +353,17 @@ export async function cleanupTestAgreements(
  * bu doğrudan SQL yalnızca test ortamında, test helper'ından çağrılır
  * (tıpkı `cleanupTestTransactions`'ın ledger/agreement_transactions temizliği
  * gibi).
+ *
+ * K-2.6.13 KARAR 1 (2026-08-16): `admin_audit_logs` DELETE'i içerdiği için
+ * (bkz. `cleanupTestTransactions`'ın JSDoc'u) TAMAMEN `app_migrate`
+ * bağlantısına taşındı.
  */
 export async function cleanupSalesActuals(
-  app: INestApplication,
+  _app: INestApplication,
   tenantId: string,
   fiscalPeriodPrefix: string = '2027-',
 ): Promise<void> {
-  const dataSource = app.get<DataSource>(getDataSourceToken());
+  const dataSource = await getAdminDataSource();
 
   const batches = await dataSource.query(
     `SELECT id FROM main.sales_actual_batches
