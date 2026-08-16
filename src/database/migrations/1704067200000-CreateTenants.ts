@@ -2,8 +2,33 @@ import { MigrationInterface, QueryRunner, Table, TableIndex } from 'typeorm';
 
 export class CreateTenants1704067200000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Create schema if not exists
-    await queryRunner.query(`CREATE SCHEMA IF NOT EXISTS "main"`);
+    // K-2.6.13(c): `CREATE SCHEMA IF NOT EXISTS` PostgreSQL'de `CREATE`
+    // hakkını şemanın zaten var olup olmadığına BAKMADAN denetler — yani
+    // migration'ları koşturan DDL-yetkili role yalnız `main` şeması içinde
+    // DDL izni verilen (veritabanı seviyesinde `CREATE` izni olmayan) bir
+    // ortamda, şema zaten mevcutken bile bu satır "permission denied for
+    // database" ile düşer (ölçüldü, gerçek dev DB, ADR/ürün sahibi kararı).
+    // Şema varlığını önce sorgulayıp yalnız YOKSA `CREATE SCHEMA`'yı
+    // çalıştırmak, izin denetimini şema zaten var olan yolun dışına çıkarır
+    // — sonuç (şema var) aynı kalır, davranış değişmez. Şema hiç yoksa (taze
+    // DB, `setup.sh` koşulmamış) bu blok YİNE `CREATE SCHEMA`'yı çalıştırır
+    // ve eksik izinde YİNE gürültülü düşer — bu kasıtlı: `setup.sh`
+    // belgelenmiş bir ön koşuldur, atlandığında sessiz başarı değil,
+    // gürültülü hata istenir.
+    //
+    // ⚠️ Bu dosyaya (K-2.6.13d/AC#8(a) guard'ı) DDL-yetkili rolün adını
+    // LİTERAL olarak yazma — guard `src/` içindeki dosyaları bu ada göre
+    // tarar ve yalnız dört dosyaya izin verir (migration'lar ONLARDAN biri
+    // DEĞİL). Yukarıdaki paragraf bilerek o adı kullanmıyor.
+    await queryRunner.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT FROM pg_namespace WHERE nspname = 'main'
+        ) THEN
+          EXECUTE 'CREATE SCHEMA main';
+        END IF;
+      END $$;
+    `);
 
     // Create enum types if not exists
     await queryRunner.query(`

@@ -1,16 +1,20 @@
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { ALL_ENTITIES } from './typeorm.config';
+import { ALL_ENTITIES } from '../database/entities/all-entities';
 
 /**
  * T-224 — pin testi.
  *
- * `ALL_ENTITIES` (`typeorm.config.ts`) uygulamanın TEK entity kaynağıdır:
- * CLI migration (`dataSourceOptions.entities`) VE runtime (`DatabaseModule`)
- * ikisi de buradan okur (bkz. `typeorm.config.ts` başındaki T-224 notu).
- * Önceden üç ayrı, elle tutulan liste vardı; `B` dalgası (T-219) yalnız
- * birini güncelledi, ikincisini unuttu, ve 17/17 e2e dosyası bootstrap'ta
- * çöktü (`İlke 4`).
+ * `ALL_ENTITIES` (K-2.6.13(B4)'ten beri `../database/entities/all-entities.ts`
+ * — önceden `typeorm.config.ts`'te tanımlıydı, oradan TAŞINDI çünkü o dosya
+ * modül seviyesinde bir kimlik-çözümleme çağrısı çalıştırıyor ve bu import
+ * zinciri runtime sürecini gereksiz yere DDL-yetkili rolün kimlik
+ * bilgilerine bağımlı kılıyordu — bkz. `all-entities.ts` başındaki not)
+ * uygulamanın TEK entity kaynağıdır: CLI migration
+ * (`typeorm.config.ts`'in `dataSourceOptions.entities`'i) VE runtime
+ * (`DatabaseModule`) ikisi de buradan okur. Önceden üç ayrı, elle tutulan
+ * liste vardı; `B` dalgası (T-219) yalnız birini güncelledi, ikincisini
+ * unuttu, ve 17/17 e2e dosyası bootstrap'ta çöktü (`İlke 4`).
  *
  * Bu test o tek listenin diskteki `@Entity`/`@ViewEntity` sınıflarıyla
  * SENKRON kaldığını pinler. Yeni bir entity dosyası eklenip `ALL_ENTITIES`'e
@@ -162,7 +166,7 @@ describe('entity list — tek kaynak pini (T-224)', () => {
   // (`src/database/entities/budget-reservation.entity.ts` kaldırıldı,
   // `main.budget_reservations` migration 1805000000000 ile düşürüldü). Disk artık
   // `ALL_ENTITIES` ile senkron; aşağıdaki pin bu yüzden `it.skip` değil, aktif.
-  it('PİN: diskteki @Entity/@ViewEntity sınıfları == ALL_ENTITIES (typeorm.config.ts)', () => {
+  it('PİN: diskteki @Entity/@ViewEntity sınıfları == ALL_ENTITIES (database/entities/all-entities.ts)', () => {
     const diskNames = scanDiskEntityClassNames();
     const canonicalNames = ALL_ENTITIES.map((e) => e.name).sort();
 

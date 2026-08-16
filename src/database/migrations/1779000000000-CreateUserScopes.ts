@@ -26,8 +26,21 @@ export class CreateUserScopes1779000000000 implements MigrationInterface {
   transaction = false;
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Schema garanti
-    await queryRunner.query(`CREATE SCHEMA IF NOT EXISTS "main"`);
+    // K-2.6.13(c) — koşullu şema yaratma (tam gerekçe:
+    // CreateTenants1704067200000, aynı görev). `CREATE SCHEMA IF NOT EXISTS`
+    // PostgreSQL'de DATABASE-düzeyi CREATE iznini şemanın var olup
+    // olmadığına BAKMADAN denetler; DDL-yetkili rol yalnız şema-içi CREATE alır
+    // (KARAR 2, scripts/db-roles/01-roles-and-ownership.sql). Sonuç aynı
+    // kalır — yalnız izin denetimi şema zaten varken yolun dışına çıkar.
+    await queryRunner.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT FROM pg_namespace WHERE nspname = 'main'
+        ) THEN
+          EXECUTE 'CREATE SCHEMA main';
+        END IF;
+      END $$;
+    `);
 
     // Tablo oluşturma (IF NOT EXISTS ile idempotent)
     await queryRunner.query(`

@@ -8,8 +8,21 @@ import {
 
 export class CreateNotifications1704067620000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Create schema if not exists
-    await queryRunner.query(`CREATE SCHEMA IF NOT EXISTS "main"`);
+    // K-2.6.13(c) — koşullu şema yaratma (tam gerekçe:
+    // CreateTenants1704067200000, aynı görev). `CREATE SCHEMA IF NOT EXISTS`
+    // PostgreSQL'de DATABASE-düzeyi CREATE iznini şemanın var olup
+    // olmadığına BAKMADAN denetler; DDL-yetkili rol yalnız şema-içi CREATE alır
+    // (KARAR 2, scripts/db-roles/01-roles-and-ownership.sql). Sonuç aynı
+    // kalır — yalnız izin denetimi şema zaten varken yolun dışına çıkar.
+    await queryRunner.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT FROM pg_namespace WHERE nspname = 'main'
+        ) THEN
+          EXECUTE 'CREATE SCHEMA main';
+        END IF;
+      END $$;
+    `);
 
     // Create enum types if not exists
     await queryRunner.query(`

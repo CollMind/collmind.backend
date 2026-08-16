@@ -2,60 +2,15 @@ import { DataSource, DataSourceOptions } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { config } from 'dotenv';
 import { SnakeCaseNamingStrategy } from '../database/strategies/snake-case-naming.strategy';
-// Import all entities explicitly to ensure they are loaded correctly
-import { User } from '../database/entities/user.entity';
-import { Tenant } from '../database/entities/tenant.entity';
-import { Customer } from '../database/entities/customer.entity';
-import { BudgetEnvelope } from '../database/entities/budget-envelope.entity';
-import { BudgetTransaction } from '../database/entities/budget-transaction.entity';
-import { Notification } from '../database/entities/notification.entity';
-import { AdminAuditLog } from '../database/entities/admin-audit-log.entity';
-import { Agreement } from '../database/entities/agreement.entity';
-import { ApprovalRequest } from '../database/entities/approval-request.entity';
-import { LedgerEntry } from '../database/entities/ledger-entry.entity';
-import { AgreementTransaction } from '../database/entities/agreement-transaction.entity';
-import { OnInvoiceEntry } from '../database/entities/on-invoice-entry.entity';
-import { OnInvoiceBatch } from '../database/entities/on-invoice-batch.entity';
-import { SalesActual } from '../database/entities/sales-actual.entity';
-import { SalesActualBatch } from '../database/entities/sales-actual-batch.entity';
-import { BudgetSummaryView } from '../database/entities/budget-summary.view-entity';
-import { Brand } from '../database/entities/brand.entity';
-import { Category } from '../database/entities/category.entity';
-import { Channel } from '../database/entities/channel.entity';
-import { Cpl } from '../database/entities/cpl.entity';
-import { ForecastingUnit } from '../database/entities/forecasting-unit.entity';
-import { GenericUnit } from '../database/entities/generic-unit.entity';
-import { Mechanic } from '../database/entities/mechanic.entity';
-import { Region } from '../database/entities/region.entity';
-import { Sku } from '../database/entities/sku.entity';
-import { Tactic } from '../database/entities/tactic.entity';
-// B dalgası (T-211)
-import { BudgetPolicy } from '../database/entities/budget-policy.entity';
-import { ApprovalPolicy } from '../database/entities/approval-policy.entity';
-import {
-  Role,
-  Capability,
-  RoleCapability,
-  UserRoleAssignment,
-} from '../database/entities/role.entity';
-import { Claim } from '../database/entities/claim.entity';
-import { ClaimMatch } from '../database/entities/claim-match.entity';
-import { TacticRealization } from '../database/entities/tactic-realization.entity';
-import { FiscalPeriod } from '../database/entities/fiscal-period.entity';
-import { Kpi } from '../database/entities/kpi.entity';
-import { UserScope } from '../database/entities/user-scope.entity';
-import { Plan, PlanFu, PlanSku } from '../database/entities/plan.entity';
-import { PlanMechanicValue } from '../database/entities/plan-mechanic-value.entity';
-import { MechanicSpendBreakdown } from '../database/entities/mechanic-spend-breakdown.entity';
-import { LTAAgreement } from '../database/entities/lta-agreement.entity';
-import { LTARate } from '../database/entities/lta-rate.entity';
-import { LTAPlanOverride } from '../database/entities/lta-plan-override.entity';
-import { BudgetAllocation } from '../database/entities/budget-allocation.entity';
-import { BudgetTransactionLog } from '../database/entities/budget-transaction-log.entity';
-import { BudgetAlertConfiguration } from '../database/entities/budget-alert-configuration.entity';
-import { PlanApprovalHistory } from '../database/entities/plan-approval-history.entity';
 import { join } from 'path';
 import { migrateDbCredentials } from './db-role-env';
+// K-2.6.13 (B4): entity listesi artık BURADA TANIMLANMIYOR — bkz.
+// `../database/entities/all-entities.ts` başındaki not. Bu dosya (CLI/seed
+// giriş noktası) modül seviyesinde `migrateDbCredentials()` çalıştırır
+// (aşağıda); `ALL_ENTITIES`'i burada tanımlamak, onu import eden HERKESİ
+// (runtime dahil) o yan etkiye maruz bırakırdı. `all-entities.ts` yan
+// etkisizdir — entity import etmek dışında hiçbir şey yapmaz.
+import { ALL_ENTITIES } from '../database/entities/all-entities';
 
 // Only load .env file if it exists (for local development)
 // In Cloud Run, environment variables are set directly
@@ -67,74 +22,6 @@ const configService = new ConfigService();
 function getEnvVar(key: string, defaultValue?: string): string | undefined {
   return process.env[key] || configService.get(key) || defaultValue;
 }
-
-// T-224: bu, uygulamanın entity kaynağı için TEK KAYNAKTIR. CLI migration
-// (`dataSourceOptions.entities` — aşağıda) VE runtime (`DatabaseModule`,
-// `../database/database.module.ts`) buradan okur. `typeorm.config.ts` kanonik
-// seçildi çünkü CLI'ın eksik bir entity'yi kaçırması sessizdir (şema eksik
-// kalır), `DatabaseModule`'ün kaçırması gürültülüdür (bootstrap çöker) —
-// ADR/ürün sahibi kararı: [[T-224]]. AYRI BİR SABİT olarak ihraç edilir,
-// `dataSource.options.entities`'ten DEĞİL — yoksa tüketici bir `DataSource`
-// örneği kurmak zorunda kalırdı.
-export const ALL_ENTITIES = [
-  // Shared entities
-  User,
-  Tenant,
-  Customer,
-  BudgetEnvelope,
-  BudgetTransaction,
-  Notification,
-  AdminAuditLog,
-  // View entities
-  BudgetSummaryView,
-  // Actuals-First entities
-  Agreement,
-  ApprovalRequest,
-  LedgerEntry,
-  AgreementTransaction,
-  OnInvoiceEntry,
-  OnInvoiceBatch,
-  SalesActual,
-  SalesActualBatch,
-  // Master Data entities
-  Brand,
-  Category,
-  Channel,
-  Cpl,
-  ForecastingUnit,
-  GenericUnit,
-  Mechanic,
-  Region,
-  Sku,
-  Tactic,
-  // KPI and User Scope entities
-  Kpi,
-  UserScope,
-  // Planning-First entities
-  Plan,
-  PlanFu,
-  PlanSku,
-  PlanMechanicValue,
-  MechanicSpendBreakdown,
-  LTAAgreement,
-  LTARate,
-  LTAPlanOverride,
-  BudgetAllocation,
-  BudgetTransactionLog,
-  BudgetAlertConfiguration,
-  PlanApprovalHistory,
-  // B dalgası (T-211)
-  BudgetPolicy,
-  ApprovalPolicy,
-  Role,
-  Capability,
-  RoleCapability,
-  UserRoleAssignment,
-  Claim,
-  ClaimMatch,
-  TacticRealization,
-  FiscalPeriod,
-];
 
 // K-2.6.13a/c: bu DataSource CLI migration komutları (`-d` flag'i,
 // package.json'daki migration:*) VE `run-seeds.ts`'in seed girişi
@@ -167,7 +54,9 @@ export const dataSourceOptions: DataSourceOptions = {
     return false;
   })(),
   // Use explicit entity imports instead of path pattern for better reliability
-  // T-224: kaynak `ALL_ENTITIES` — bu dosyanın üstünde ihraç edilen tek liste.
+  // T-224 / K-2.6.13(B4): kaynak `ALL_ENTITIES` —
+  // `../database/entities/all-entities.ts` (bu dosyanın DIŞINDA, yan
+  // etkisiz). `database.module.ts` (runtime) da aynı yerden okur.
   entities: ALL_ENTITIES,
   migrations: (() => {
     // Use glob pattern for both development and production
