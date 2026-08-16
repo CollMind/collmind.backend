@@ -55,6 +55,7 @@ import { BudgetTransactionLog } from '../database/entities/budget-transaction-lo
 import { BudgetAlertConfiguration } from '../database/entities/budget-alert-configuration.entity';
 import { PlanApprovalHistory } from '../database/entities/plan-approval-history.entity';
 import { join } from 'path';
+import { migrateDbCredentials } from './db-role-env';
 
 // Only load .env file if it exists (for local development)
 // In Cloud Run, environment variables are set directly
@@ -135,12 +136,21 @@ export const ALL_ENTITIES = [
   FiscalPeriod,
 ];
 
+// K-2.6.13a/c: bu DataSource CLI migration komutları (`-d` flag'i,
+// package.json'daki migration:*) VE `run-seeds.ts`'in seed girişi
+// tarafından paylaşılır — ikisi de `app_migrate` ile koşar (S2: "seed bir
+// kurulum işlemidir, runtime işlemi değil"). Runtime bağlantısı (NestJS
+// uygulaması) BURADAN beslenmez — o `database.module.ts`'in kendi
+// `app_runtime` kimlik bilgileriyle kurulur. K-2.6.13d: eksik/boş kimlik
+// sessizce 'postgres'e düşmez, `migrateDbCredentials()` açık hata fırlatır.
+const migrateCredentials = migrateDbCredentials();
+
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
   host: getEnvVar('DB_HOST') || 'localhost',
   port: parseInt(getEnvVar('DB_PORT') || '5432', 10),
-  username: getEnvVar('DB_USERNAME') || 'postgres',
-  password: getEnvVar('DB_PASSWORD') || '',
+  username: migrateCredentials.username,
+  password: migrateCredentials.password,
   database: getEnvVar('DB_DATABASE') || '',
   schema: getEnvVar('DB_SCHEMA') || 'main',
   ssl: (() => {

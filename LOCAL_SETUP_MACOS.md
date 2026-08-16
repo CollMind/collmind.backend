@@ -283,10 +283,16 @@ DB_HOST=localhost
 # DB_HOST=localhost
 
 DB_PORT=5432
-DB_USERNAME=postgres
-DB_PASSWORD=postgres
 DB_DATABASE=collmind_tpm
 DB_SCHEMA=main
+
+# K-2.6.13: iki AYRI, AYRICALIKSIZ bağlantı rolü — tek 'postgres' kimliği
+# artık kullanılmıyor. Parolaları kendiniz seçin, sonra "Veritabanı
+# Yapılandırması" bölümündeki Adım 1a ile rolleri DB'de yaratın.
+DB_RUNTIME_USERNAME=app_runtime
+DB_RUNTIME_PASSWORD=<yerel-parola-seçin>
+DB_MIGRATE_USERNAME=app_migrate
+DB_MIGRATE_PASSWORD=<yerel-parola-seçin>
 
 # JWT Configuration
 JWT_SECRET=your-secret-key-change-in-production
@@ -294,6 +300,10 @@ JWT_EXPIRES_IN=1d
 ```
 
 ⚠️ **Önemli**: Production ortamında `JWT_SECRET` değerini mutlaka güçlü bir değerle değiştirin!
+
+⚠️ **`DB_USERNAME`/`DB_PASSWORD` artık okunmuyor** (K-2.6.13). Uygulama ve CLI
+komutları `DB_RUNTIME_*`/`DB_MIGRATE_*` olmadan AÇIK HATA ile durur — sessizce
+ayrıcalıklı bir role düşmez.
 
 ---
 
@@ -310,6 +320,32 @@ docker compose ps postgres
 ```bash
 brew services list | grep postgresql
 ```
+
+### Adım 1a: Veritabanı Rollerini Kurma (K-2.6.13 — ZORUNLU, idempotent)
+
+Migration'lardan ÖNCE çalıştırılmalıdır — `npm run migration:run` artık
+ayrıcalıksız `app_migrate` rolüyle koşar, ve bu rol bu adımda yaratılır.
+Tekrar çalıştırmak güvenlidir (roller yoksa yaratır, varsa parolayı/
+özniteliklerini yeniden uygular).
+
+```bash
+DB_RUNTIME_PASSWORD=<.env'deki DB_RUNTIME_PASSWORD> \
+DB_MIGRATE_PASSWORD=<.env'deki DB_MIGRATE_PASSWORD> \
+  bash scripts/db-roles-setup.sh
+```
+
+Bu betik:
+- `app_runtime` rolünü yaratır — uygulamanın çalışma zamanı bağlantısı (DML,
+  RLS'e tabi, DDL yok, hiçbir tablonun sahibi değil).
+- `app_migrate` rolünü yaratır — migration/seed bağlantısı (DDL yetkili,
+  tablo sahibi).
+- Var olan tüm tabloların/sequence'ların/view'ların sahipliğini
+  `app_migrate`'e taşır (yerel DB'de daha önce `postgres` ile yaratılmış
+  olabilirler).
+
+Bu adım atlanırsa `migration:run`/`seed`/`start:dev` bağlantı kimliği
+eksik hatasıyla durur (K-2.6.13d: sessiz geri dönüş yok, ayrıcalıklı
+`postgres`'e düşülmez).
 
 ### Adım 2: Migration'ları Çalıştırma
 

@@ -17,6 +17,29 @@ function envOr(key, fallback) {
   return v === undefined || v === '' ? fallback : v;
 }
 
+// K-2.6.13a/d: bu, `npm run test:e2e` suite'inin YALNIZ SELECT yapan bir
+// ölçüm bağlantısıdır (satır sayısı invaryantı, T-047/T-060) — app_runtime
+// (K-2.6.13, AC#1: "tam suite app_runtime altında yeşil") ile aynı rolü
+// kullanır, çünkü ölçtüğü tablolar zaten uygulamanın kendisi tarafından
+// sürekli okunuyor (envanter S3'ün kapsadığı SELECT hakları burada da
+// yeterli). Sessizce 'postgres'e düşmez — eksikse AÇIK hata.
+//
+// Bu dosya CommonJS'tir ve ts-jest'e bağımlı OLAMAZ (bkz. dosya başı yorumu)
+// — bu yüzden `src/config/db-role-env.ts`'i import EDEMEZ ve aynı
+// fail-fast mantığını burada AYRI bir kopya olarak taşır. İkisi aynı
+// sözleşmeyi (DB_RUNTIME_USERNAME/PASSWORD zorunlu, sessiz varsayılan yok)
+// uygular — biri değişirse diğeri de gözden geçirilmeli.
+function requireEnv(key) {
+  const v = process.env[key];
+  if (v === undefined || v === '') {
+    throw new Error(
+      `${key} tanımlı değil. K-2.6.13d: veritabanı bağlantı kimliği eksikse ` +
+        `sessizce bir varsayılana düşülmez.`,
+    );
+  }
+  return v;
+}
+
 function schema() {
   return envOr('DB_SCHEMA', 'main');
 }
@@ -25,8 +48,8 @@ async function connect() {
   const client = new Client({
     host: envOr('DB_HOST', 'localhost'),
     port: parseInt(envOr('DB_PORT', '5432'), 10),
-    user: envOr('DB_USERNAME', 'postgres'),
-    password: envOr('DB_PASSWORD', ''),
+    user: requireEnv('DB_RUNTIME_USERNAME'),
+    password: requireEnv('DB_RUNTIME_PASSWORD'),
     database: envOr('DB_DATABASE', ''),
   });
   await client.connect();

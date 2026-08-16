@@ -108,10 +108,16 @@ PORT=3000
 # Database Configuration
 DB_HOST=localhost
 DB_PORT=5432
-DB_USERNAME=postgres
-DB_PASSWORD=postgres
 DB_DATABASE=collmind_tpm
 DB_SCHEMA=main
+
+# K-2.6.13: iki AYRI, AYRICALIKSIZ bağlantı rolü — tek 'postgres' kimliği
+# YOK. Değerleri kendiniz belirleyin (herhangi bir yerel parola), sonra
+# `bash scripts/db-roles-setup.sh` ile rolleri DB'de yaratın (adım 4a).
+DB_RUNTIME_USERNAME=app_runtime
+DB_RUNTIME_PASSWORD=<yerel-parola-seçin>
+DB_MIGRATE_USERNAME=app_migrate
+DB_MIGRATE_PASSWORD=<yerel-parola-seçin>
 
 # JWT Configuration
 JWT_SECRET=your-secret-key-change-in-production
@@ -123,12 +129,24 @@ JWT_EXPIRES_IN=1d
 docker-compose up -d
 ```
 
-5. **Migration'ları çalıştırın:**
+4a. **Veritabanı rollerini kurun (K-2.6.13 — idempotent, tekrar çalıştırılabilir):**
+```bash
+DB_RUNTIME_PASSWORD=<.env'deki DB_RUNTIME_PASSWORD> \
+DB_MIGRATE_PASSWORD=<.env'deki DB_MIGRATE_PASSWORD> \
+  bash scripts/db-roles-setup.sh
+```
+Bu betik `app_runtime` (uygulamanın çalışma zamanı rolü — DML, RLS'e tabi,
+DDL yok) ve `app_migrate` (migration/seed rolü — DDL yetkili, tablo sahibi)
+rollerini yaratır. Uygulama artık ayrıcalıklı `postgres` rolüyle
+BAĞLANMAZ — bu adım atlanırsa `npm run start:dev` / `migration:run` /
+`seed` bağlantı hatasıyla durur (K-2.6.13d: sessiz geri dönüş yok).
+
+5. **Migration'ları çalıştırın (`app_migrate` ile):**
 ```bash
 npm run migration:run
 ```
 
-6. **Seed verilerini yükleyin (opsiyonel):**
+6. **Seed verilerini yükleyin (opsiyonel, `app_migrate` ile):**
 ```bash
 npm run seed:run
 ```
@@ -143,12 +161,19 @@ npm run seed:run
 | `PORT` | API port numarası | `3000` |
 | `DB_HOST` | PostgreSQL host adresi | `localhost` |
 | `DB_PORT` | PostgreSQL port numarası | `5432` |
-| `DB_USERNAME` | Veritabanı kullanıcı adı | `postgres` |
-| `DB_PASSWORD` | Veritabanı şifresi | `postgres` |
+| `DB_RUNTIME_USERNAME` | Uygulamanın çalışma zamanı rolü (K-2.6.13a) — DML, RLS'e tabi, DDL yok | `app_runtime` |
+| `DB_RUNTIME_PASSWORD` | `app_runtime` parolası — zorunlu, varsayılanı yok | - |
+| `DB_MIGRATE_USERNAME` | Migration/seed rolü (K-2.6.13a) — DDL yetkili, tablo sahibi | `app_migrate` |
+| `DB_MIGRATE_PASSWORD` | `app_migrate` parolası — zorunlu, varsayılanı yok | - |
 | `DB_DATABASE` | Veritabanı adı | `collmind_tpm` |
 | `DB_SCHEMA` | PostgreSQL şema adı | `main` |
 | `JWT_SECRET` | JWT imza anahtarı | - |
 | `JWT_EXPIRES_IN` | JWT token geçerlilik süresi | `1d` |
+
+⚠️ **`DB_USERNAME`/`DB_PASSWORD` artık kullanılmıyor** (K-2.6.13 — ayrıcalıksız
+rol ayrımı). Eski `.env` dosyanızda bu iki değişken varsa kalabilir ama hiçbir
+kod yolu onları okumaz; yukarıdaki dört `DB_RUNTIME_*`/`DB_MIGRATE_*`
+değişkeni olmadan uygulama ve CLI komutları AÇIK HATA ile durur.
 
 ## 🏃 Çalıştırma
 

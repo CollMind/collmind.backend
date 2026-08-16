@@ -14,7 +14,10 @@ async function bootstrap() {
       DB_HOST: process.env.DB_HOST,
       DB_PORT: process.env.DB_PORT,
       DB_DATABASE: process.env.DB_DATABASE,
-      DB_USERNAME: process.env.DB_USERNAME,
+      // K-2.6.13: runtime bağlantısı artık `app_runtime` (DB_RUNTIME_*) —
+      // bkz. src/database/database.module.ts. `DB_USERNAME` bu amaçla
+      // kullanılmıyor.
+      DB_RUNTIME_USERNAME: process.env.DB_RUNTIME_USERNAME,
       DB_SCHEMA: process.env.DB_SCHEMA,
       JWT_SECRET: process.env.JWT_SECRET ? '***SET***' : 'NOT SET',
       JWT_EXPIRATION: process.env.JWT_EXPIRATION,

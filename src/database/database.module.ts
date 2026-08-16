@@ -9,18 +9,25 @@ import { SnakeCaseNamingStrategy } from './strategies/snake-case-naming.strategy
 // iki listesi, biri karanlıkta). Artık ikinci liste yok — bu dosya kendi
 // entity import'unu tutmaz.
 import { ALL_ENTITIES } from '../config/typeorm.config';
+import { runtimeDbCredentials } from '../config/db-role-env';
 
 @Module({
   imports: [
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
+        // K-2.6.13a/d: NestJS uygulamasının ÇALIŞMA ZAMANI bağlantısı —
+        // `app_runtime` (DML, RLS'e tabi, DDL yok, tablo sahibi değil).
+        // Eksik/boş kimlik bilgisi sessizce ayrıcalıklı bir role düşmez;
+        // `runtimeDbCredentials()` açık hata fırlatır (bkz.
+        // `src/config/db-role-env.ts`).
+        const { username, password } = runtimeDbCredentials();
         const dbConfig = {
           type: 'postgres' as const,
           host: configService.get('DB_HOST'),
           port: parseInt(configService.get('DB_PORT') || '5432', 10),
-          username: configService.get('DB_USERNAME'),
-          password: configService.get('DB_PASSWORD'),
+          username,
+          password,
           database: configService.get('DB_DATABASE'),
           schema: configService.get('DB_SCHEMA') || 'main',
           // Retry mechanism for Cloud Run (VPC connections can be slow)

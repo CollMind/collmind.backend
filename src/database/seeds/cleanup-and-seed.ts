@@ -19,6 +19,7 @@ import { seedFiscalPeriods } from './fiscal-period.seed';
 import { seedBudgetPolicies } from './budget-policy.seed';
 import { seedApprovalPolicies } from './approval-policy.seed';
 import { seedRoles } from './role.seed';
+import { migrateDbCredentials } from '../../config/db-role-env';
 
 config();
 
@@ -202,12 +203,15 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
 
 // Standalone execution
 async function bootstrap() {
+  // K-2.6.13a/d (S2): seed bir kurulum işlemidir, runtime işlemi değil —
+  // `app_migrate` ile koşar. Eksik kimlik sessizce 'postgres'e düşmez.
+  const { username, password } = migrateDbCredentials();
   const dataSource = new DataSource({
     type: 'postgres',
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '5432'),
-    username: process.env.DB_USERNAME || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
+    username,
+    password,
     database: process.env.DB_DATABASE || 'collmind_tpm',
     schema: process.env.DB_SCHEMA || 'main',
     entities: [__dirname + '/../entities/*.entity{.ts,.js}'],
