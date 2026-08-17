@@ -82,70 +82,166 @@ import { UserRole } from '../../database/entities/user.entity';
  * gerektirir, tenant-başına özelleştirme bugün istenmiyor. Bu fark o kararın
  * ölçülmüş sonucu — yeni bir sapma değil.
  *
- * ### ⛔ 9/24 hücre BLOKE — ürün sahibi kararı bekliyor (bu turun DUR bulgusu)
+ * ### `9/24` hücre — `ADIM 3 Faz A` (2026-08-17): `4` ÇÖZÜLDÜ, `5` DUR
  *
- * `0072`, rol kümesi sıklığını TÜM route'lar üzerinden ölçtü (`§2`), ama
- * HÜCRE-İÇİ tutarlılığı ölçmedi. Bu tur ölçtü: 24 hücrenin **9'unda**, o
- * hücreye düşen route'lar BUGÜN FARKLI rol kümeleri taşıyor (bazıları hiç
- * `@Roles` taşımıyor — filtresiz). Tek bir yetenek adı altında toplamak,
- * bu route'lardan bazılarının erişimini GENİŞLETİR ya da DARALTIR — bu bir
- * mekanik yeniden adlandırma değil, bir **RBAC politika kararı**.
- *
- * `§2.5`/`§2.4` (CLAUDE.md): sessiz varsayım YOK. Bu 9 yetenek `CAPABILITIES`
- * sabitinde TANIMLI (taksonomi 24'ü tam kapsasın diye — 0072'nin tabanı budur),
- * ama `ROLE_CAPABILITIES`'te HİÇBİR role atanmadı. `@RequireCapability` bugün
- * hiçbir route'a uygulanmadığı için (Faz B, ayrı tur) bunun bugün davranışsal
- * etkisi YOK — ama Faz B bu haritayı OLDUĞU GİBİ tüketecek, yani karar Faz
- * B'den ÖNCE verilmeli:
+ * Ürün sahibi kararı (2026-08-17): **(a) UNION, ŞARTLI.** Her bloke hücre
+ * route-route ölçüldü (dekoratör taraması, `find-entity` dersine göre —
+ * dosya adı değil `@(Get|Post|Put|Patch|Delete)` + `@Roles` bloğu) ve ÜÇ
+ * DALDAN birine yerleştirildi:
  *
  * ```
- * MODES_READ    (modes:okuma, 37 route)   7 farklı rol kümesi + 1 filtresiz
- * MODES_WRITE   (modes:yazma, 18 route)   3 farklı rol kümesi
- * MODES_APPROVE (modes:onay, 13 route)    3 farklı rol kümesi + 2 filtresiz
- *                                          (2'si ALAN guard'lı: Reversal/
- *                                          SettlementGuard — 0072 §4b)
- * SHARED_READ   (shared:okuma, 36 route)  3 farklı rol kümesi + 20 filtresiz
- * SHARED_WRITE  (shared:yazma, 14 route)  4 farklı rol kümesi + 4 filtresiz
- * SHARED_APPROVE(shared:onay, 5 route)    4 farklı rol kümesi (CATEGORY_MANAGER
- *                                          tek başına 2, geri kalan 3 route'un
- *                                          her biri FARKLI ikili)
- * TENANT_READ   (tenant:okuma, 3 route)   1 ADMIN + 2 filtresiz
- * USER_READ     (user:okuma, 4 route)     2 farklı rol kümesi + 2 filtresiz
- * USER_WRITE    (user:yazma, 9 route)     1 ADMIN kümesi + 5 filtresiz
- *                                          (bunların 3'ü `auth.controller.ts`
- *                                          login/refresh/logout — kasıtlı
- *                                          kimliksiz/self-servis, ADMIN'in
- *                                          diğer 4 rotasıyla AYNI kovaya
- *                                          konursa anlamsız bir karışım olur)
+ * 1  hücre içi tüm kümeler AYNI      →  union = DEĞİŞİKLİK YOK, mekanik
+ * 2  hücrede FİLTRESİZ route var     →  o route union'a GİRMEZ (K-2.6.6'nın
+ *                                        konusu; report-only fazına kalır)
+ * 3  kümeler FARKLI                  →  GENİŞLEME listesi, tek tek yazılı
  * ```
  *
- * Seçenekler (Team Lead'e, ürün sahibine gider):
- *   (a) UNION — hücredeki her rol kümesinin BİLEŞİMİ yetenek sahibi olur.
- *       Hiçbir mevcut erişim KAPANMAZ, ama bazı route'lar bugünkünden DAHA
- *       GENİŞ role açılır (ör. `MODES_WRITE` bugün `{ADMIN,PLANNER}` VEYA
- *       `{ADMIN,FINANCE_MANAGER}` olan route'ları tek kümede
- *       `{ADMIN,PLANNER,FINANCE_MANAGER}` yapar — PLANNER'ın bugün
- *       giremediği bir FINANCE_MANAGER route'una erişimi açılır).
- *   (b) İŞLEM SINIFINI DAHA İNCE BÖL — `modes:onay` yerine
- *       `modes:onay:plan` / `modes:onay:agreement` / `modes:onay:budget` gibi
- *       alt-sınıflar. 24 hücre büyür (kaç olacağı ölçülmedi), ama route'ların
- *       gerçek rol kümesiyle BİREBİR eşleşme ihtimali artar.
- *   (c) Bu 9 kapsam DIŞI bırakılır — o route'lar `@Roles` ile kalmaya DEVAM
- *       eder (Faz B'nin göçü yalnız kalan 15 kapasiteyi taşır). `İlke 4`
- *       riski: iki mekanizma kalıcı olarak bir arada yaşar.
- *   (d) filtresiz olanlar ÖNCE `K-2.6.6` rotasıyla kapatılır (bkz. FAZ1_PLAN
- *       §5 Faz B, "72 uç kimlik doğrulanmış rol kısıtı yok"), SONRA bu 9
- *       hücre yeniden ölçülür — filtresiz route'lar temizlenince bazı
- *       hücreler UNIFORM'a düşebilir.
+ * Ve iki ek `DUR` koşulu (görev tanımından, mekanik uygulanmadı):
+ *   - genişleme bir rolü ONAY/İŞ-AKIŞI yeteneğine sokuyorsa (`K-2.5.12`)
+ *   - union hücreyi TÜM 5 role açıyorsa (**çöküş**, genişleme değil)
  *
- * `login`/`refresh`/`logout` üçlüsü (`USER_WRITE`'ın filtresiz beşlisinin
- * parçası) ayrıca not: `login`/`refresh` zaten `@Public()` (bu turda
- * eklendi, `public.decorator.ts`) — bunlar kavramsal olarak `USER_WRITE`
- * kapsamında OLMAMALI (kimliksiz erişim bir "yetenek" değil, kimlik
- * doğrulamanın ÖN KOŞULUDUR). Bu, seçenek (b)'nin bir alt-kanıtı: en azından
- * `login`/`refresh`/`logout` üçlüsünün `USER_WRITE`'tan AYRI tutulması
- * gerekiyor, aksi hâlde "yetenek" ile "genel kimlik doğrulama ucu" kavramsal
- * olarak karışıyor.
+ * ```
+ * ÇÖZÜLDÜ (4) — ROLE_CAPABILITIES'e bu turda YAZILDI
+ *   MODES_WRITE    {ADMIN,FINANCE,PLANNER}                     dal 3
+ *   SHARED_WRITE   {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER}    dal 3
+ *   TENANT_READ    {ADMIN}                                     dal 1+2 (tek küme + 2 filtresiz hariç)
+ *   USER_WRITE     {ADMIN}                                     dal 1+2 (tek küme + 5 filtresiz hariç)
+ *
+ * DUR (5) — HİÇBİR role atanmadı, ürün sahibine gider
+ *   MODES_READ     union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)
+ *   MODES_APPROVE  dal 3 genişleme, ONAY yeteneği               → K-2.5.12
+ *   SHARED_READ    union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)
+ *   SHARED_APPROVE dal 3 genişleme, ONAY yeteneği               → K-2.5.12
+ *   USER_READ      union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)
+ * ```
+ *
+ * ⚠️ **Davranışsal etki bu turda SIFIR** — `@RequireCapability` hiçbir
+ * route'a uygulanmadı (Faz B, ayrı tur), yani `ÇÖZÜLDÜ` dörtlünün
+ * `ROLE_CAPABILITIES`'e yazılması da bugün hiçbir guard'ı değiştirmiyor.
+ * `report-only` fazı bu genişlemelerin doğrulama katmanıdır: beklenmedik bir
+ * rol orada görünürse düzeltilir.
+ *
+ * ---
+ *
+ * #### ÇÖZÜLDÜ — hücre hücre, route × eklenen rol
+ *
+ * **`MODES_WRITE`** (18 route, filtresiz YOK):
+ * ```
+ * {ADMIN,FINANCE,PLANNER}  n=1   POST /agreement-transactions                    (create)               — değişiklik yok, zaten union
+ * {ADMIN,FINANCE}          n=5   POST /agreement-transactions/upload             (uploadFile)            +PLANNER
+ *                                 POST /on-invoice/upload                        (uploadFile)            +PLANNER
+ *                                 POST /on-invoice/:batchId/validate             (validateBatch)         +PLANNER
+ *                                 POST /on-invoice/:batchId/process              (processBatch)          +PLANNER
+ *                                 POST /actuals-first/sales-actuals/upload       (upload, WRITE_ROLES)   +PLANNER
+ * {ADMIN,PLANNER}          n=12  POST/PATCH/DELETE /agreements[/:id]             (create/update/delete)  +FINANCE
+ *                                 POST/PATCH/DELETE /plans[/:id[/fus/...]]       (create/update/addFu/
+ *                                                                                  updateFuTactic/removeFu/
+ *                                                                                  updateSkuVolume/delete/
+ *                                                                                  calculateKpis/recalculate) +FINANCE
+ * ```
+ * Gerekçe (neden kabul edildi): `(a) UNION` kararının doğrudan uygulanışı —
+ * hiçbir mevcut erişim kapanmadı, en dar iki küme birbirinin eksik rolüyle
+ * tamamlandı. **Dikkat:** bu, FINANCE'e 12 Plan-CRUD ucuna (silme dahil) ve
+ * PLANNER'a 5 actuals-upload/validate/process ucuna yazma erişimi açıyor —
+ * bugün fonksiyonel olarak ayrı iki alan. `report-only` bunu göstermeli.
+ *
+ * **`SHARED_WRITE`** (14 route, `4` filtresiz HARİÇ — bkz. altta):
+ * ```
+ * {ADMIN,CATEGORY_MANAGER}  n=1  POST /budget-allocations/reserve                (reserveBudget)         +FINANCE,+PLANNER
+ * {ADMIN,FINANCE}           n=5  POST/PATCH /budget-allocations[/:id]            (create/update)         +CATEGORY_MANAGER,+PLANNER
+ *                                 POST /budget-allocations/adjust                (adjustUtilization)     +CATEGORY_MANAGER,+PLANNER
+ *                                 POST /budget/envelopes[/:id/split]             (createEnvelope/
+ *                                                                                  splitEnvelope)         +CATEGORY_MANAGER,+PLANNER
+ * {ADMIN,PLANNER}           n=1  POST /budget/reserve                           (reserveBudget)         +CATEGORY_MANAGER,+FINANCE
+ * {ADMIN}                   n=3  PATCH /approval-policies/:id                   (update)                +CATEGORY_MANAGER,+FINANCE,+PLANNER  ⚠️
+ *                                 POST/PATCH /lta-agreements[/:id]               (create/update)         +CATEGORY_MANAGER,+FINANCE,+PLANNER
+ * ```
+ * Union: `{ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER}` (READONLY dışarıda —
+ * çöküş değil).
+ *
+ * ⚠️ **`approval-policies/:id` PATCH özellikle işaretli:** bu bir onay
+ * POLİTİKASI konfigürasyon ucu, bugün ADMIN-only. Union onu 3 role daha
+ * açıyor. `İlke`'ye göre bu `K-2.5.12`'nin (onay/iş-akışı) DEĞİL —
+ * `0072`'nin sınıflandırmasında `approval-policy.update` bir `yazma`
+ * (config değil), 10 düzeltmenin dışında kaldı — yani bu turun taksonomi
+ * SINIRLARI içinde `yönetim`'e taşınmadı. Ama davranışsal ağırlığı
+ * `yönetim`'e yakın. **Report-only fazında ÖNCELİKLE buraya bakılmalı.**
+ *
+ * Filtresiz `4` (union'a GİRMEDİ, K-2.6.6 kapsamı):
+ * `POST /lta-agreements/calculate/base-spend` · `.../planned-spend` ·
+ * `POST /spend-calculation/distribute/:planFuId/:mechanicId` ·
+ * `.../recalculate-on-volume-change/:skuId` — 0072'nin "hesaplama
+ * tetikleyen, korumasız" tespitiyle aynı 4 uç.
+ *
+ * **`TENANT_READ`** (3 route): `{ADMIN}` — `GET /tenants` tek `@Roles`'lu
+ * route, tek küme (dal 1, mekanik). `GET /tenants/:id` ve `.../:id/stats`
+ * filtresiz (dal 2, K-2.6.6'ya kalır). Genişleme YOK.
+ *
+ * **`USER_WRITE`** (9 route): `{ADMIN}` — `POST /users`, `PATCH /users/:id`,
+ * `PATCH /users/:id/password`, `DELETE /users/:id` tek küme (dal 1,
+ * mekanik). Filtresiz `5` (dal 2, K-2.6.6'ya kalır, ama `3`'ü BİLİNÇLİ
+ * açık): `POST /auth/login` · `/auth/refresh` (ikisi `@Public()`, bu turdan
+ * önce eklendi) · `POST /auth/logout` (yalnız `JwtAuthGuard`, self-servis)
+ * · `PATCH /users/me` · `/users/me/password` (kimlik bazlı self-servis,
+ * rol değil). Bunlar kavramsal olarak `USER_WRITE`'ın ADMIN-yönetim
+ * anlamıyla AYNI kovada değil — genişleme YOK, ayrı kaldılar.
+ *
+ * ---
+ *
+ * #### DUR — hücre hücre, ürün sahibine gider (bu turda ATANMADI)
+ *
+ * **`MODES_READ`** (37 route, `1` filtresiz — `GET /actuals-first/settlements/summary`,
+ * `SettlementController` yalnız `JwtAuthGuard`, JSDoc: *"tüm authenticated
+ * kullanıcılar erişebilir, scope serviste filtrelenir"* — bilinçli, self-servis
+ * gibi ama işaretsiz). `7` farklı `@Roles` kümesi, union =
+ * `{ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY}` — **5 rolün 5'i de.**
+ * Bu bir genişleme değil, **çöküş**: bugün `{ADMIN,FINANCE}` olan 7 route
+ * (ör. `ledger/envelope/:id`, agreement-transaction template indirmeleri)
+ * READONLY/PLANNER/CATEGORY_MANAGER'a da açılırdı.
+ *
+ * **`MODES_APPROVE`** (13 route, `2` filtresiz — `POST
+ * /actuals-first/reversals/agreement-transaction/:transactionId`
+ * (`ReversalGuard`) ve `POST /actuals-first/settlements/close/:agreementId`
+ * (`SettlementGuard`); ikisi de ALAN guard'lı, korumasız DEĞİL — `0072 §4b`).
+ * `3` farklı `@Roles` kümesi: `{ADMIN,PLANNER}` (submit/cancel, n=5) ·
+ * `{ADMIN,CATEGORY_MANAGER}` (escalate/approve/reject plan, n=3) ·
+ * `{ADMIN,CATEGORY_MANAGER,FINANCE}` (approve/reject agreement + reviewPlan,
+ * n=3). Union = `{ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER}` — PLANNER kendi
+ * submit'inin dışında bir approve/reject/escalate yetkisi kazanır, FINANCE
+ * plan approve/reject/escalate kazanır. **ONAY yeteneği → `K-2.5.12`, DUR.**
+ *
+ * **`SHARED_READ`** (36 route, `20` filtresiz — `budget-allocations`,
+ * `budget` envelope okumaları, `lta-agreements` okumaları,
+ * `spend-calculation` validate/breakdown uçlarının TAMAMI; `0072`'nin
+ * "shared modülünde en yoğun filtresiz küme" tespitiyle örtüşüyor). `3`
+ * farklı `@Roles` kümesi, en genişi `{ADMIN,CATEGORY_MANAGER,FINANCE,
+ * PLANNER,READONLY}` (dashboard/approval `my-requests`, n=6) zaten **5
+ * rolün 5'i** — union bu yüzden otomatik olarak **çöküş**. Bugün
+ * `{ADMIN,FINANCE,READONLY}` olan `finance-reporting`'in risk/varyans/
+ * cash-flow uçları (n=3) CATEGORY_MANAGER/PLANNER'a da açılırdı.
+ *
+ * **`SHARED_APPROVE`** (5 route, filtresiz YOK). `4` farklı `@Roles` kümesi
+ * — her route neredeyse kendi kümesinde: `{CATEGORY_MANAGER}` (approval
+ * approve/reject, n=2) · `{ADMIN,PLANNER}` (approval cancel, n=1) ·
+ * `{ADMIN,FINANCE}` (budget-allocation commit, n=1) ·
+ * `{ADMIN,CATEGORY_MANAGER}` (budget-allocation release, n=1). Union =
+ * `{ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER}` — CATEGORY_MANAGER'ın bugün
+ * yalnız kendisinin sahip olduğu approval approve/reject'i ADMIN/FINANCE/
+ * PLANNER'a da açardı. **ONAY yeteneği → `K-2.5.12`, DUR.**
+ *
+ * **`USER_READ`** (4 route, `2` filtresiz — `GET /users/me`,
+ * `GET /users/:id`, kimlik/self-servis + admin lookup karışımı, K-2.6.6
+ * kapsamı). `2` farklı `@Roles` kümesi: `{ADMIN,FINANCE}` (`GET /users`,
+ * n=1, tüm kullanıcı listesi) ve `{ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+ * READONLY}` (`dashboard-summary`, n=1) — ikincisi zaten **5 rolün 5'i**,
+ * union otomatik **çöküş**: `GET /users` (tüm tenant kullanıcı listesi,
+ * bugün ADMIN+FINANCE) CATEGORY_MANAGER/PLANNER/READONLY'a da açılırdı.
+ *
+ * ---
+ *
+ * Kaynak taksonomi düzeltmeleri değişmedi (bkz. üstteki 10 düzeltme listesi)
+ * — bu tur yalnız BLOKE hücreleri çözdü/DUR'ladı, taksonomiye yeni madde
+ * eklemedi.
  */
 
 export const CAPABILITIES = {
@@ -159,9 +255,12 @@ export const CAPABILITIES = {
   MASTER_DATA_WRITE: 'master-data:write',
   MASTER_DATA_MANAGE: 'master-data:manage',
 
-  // ⛔ BLOKE — yukarıdaki "9/24 hücre BLOKE" bölümüne bkz. Hiçbir role
-  // atanmadı; Faz B bu üçünü TÜKETMEDEN önce ürün sahibi kararı gerekir.
+  // ⛔ BLOKE (2026-08-17 turundan sonra da) — MODES_READ · MODES_APPROVE.
+  // Union çöküşe/onay-genişlemesine düşüyor, ürün sahibi kararı bekliyor.
+  // Bkz. yukarıdaki "9/24 hücre — ADIM 3 Faz A" bölümü, "DUR" alt-başlığı.
   MODES_READ: 'modes:read',
+  // ✅ ÇÖZÜLDÜ (2026-08-17, UNION) — {ADMIN,FINANCE,PLANNER}. Bkz. yukarı,
+  // "ÇÖZÜLDÜ" alt-başlığı.
   MODES_WRITE: 'modes:write',
   MODES_APPROVE: 'modes:approve',
   MODES_MANAGE: 'modes:manage',
@@ -169,19 +268,24 @@ export const CAPABILITIES = {
   NOTIFICATION_READ: 'notification:read',
   NOTIFICATION_WRITE: 'notification:write',
 
-  // ⛔ BLOKE — SHARED_READ / SHARED_WRITE / SHARED_APPROVE (bkz. üstteki not).
+  // ⛔ BLOKE (2026-08-17 turundan sonra da) — SHARED_READ · SHARED_APPROVE.
+  // Bkz. yukarıdaki "DUR" alt-başlığı.
   SHARED_READ: 'shared:read',
+  // ✅ ÇÖZÜLDÜ (2026-08-17, UNION) — {ADMIN,CATEGORY_MANAGER,FINANCE,
+  // PLANNER}. Bkz. yukarı, "ÇÖZÜLDÜ" alt-başlığı (`approval-policies` uyarısı dahil).
   SHARED_WRITE: 'shared:write',
   SHARED_APPROVE: 'shared:approve',
   SHARED_MANAGE: 'shared:manage',
 
-  // ⛔ BLOKE — TENANT_READ (bkz. üstteki not).
+  // ✅ ÇÖZÜLDÜ (2026-08-17, dal 1 — tek rol kümesi, mekanik) — {ADMIN}.
   TENANT_READ: 'tenant:read',
   TENANT_WRITE: 'tenant:write',
   TENANT_MANAGE: 'tenant:manage',
 
-  // ⛔ BLOKE — USER_READ / USER_WRITE (bkz. üstteki not).
+  // ⛔ BLOKE (2026-08-17 turundan sonra da) — USER_READ (union çöküşe
+  // düşüyor). Bkz. yukarıdaki "DUR" alt-başlığı.
   USER_READ: 'user:read',
+  // ✅ ÇÖZÜLDÜ (2026-08-17, dal 1 — tek rol kümesi, mekanik) — {ADMIN}.
   USER_WRITE: 'user:write',
   USER_MANAGE: 'user:manage',
 
@@ -197,12 +301,16 @@ export type Capability = (typeof CAPABILITIES)[keyof typeof CAPABILITIES];
 /**
  * `ROLE_CAPABILITIES` — TEK harita, `Record<UserRole, Capability[]>`.
  *
- * Yalnız 24 hücreden **UNAMBIGUOUS 15'i** dolduruldu (5 tamamen filtresiz —
- * "bugün herkese açık" → tüm rollere verildi, davranış korunuyor; 10 tek bir
- * rol kümesiyle uniform — o kümeye verildi). Kalan **9 BLOKE** hücre
- * (`CAPABILITIES` yorumuna bkz.) hiçbir rolün listesinde YOK — ürün sahibi
- * kararına kadar. Bu, bir eksiklik değil, `CLAUDE.md §2.4`'ün gereği: bir
- * yetenek adının hangi role verileceği belirsizken sessizce doldurulmaz.
+ * 24 hücreden başlangıçta **15'i UNAMBIGUOUS** dolduruldu (5 tamamen
+ * filtresiz — "bugün herkese açık" → tüm rollere verildi, davranış
+ * korunuyor; 10 tek bir rol kümesiyle uniform — o kümeye verildi). Kalan
+ * **9 BLOKE** hücreden `ADIM 3 Faz A` (2026-08-17, `(a) UNION ŞARTLI`)
+ * **4'ünü** çözdü (`MODES_WRITE` · `SHARED_WRITE` · `TENANT_READ` ·
+ * `USER_WRITE` — bkz. `CAPABILITIES` yorumu). **19/24 dolu, 5 hâlâ BLOKE**
+ * (`MODES_READ` · `MODES_APPROVE` · `SHARED_READ` · `SHARED_APPROVE` ·
+ * `USER_READ`) — bunlar hiçbir rolün listesinde YOK, ürün sahibi kararına
+ * kadar. Bu, bir eksiklik değil, `CLAUDE.md §2.4`'ün gereği: bir yetenek
+ * adının hangi role verileceği belirsizken sessizce doldurulmaz.
  */
 export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
   [UserRole.ADMIN]: [
@@ -213,12 +321,20 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.MASTER_DATA_WRITE,
     CAPABILITIES.MASTER_DATA_MANAGE,
+    // ↓ ADIM 3 Faz A (2026-08-17, UNION): ADMIN her iki genişleyen hücrede
+    // de zaten mevcuttu — bkz. CAPABILITIES yorumu.
+    CAPABILITIES.MODES_WRITE,
     CAPABILITIES.MODES_MANAGE,
     CAPABILITIES.NOTIFICATION_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
+    CAPABILITIES.SHARED_WRITE,
     CAPABILITIES.SHARED_MANAGE,
+    // ↓ TENANT_READ: dal 1 (tek rol kümesi — `GET /tenants` zaten ADMIN-only).
+    CAPABILITIES.TENANT_READ,
     CAPABILITIES.TENANT_WRITE,
     CAPABILITIES.TENANT_MANAGE,
+    // ↓ USER_WRITE: dal 1 (tek rol kümesi — 4 ADMIN-only route zaten ADMIN'de).
+    CAPABILITIES.USER_WRITE,
     CAPABILITIES.USER_MANAGE,
     CAPABILITIES.HEALTH_READ,
   ],
@@ -227,8 +343,17 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.CUSTOMER_WRITE,
     CAPABILITIES.CUSTOMER_MANAGE,
     CAPABILITIES.MASTER_DATA_READ,
+    // ↓ ADIM 3 Faz A (2026-08-17, UNION) — bkz. CAPABILITIES yorumu:
+    // MODES_WRITE union'ı PLANNER'a agreement-transaction/on-invoice/
+    // sales-actuals upload-validate-process uçlarını (5 route, önceden
+    // {ADMIN,FINANCE}) açıyor.
+    CAPABILITIES.MODES_WRITE,
     CAPABILITIES.NOTIFICATION_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
+    // ↓ SHARED_WRITE union'ı PLANNER'a budget-allocation/budget/
+    // lta-agreement yazma uçlarını açıyor (approval-policies dahil —
+    // CAPABILITIES yorumundaki ⚠️ uyarıya bkz.).
+    CAPABILITIES.SHARED_WRITE,
     CAPABILITIES.HEALTH_READ,
   ],
   [UserRole.CATEGORY_MANAGER]: [
@@ -236,14 +361,22 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.NOTIFICATION_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
+    // ↓ ADIM 3 Faz A (2026-08-17, UNION) — bkz. CAPABILITIES yorumu.
+    CAPABILITIES.SHARED_WRITE,
     CAPABILITIES.HEALTH_READ,
   ],
   [UserRole.FINANCE]: [
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
+    // ↓ ADIM 3 Faz A (2026-08-17, UNION) — bkz. CAPABILITIES yorumu:
+    // MODES_WRITE union'ı FINANCE'e Plan CRUD (create/update/delete/addFu/
+    // removeFu/updateSkuVolume/calculateKpis/recalculate — 12 route,
+    // önceden {ADMIN,PLANNER}) açıyor.
+    CAPABILITIES.MODES_WRITE,
     CAPABILITIES.MODES_MANAGE,
     CAPABILITIES.NOTIFICATION_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
+    CAPABILITIES.SHARED_WRITE,
     CAPABILITIES.HEALTH_READ,
   ],
   [UserRole.READONLY]: [
@@ -251,6 +384,9 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.NOTIFICATION_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
+    // ↓ ADIM 3 Faz A (2026-08-17): READONLY hiçbir ÇÖZÜLDÜ hücrenin union'ında
+    // yok (MODES_WRITE/SHARED_WRITE/TENANT_READ/USER_WRITE'ın hiçbiri
+    // READONLY içermiyor) — bilinçli, ekleme yok.
     CAPABILITIES.HEALTH_READ,
   ],
 };
