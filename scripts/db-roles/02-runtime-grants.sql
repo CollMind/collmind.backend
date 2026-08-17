@@ -378,4 +378,22 @@ GRANT UPDATE (is_reversed, updated_at) ON :"schema".agreement_transactions TO ap
 --    artık DDL-yetkili bağlantı üzerinden koşuyor.
 GRANT DELETE ON :"schema".mechanics TO app_runtime;
 
+-- ── S3 tur 20 (T-214, 2026-08-17) — `approval_policies` HİÇ granted
+--    değildi: tablo 1803000000000 migration'ında yaratıldığında hiçbir
+--    üretim tüketicisi yoktu (ölçüldü, `docs/verification/T214_HAZIRLIK_
+--    OLCUMU.md`: "ApprovalPolicy'yi import eden ÜRETİM dosyası: 0"), bu
+--    yüzden bu envanter o turda tabloyu hiç görmedi. T-214 ilk yazma yolunu
+--    (`PATCH /approval-policies/:id`) ekleyince e2e manuel doğrulama
+--    "permission denied for table approval_policies" ile düştü — ölçüldü,
+--    izole e2e koşumu, `app_runtime` bağlantısı, `SELECT ... FROM main.
+--    approval_policies` STATEMENT'i.
+--    SELECT: `ApprovalPolicyRepository.findById` (var olduğunu + tenant
+--      sahipliğini doğrulama, PATCH'in ilk adımı).
+--    UPDATE: `ApprovalPolicyRepository.updatePolicySelection` — `template`/
+--      `amount_threshold`/`updated_by`/`updated_at` günceller. Sütun
+--      düzeyinde KISITLANMADI — bu bir defter/denetim tablosu değil
+--      (K-2.11.6/K-2.11.7 buraya uygulanmıyor), ADMIN'in bilerek
+--      güncellediği bir tenant POLİTİKA seçimi (K-2.5.13c).
+GRANT SELECT, UPDATE ON :"schema".approval_policies TO app_runtime;
+
 COMMIT;
