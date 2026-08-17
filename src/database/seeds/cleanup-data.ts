@@ -104,6 +104,19 @@ export async function cleanupAgreementsBudgetPlans(
     await queryRunner.query(`DELETE FROM main.generic_units`);
     console.log('   ✅ Deleted generic_units');
 
+    // T-237: main.user_scopes.category_id artık FK taşıyor (ON DELETE
+    // RESTRICT, migration 1808000000000) — bu script AŞAĞIDA main.categories'i
+    // TAMAMEN siliyor, ve bu satır olmadan `DELETE FROM main.categories`
+    // ilk category-scope'lu satırda RESTRICT ile PATLAR (önceden sessizce
+    // ÖKSÜZ SATIR biriktiriyordu — T-235 ölçümünün 115/148 bulduğu kaynak
+    // tam olarak buydu). cpl-scope'lu ve wildcard (category_id NULL) satırlar
+    // dokunulmadan kalır — yalnız kategoriye bağlı satırlar siliniyor,
+    // çünkü yalnız onlar main.categories'e bağımlı.
+    await queryRunner.query(
+      `DELETE FROM main.user_scopes WHERE category_id IS NOT NULL`,
+    );
+    console.log('   ✅ Deleted category-scoped user_scopes rows (T-237)');
+
     await queryRunner.query(`DELETE FROM main.categories`);
     console.log('   ✅ Deleted categories');
 

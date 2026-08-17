@@ -38,7 +38,21 @@ export class UserScope extends BaseEntity {
   @JoinColumn({ name: 'cpl_id' })
   cpl?: Cpl;
 
-  @ManyToOne(() => Category, { nullable: true })
-  @JoinColumn({ name: 'category_id' })
+  // T-237 (migration 1808000000000): category_id — bugüne kadar FK'sız
+  // (aynı tabloda cpl_id/tenant_id/user_id CASCADE FK taşıyor, category_id
+  // hiç taşımıyordu — kök neden `1779000000000-CreateUserScopes.ts`'in FK
+  // yazmayı atlaması). `ON DELETE RESTRICT`: ADR 0012'nin gerekçesi ("sessiz
+  // destruction'ı tespit edilebilir bir hataya çevirir") + K-2.6.8a'nın kapsam
+  // tarafı varsayılanı KISITLI (boş kapsam = erişim yok) — sessiz kayıp en
+  // kötü sonuç, CASCADE tam onu üretirdi. `foreignKeyConstraintName`: bu
+  // tablonun diğer üç FK'si okunabilir isim kullanıyor (hash değil,
+  // `FK_user_scopes_cpl/tenant/user`); aynı konvansiyon burada da korunuyor
+  // VE TypeORM'un hash türetmesini önleyerek migration:generate'in bu FK'yi
+  // "yeniden adlandırma" olarak önermesini kapatıyor (katalogla adı da eşit).
+  @ManyToOne(() => Category, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({
+    name: 'category_id',
+    foreignKeyConstraintName: 'FK_user_scopes_category',
+  })
   category?: Category;
 }
