@@ -56,10 +56,34 @@ import { UserRole } from '../../database/entities/user.entity';
  *                                                            aracı — seed/
  *                                                            clone ailesiyle
  *                                                            aynı sınıf.
+ *
+ * ── 11. düzeltme (2026-08-17, ürün sahibi) ────────────────────────────────
+ * PATCH /approval-policies/:id           yazma → YÖNETİM   onay POLİTİKASI
+ *   (approval-policy.controller.ts:33)                       konfigürasyonu;
+ *                                                            `@Roles(ADMIN)`
+ *                                                            BİLİNÇLİ (T-214'ün
+ *                                                            yazma yolunun
+ *                                                            sahibi). `K-2.5.13c`
+ *                                                            "tenant şablon
+ *                                                            seçer" der — KİMİN
+ *                                                            seçtiği ayrı soru,
+ *                                                            ve bugünkü cevap
+ *                                                            ADMIN. Bir
+ *                                                            konfigürasyon ucu
+ *                                                            yazma sınıfına
+ *                                                            düşmemeli.
  * ```
  *
- * Bu 10 düzeltme **hiçbiri yeni hücre açmadı** — hepsi zaten dolu olan bir
+ * İlk 10 düzeltme **hiçbiri yeni hücre açmadı** — hepsi zaten dolu olan bir
  * (modül, sınıf) hücresine taşındı, yani `24` dolu hücre sayısı DEĞİŞMEDİ.
+ * 11. düzeltme de aynı: `SHARED_WRITE` → `SHARED_MANAGE`, ikisi de zaten dolu.
+ *
+ * ⚠️ **Ve 11. düzeltme `SHARED_WRITE`'ın UNION'INI DEĞİŞTİRMEDİ** — ölçüldü:
+ * `{ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER}` aynı kaldı, çünkü kalan `9`
+ * route zaten dört rolün hepsini katkılıyor. Yani bu düzeltmenin etkisi
+ * union'ın **kümesinde** değil, `approval-policies`'in hangi ada **eşleneceğinde**:
+ * artık `SHARED_MANAGE` (= yalnız `ADMIN`), `SHARED_WRITE` (= 4 rol) değil.
+ * Fark `Faz B`'de ortaya çıkar — ve tam olarak orada önemliydi.
  *
  * ### `§7.2` (BRD Section_07, `docs/brd/01_Main_BRD/Section_07_Security_Roles.md`)
  * ↔ bu taksonomi — `0056`'nın kendi karşılaştırması (B.4), burada yan yana:
@@ -99,6 +123,26 @@ import { UserRole } from '../../database/entities/user.entity';
  * Ve iki ek `DUR` koşulu (görev tanımından, mekanik uygulanmadı):
  *   - genişleme bir rolü ONAY/İŞ-AKIŞI yeteneğine sokuyorsa (`K-2.5.12`)
  *   - union hücreyi TÜM 5 role açıyorsa (**çöküş**, genişleme değil)
+ *
+ * ### `*_APPROVE` — `K-2.5.12`'ye devredildi, ve BİR SINIRLA (2026-08-17)
+ *
+ * Ürün sahibi kararı: *"Onay yetkisi bir rol kümesi değil, şablonun
+ * tanımladığı bir kademe — `K-2.5.12` onu `approval_policies`'e bağladı.
+ * Bu iki hücre `Faz B`'de `@RequireCapability` ALMAZ; onay akışı kendi
+ * mekanizmasını kullanır."*
+ *
+ * ⚠️ **Ama bir sınır — ve bugün taksonomi bunu AYIRMIYOR:**
+ * ```
+ * "onaylayabilir mi"          → şablon/kademe kararı   → K-2.5.12, YETENEK DEĞİL
+ * "onay EKRANINI görebilir mi" → bir YETENEK
+ * ```
+ * `MODES_APPROVE`/`SHARED_APPROVE` bugün ikisini de tek adın altında
+ * topluyor (ör. `GET /approvals/:id` ve `GET /plans/:id/approval-history`
+ * `*_READ` hücresine düşmüş — yani okuma tarafı zaten AYRI bir hücrede,
+ * ama `pending` listeleri gibi ara vakalar ölçülmedi). `Faz B` bu iki
+ * hücreyi atlarken, **görme** tarafının bir yetenek olarak nereye düştüğü
+ * ayrıca ölçülmeli — atlanırsa onay ekranı `K-2.6.6`'nın filtresiz
+ * kümesine düşer.
  *
  * ```
  * ÇÖZÜLDÜ (4) — ROLE_CAPABILITIES'e bu turda YAZILDI
@@ -145,7 +189,8 @@ import { UserRole } from '../../database/entities/user.entity';
  * PLANNER'a 5 actuals-upload/validate/process ucuna yazma erişimi açıyor —
  * bugün fonksiyonel olarak ayrı iki alan. `report-only` bunu göstermeli.
  *
- * **`SHARED_WRITE`** (14 route, `4` filtresiz HARİÇ — bkz. altta):
+ * **`SHARED_WRITE`** (14 route; `4` filtresiz HARİÇ + `1` `SHARED_MANAGE`'e
+ * taşındı → union `9` route'tan hesaplandı):
  * ```
  * {ADMIN,CATEGORY_MANAGER}  n=1  POST /budget-allocations/reserve                (reserveBudget)         +FINANCE,+PLANNER
  * {ADMIN,FINANCE}           n=5  POST/PATCH /budget-allocations[/:id]            (create/update)         +CATEGORY_MANAGER,+PLANNER
@@ -153,19 +198,16 @@ import { UserRole } from '../../database/entities/user.entity';
  *                                 POST /budget/envelopes[/:id/split]             (createEnvelope/
  *                                                                                  splitEnvelope)         +CATEGORY_MANAGER,+PLANNER
  * {ADMIN,PLANNER}           n=1  POST /budget/reserve                           (reserveBudget)         +CATEGORY_MANAGER,+FINANCE
- * {ADMIN}                   n=3  PATCH /approval-policies/:id                   (update)                +CATEGORY_MANAGER,+FINANCE,+PLANNER  ⚠️
- *                                 POST/PATCH /lta-agreements[/:id]               (create/update)         +CATEGORY_MANAGER,+FINANCE,+PLANNER
+ * {ADMIN}                   n=2  POST/PATCH /lta-agreements[/:id]               (create/update)         +CATEGORY_MANAGER,+FINANCE,+PLANNER
  * ```
  * Union: `{ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER}` (READONLY dışarıda —
  * çöküş değil).
  *
- * ⚠️ **`approval-policies/:id` PATCH özellikle işaretli:** bu bir onay
- * POLİTİKASI konfigürasyon ucu, bugün ADMIN-only. Union onu 3 role daha
- * açıyor. `İlke`'ye göre bu `K-2.5.12`'nin (onay/iş-akışı) DEĞİL —
- * `0072`'nin sınıflandırmasında `approval-policy.update` bir `yazma`
- * (config değil), 10 düzeltmenin dışında kaldı — yani bu turun taksonomi
- * SINIRLARI içinde `yönetim`'e taşınmadı. Ama davranışsal ağırlığı
- * `yönetim`'e yakın. **Report-only fazında ÖNCELİKLE buraya bakılmalı.**
+ * ✅ **`PATCH /approval-policies/:id` UNION'DAN ÇIKARILDI** (2026-08-17,
+ * ürün sahibi): *"Bir konfigürasyon ucu yazma sınıfına düşmemeli."*
+ * `SHARED_WRITE` → `SHARED_MANAGE` (11. taksonomi düzeltmesi, yukarı bkz.),
+ * yani `ADMIN` kalıyor ve union onu 3 role AÇMIYOR. İlk turda `{ADMIN} n=3`
+ * içindeydi ve ⚠️ ile işaretlenmişti — işaret bir düzeltmeye dönüştü.
  *
  * Filtresiz `4` (union'a GİRMEDİ, K-2.6.6 kapsamı):
  * `POST /lta-agreements/calculate/base-spend` · `.../planned-spend` ·
@@ -239,9 +281,54 @@ import { UserRole } from '../../database/entities/user.entity';
  *
  * ---
  *
- * Kaynak taksonomi düzeltmeleri değişmedi (bkz. üstteki 10 düzeltme listesi)
- * — bu tur yalnız BLOKE hücreleri çözdü/DUR'ladı, taksonomiye yeni madde
- * eklemedi.
+ * #### `5/5` ROL TAŞIYAN ROUTE'LAR — ölçüldü, ve HİPOTEZ ÇÜRÜDÜ
+ *
+ * Üç `READ` hücresinin çöküşünün kaynağı **`18` route** (ilk sayım `14`
+ * demişti — parser iç içe sabiti (`READ_ROLES = [...WRITE_ROLES, …]`) tek
+ * geçişte çözemiyordu; **fixpoint** ile düzeltildi, çözülemeyen sabit `0`).
+ *
+ * Ürün sahibinin hipotezi: *"üçü de kullanıcının kendi verisine ya da özet
+ * görünüme bakıyor — `plan.read` ile aynı yetenek değil."* **Ölçüm şartı
+ * kondu ve şart TUTMADI** — üçü aynı sınıfta değil:
+ *
+ * ```
+ * SINIF A · aktör scope'u SERVİSTE (@CurrentUser → resolveScopeForFilter)
+ *   approval /my-requests    findMyRequests(userId)      — saf kendi verisi
+ *   approval /:id            findOne
+ *   plan     findAll · findOne · :id/analysis · :id/approval-history
+ *                            plan.service.ts:385 `resolveScopeForFilter(actor)`
+ *   agreement findAll · findOne · tactics/available
+ *   dashboard summary · pending-tasks · cpl-status
+ *
+ * SINIF B · ÖLÜ İKİZ
+ *   user /dashboard-summary  @deprecated — GET /dashboard/summary'nin ikizi
+ *                            (user.controller.ts:116). Bir yetenek sorusu
+ *                            DEĞİL, bir `İlke 4` kalıntısı.
+ *
+ * SINIF C · scope YOK, özet DEĞİL  ⛔ HİPOTEZİ ÇÜRÜTEN
+ *   sales-actuals /batches · /batches/:batchId · /batches/:batchId/rows
+ *                            SATIR DÜZEYİNDE gerçekleşen satış verisi.
+ *                            @CurrentUser YOK (dosyada tek kullanımı
+ *                            :65, upload rotasında) — yalnız tenantId.
+ *   sales-actuals /summary   tek gerçek özet — ama aynı READ_ROLES sabitini
+ *                            paylaştığı için diğer üçüyle ayrılamıyor.
+ *   finance-reporting /plan-performance   scope YOK.
+ * ```
+ *
+ * ⚠️ **Sorulan soruya doğrudan cevap:** `READ_ROLES` bir ÖZET DEĞİL.
+ * Dördünün yalnız biri (`/summary`) özet; `batches/:batchId/rows` satır
+ * seviyesinde veri döndürüyor ve **hiçbir kapsam filtresi yok**.
+ *
+ * 📌 **Ve ölçümün ürettiği sınıf, aranandan farklı ve daha keskin:**
+ * *"kendi verisi / özet"* değil — **"aktör kapsamı SERVİS katmanında"**.
+ * `SINIF A`'nın 11 route'u `@Roles`'u kaba bir kapı olarak kullanıp asıl
+ * daraltmayı satır seviyesinde yapıyor; `SINIF C` ise **hiç daraltmıyor**.
+ * İkisi `@Roles` yüzeyinden AYNI görünüyor (`5/5`) — ayrım yalnız servise
+ * bakınca çıkıyor. Bu, `POST = yazma` varsayımının kardeşi: **dekoratör bir
+ * yüzey, DAVRANIŞ başka.**
+ *
+ * ⛔ Bu yüzden üç `READ` hücresi **hâlâ DUR** — reklasifikasyon yapılmadı.
+ * Ölçüm şartı sağlanmadan bir yetenek adı yazmak `§2.4` ihlali olurdu.
  */
 
 export const CAPABILITIES = {
@@ -275,6 +362,8 @@ export const CAPABILITIES = {
   // PLANNER}. Bkz. yukarı, "ÇÖZÜLDÜ" alt-başlığı (`approval-policies` uyarısı dahil).
   SHARED_WRITE: 'shared:write',
   SHARED_APPROVE: 'shared:approve',
+  // 11. taksonomi düzeltmesi (2026-08-17): `PATCH /approval-policies/:id`
+  // SHARED_WRITE'tan BURAYA taşındı — konfigürasyon ucu, ADMIN kalıyor.
   SHARED_MANAGE: 'shared:manage',
 
   // ✅ ÇÖZÜLDÜ (2026-08-17, dal 1 — tek rol kümesi, mekanik) — {ADMIN}.
