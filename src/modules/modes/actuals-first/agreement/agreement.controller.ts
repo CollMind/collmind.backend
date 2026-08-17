@@ -61,7 +61,7 @@ export class AgreementController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get all agreements' })
@@ -85,7 +85,7 @@ export class AgreementController {
   @Roles(
     UserRole.ADMIN,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get pending approval agreements' })
@@ -102,7 +102,7 @@ export class AgreementController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get available tactics for channel and category' })
@@ -129,7 +129,7 @@ export class AgreementController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get agreement by ID' })
@@ -191,7 +191,7 @@ export class AgreementController {
   }
 
   @Post(':id/approve')
-  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Approve agreement' })
   @ApiResponse({ status: 200, description: 'Agreement approved successfully' })
@@ -216,7 +216,7 @@ export class AgreementController {
   }
 
   @Post(':id/reject')
-  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject agreement' })
   @ApiResponse({ status: 200, description: 'Agreement rejected successfully' })

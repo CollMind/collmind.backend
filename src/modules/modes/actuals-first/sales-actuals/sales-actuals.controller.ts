@@ -28,7 +28,7 @@ import { CurrentUser } from '../../../../common/decorators/current-user.decorato
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../../database/entities/user.entity';
 
-const WRITE_ROLES = [UserRole.ADMIN, UserRole.FINANCE_MANAGER];
+const WRITE_ROLES = [UserRole.ADMIN, UserRole.FINANCE];
 
 const READ_ROLES = [
   ...WRITE_ROLES,

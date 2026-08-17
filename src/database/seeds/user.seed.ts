@@ -72,7 +72,7 @@ export async function seedUsers(
       lastName: 'Finance',
       // T-028a: FINANCE deprecated alias → FINANCE_MANAGER (BRD canonical).
       // E-posta korunur (e2e login helper'ları buna göre eşleşiyor).
-      role: UserRole.FINANCE_MANAGER,
+      role: UserRole.FINANCE,
       status: UserStatus.ACTIVE,
       department: 'Finance',
       jobTitle: 'Finance Analyst',
@@ -85,7 +85,7 @@ export async function seedUsers(
       fullName: 'Sarah Finance Manager',
       firstName: 'Sarah',
       lastName: 'Finance Manager',
-      role: UserRole.FINANCE_MANAGER,
+      role: UserRole.FINANCE,
       status: UserStatus.ACTIVE,
       department: 'Finance',
       jobTitle: 'Finance Manager',

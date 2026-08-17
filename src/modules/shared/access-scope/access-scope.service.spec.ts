@@ -48,7 +48,7 @@ describe('AccessScopeService', () => {
   });
 
   describe('resolveScope — role semantics', () => {
-    it.each([UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.READONLY])(
+    it.each([UserRole.ADMIN, UserRole.FINANCE, UserRole.READONLY])(
       '%s is always UNRESTRICTED (no UserScope query)',
       async (role) => {
         const scope = await service.resolveScope(TENANT, USER, role);

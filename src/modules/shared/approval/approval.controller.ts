@@ -29,7 +29,7 @@ export class ApprovalController {
   @Roles(
     UserRole.ADMIN,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get all approval requests' })
@@ -50,7 +50,7 @@ export class ApprovalController {
   @Roles(
     UserRole.ADMIN,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get pending approval requests for current user' })
@@ -63,7 +63,7 @@ export class ApprovalController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get approval requests created by current user' })
@@ -79,7 +79,7 @@ export class ApprovalController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get approval request by ID' })

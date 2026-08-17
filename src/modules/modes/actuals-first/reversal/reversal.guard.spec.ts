@@ -39,7 +39,7 @@ describe('ReversalGuard', () => {
   });
 
   it('denies FINANCE_MANAGER', () => {
-    expect(() => guard.canActivate(makeCtx(UserRole.FINANCE_MANAGER))).toThrow(
+    expect(() => guard.canActivate(makeCtx(UserRole.FINANCE))).toThrow(
       ForbiddenException,
     );
   });

@@ -87,7 +87,7 @@ export interface ScopableEntity {
 /** Roller: her zaman tüm tenant görür (kategori/CPL scope'una tabi değil). */
 const UNRESTRICTED_ROLES = new Set<UserRole>([
   UserRole.ADMIN,
-  UserRole.FINANCE_MANAGER,
+  UserRole.FINANCE,
   UserRole.READONLY,
 ]);
 

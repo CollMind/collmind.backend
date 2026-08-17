@@ -22,7 +22,7 @@ export class LedgerController {
   constructor(private readonly ledgerService: LedgerService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get all ledger entries' })
   findAll(
     @TenantId() tenantId: string,
@@ -40,7 +40,7 @@ export class LedgerController {
   }
 
   @Get('agreement/:agreementId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get ledger entries by agreement ID' })
   findByAgreement(
     @Param('agreementId', ParseUUIDPipe) agreementId: string,
@@ -50,7 +50,7 @@ export class LedgerController {
   }
 
   @Get('agreement/:agreementId/consumed')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get total consumed amount for agreement' })
   async getConsumedByAgreement(
     @Param('agreementId', ParseUUIDPipe) agreementId: string,
@@ -64,7 +64,7 @@ export class LedgerController {
   }
 
   @Get('envelope/:envelopeId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Get ledger entries by budget envelope ID' })
   findByEnvelope(
     @Param('envelopeId', ParseUUIDPipe) envelopeId: string,
@@ -74,7 +74,7 @@ export class LedgerController {
   }
 
   @Get('envelope/:envelopeId/consumed')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Get total consumed amount for budget envelope' })
   async getConsumedByEnvelope(
     @Param('envelopeId', ParseUUIDPipe) envelopeId: string,
@@ -88,7 +88,7 @@ export class LedgerController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER, UserRole.PLANNER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get ledger entry by ID' })
   findOne(
     @Param('id', ParseUUIDPipe) id: string,

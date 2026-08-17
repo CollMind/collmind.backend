@@ -77,7 +77,7 @@ export class PlanController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get all plans' })
@@ -128,7 +128,7 @@ export class PlanController {
   @Roles(
     UserRole.ADMIN,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get approval queue for current user' })
@@ -181,7 +181,7 @@ export class PlanController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get plan analysis data' })
@@ -203,7 +203,7 @@ export class PlanController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get plan by ID' })
@@ -390,7 +390,7 @@ export class PlanController {
   }
 
   @Post(':id/review')
-  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.CATEGORY_MANAGER, UserRole.FINANCE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Review plan (approve/reject/request changes/escalate)',
@@ -441,7 +441,7 @@ export class PlanController {
     UserRole.ADMIN,
     UserRole.PLANNER,
     UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({ summary: 'Get plan approval history' })

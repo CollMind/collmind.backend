@@ -38,8 +38,9 @@ import { Tenant } from './tenant.entity';
  * APPROVER / MANAGER / (eski) FINANCE → SİLİNİR (üçü de 0 kullanıcı, ölçüldü 2026-08-13)
  * ```
  *
- * TS enum KEY'leri (sol taraf) DEĞİŞMEDİ — kod hâlâ `UserRole.FINANCE_MANAGER` yazıyor;
- * yalnız o key'in TAŞIDIĞI string `'FINANCE_MANAGER'` → `'FINANCE'` oldu.
+ * (Bu turda, R2a'da) TS enum KEY'leri (sol taraf) DEĞİŞMEDİ — kod hâlâ
+ * `UserRole.FINANCE_MANAGER` yazıyordu; yalnız o key'in TAŞIDIĞI string
+ * `'FINANCE_MANAGER'` → `'FINANCE'` olmuştu. (`Z7` bunu aşağıda değiştirdi.)
  *
  * K-2.6.4'ün Türkçe rol katalogu (YÖNETİCİ/PLANLAMACI/KATEGORİ MÜDÜRÜ/FİNANS/İZLEYİCİ)
  * bir **görüntü eşlemesidir** — bugün frontend'de var olan tek eşleme mekanizması
@@ -53,12 +54,25 @@ import { Tenant } from './tenant.entity';
  * ve üç değer silindiği için frontend'in KENDİ `UserRole` enum'u + tüketicileri de bu
  * migration'ın bir parçası olarak güncellendi (ayrı repo, aynı PR/tur — bkz. `collmind.
  * frontend/src/types/user.types.ts` ve grep ile üretilen tüketici listesi, final rapor).
+ *
+ * `Z7` (`04_KARAR_KAYDI.md`, 2026-08-17, ADIM 3 Faz A) — yukarıdaki `R2b` ertelemesi
+ * GEÇERSİZLEŞTİ. TS enum KEY'i de değişti (satırın hemen altında, `FINANCE`).
+ * Gerekçe: bu dalga zaten `ROLE_CAPABILITIES`'i **rollerle anahtarlıyor**
+ * (`src/common/authorization/capabilities.ts`), ve eski hâlde key `FINANCE_MANAGER`
+ * iken taşıdığı DEĞER `'FINANCE'` idi — yani anahtar ile değer AYRIŞIYORDU.
+ * `EK_C`'nin kendi uyarısı ("ad benzerliği ile anlam ayrışması") tam bunu
+ * adlandırıyordu. DEĞER `'FINANCE'` DEĞİŞMEDİ — yalnız sol taraftaki TS
+ * tanımlayıcısı eski `FINANCE_MANAGER` isminden `FINANCE`'e geçti. 76 çağrı yeri
+ * (`src/`, yalnız backend — frontend ayrı turda) bu değişiklikle güncellendi;
+ * migration'lardaki tarihsel `'FINANCE_MANAGER'` DB-değer string'lerine (ör.
+ * `1803000000000-BDalgasiSemaKalemleri.ts`) DOKUNULMADI — onlar TS tanımlayıcısı
+ * değil, geçmiş bir DB durumunun kaydı.
  */
 export enum UserRole {
   ADMIN = 'ADMIN',
   PLANNER = 'PLANNER',
   CATEGORY_MANAGER = 'CATEGORY_MANAGER',
-  FINANCE_MANAGER = 'FINANCE', // ⚠️ tek ad değişikliği — eski jenerik FINANCE'in yerini alıyor
+  FINANCE = 'FINANCE', // Z7: TS key FINANCE_MANAGER → FINANCE (değer değişmedi, key=değer artık eşleşiyor)
   READONLY = 'READONLY', // Read-only access — all GET endpoints, no write
 }
 

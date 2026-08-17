@@ -17,12 +17,16 @@ import {
 import { UserService } from './user.service';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly userService: UserService) {}
 
+  // ADIM 3 Faz A (0072 §0/4b): bilinçli-açık uç — hiç JwtAuthGuard taşımıyor,
+  // @Public() burada yalnız işaret; guard'ın kendisi bu uçta hiç koşmuyor.
+  @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'User login' })
@@ -53,6 +57,8 @@ export class AuthController {
     return this.userService.login(tenantId, loginDto);
   }
 
+  // ADIM 3 Faz A (0072 §0/4b): bilinçli-açık uç — aynı gerekçe (login'e bkz.).
+  @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh access token' })

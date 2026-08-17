@@ -58,13 +58,13 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
 
   // B dalgası / R2a: enum DEĞERLERİ ASCII kalır (⛔ P0 düzeltmesi — bkz. user.entity.ts
   // üst yorumu). Yalnız `FINANCE_MANAGER`'ın tel değeri `FINANCE_MANAGER` → `FINANCE`
-  // oldu; `UserRole.FINANCE_MANAGER` üzerinden karşılaştırmak (enum key'e bağlı) yine
+  // oldu; `UserRole.FINANCE` üzerinden karşılaştırmak (enum key'e bağlı) yine
   // otomatik doğru kalır.
   const adminUser = users.find((u) => u.role === UserRole.ADMIN) || users[0];
   const plannerUser =
     users.find((u) => u.role === UserRole.PLANNER) || users[0];
   const financeManagerUser =
-    users.find((u) => u.role === UserRole.FINANCE_MANAGER) || users[0];
+    users.find((u) => u.role === UserRole.FINANCE) || users[0];
   // ⚠️ `categoryManagerUser` KALDIRILDI (kullanılmayan değişken).
   // Ölçüldü (2026-08-13, T-211 dönüşü): HEAD'de de bu değişken tanımlıydı ama hiçbir
   // yerde kullanılmıyordu (tek geçiş, tanım satırının kendisi) — B dalgası

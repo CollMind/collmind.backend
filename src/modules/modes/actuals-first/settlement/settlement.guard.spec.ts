@@ -33,12 +33,12 @@ describe('SettlementGuard', () => {
   });
 
   // ⚠️ B dalgası / R2a (code-reviewer S6, 2026-08-13): eski "denies FINANCE (deprecated)"
-  // testi KALDIRILDI — 'FINANCE' artık UserRole.FINANCE_MANAGER'ın TEL değeri (⛔ P0
+  // testi KALDIRILDI — 'FINANCE' artık UserRole.FINANCE'ın TEL değeri (⛔ P0
   // düzeltmesi), yani bu test aşağıdaki FINANCE_MANAGER testiyle birebir aynı girdiyi
   // sınıyordu (§2.7 #6 — ayırt etme gücü sıfır). Gerçekten silinmiş bir etiket için
   // aşağıdaki MANAGER testine bkz.
   it('denies FINANCE_MANAGER', () => {
-    expect(() => guard.canActivate(makeCtx(UserRole.FINANCE_MANAGER))).toThrow(
+    expect(() => guard.canActivate(makeCtx(UserRole.FINANCE))).toThrow(
       ForbiddenException,
     );
   });

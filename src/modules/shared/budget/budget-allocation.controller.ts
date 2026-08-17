@@ -48,7 +48,7 @@ export class BudgetAllocationController {
   ) {}
 
   @Post()
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Create a new budget allocation' })
   @ApiResponse({
     status: 201,
@@ -98,7 +98,7 @@ export class BudgetAllocationController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Update budget allocation' })
   @ApiResponse({
     status: 200,
@@ -152,7 +152,7 @@ export class BudgetAllocationController {
   }
 
   @Post('commit')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Commit budget (plan approved)' })
   @ApiResponse({ status: 204, description: 'Budget committed successfully' })
@@ -188,7 +188,7 @@ export class BudgetAllocationController {
   }
 
   @Post('adjust')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Adjust budget utilization (plan revised)' })
   @ApiResponse({ status: 204, description: 'Budget adjusted successfully' })

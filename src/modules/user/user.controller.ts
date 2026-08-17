@@ -50,7 +50,7 @@ export class UserController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({
     status: 200,
@@ -123,7 +123,7 @@ export class UserController {
     UserRole.ADMIN,
     UserRole.CATEGORY_MANAGER,
     UserRole.PLANNER,
-    UserRole.FINANCE_MANAGER,
+    UserRole.FINANCE,
     UserRole.READONLY,
   )
   @ApiOperation({

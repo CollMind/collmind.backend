@@ -35,7 +35,7 @@ export class BudgetController {
   constructor(private readonly budgetService: BudgetService) {}
 
   @Post('envelopes')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @ApiOperation({ summary: 'Create a new budget envelope' })
   @ApiResponse({
     status: 201,
@@ -106,7 +106,7 @@ export class BudgetController {
   }
 
   @Post('envelopes/:id/split')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE_MANAGER)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary:

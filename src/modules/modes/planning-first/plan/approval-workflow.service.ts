@@ -357,7 +357,7 @@ export class ApprovalWorkflowService {
     // RolesGuard's coarse @Roles() check (@Roles only knows the route allows
     // ADMIN|CATEGORY_MANAGER|FINANCE_MANAGER, not the plan's current status).
     if (
-      reviewerRole === UserRole.FINANCE_MANAGER &&
+      reviewerRole === UserRole.FINANCE &&
       plan.status !== PlanStatus.PENDING_FINANCE_REVIEW
     ) {
       throw new ForbiddenException(
