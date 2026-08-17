@@ -97,6 +97,24 @@ export class ApprovalPolicyService {
    * Birincil savunma `resolveAmountThreshold` — bu yalnız bir arka duvar.
    * DB'den `23514` (check_violation) gelirse ham `QueryFailedError`
    * kullanıcıya 500 olarak dönmemeli.
+   *
+   * ⚠️ ARKA DUVAR ASİMETRİKTİR — ölçüldü (qa-engineer, mutasyon turu,
+   * 2026-08-17). Yukarıdaki cümle KOŞULSUZ okunmamalı:
+   *
+   *   THRESHOLD yönü   katman 1 düşerse  →  eşiksiz THRESHOLD yazılır
+   *                    CHECK İHLAL EDİLİR → 23514 → burada 400'e çevrilir  ✅
+   *   STANDARD  yönü   katman 1 düşerse  →  eşik sessizce `null`'a düşer
+   *                    ve `(template <> 'THRESHOLD' AND amount_threshold
+   *                    IS NULL)` kısıtı ZATEN SAĞLANIR → CHECK YAKALAMAZ  ⛔
+   *
+   * Ampirik: `resolveAmountThreshold`'un `!isThreshold && hasAmount` dalı
+   * mutasyonla devre dışı bırakıldığında istek 500 değil **200** döndü ve
+   * kullanıcının gönderdiği `amountThreshold` SESSİZCE kayboldu.
+   *
+   * Yani `STANDARD + eşik` yönünde `resolveAmountThreshold` TEK savunmadır.
+   * O dalı kaldıran/gevşeten bir değişiklik `§2.5` ihlali üretir
+   * (kullanıcının girdiği bir değer sessizce yok olur) ve HİÇBİR kapı
+   * onu göstermez — testten başka. Pin: `test/approval-policy-write.e2e-spec.ts`.
    */
   private wrapCheckViolation(err: unknown): unknown {
     const code =
