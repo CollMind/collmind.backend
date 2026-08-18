@@ -117,6 +117,16 @@ export async function cleanupAgreementsBudgetPlans(
     );
     console.log('   ✅ Deleted category-scoped user_scopes rows (T-237)');
 
+    // ⚠️ main.categories'e bağlı OLUP bu script'te DELETE satırı OLMAYAN
+    // referans verenler (code-review bulgusu, ölçüldü 2026-08-18, katalog):
+    //   budget_policies.category_id  NO ACTION
+    //   claims.category_id           NO ACTION
+    //   lta_rates.category_id        RESTRICT
+    // Bugün geçiyor çünkü üçü de bu ortamda BOŞ (budget_policies'te
+    // category dolu 0 · claims 0 satır · lta_rates 0 satır). Doldukları an
+    // aşağıdaki `DELETE FROM main.categories` DÜŞER — o zaman buraya
+    // DELETE satırı gerekir. Garanti şemadan değil VERİDEN geliyor.
+
     await queryRunner.query(`DELETE FROM main.categories`);
     console.log('   ✅ Deleted categories');
 

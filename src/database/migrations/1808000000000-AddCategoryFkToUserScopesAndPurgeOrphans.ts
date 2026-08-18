@@ -83,7 +83,10 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /** Öksüz satırlar: `category_id` DOLU + `main.categories`'te karşılığı YOK.
  *  Ölçüldü (2026-08-17/18): 115. Sabit sayı değil — `up()` üç durumu ayırt
- *  eder, bu yalnız İPTAL mesajında referans için. */
+ *  eder — ama bu sabit KOZMETİK DEĞİL: `up()` içinde `orphanCount ===
+ *  EXPECTED_ORPHAN_COUNT` dal koşuludur, yani purge'ün koşup koşmayacağına
+ *  KARAR VERİR. Ara/beklenmeyen bir sayı bu sabitle karşılaştırılarak İPTAL
+ *  dalına düşer. Güncellenmesi/silinmesi davranışı değiştirir. */
 const EXPECTED_ORPHAN_COUNT = 115;
 
 const FK_NAME = 'FK_user_scopes_category';
@@ -127,11 +130,24 @@ export class AddCategoryFkToUserScopesAndPurgeOrphans1808000000000 implements Mi
       // Ölçüm bugünkü veriye GÜVENMEZ — silme sonrası kalan satır sayısını
       // (category_id NULL VEYA category_id geçerli) her etkilenen kullanıcı
       // için AYRICA hesaplar.
+      //
+      // ⚠️ Ve ÇÖZÜMLEYİCİNİN OKUDUĞU kümeyle birebir aynı olmalı, daha geniş
+      // DEĞİL (code-review bulgusu, 2026-08-18): `AccessScopeService`
+      // `userScopeRepo.find({ where: { tenantId, userId, isActive: true } })`
+      // ile okuyor (`access-scope.service.ts:154`), ve TypeORM `find()`
+      // soft-silinmişleri dışlar (`base.entity.ts:24` `@DeleteDateColumn`).
+      // `is_active`/`deleted_at` filtresi olmadan bu assert, çözümleyicinin
+      // HİÇ görmediği satırları sayar — yani kullanıcı tamamen körken de
+      // GEÇEBİLİR, tam olarak engellemek için var olduğu durumda.
+      // Pasif satır varsayımsal değil: `seeds/user-scope.seed.ts` pasif bir
+      // satırı bulup yeniden aktifleştiriyor, yani ürünün tanıdığı bir hâl.
       const zeroRowUsers: Array<{ user_id: string; remaining: number }> =
         await queryRunner.query(
           `SELECT us.user_id,
                   COUNT(*) FILTER (
-                    WHERE us.category_id IS NULL OR c.id IS NOT NULL
+                    WHERE (us.category_id IS NULL OR c.id IS NOT NULL)
+                      AND us.is_active = true
+                      AND us.deleted_at IS NULL
                   )::int AS remaining
              FROM "main"."user_scopes" us
              LEFT JOIN "main"."categories" c ON c.id = us.category_id
@@ -143,7 +159,9 @@ export class AddCategoryFkToUserScopesAndPurgeOrphans1808000000000 implements Mi
                   )
             GROUP BY us.user_id
            HAVING COUNT(*) FILTER (
-                    WHERE us.category_id IS NULL OR c.id IS NOT NULL
+                    WHERE (us.category_id IS NULL OR c.id IS NOT NULL)
+                      AND us.is_active = true
+                      AND us.deleted_at IS NULL
                   ) = 0`,
         );
 
@@ -171,9 +189,13 @@ export class AddCategoryFkToUserScopesAndPurgeOrphans1808000000000 implements Mi
          WHERE us.id = orphans.id`,
       );
 
-      // node-postgres DELETE için ikinci eleman satır sayısı taşımayabilir
-      // (driver'a göre değişir) — deltayı AYRICA doğrula (CLAUDE.md: "bir
-      // yazma işleminin dönüş değeri yazdığının kanıtı değildir").
+      // Delta AYRICA doğrulanır (CLAUDE.md: "bir yazma işleminin dönüş
+      // değeri yazdığının kanıtı değildir") — ama dönüş değeri de ATILMAZ:
+      // bu sürücüde DELETE'in ikinci elemanı DETERMİNİSTİK olarak `rowCount`
+      // (ölçüldü 2026-08-18: `typeorm/driver/postgres/PostgresQueryRunner.js`
+      // `case "DELETE": result.raw = [raw.rows, raw.rowCount]`). İkisi
+      // birlikte iki FARKLI hatayı yakalar: `afterOrphanCount` EKSİK silmeyi,
+      // `deletedRows` karşılaştırması BEKLENENDEN FARKLI sayıda silmeyi.
       const [{ cnt: afterOrphanCount }]: [{ cnt: number }] =
         await queryRunner.query(
           `SELECT COUNT(*)::int AS cnt
@@ -190,7 +212,14 @@ export class AddCategoryFkToUserScopesAndPurgeOrphans1808000000000 implements Mi
         );
       }
 
-      void deletedRows;
+      if (deletedRows !== orphanCount) {
+        throw new Error(
+          `T-237 AddCategoryFkToUserScopes ASSERT başarısız: DELETE ` +
+            `${deletedRows} satır sildi, beklenen ${orphanCount}. Küme ` +
+            `silme sırasında değişmiş olabilir. Migration İPTAL edildi ` +
+            `(transaction rollback).`,
+        );
+      }
     } else {
       throw new Error(
         `T-237 AddCategoryFkToUserScopes ASSERT başarısız: öksüz satır sayısı ` +
