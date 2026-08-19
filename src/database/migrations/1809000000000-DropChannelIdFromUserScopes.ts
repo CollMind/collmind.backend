@@ -75,6 +75,22 @@ export class DropChannelIdFromUserScopes1809000000000 implements MigrationInterf
     }
 
     // ── 2) Dolu satır var mı? — ÜÇ DURUM AYRIMININ can alıcı kontrolü ───────
+    //
+    // ⚠️ FİLTRESİZ, ve bu 1808'den BİLİNÇLİ bir farktır (code-review S2,
+    // 2026-08-18). Kardeş migration (1808...ts) assert'ini
+    // `is_active = true AND deleted_at IS NULL` ile DARALTIYOR — çünkü orada
+    // assert ERİŞİMİ koruyordu, yani AccessScopeService'in fiilen okuduğu
+    // kümeyi ölçmesi gerekiyordu (`find({ where: { isActive: true } })`,
+    // access-scope.service.ts:154; TypeORM `find()` soft-silinmişleri dışlar).
+    //
+    // Burada assert VERİYİ koruyor: `DROP COLUMN` pasif (`is_active = false`)
+    // ve soft-silinmiş (`deleted_at IS NOT NULL`) satırlardaki değeri de yok
+    // eder. Bu yüzden TÜM satırlar taranmalı.
+    //
+    // ⛔ İki dosyayı "tutarlı hâle getirmek" isteyen bir tur buraya
+    // `AND is_active = true AND deleted_at IS NULL` EKLEMEMELİ — koruma
+    // sessizce daralır. Pasif satır varsayımsal değil:
+    // seeds/user-scope.seed.ts pasif bir satırı bulup yeniden aktifleştiriyor.
     const [{ cnt: filledCount }]: [{ cnt: number }] = await queryRunner.query(
       `SELECT COUNT(*)::int AS cnt
          FROM "main"."user_scopes"
@@ -112,9 +128,16 @@ export class DropChannelIdFromUserScopes1809000000000 implements MigrationInterf
       return;
     }
 
-    // Simetrik geri kurma: silinen veri yoktu (37/37 NULL), yani boş bir
-    // nullable kolon geri kurmak veri kaybını GERİ ALIR — 1808'deki gibi bir
-    // asimetri burada yok.
+    // Simetrik geri kurma — ve gerekçe bir SAYIDAN değil, `up()`'ın
+    // INVARYANTINDAN türüyor (code-review S1, 2026-08-18): `up()` dolu satır
+    // varken DÜŞÜRMÜYOR (yukarıda `filledCount > 0` → throw). Dolayısıyla
+    // kolonun düştüğü HER veritabanında kaybolan veri YOKTUR, ve boş bir
+    // nullable kolon geri kurmak kaybı tam olarak geri alır.
+    //
+    // ⚠️ Önceki hâli "37/37 NULL" diyordu — bu BİR veritabanında ölçülmüş bir
+    // sayıydı ve koşulu yazılmadan evrensel bir gerekçe gibi duruyordu. Sayı
+    // bayatlar (bugün 37, yarın başka); invaryant bayatlamaz.
+    // 1808'deki asimetri (silinen satırlar geri gelmiyordu) burada YOK.
     await queryRunner.query(
       `ALTER TABLE "main"."user_scopes" ADD COLUMN "channel_id" uuid NULL`,
     );

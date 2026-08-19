@@ -10,6 +10,10 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Sütunlar:
  *   id (uuid PK), tenant_id, user_id, cpl_id (nullable), category_id (nullable),
  *   channel_id (nullable), is_active, created_at, updated_at, deleted_at,
+ *
+ *   ⚠️ Bu envanter TARİHSELDİR: `channel_id` 1809000000000 (T-238) ile
+ *   DÜŞÜRÜLDÜ (2026-08-18). Bu migration onu gerçekten yaratıyor (aşağıda) —
+ *   satır doğru, ama güncel şema DEĞİL.
  *   created_by, updated_by
  *
  * Unique index: (user_id, cpl_id, category_id) — aynı kullanıcıya aynı
