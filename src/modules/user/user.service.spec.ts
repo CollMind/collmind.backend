@@ -309,13 +309,14 @@ describe('UserService', () => {
       expect(categoryRepository.find).not.toHaveBeenCalled();
     });
 
-    it('ignores a caller-supplied scope for a wildcard role (ADMIN) and still writes only the wildcard row', async () => {
+    // A3 (ikinci tur review, 2026-08-20): bu test ESKİDEN "sessizce yok
+    // sayılır"ı pinliyordu. Davranış BİLİNÇLİ olarak değişti — sessiz atlama
+    // bir SÖZLEŞME YALANIYDI (§2.5): çağıran 201 alıp kısıtlı bir kullanıcı
+    // yarattığını sanıyor, gerçekte joker yaratmış oluyordu.
+    // ⚠️ Bu KIRMIZI beklenendi ve testin yeniden yazılmasıyla giderildi —
+    // davranış geri alınarak DEĞİL.
+    it('A3: rejects a caller-supplied scope for a wildcard role (ADMIN) with 400 (no silent drop)', async () => {
       userRepository.findByEmail.mockResolvedValue(null);
-      // ADMIN is a wildcard role — CreateUserDto's `scope` field is ignored
-      // for it by design (see create-user.dto.ts). This DTO shape is only
-      // reachable by calling the service directly (ValidateIf wouldn't even
-      // require it), so this proves the SERVICE, not just the DTO, enforces
-      // "wildcard roles always get exactly the wildcard row".
       const adminDtoWithScope = {
         email: 'admin3@example.com',
         password: 'password123',
@@ -324,9 +325,30 @@ describe('UserService', () => {
         scope: [{ cplId: 'cpl-1', categoryId: null }],
       } as CreateUserDto;
 
-      await service.create(mockTenantId, adminDtoWithScope);
+      await expect(
+        service.create(mockTenantId, adminDtoWithScope),
+      ).rejects.toThrow(BadRequestException);
+      expect(userEntityRepo.create).not.toHaveBeenCalled();
+    });
 
-      expect(userScopeRepo.create).toHaveBeenCalledTimes(1);
+    it('writes exactly the wildcard row for a wildcard role when NO scope is supplied', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      const adminDto = {
+        email: 'admin4@example.com',
+        password: 'password123',
+        fullName: 'New Admin 4',
+        role: UserRole.ADMIN,
+      } as CreateUserDto;
+
+      await service.create(mockTenantId, adminDto);
+
+      // ⚠️ `undefined`, `null` DEĞİL — ve bu bilinçli: `user.service.ts:112`
+      // `row.cplId ?? undefined` yazıyor, çünkü TypeORM `undefined`'ı
+      // "kolonu INSERT'ten ÇIKAR" diye okur ve DB varsayılanı (NULL) yazılır.
+      // Okuma tarafı ikisini de aynı sayıyor (`(r.cplId ?? null) === null`,
+      // access-scope.service.ts:205) ve DB'de ölçüldü: joker satırlar
+      // `cpl_id IS NULL`. Yani `undefined` ≡ `null` — ama TEST GERÇEĞİ
+      // yazmalı, niyeti değil.
       expect(userScopeRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ cplId: undefined, categoryId: undefined }),
       );
@@ -366,6 +388,31 @@ describe('UserService', () => {
         service.create(mockTenantId, plannerScopeDto),
       ).rejects.toThrow(BadRequestException);
       expect(userEntityRepo.create).not.toHaveBeenCalled();
+    });
+
+    // ── A4 (ikinci tur review) — guard'ın AYIRT EDİCİ vakası pinlenir ────
+    //
+    // Yukarıdaki test `find` → `[]` mock'luyor, yani "başka tenant'ta VAR" ile
+    // "hiç YOK" ayırt edilemiyor — ve e2e de var olmayan bir UUID kullanıyor,
+    // yani FK de aynı sonucu verirdi. Sonuç: sorgudan `tenantId` SİLİNSE
+    // hiçbir test kırmızıya dönmezdi (§2.7 #6 — doğru kapsam, yanlış şekil).
+    //
+    // Bu test sorgunun ŞEKLİNİ pinliyor: kiracı filtresi WHERE'de OLMALI.
+    // FK bunu yakalayamaz — FK tenant'ı bilmez.
+    it('A4: cplId/categoryId sorguları tenantId ile FİLTRELENİR (guard FK ile karıştırılamaz)', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
+      categoryRepository.find.mockResolvedValue([]);
+
+      // Yaratma BAŞARILI olmalı (cpl bulundu) — bu testin konusu reddedilme
+      // değil, sorgunun ŞEKLİ.
+      await service.create(mockTenantId, plannerScopeDto);
+
+      expect(cplRepository.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ tenantId: mockTenantId }),
+        }),
+      );
     });
 
     // ── K-2.6.10 — the write endpoint must not compute pair semantics ──

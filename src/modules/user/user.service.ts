@@ -146,6 +146,26 @@ export class UserService {
     dto: CreateUserDto,
   ): Promise<UserScopePairDto[]> {
     if (WILDCARD_SCOPE_ROLES.has(dto.role)) {
+      // ⛔ A3 (ikinci tur code-review) — `B1`'in TERS YÜZÜ.
+      //
+      // `B1` SCOPE_REQUIRED rollerde joker göndermeyi yasakladı. Bu dal ise
+      // UNRESTRICTED rollerde gönderilen `scope`'u SESSİZCE ATIYORDU: çağıran
+      // `{role:'FINANCE', scope:[{cplId:X}]}` gönderip **201** alıyor,
+      // KISITLI bir kullanıcı yarattığını sanıyor — gerçekte JOKER yaratmış
+      // oluyordu. Ve DTO da yakalamıyor: `@ValidateIf` yalnız
+      // SCOPE_REQUIRED_ROLES için koşuyor, `forbidNonWhitelisted` ise
+      // `scope`'u beyaz listede gördüğü için geçiriyor.
+      //
+      // §2.5: sessiz atlama YOK. Aynı asimetrinin iki yüzü, aynı ilke —
+      // "bir sözleşme yalanı" (code-reviewer).
+      if (dto.scope !== undefined) {
+        throw new BadRequestException(
+          `role=${dto.role} için 'scope' alanı VERİLEMEZ — bu rol JOKER ` +
+            'kapsam alır (tüm CPL + tüm kategori) ve gönderilen kapsam ' +
+            'uygulanmaz. Sessizce yok saymak yerine açık hata: kısıtlı bir ' +
+            'kapsam isteniyorsa PLANNER ya da CATEGORY_MANAGER rolü kullanın.',
+        );
+      }
       return [{ cplId: null, categoryId: null }];
     }
 

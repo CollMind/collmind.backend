@@ -365,6 +365,35 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
       expect(rows).toEqual([{ cpl_id: CPL_NKA, category_id: null }]);
     });
 
+    // ── A3 (ikinci tur review) — B1'in TERS YÜZÜ ─────────────────────────
+    // UNRESTRICTED rollerde gönderilen `scope` SESSİZCE atılıyordu: çağıran
+    // 201 alıp kısıtlı bir kullanıcı yarattığını sanıyor, gerçekte joker.
+    it('A3: UNRESTRICTED rolde scope gönderilirse → 400 (sessizce atılmaz)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-t241-a3-finance-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
+
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password: 'Collmind2026!',
+          fullName: 'T-241 A3 wildcard role with scope',
+          role: 'FINANCE',
+          status: 'ACTIVE',
+          scope: [{ cplId: CPL_NKA }],
+        });
+
+      expect(res.status).toBe(400);
+
+      const rows = await dataSource.query(
+        `SELECT id FROM main.users WHERE email = $1`,
+        [email],
+      );
+      expect(rows.length).toBe(0);
+    });
+
     it('YARATILAN HER kullanıcının kapsam satırı ≥ 1 (invaryant — bu testin şimdiye kadar yarattığı tüm kullanıcılar)', async () => {
       expect(scratchUserIds.length).toBeGreaterThan(0);
       for (const userId of scratchUserIds) {
