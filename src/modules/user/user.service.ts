@@ -190,6 +190,42 @@ export class UserService {
         );
       }
 
+      // ⛔ R1 + A5 (ikinci tur code-review blocker, 2026-08-20) — CM'de DOLU
+      // `cplId` REDDEDİLİR.
+      //
+      // B1 kapısı yalnız İKİ boyutu da boş çifti yakalıyordu. CATEGORY_MANAGER
+      // için `{cplId: <geçerli>, categoryId: null}` o kapıdan GEÇİYOR ve AYNI
+      // sonucu üretiyor — çünkü okuma yolu CM'de `cplId`'yi ATIYOR:
+      //
+      //   access-scope.service.ts:213  CM dalı → {cplId: null, categoryId: r.categoryId ?? null}
+      //                                        → pairs = [{null, null}]
+      //   access-scope.service.ts:250  cplOk = (pair.cplId === null) → true
+      //   access-scope.service.ts:251  categoryOk = (null) → true    ⇒ HER ŞEY
+      //
+      // Yani joker YAZIMI farklı bir yoldan geri geliyordu, ve CM enforcement
+      // BAYRAKTAN BAĞIMSIZ olduğu için CANLIYDI.
+      //
+      // Ürün sahibi kararı (2026-08-20): REDDEDİLİR, normalize EDİLMEZ.
+      // Gerekçe: normalize etmek kullanıcının girdiği bir değeri SESSİZCE yok
+      // saymaktır (§2.5), ve T-214'te aynı karar verildi ("STANDARD + eşik
+      // gönderilirse reddedilsin"). Daha derini: CM için `cplId` ANLAMSIZ
+      // değil — okuma yolu onu atıyor, yani ANLAMI BELİRSİZ. 400 o belirsizliği
+      // kullanıcıya taşır, bir varsayımla kapatmaz.
+      if (dto.role === UserRole.CATEGORY_MANAGER) {
+        const cplPairIndex = dto.scope.findIndex(
+          (pair) => (pair.cplId ?? null) !== null,
+        );
+        if (cplPairIndex !== -1) {
+          throw new BadRequestException(
+            `role=${UserRole.CATEGORY_MANAGER} için 'scope' çiftleri 'cplId' ` +
+              `TAŞIYAMAZ — ${cplPairIndex}. çift dolu bir 'cplId' içeriyor. ` +
+              'Kategori müdürünün kapsamı yalnız KATEGORİ boyutundadır ' +
+              '(kanaldan bağımsız kategori sahibi); verilen cplId karar ' +
+              'anında yok sayılır ve yanıltıcı olur. Yalnız categoryId verin.',
+          );
+        }
+      }
+
       const cplIds = [
         ...new Set(
           dto.scope
@@ -391,8 +427,78 @@ export class UserService {
       }
     }
 
+    // ⛔ R2 (ikinci tur code-review blocker, 2026-08-20) — ROL DEĞİŞİMİ
+    // KAPSAM TUTARSIZLIĞI ÜRETİYORSA 409.
+    //
+    // B1'in YARATMA kapısında yasakladığı DB durumu, bu rota üzerinden TEK
+    // ÇAĞRIYLA kuruluyordu: joker satırlı bir kullanıcı (ADMIN/FINANCE/
+    // READONLY) SCOPE_REQUIRED bir role çevrildiğinde satır OLDUĞU GİBİ
+    // kalıyor ve `hasUnrestrictedRow` onu UNRESTRICTED'a çeviriyor
+    // (access-scope.service.ts:205-210). CATEGORY_MANAGER için bayraktan
+    // BAĞIMSIZ, yani CANLI.
+    //
+    // Ürün sahibi kararı (2026-08-20): burada 409 — "önce kapsam ver".
+    // Fail-closed ve AÇIK. Kapsamın rol değişiminde YENİDEN KURULMASI ayrı
+    // bir iştir ([[T-242]], artık P1) — bu kapı deliği kapatır, o yolu açar.
+    // ⚠️ Ve 409 KALICI olabilir: kapsam güncelleme zaten ayrı bir işlem.
+    if (updateUserDto.role && updateUserDto.role !== user.role) {
+      await this.assertRoleChangeScopeConsistent(
+        tenantId,
+        id,
+        updateUserDto.role,
+      );
+    }
+
     Object.assign(user, updateUserDto);
     return this.userRepository.save(user);
+  }
+
+  /**
+   * Rol değişimi kapsam satırlarıyla tutarsız bir durum üretiyorsa 409.
+   *
+   * Bugün tek yön kapatılıyor — FAIL-OPEN olan yön:
+   *   joker satırlı kullanıcı → SCOPE_REQUIRED rol   ⇒ 409
+   *
+   * Ters yön (dar kapsamlı kullanıcı → WILDCARD rol) bugün ZARARSIZ, çünkü
+   * UNRESTRICTED_ROLES kod dalı o rolleri satırları okumadan geçiriyor
+   * (access-scope.service.ts:168-171). ⚠️ Ama [[T-235]] ADIM 3 o dalı
+   * kaldıracak — o gün bu yön de bir kapı ister ve [[T-242]]'nin konusudur.
+   */
+  private async assertRoleChangeScopeConsistent(
+    tenantId: string,
+    userId: string,
+    newRole: UserRole,
+  ): Promise<void> {
+    if (!SCOPE_REQUIRED_ROLES.has(newRole)) {
+      return;
+    }
+
+    const rows = await this.dataSource.getRepository(UserScope).find({
+      where: { tenantId, userId, isActive: true },
+    });
+
+    const wildcardRow = rows.find(
+      (r: UserScope) =>
+        (r.cplId ?? null) === null && (r.categoryId ?? null) === null,
+    );
+    if (wildcardRow) {
+      throw new ConflictException(
+        `Rol '${newRole}' olarak değiştirilemez: kullanıcının JOKER kapsam ` +
+          'satırı var (tüm CPL + tüm kategori) ve bu rol için joker kapsam ' +
+          'verilemez (T-241). Rol değişiminden ÖNCE kapsam satırları bu role ' +
+          'uygun hâle getirilmelidir — bugün bunun bir ucu YOK ([[T-242]]). ' +
+          'Sessizce geçilseydi kullanıcı yeni rolüyle HER ŞEYİ görürdü.',
+      );
+    }
+
+    if (rows.length === 0) {
+      throw new ConflictException(
+        `Rol '${newRole}' olarak değiştirilemez: kullanıcının hiç kapsam ` +
+          'satırı yok, ve bu rol kapsam ZORUNLU (T-241). Kapsam satırı ' +
+          'olmayan bir kullanıcı bu rolde HİÇBİR ŞEY göremez (R-2 ' +
+          'fail-closed) — sessiz bir erişim kaybı yerine açık hata.',
+      );
+    }
   }
 
   async remove(tenantId: string, id: string): Promise<void> {

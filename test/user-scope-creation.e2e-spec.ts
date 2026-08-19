@@ -190,6 +190,71 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
       },
     );
 
+    // ── R1 + A5 (ikinci tur review blocker) — CM'de DOLU cplId REDDEDİLİR ──
+    //
+    // ⚠️ Ve bu, B1'in KAÇIRDIĞI taraf: B1 yalnız İKİ boyutu da boş çifti
+    // yakalıyordu. CM için `{cplId: X, categoryId: null}` o kapıdan GEÇİYOR ve
+    // AYNI joker sonucu üretiyor (okuma yolu CM'de cplId'yi ATIYOR →
+    // pairs=[{null,null}] → isInScope her şeye true).
+    //
+    // 📌 B1'in yeşil yarısı bunu göremedi çünkü PLANNER ile kurulmuştu — ve
+    // PLANNER için `{cplId, null}` MEŞRU. Aynı girdi CM'de güvensiz.
+    // Ders (§7.1): bir kural birden çok ÖZNEye uygulanıyorsa, testi HER ÖZNE
+    // için ayrı kurulmalı — bir öznede geçen kanıt diğerinde geçmeyebilir.
+    it('R1: CATEGORY_MANAGER + dolu cplId → 400, kullanıcı YARATILMAZ', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-t241-r1-cm-cpl-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
+
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password: 'Collmind2026!',
+          fullName: 'T-241 R1 CM with cplId',
+          role: 'CATEGORY_MANAGER',
+          status: 'ACTIVE',
+          scope: [{ cplId: CPL_NKA, categoryId: CATEGORY_SAC_BOYASI }],
+        });
+
+      expect(res.status).toBe(400);
+
+      const rows = await dataSource.query(
+        `SELECT id FROM main.users WHERE email = $1`,
+        [email],
+      );
+      expect(rows.length).toBe(0);
+    });
+
+    // R1 YEŞİL yarı — CM için yalnız categoryId MEŞRU (yasak cplId'ye özgü,
+    // CM'nin tümüne değil). İki girdi, iki çıktı — AYNI ÖZNE üzerinde.
+    it('R1 yeşil yarı: CATEGORY_MANAGER + yalnız categoryId → 201', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-t241-r1-cm-ok-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
+
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password: 'Collmind2026!',
+          fullName: 'T-241 R1 CM category-only',
+          role: 'CATEGORY_MANAGER',
+          status: 'ACTIVE',
+          scope: [{ categoryId: CATEGORY_SAC_BOYASI }],
+        });
+
+      expect(res.status).toBe(201);
+      scratchUserIds.push(res.body.id);
+
+      const rows = await readScopeRows(res.body.id);
+      expect(rows).toEqual([
+        { cpl_id: null, category_id: CATEGORY_SAC_BOYASI },
+      ]);
+    });
+
     // YEŞİL yarı: dolu bir boyut YETER — yasak yalnız İKİ boyutu da boş olanı
     // kapsıyor, kısmi çifti değil (iki girdi, iki çıktı — §2.7 #9).
     it('B1 yeşil yarı: yalnız cplId dolu çift → 201 (yasak İKİ boyutu da boş olana özgü)', async () => {
@@ -309,6 +374,84 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     });
   });
 
+  // ── R2 (ikinci tur review blocker) — ROL DEĞİŞİMİ kapsam tutarsızlığı ──
+  //
+  // B1'in YARATMA kapısında yasakladığı DB durumu, PATCH /users/:id üzerinden
+  // TEK ÇAĞRIYLA kuruluyordu: joker satırlı bir kullanıcı SCOPE_REQUIRED bir
+  // role çevrildiğinde satır olduğu gibi kalıyor → hasUnrestrictedRow →
+  // UNRESTRICTED. CM için bayraktan BAĞIMSIZ, yani CANLIYDI.
+  //
+  // ⚠️ Ve T-242 bunu TERS YÖNDE kaydetmişti (PLANNER → ADMIN, fail-closed ve
+  // zararsız). Sayılmayan yön — joker → kapsamlı rol — fail-open'dı.
+  describe('R2 — rol değişimi kapsam tutarsızlığı üretiyorsa 409', () => {
+    it('joker satırlı FINANCE → CATEGORY_MANAGER → 409, rol DEĞİŞMEZ', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-t241-r2-finance-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
+
+      // 1) joker satırlı bir FINANCE yarat (WILDCARD_SCOPE_ROLES → otomatik joker)
+      const createRes = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password: 'Collmind2026!',
+          fullName: 'T-241 R2 wildcard finance',
+          role: 'FINANCE',
+          status: 'ACTIVE',
+        })
+        .expect(201);
+      scratchUserIds.push(createRes.body.id);
+      expect(await readScopeRows(createRes.body.id)).toEqual([
+        { cpl_id: null, category_id: null },
+      ]);
+
+      // 2) SCOPE_REQUIRED bir role çevirmeye çalış → 409
+      const patchRes = await request(app.getHttpServer())
+        .patch(`/users/${createRes.body.id}`)
+        .set(admin.authHeader())
+        .send({ role: 'CATEGORY_MANAGER' });
+
+      expect(patchRes.status).toBe(409);
+
+      // 3) rol DEĞİŞMEMİŞ olmalı — ve joker satır hâlâ FINANCE'a ait
+      const after = await dataSource.query(
+        `SELECT role FROM main.users WHERE id = $1`,
+        [createRes.body.id],
+      );
+      expect(after[0].role).toBe('FINANCE');
+    });
+
+    // YEŞİL yarı: aynı rota, tutarsızlık ÜRETMEYEN bir değişiklik geçmeli —
+    // yoksa kapı "her rol değişimini reddediyor" olurdu (§2.7 #9).
+    it('R2 yeşil yarı: kapsamlı PLANNER → CATEGORY_MANAGER geçişi ENGELLENMEZ (joker yok)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-t241-r2-scoped-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
+
+      const createRes = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password: 'Collmind2026!',
+          fullName: 'T-241 R2 scoped planner',
+          role: 'PLANNER',
+          status: 'ACTIVE',
+          scope: [{ categoryId: CATEGORY_SAC_BOYASI }],
+        })
+        .expect(201);
+      scratchUserIds.push(createRes.body.id);
+
+      const patchRes = await request(app.getHttpServer())
+        .patch(`/users/${createRes.body.id}`)
+        .set(admin.authHeader())
+        .send({ role: 'CATEGORY_MANAGER' });
+
+      expect(patchRes.status).toBe(200);
+    });
+  });
+
   describe("Cross-tenant izolasyon — scope içindeki cplId/categoryId bu tenant'a ait olmalı", () => {
     it('başka (var olmayan) bir cplId ile PLANNER yaratma → 400, kullanıcı YARATILMAZ', async () => {
       const admin = await loginAs(app, 'ADMIN');
@@ -344,12 +487,19 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
   describe('RBAC — yalnızca ADMIN kullanıcı yaratabilir', () => {
     it('PLANNER kendi rolüyle POST /users çağırır → 403', async () => {
       const planner = await loginAs(app, 'PLANNER');
+      // A6 (ikinci tur review): bu test de REDDEDİLME bekliyor, yani bir
+      // mutasyon (@Roles kaldırılması) onu 201'e çevirir ve kalıntı bırakır.
+      // İlk cleanup düzeltmesi yalnız `400` bekleyenleri kapsıyordu — kusurun
+      // İLK YAZIMI'nı, SINIFINI değil (CLAUDE.md: "kapsam kusurun SINIFIYLA
+      // tanımlanır"). Sınıf: REDDEDİLME bekleyen HER istek.
+      const email = `e2e-t241-rbac-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
 
       const res = await request(app.getHttpServer())
         .post('/users')
         .set(planner.authHeader())
         .send({
-          email: `e2e-t241-rbac-${Date.now()}@wella.com`,
+          email,
           password: 'Collmind2026!',
           fullName: 'Should Not Be Created',
           role: 'PLANNER',
