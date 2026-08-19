@@ -48,7 +48,10 @@ describe('AccessScopeService', () => {
   });
 
   describe('resolveScope — role semantics', () => {
-    it.each([UserRole.ADMIN, UserRole.FINANCE, UserRole.READONLY])(
+    // T-235 ADIM 2: READONLY bu listeden ÇIKARILDI — UNRESTRICTED_ROLES kod
+    // sabitinde artık yok (access-scope.service.ts). ADMIN/FINANCE bu turda
+    // dokunulmadı, kod dalıyla koşulsuz UNRESTRICTED kalır.
+    it.each([UserRole.ADMIN, UserRole.FINANCE])(
       '%s is always UNRESTRICTED (no UserScope query)',
       async (role) => {
         const scope = await service.resolveScope(TENANT, USER, role);
@@ -346,11 +349,41 @@ describe('AccessScopeService', () => {
       expect(scopeOn).toEqual(scopeOff);
     });
 
-    it('flag does NOT affect UNRESTRICTED roles (ADMIN/FM/READONLY) — no UserScope query either way', async () => {
+    it('flag does NOT affect code-branch UNRESTRICTED roles (ADMIN/FM) — no UserScope query either way', async () => {
       const { svc, repo } = await buildServiceWithFlag(undefined);
       const scope = await svc.resolveScope(TENANT, USER, UserRole.ADMIN);
       expect(scope).toEqual({ kind: 'UNRESTRICTED' });
       expect(repo.find).not.toHaveBeenCalled();
+    });
+
+    // T-235 ADIM 2: READONLY artık UNRESTRICTED_ROLES kod dalında değil, bu
+    // yüzden bu describe'ın flag'iyle ilgisi yok — flag PLANNER'a özgü ve
+    // READONLY her koşulda UserScope'u sorgular (ayrı describe: aşağıda).
+  });
+
+  // T-235 ADIM 2 (docs/verification/T235_OLCUM_1_VE_3.md, ürün sahibi kararı):
+  // UNRESTRICTED_ROLES kod sabitinden READONLY çıkarıldı — kısa devre kalktı,
+  // her READONLY çağrısı artık UserScope'u sorgular. İki girdi, iki çıktı
+  // (CLAUDE.md §2.7 #9 — sinyal sabitse sinyal değildir):
+  //   joker satır ({cplId:null, categoryId:null})  -> UNRESTRICTED, find ÇAĞRILIR
+  //   satır YOK                                     -> SCOPED{pairs:[]} (R-2 fail-closed)
+  describe('T-235 ADIM 2 — READONLY kod dalından çıktı, buildScope üzerinden çözülür', () => {
+    it('READONLY with a wildcard UserScope row => UNRESTRICTED (find IS called, unlike the code-branch roles)', async () => {
+      userScopeRepo.find.mockResolvedValue([
+        buildScopeRow({ cplId: undefined, categoryId: undefined }),
+      ]);
+      const scope = await service.resolveScope(TENANT, USER, UserRole.READONLY);
+      expect(scope).toEqual({ kind: 'UNRESTRICTED' });
+      expect(userScopeRepo.find).toHaveBeenCalled();
+    });
+
+    it('READONLY with NO UserScope rows => SCOPED with empty pairs (R-2 fail-closed — sees nothing)', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+      const scope = await service.resolveScope(TENANT, USER, UserRole.READONLY);
+      expect(scope).toEqual({ kind: 'SCOPED', pairs: [] });
+      expect(service.isInScope(scope, { cplId: 'x', categoryId: 'y' })).toBe(
+        false,
+      );
     });
   });
 });

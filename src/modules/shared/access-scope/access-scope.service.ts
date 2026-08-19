@@ -35,8 +35,12 @@ import { UserRole } from '../../../database/entities/user.entity';
  *         dashboard.service.ts'de `.filter(id=>!!id)` bunu sessizce
  *         "hiçbiri"ye çeviriyordu — bu servis NULL'ı doğru "hepsi" olarak
  *         yorumlar).
- *   Rol semantiği TEK yerde (burada): ADMIN/FINANCE_MANAGER/READONLY ->
- *         UNRESTRICTED (BRD: bu roller kategori/CPL scope'una tabi değil) ·
+ *   Rol semantiği TEK yerde (burada): ADMIN/FINANCE_MANAGER -> kod dalıyla
+ *         koşulsuz UNRESTRICTED (BRD: bu roller kategori/CPL scope'una tabi
+ *         değil) · READONLY -> T-235 ADIM 2'den beri kod dalında DEĞİL,
+ *         `buildScope`'un joker-satır dalıyla (aşağıda `UNRESTRICTED_ROLES`
+ *         yorumu) UNRESTRICTED'a çözülür — satırsız bir READONLY artık R-2
+ *         fail-closed'a tabidir ·
  *         PLANNER -> cpl+category pair (ikisi de kullanılır) ·
  *         CATEGORY_MANAGER -> yalnız category boyutu, cplId satırdan
  *         gelse bile normalize edilip null'a düşürülür (BRD: "kategori
@@ -68,6 +72,10 @@ import { UserRole } from '../../../database/entities/user.entity';
  *     - CATEGORY_MANAGER / ADMIN / FINANCE_MANAGER / READONLY flag'den
  *       ETKİLENMEZ (CM enforcement T-028b'de zaten prod'a gitti; flag
  *       yalnızca PLANNER'ın T-028c'de YENİ eklenen enforcement'ını kapsar).
+ *       READONLY için "etkilenmez" artık iki farklı yoldan gelir: kod
+ *       dalından değil (T-235 ADIM 2'den beri UNRESTRICTED_ROLES'te değil),
+ *       joker satırdan (`buildScope` `hasUnrestrictedRow`) — sonuç aynı,
+ *       mekanizma farklı.
  */
 
 export interface ScopePair {
@@ -84,11 +92,35 @@ export interface ScopableEntity {
   categoryId?: string | null;
 }
 
-/** Roller: her zaman tüm tenant görür (kategori/CPL scope'una tabi değil). */
+/**
+ * Roller: kod dalı olarak koşulsuz tüm tenant görür (kategori/CPL scope'una
+ * tabi değil).
+ *
+ * T-235 ADIM 2 (docs/verification/T235_OLCUM_1_VE_3.md, ürün sahibi kararı):
+ * READONLY bu sabitten ÇIKARILDI. K-2.6.4c — "İZLEYİCİ bir izleme
+ * YETENEKLERİ SETİdir, bir 'salt-okur bayrağı' DEĞİL" — kapsamı hiçbir
+ * BRD/karar metninde "her şey" diye yazılı değildi; bu sabitteki koşulsuz
+ * üyelik o yazılı olmayan varsayımı kod tarafında sabitliyordu.
+ * ADMIN/FINANCE bu turda DOKUNULMADI (K-2.6.4: tenant-geneli tanım/transfer
+ * işleri — bilinçli olarak kalır).
+ *
+ * ⛔ SIRA BAĞLAYICI — bu satır, T-235 ADIM 1'in seed'i (a25e820,
+ * src/database/seeds/user-scope.seed.ts `WILDCARD_SCOPE_ROLES`) READONLY
+ * için HER kullanıcıya joker satır ({cplId:null, categoryId:null}) yazdıktan
+ * SONRA kaldırıldı. Ölçüldü (2026-08-19, main.users JOIN main.user_scopes,
+ * main şemasına nitelendirilmiş): tek READONLY kullanıcısı
+ * (readonly@wella.com) 1 kapsam satırına sahip ve o satır joker — yani bu
+ * kaldırma READONLY'nin davranışını DEĞİŞTİRMEZ: `buildScope`'un
+ * `hasUnrestrictedRow` dalı aynı joker satırı zaten UNRESTRICTED'a çeviriyor
+ * (aşağıda). Fark yalnız MEKANİZMA: erişim artık kod sabitinde gizli değil,
+ * K-2.6.8a'nın istediği gibi bir DB satırında AÇIK.
+ *
+ * 📌 Kayıt (bu turda DEĞİL): K-2.6.8a uzun vadede ADMIN/FINANCE için de
+ * "kod dalı değil, satır kanonik" diyor — bu sabit bir gün tümüyle boşalabilir.
+ */
 const UNRESTRICTED_ROLES = new Set<UserRole>([
   UserRole.ADMIN,
   UserRole.FINANCE,
-  UserRole.READONLY,
 ]);
 
 const CACHE_TTL_MS = 5000;
