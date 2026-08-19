@@ -18,13 +18,10 @@ export class UserScope extends BaseEntity {
   userId!: string;
 
   @Column({ name: 'cpl_id', type: 'uuid', nullable: true })
-  cplId?: string; // If null, user has access to all CPLs in their channel
+  cplId?: string; // If null, user has access to all CPLs
 
   @Column({ name: 'category_id', type: 'uuid', nullable: true })
   categoryId?: string; // If null, user has access to all categories
-
-  @Column({ name: 'channel_id', type: 'uuid', nullable: true })
-  channelId?: string; // Optional: can restrict to specific channel
 
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
