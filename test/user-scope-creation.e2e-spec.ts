@@ -51,6 +51,14 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
   let CHANNEL_DISTRIBUTOR: string; // code DISTRIBUTOR
 
   const scratchUserIds: string[] = [];
+  // ⚠️ 400 BEKLEYEN testler de buraya kaydolur (ürün sahibi dersi, 2026-08-20).
+  // Gerekçe ÖLÇÜLDÜ: B1 mutasyon koşumunda (`if (false && …)`) guard kapalıydı,
+  // o testler 400 yerine 201 aldı ve YARATTIKLARI kullanıcılar hiçbir cleanup
+  // listesine girmediği için dev DB'de KALDI — üstelik tam olarak engellemek
+  // istediğimiz şekilde (joker satırlı PLANNER/CM). Yani mutasyon KENDİ
+  // KALINTISINI bıraktı. Bir mutasyon, testin beklentisini TERSİNE ÇEVİRİR;
+  // bu yüzden "yaratılmayacak" varsayımına dayanan bir cleanup yetersizdir.
+  const scratchEmails: string[] = [];
   const PLAN_NAME_PREFIX = `E2E-T241-${Date.now()}-`;
 
   beforeAll(async () => {
@@ -87,6 +95,14 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
   afterAll(async () => {
     await cleanupTestPlans(app, fixture.tenantId, PLAN_NAME_PREFIX);
     await cleanupTestUsers(app, scratchUserIds);
+    // Savunma temizliği: 400 bekleyen testlerin e-postaları. Normal koşumda
+    // hiçbir satır yoktur (DELETE 0); bir mutasyon koşumunda kalıntıyı alır.
+    if (scratchEmails.length > 0) {
+      await dataSource.query(
+        `DELETE FROM main.users WHERE email = ANY($1::text[])`,
+        [scratchEmails],
+      );
+    }
     await closeTestApp();
   });
 
@@ -110,6 +126,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     it('kapsamsız PLANNER yaratma denemesi → 400, kullanıcı YARATILMAZ', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-scopeless-planner-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
 
       const res = await request(app.getHttpServer())
         .post('/users')
@@ -149,6 +166,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
       async (role, scope) => {
         const admin = await loginAs(app, 'ADMIN');
         const email = `e2e-t241-b1-${role.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@wella.com`;
+        scratchEmails.push(email);
 
         const res = await request(app.getHttpServer())
           .post('/users')
@@ -177,6 +195,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     it('B1 yeşil yarı: yalnız cplId dolu çift → 201 (yasak İKİ boyutu da boş olana özgü)', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-b1-green-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
 
       const res = await request(app.getHttpServer())
         .post('/users')
@@ -200,6 +219,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     it('kapsamsız CATEGORY_MANAGER yaratma denemesi → 400 (SCOPE_REQUIRED_ROLES ikisini de kapsar)', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-scopeless-cm-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
 
       const res = await request(app.getHttpServer())
         .post('/users')
@@ -218,6 +238,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     it('boş scope dizisi (scope: []) → 400 (ArrayMinSize)', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-empty-scope-planner-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
 
       const res = await request(app.getHttpServer())
         .post('/users')
@@ -237,6 +258,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     it('ADMIN yaratma → joker satır OTOMATİK (çağrı scope göndermese de)', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-new-admin-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
 
       const res = await request(app.getHttpServer())
         .post('/users')
@@ -258,6 +280,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     it('PLANNER yaratma (scope verilerek) → 201, kapsam satırı çağrıdaki çiftle BİREBİR eşleşir', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-new-planner-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
 
       const res = await request(app.getHttpServer())
         .post('/users')
@@ -290,6 +313,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     it('başka (var olmayan) bir cplId ile PLANNER yaratma → 400, kullanıcı YARATILMAZ', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-foreign-cpl-planner-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
       // Rastgele bir UUID — hiçbir CPL'e karşılık gelmez (bu tenant'ta da,
       // başka bir tenant'ta da). Amaç: FK'nin YAKALAYAMAYACAĞI (satır BAŞKA
       // bir tenant'ta var olsaydı FK geçerdi) sınıfı simüle etmek yerine,
@@ -340,6 +364,7 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
     it("kendi CPL kapsamındaki bir planı görür ve içinde yaratabilir; kapsam dışı bir CPL'de plan yaratamaz (403)", async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-scoped-planner-journey-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
       const password = 'Collmind2026!';
 
       const createRes = await request(app.getHttpServer())
