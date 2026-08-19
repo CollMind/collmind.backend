@@ -131,6 +131,72 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
       expect(rows.length).toBe(0);
     });
 
+    // ── B1 (code-review blocker, 2026-08-19) — JOKER YASAĞI ──────────────
+    //
+    // `[{}]` ve AÇIKÇA `{cplId:null, categoryId:null}` `{null,null}` satırına
+    // dönüşüyordu, ve AccessScopeService onu UNRESTRICTED'a çeviriyordu
+    // (hasUnrestrictedRow, access-scope.service.ts:205-210) — yani kapsamı
+    // ZORUNLU bir rol SESSİZCE her şeyi görüyordu. Yön FAIL-OPEN.
+    // ⚠️ Ve CM için bayraktan BAĞIMSIZDI (bayrak yalnız PLANNER'ı kapsıyor).
+    // Ürün sahibi kararı: bu roller joker ALAMAZ.
+    it.each([
+      ['PLANNER', [{}]],
+      ['PLANNER', [{ cplId: null, categoryId: null }]],
+      ['CATEGORY_MANAGER', [{}]],
+      ['CATEGORY_MANAGER', [{ cplId: null, categoryId: null }]],
+    ])(
+      'B1: %s + boş/joker çift (%j) → 400, kullanıcı YARATILMAZ',
+      async (role, scope) => {
+        const admin = await loginAs(app, 'ADMIN');
+        const email = `e2e-t241-b1-${role.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@wella.com`;
+
+        const res = await request(app.getHttpServer())
+          .post('/users')
+          .set(admin.authHeader())
+          .send({
+            email,
+            password: 'Collmind2026!',
+            fullName: `T-241 B1 wildcard-ban ${role}`,
+            role,
+            status: 'ACTIVE',
+            scope,
+          });
+
+        expect(res.status).toBe(400);
+
+        const rows = await dataSource.query(
+          `SELECT id FROM main.users WHERE email = $1`,
+          [email],
+        );
+        expect(rows.length).toBe(0);
+      },
+    );
+
+    // YEŞİL yarı: dolu bir boyut YETER — yasak yalnız İKİ boyutu da boş olanı
+    // kapsıyor, kısmi çifti değil (iki girdi, iki çıktı — §2.7 #9).
+    it('B1 yeşil yarı: yalnız cplId dolu çift → 201 (yasak İKİ boyutu da boş olana özgü)', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-t241-b1-green-${Date.now()}@wella.com`;
+
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password: 'Collmind2026!',
+          fullName: 'T-241 B1 partial pair is fine',
+          role: 'PLANNER',
+          status: 'ACTIVE',
+          scope: [{ cplId: CPL_NKA }],
+        });
+
+      expect(res.status).toBe(201);
+      scratchUserIds.push(res.body.id);
+
+      const rows = await readScopeRows(res.body.id);
+      expect(rows).toEqual([{ cpl_id: CPL_NKA, category_id: null }]);
+    });
+
     it('kapsamsız CATEGORY_MANAGER yaratma denemesi → 400 (SCOPE_REQUIRED_ROLES ikisini de kapsar)', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-scopeless-cm-${Date.now()}@wella.com`;

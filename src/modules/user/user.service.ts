@@ -157,6 +157,39 @@ export class UserService {
         );
       }
 
+      // ⛔ B1 (code-review blocker, 2026-08-19) — JOKER YASAĞI
+      //
+      // Her iki boyutu da boş olan bir çift (`{}` ya da AÇIKÇA
+      // `{cplId:null, categoryId:null}`) `{null,null}` satırına dönüşür, ve
+      // AccessScopeService onu `hasUnrestrictedRow` ile UNRESTRICTED'a
+      // çevirir (access-scope.service.ts:205-210, ölçüldü) — yani kapsamı
+      // ZORUNLU olan bir rol SESSİZCE her şeyi görür. Yönü FAIL-OPEN, ve
+      // T-241'in tüm gerekçesinin tersi.
+      //
+      // ⚠️ Ve CATEGORY_MANAGER için bu BAYRAKTAN BAĞIMSIZ: bayrak yalnız
+      // PLANNER'ı kapsıyor (access-scope.service.ts:175-177), CM enforcement
+      // T-028b'den beri açık.
+      //
+      // Ürün sahibi kararı (2026-08-19): bu roller joker ALAMAZ. Joker
+      // isteniyorsa rol değiştirilir. İhmal (`[{}]`) hiçbir zaman "hepsi"
+      // anlamına gelemez — DTO doğrulaması onu geçiriyor (ölçüldü:
+      // class-validator `@ValidateIf` + `@IsOptional` ikilisi hem null hem
+      // undefined için tüm kuralları atlıyor), bu yüzden kapı BURADA.
+      const emptyPairIndex = dto.scope.findIndex(
+        (pair) =>
+          (pair.cplId ?? null) === null && (pair.categoryId ?? null) === null,
+      );
+      if (emptyPairIndex !== -1) {
+        throw new BadRequestException(
+          `role=${dto.role} için 'scope' çiftlerinin en az bir boyutu dolu ` +
+            `olmalıdır — ${emptyPairIndex}. çiftin hem 'cplId' hem ` +
+            `'categoryId' değeri boş. Boş bir çift JOKER kapsam (tüm CPL + ` +
+            'tüm kategori) anlamına gelir ve bu rol için verilemez (T-241, ' +
+            'ürün sahibi kararı 2026-08-19). Joker kapsam gereken bir ' +
+            'kullanıcı ADMIN/FINANCE/READONLY rollerinden biriyle yaratılır.',
+        );
+      }
+
       const cplIds = [
         ...new Set(
           dto.scope
