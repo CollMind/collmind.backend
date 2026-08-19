@@ -45,8 +45,8 @@
  * idempotentlik bu dosyanın açık `IS NULL` sorgusundan gelir.
  */
 import { Brackets, DataSource, IsNull } from 'typeorm';
-import { User, UserRole } from '../entities/user.entity';
-import { UserScope } from '../entities/user-scope.entity';
+import { User } from '../entities/user.entity';
+import { UserScope, WILDCARD_SCOPE_ROLES } from '../entities/user-scope.entity';
 import { Cpl } from '../entities/cpl.entity';
 import { Channel } from '../entities/channel.entity';
 import { Category } from '../entities/category.entity';
@@ -57,12 +57,12 @@ import { Category } from '../entities/category.entity';
  * bölümü — İZLEYİCİ dahil, K-2.6.4c: "izleme yetenekleri seti, salt-okur
  * bayrağı DEĞİL", yani kapsamı hiçbir yerde "her şey" diye yazılı değildi;
  * joker satır bugünkü davranışı KORUYARAK kuralı ihlal etmeyen hâle getiriyor).
+ *
+ * T-241 (2026-08-19): sabitin kendisi `user-scope.entity.ts`'e taşındı — artık
+ * `POST /users`'ın (user.service.ts#create) da aynı listeye ihtiyacı var, ve
+ * iki ayrı kopya kararın kendisini bozar (bkz. entity dosyasındaki yorum).
+ * Bu satır davranışı DEĞİŞTİRMEZ, yalnız kaynağı taşır.
  */
-const WILDCARD_SCOPE_ROLES = new Set<UserRole>([
-  UserRole.ADMIN,
-  UserRole.FINANCE,
-  UserRole.READONLY,
-]);
 
 const NKA_CHANNEL_CODE = 'NKA';
 const DISTRIBUTOR_CHANNEL_CODE = 'DISTRIBUTOR';

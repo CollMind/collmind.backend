@@ -41,6 +41,12 @@ import {
   cleanupTestUsers,
 } from './helpers/seed-e2e';
 import { closeAdminDataSource } from './helpers/admin-datasource';
+import * as bcrypt from 'bcrypt';
+import {
+  User,
+  UserRole,
+  UserStatus,
+} from '../src/database/entities/user.entity';
 // T-056 adım 5, A18 fixture düzeltmesi (Team Lead onaylı, 2026-08-03):
 // canlı `/submit` artık hiçbir zaman TOTAL kova yazmıyor (K1/§3.3) — A18'in
 // "legacy TOTAL RESERVE'li plan" ön koşulunu kurmak için gerçek servisleri
@@ -3982,17 +3988,31 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       const email = `e2e-n9-scopeless-planner-${Date.now()}@wella.com`;
       const password = 'Collmind2026!';
 
-      const createUserRes = await request(app.getHttpServer())
-        .post('/users')
-        .set(admin.authHeader())
-        .send({
+      // T-241 (2026-08-19): `POST /users` artık PLANNER için scope'u ZORUNLU
+      // kılıyor — kapsamsız bir PLANNER bu uçtan bir daha YARATILAMAZ (bu
+      // testin ORİJİNAL kurulumu buydu, ve T-241'in kapattığı TAM OLARAK bu
+      // delik). N9'un konusu ise `POST /users`'ın davranışı değil,
+      // AccessScopeService'in R-2 fail-closed semantiği (scope satırı olmayan
+      // bir PLANNER hiçbir şey görmemeli) — bu semantik T-241'in dokunmadığı
+      // bir katmanda yaşıyor (K-2.6.10) ve gerçek bir DB'de hâlâ oluşabilir
+      // (T-241 öncesi backfill edilmemiş kullanıcı, ileride bir toplu
+      // import/migration senaryosu). Bu yüzden test kurulumu `POST /users`
+      // yerine DOĞRUDAN repository insert'e geçirildi — ölçtüğü şey
+      // (fail-closed) DEĞİŞMEDİ, yalnız önkoşulu KURMA YOLU değişti.
+      const dataSourceForInsert = app.get<DataSource>(getDataSourceToken());
+      const passwordHash = await bcrypt.hash(password, 10);
+      const scopelessUser = await dataSourceForInsert.getRepository(User).save(
+        dataSourceForInsert.getRepository(User).create({
+          tenantId: fixture.tenantId,
           email,
-          password,
-          fullName: 'E2E N9 Scopeless Planner',
-          role: 'PLANNER',
-          status: 'ACTIVE',
-        })
-        .expect(201);
+          passwordHash,
+          fullName:
+            'E2E N9 Scopeless Planner (direct-insert, bkz. T-241 yorumu)',
+          role: UserRole.PLANNER,
+          status: UserStatus.ACTIVE,
+        }),
+      );
+      const createUserRes = { body: { id: scopelessUser.id } };
 
       const loginRes = await request(app.getHttpServer())
         .post('/auth/login')
@@ -4014,7 +4034,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
           ? '[] (fail-closed, R-2)'
           : 'tenant-wide (flag kapalı)',
         actual: `status=${res.status}, count=${Array.isArray(res.body) ? res.body.length : 'n/a'}`,
-        note: 'docs/analysis/0004 §7 R-2 — main.user_scopes satırı olmayan PLANNER hiçbir şey görmemeli (deny-by-default). Bu kullanıcı user-scope.seed.ts/backfill migration’ının KAPSAMI DIŞINDA (POST /users ile şimdi oluşturuldu, geçmiş plan yok) — tam olarak T-028c task raporunun "planı olmayan Planner" uyarısının kanıtı.',
+        note: 'docs/analysis/0004 §7 R-2 — main.user_scopes satırı olmayan PLANNER hiçbir şey görmemeli (deny-by-default). Bu kullanıcı user-scope.seed.ts/backfill migration’ının VE (T-241’den beri) `POST /users`’ın KAPSAMI DIŞINDA — doğrudan repository insert ile kuruldu (T-241 artık `POST /users`’tan kapsamsız PLANNER yaratılmasını 400 ile engelliyor; bu test AccessScopeService’in R-2 semantiğini sınıyor, oluşturma ucunu değil).',
       });
 
       expect(res.status).toBe(200);

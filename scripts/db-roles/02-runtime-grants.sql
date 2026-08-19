@@ -396,4 +396,19 @@ GRANT DELETE ON :"schema".mechanics TO app_runtime;
 --      güncellediği bir tenant POLİTİKA seçimi (K-2.5.13c).
 GRANT SELECT, UPDATE ON :"schema".approval_policies TO app_runtime;
 
+-- ── S3 tur 21 (T-241, 2026-08-19) — `user_scopes` yalnız SELECT taşıyordu
+--    (tur 3, AccessScopeService'in OKUMA yolu — resolveScope). T-241 ile
+--    `POST /users` artık PLANNER/CATEGORY_MANAGER yaratılırken kapsam
+--    satır(lar)ını AYNI transaction'da YAZIYOR (user.service.ts#create,
+--    `dataSource.transaction` içinde `manager.getRepository(UserScope).save`)
+--    — ölçüldü, izole e2e koşumu (`test/user-scope-creation.e2e-spec.ts`),
+--    `app_runtime` bağlantısı: "permission denied for table user_scopes"
+--    (INSERT), STATEMENT `INSERT INTO "main"."user_scopes"(...)`. Transaction
+--    bu hatayla ROLLBACK oldu — kullanıcı satırı da GERİ ALINDI (atomiklik
+--    tam da tasarlandığı gibi çalıştı; eksik olan yalnızca DB-rol izniydi).
+--    UPDATE/DELETE bilerek verilmedi: T-241'in kapsamı yalnız YARATMA
+--    (`isActive: true` ile INSERT); kapsam GÜNCELLEME ayrı bir task
+--    ([[T-242]]) — o task kendi GRANT ihtiyacını kendi S3 turunda ölçer.
+GRANT INSERT ON :"schema".user_scopes TO app_runtime;
+
 COMMIT;

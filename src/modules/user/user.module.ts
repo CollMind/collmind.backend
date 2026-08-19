@@ -12,10 +12,26 @@ import { User } from '../../database/entities/user.entity';
 import { Plan } from '../../database/entities/plan.entity';
 import { Agreement } from '../../database/entities/agreement.entity';
 import { BudgetEnvelope } from '../../database/entities/budget-envelope.entity';
+import { UserScope } from '../../database/entities/user-scope.entity';
+import { Cpl } from '../../database/entities/cpl.entity';
+import { Category } from '../../database/entities/category.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Plan, Agreement, BudgetEnvelope]),
+    // T-241: UserScope (user.service.ts#create, dataSource.transaction içinde
+    // manager.getRepository(UserScope) ile yazılıyor — modülün gerçek
+    // bağımlılığını burada da açık tutmak için forFeature'a eklendi),
+    // Cpl/Category (scope referanslarının tenant-aidiyet kontrolü,
+    // @InjectRepository ile doğrudan kullanılıyor).
+    TypeOrmModule.forFeature([
+      User,
+      Plan,
+      Agreement,
+      BudgetEnvelope,
+      UserScope,
+      Cpl,
+      Category,
+    ]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
 import {
@@ -18,6 +18,9 @@ import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
 } from '../../database/entities/budget-envelope.entity';
+import { UserScope } from '../../database/entities/user-scope.entity';
+import { Cpl } from '../../database/entities/cpl.entity';
+import { Category } from '../../database/entities/category.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginDto } from './dto/login.dto';
@@ -27,6 +30,7 @@ import {
   NotFoundException,
   UnauthorizedException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 
@@ -42,6 +46,16 @@ describe('UserService', () => {
   let planRepository: jest.Mocked<Repository<Plan>>;
   let agreementRepository: jest.Mocked<Repository<Agreement>>;
   let budgetEnvelopeRepository: jest.Mocked<Repository<BudgetEnvelope>>;
+  let cplRepository: jest.Mocked<Repository<Cpl>>;
+  let categoryRepository: jest.Mocked<Repository<Category>>;
+  // T-241: create() now writes User + UserScope inside ONE
+  // `dataSource.transaction`. The mock runs the callback synchronously with a
+  // manager whose `getRepository` hands back these SAME mocks, so the
+  // transactional path is exercised (not stubbed away) — same pattern as
+  // budget-allocation.service.spec.ts (T-096/2).
+  type MockEntityRepo = { create: jest.Mock; save: jest.Mock };
+  let userEntityRepo: MockEntityRepo;
+  let userScopeRepo: MockEntityRepo;
 
   const mockTenantId = 'tenant-123';
   const mockUserId = 'user-123';
@@ -63,6 +77,9 @@ describe('UserService', () => {
   } as any;
 
   beforeEach(async () => {
+    userEntityRepo = { create: jest.fn(), save: jest.fn() };
+    userScopeRepo = { create: jest.fn(), save: jest.fn() };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserService,
@@ -103,6 +120,41 @@ describe('UserService', () => {
             find: jest.fn(),
           },
         },
+        {
+          provide: getRepositoryToken(Cpl),
+          useValue: {
+            find: jest.fn(),
+          },
+        },
+        {
+          provide: getRepositoryToken(Category),
+          useValue: {
+            find: jest.fn(),
+          },
+        },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: (
+              cb: (manager: {
+                getRepository: (
+                  entity: typeof User | typeof UserScope,
+                ) => MockEntityRepo;
+              }) => Promise<User>,
+            ) =>
+              cb({
+                getRepository: (
+                  entity: typeof User | typeof UserScope,
+                ): MockEntityRepo => {
+                  if (entity === User) return userEntityRepo;
+                  if (entity === UserScope) return userScopeRepo;
+                  throw new Error(
+                    `unexpected entity passed to manager.getRepository in test: ${entity.name}`,
+                  );
+                },
+              }),
+          },
+        },
       ],
     }).compile();
 
@@ -118,6 +170,12 @@ describe('UserService', () => {
     budgetEnvelopeRepository = module.get(
       getRepositoryToken(BudgetEnvelope),
     ) as jest.Mocked<Repository<BudgetEnvelope>>;
+    cplRepository = module.get(getRepositoryToken(Cpl)) as jest.Mocked<
+      Repository<Cpl>
+    >;
+    categoryRepository = module.get(
+      getRepositoryToken(Category),
+    ) as jest.Mocked<Repository<Category>>;
 
     // Mock bcrypt
     (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
@@ -128,41 +186,260 @@ describe('UserService', () => {
   });
 
   describe('create', () => {
-    const createUserDto: CreateUserDto = {
+    // T-241: PLANNER/CATEGORY_MANAGER are SCOPE_REQUIRED_ROLES — an explicit
+    // `scope` (>=1 pair) is now mandatory. This fixture used to omit `scope`
+    // entirely and still succeed; that is exactly the gap T-241 closes, so
+    // the fixture is updated (not silenced) to carry a valid scope.
+    const plannerScopeDto: CreateUserDto = {
       email: 'newuser@example.com',
       password: 'password123',
       fullName: 'New User',
       role: UserRole.PLANNER,
+      scope: [{ cplId: 'cpl-1', categoryId: null }],
     };
 
-    it('should create a new user successfully', async () => {
-      userRepository.findByEmail.mockResolvedValue(null);
-      userRepository.create.mockReturnValue(mockUser);
-      userRepository.save.mockResolvedValue(mockUser);
-
-      const result = await service.create(mockTenantId, createUserDto);
-
-      expect(userRepository.findByEmail).toHaveBeenCalledWith(
-        mockTenantId,
-        createUserDto.email,
+    beforeEach(() => {
+      userEntityRepo.create.mockImplementation((data: Partial<User>) => data);
+      userEntityRepo.save.mockImplementation((entity: Partial<User>) =>
+        Promise.resolve({ ...mockUser, ...entity }),
       );
-      expect(bcrypt.hash).toHaveBeenCalledWith(createUserDto.password, 10);
-      expect(userRepository.create).toHaveBeenCalled();
-      expect(userRepository.save).toHaveBeenCalled();
-      expect(result).toEqual(mockUser);
+      userScopeRepo.create.mockImplementation(
+        (data: Partial<UserScope>) => data,
+      );
+      userScopeRepo.save.mockImplementation((rows: Partial<UserScope>[]) =>
+        Promise.resolve(rows),
+      );
     });
 
-    it('should throw ConflictException if user with email already exists', async () => {
-      userRepository.findByEmail.mockResolvedValue(mockUser);
+    it('should create a PLANNER with the given scope, atomically (user + scope in one transaction)', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
 
-      await expect(service.create(mockTenantId, createUserDto)).rejects.toThrow(
-        ConflictException,
-      );
+      const result = await service.create(mockTenantId, plannerScopeDto);
+
       expect(userRepository.findByEmail).toHaveBeenCalledWith(
         mockTenantId,
-        createUserDto.email,
+        plannerScopeDto.email,
       );
-      expect(userRepository.create).not.toHaveBeenCalled();
+      expect(bcrypt.hash).toHaveBeenCalledWith(plannerScopeDto.password, 10);
+      expect(userEntityRepo.create).toHaveBeenCalled();
+      expect(userEntityRepo.save).toHaveBeenCalled();
+      // `scope` must NOT leak onto the User entity payload (not a column).
+      expect(userEntityRepo.create.mock.calls[0][0]).not.toHaveProperty(
+        'scope',
+      );
+      expect(userScopeRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: mockTenantId,
+          userId: mockUserId,
+          cplId: 'cpl-1',
+          categoryId: undefined,
+          isActive: true,
+        }),
+      );
+      expect(userScopeRepo.save).toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({ id: mockUserId }));
+    });
+
+    it('should throw ConflictException if user with email already exists (no writes attempted)', async () => {
+      userRepository.findByEmail.mockResolvedValue(mockUser);
+
+      await expect(
+        service.create(mockTenantId, plannerScopeDto),
+      ).rejects.toThrow(ConflictException);
+      expect(userRepository.findByEmail).toHaveBeenCalledWith(
+        mockTenantId,
+        plannerScopeDto.email,
+      );
+      expect(userEntityRepo.create).not.toHaveBeenCalled();
+      expect(userScopeRepo.create).not.toHaveBeenCalled();
+    });
+
+    // ── Acceptance criteria: kabul davranışı — üç girdi, üç çıktı ──
+
+    it('rejects a scopeless PLANNER with 400 — a scope-less PLANNER cannot be created (T-241)', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      const dtoWithoutScope: CreateUserDto = {
+        ...plannerScopeDto,
+        scope: undefined,
+      };
+
+      await expect(
+        service.create(mockTenantId, dtoWithoutScope),
+      ).rejects.toThrow(BadRequestException);
+      expect(userEntityRepo.create).not.toHaveBeenCalled();
+      expect(userScopeRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a PLANNER with an empty scope array with 400 (defense in depth — DTO-level ArrayMinSize is the first line)', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      const dtoWithEmptyScope: CreateUserDto = {
+        ...plannerScopeDto,
+        scope: [],
+      };
+
+      await expect(
+        service.create(mockTenantId, dtoWithEmptyScope),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('creates an ADMIN with an automatic wildcard scope row, even when the caller sends no scope', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      const adminDto: CreateUserDto = {
+        email: 'admin2@example.com',
+        password: 'password123',
+        fullName: 'New Admin',
+        role: UserRole.ADMIN,
+      };
+
+      await service.create(mockTenantId, adminDto);
+
+      expect(userScopeRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: mockTenantId,
+          userId: mockUserId,
+          cplId: undefined,
+          categoryId: undefined,
+          isActive: true,
+        }),
+      );
+      // CPL/Category tenant-ownership check must NOT run for wildcard roles
+      // (there is nothing to validate — no pairs were provided/used).
+      expect(cplRepository.find).not.toHaveBeenCalled();
+      expect(categoryRepository.find).not.toHaveBeenCalled();
+    });
+
+    it('ignores a caller-supplied scope for a wildcard role (ADMIN) and still writes only the wildcard row', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      // ADMIN is a wildcard role — CreateUserDto's `scope` field is ignored
+      // for it by design (see create-user.dto.ts). This DTO shape is only
+      // reachable by calling the service directly (ValidateIf wouldn't even
+      // require it), so this proves the SERVICE, not just the DTO, enforces
+      // "wildcard roles always get exactly the wildcard row".
+      const adminDtoWithScope = {
+        email: 'admin3@example.com',
+        password: 'password123',
+        fullName: 'New Admin 3',
+        role: UserRole.ADMIN,
+        scope: [{ cplId: 'cpl-1', categoryId: null }],
+      } as CreateUserDto;
+
+      await service.create(mockTenantId, adminDtoWithScope);
+
+      expect(userScopeRepo.create).toHaveBeenCalledTimes(1);
+      expect(userScopeRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ cplId: undefined, categoryId: undefined }),
+      );
+    });
+
+    it('every successfully created user has >=1 scope row written (invariant, PLANNER + ADMIN)', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
+
+      await service.create(mockTenantId, plannerScopeDto);
+      expect(
+        (userScopeRepo.save as jest.Mock).mock.calls[0][0].length,
+      ).toBeGreaterThanOrEqual(1);
+
+      userScopeRepo.create.mockClear();
+      userScopeRepo.save.mockClear();
+
+      const adminDto: CreateUserDto = {
+        email: 'admin4@example.com',
+        password: 'password123',
+        fullName: 'New Admin 4',
+        role: UserRole.ADMIN,
+      };
+      await service.create(mockTenantId, adminDto);
+      expect(
+        (userScopeRepo.save as jest.Mock).mock.calls[0][0].length,
+      ).toBeGreaterThanOrEqual(1);
+    });
+
+    // ── Multi-tenant izolasyon ──
+
+    it('rejects a scope referencing a cplId from another tenant with 400 (cross-tenant leak guard)', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([]); // not found for THIS tenant
+
+      await expect(
+        service.create(mockTenantId, plannerScopeDto),
+      ).rejects.toThrow(BadRequestException);
+      expect(userEntityRepo.create).not.toHaveBeenCalled();
+    });
+
+    // ── K-2.6.10 — the write endpoint must not compute pair semantics ──
+
+    it('writes each scope pair as-is (no cross-product flattening) for a CATEGORY_MANAGER with multiple pairs', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([]);
+      categoryRepository.find.mockResolvedValue([
+        { id: 'cat-1' } as Category,
+        { id: 'cat-2' } as Category,
+      ]);
+      const cmDto: CreateUserDto = {
+        email: 'cm@example.com',
+        password: 'password123',
+        fullName: 'New CM',
+        role: UserRole.CATEGORY_MANAGER,
+        scope: [
+          { cplId: null, categoryId: 'cat-1' },
+          { cplId: null, categoryId: 'cat-2' },
+        ],
+      };
+
+      await service.create(mockTenantId, cmDto);
+
+      expect(userScopeRepo.create).toHaveBeenCalledTimes(2);
+      expect(userScopeRepo.create).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ cplId: undefined, categoryId: 'cat-1' }),
+      );
+      expect(userScopeRepo.create).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ cplId: undefined, categoryId: 'cat-2' }),
+      );
+    });
+
+    // ── T-096/2 style fault injection: prove the write is wrapped in ONE
+    // transaction, not just "looks atomic" from a green test. A mocked
+    // DataSource.transaction cannot demonstrate a real ROLLBACK, but it CAN
+    // demonstrate that the scope-write failure is not swallowed and reaches
+    // the caller — the precondition for a real transaction to roll back the
+    // user insert that already ran inside the same callback. ──
+    it('atomicity: scope write failing inside the transaction propagates the error (user save had already run and would be rolled back by a real DB transaction)', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
+      const dbError = new Error(
+        'simulated FK violation on user_scopes (42703)',
+      );
+      userScopeRepo.save.mockRejectedValue(dbError);
+
+      await expect(
+        service.create(mockTenantId, plannerScopeDto),
+      ).rejects.toThrow(dbError);
+
+      // The user save WAS reached before the scope write failed — this is
+      // the part a real transaction would roll back; the mock cannot show
+      // the rollback itself, only that the sequence got there.
+      expect(userEntityRepo.save).toHaveBeenCalled();
+    });
+
+    // ── §2.5 sessiz sıfır yasağı: a role in neither WILDCARD_SCOPE_ROLES
+    // nor SCOPE_REQUIRED_ROLES must fail loudly, not silently default. ──
+    it('throws (does not silently default) if role falls into neither WILDCARD_SCOPE_ROLES nor SCOPE_REQUIRED_ROLES', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      const dtoWithUnknownRole = {
+        email: 'unknown-role@example.com',
+        password: 'password123',
+        fullName: 'Unknown Role User',
+        role: 'SOME_FUTURE_ROLE' as UserRole,
+      } as CreateUserDto;
+
+      await expect(
+        service.create(mockTenantId, dtoWithUnknownRole),
+      ).rejects.toThrow();
+      expect(userEntityRepo.create).not.toHaveBeenCalled();
     });
   });
 

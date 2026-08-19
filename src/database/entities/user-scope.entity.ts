@@ -1,8 +1,45 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from './base.entity';
-import { User } from './user.entity';
+import { User, UserRole } from './user.entity';
 import { Cpl } from './cpl.entity';
 import { Category } from './category.entity';
+
+/**
+ * T-241 — roller: bir kullanıcı bu rollerden BİRİYLE yaratıldığında, kapsam
+ * satırı her zaman JOKER olarak yazılır ({cplId: null, categoryId: null}) —
+ * çağıran bir `scope` GÖNDERSE bile yok sayılır (yaratma HER ZAMAN ≥1 kapsam
+ * satırı bırakır, K-2.6.8a). Diğer roller (PLANNER, CATEGORY_MANAGER) çağrıda
+ * AÇIK kapsam vermek ZORUNDADIR — yoksa `POST /users` 400 döner (T-241 karar
+ * (b), `.claude/backlog/tasks/T-241.md`).
+ *
+ * Kaynak: `src/database/seeds/user-scope.seed.ts`'in aynı adlı sabitiyle
+ * BİREBİR aynı olmalı — tek kaynak burası, seed BURADAN import eder.
+ * `user.service.ts#create` da BURADAN import eder (iki yazma yolu, tek
+ * liste).
+ *
+ * ⚠️ `AccessScopeService.UNRESTRICTED_ROLES` (yalnız ADMIN+FINANCE) İLE
+ * KARIŞTIRILMAMALI: bu sabit YAZMA tarafı (hangi rol joker SATIR alır), o
+ * sabit OKUMA/karar tarafı (hangi rol kod dalıyla, satırsız bile,
+ * UNRESTRICTED sayılır). READONLY burada var (satır alır) ama orada yok
+ * (T-235 ADIM 2 — artık satırdan geliyor, kod dalından değil).
+ */
+export const WILDCARD_SCOPE_ROLES: ReadonlySet<UserRole> = new Set([
+  UserRole.ADMIN,
+  UserRole.FINANCE,
+  UserRole.READONLY,
+]);
+
+/**
+ * T-241 — roller: bu rollerde bir kullanıcı yaratılırken çağıran AÇIK bir
+ * `scope` (≥1 çift) vermek ZORUNDADIR; boş/eksikse `POST /users` 400 döner.
+ * `WILDCARD_SCOPE_ROLES`'un tümleyeni (bugünkü `UserRole` kümesinde) — bir
+ * rol ikisinde birden olamaz, ikisinde de olmayan bir rol de olamaz (ADIM 3
+ * yeni bir rol eklerse bu iki sabit BİRLİKTE güncellenmeli).
+ */
+export const SCOPE_REQUIRED_ROLES: ReadonlySet<UserRole> = new Set([
+  UserRole.PLANNER,
+  UserRole.CATEGORY_MANAGER,
+]);
 
 /**
  * User Scope Entity

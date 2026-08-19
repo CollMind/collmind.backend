@@ -8,9 +8,9 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { UserRepository } from './user.repository';
-import { CreateUserDto } from './dto/create-user.dto';
+import { CreateUserDto, UserScopePairDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -28,6 +28,13 @@ import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
 } from '../../database/entities/budget-envelope.entity';
+import {
+  UserScope,
+  WILDCARD_SCOPE_ROLES,
+  SCOPE_REQUIRED_ROLES,
+} from '../../database/entities/user-scope.entity';
+import { Cpl } from '../../database/entities/cpl.entity';
+import { Category } from '../../database/entities/category.entity';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -41,8 +48,30 @@ export class UserService {
     private readonly agreementRepository: Repository<Agreement>,
     @InjectRepository(BudgetEnvelope)
     private readonly budgetEnvelopeRepository: Repository<BudgetEnvelope>,
+    @InjectRepository(Cpl)
+    private readonly cplRepository: Repository<Cpl>,
+    @InjectRepository(Category)
+    private readonly categoryRepository: Repository<Category>,
+    // T-241: user + user_scopes tek transaction'a yazılır (aşağıdaki create()).
+    private readonly dataSource: DataSource,
   ) {}
 
+  /**
+   * T-241 — `POST /users` rol + kapsam BİRLİKTE alır; kapsamsız kullanıcı
+   * YARATILMAZ (`.claude/backlog/tasks/T-241.md` karar (b)).
+   *
+   * Atomiklik: kullanıcı satırı ve kapsam satır(lar)ı TEK transaction'da
+   * yazılır — kısmi başarı (kullanıcı var, kapsam yok) oluşamaz. Bu, R-2
+   * fail-closed'ın (AccessScopeService) tam olarak kaçınmaya çalıştığı
+   * "kullanıcı var ama scope satırı yok" deliğini yaratma anında kapatır.
+   *
+   * K-2.6.10 sınırı: bu metod bir kapsam YAZAR, bir yetki HESAPLAMAZ.
+   * AccessScopeService#buildScope'un semantiğini (R-1 pair, R-2 fail-closed,
+   * NULL="hepsi") yeniden uygulamaz — yalnız hangi (cplId, categoryId)
+   * çiftlerinin satır olarak var olacağına karar verir; o satırları nasıl
+   * yorumlayacağı (UNRESTRICTED/SCOPED, CM normalizasyonu) okuma zamanında
+   * yine AccessScopeService'tedir.
+   */
   async create(tenantId: string, createUserDto: CreateUserDto): Promise<User> {
     const existing = await this.userRepository.findByEmail(
       tenantId,
@@ -52,15 +81,162 @@ export class UserService {
       throw new ConflictException('User with this email already exists');
     }
 
-    const passwordHash = await bcrypt.hash(createUserDto.password, 10);
-
-    const user = this.userRepository.create({
-      ...createUserDto,
+    const scopeRows = await this.resolveScopeRowsToWrite(
       tenantId,
-      passwordHash,
-    });
+      createUserDto,
+    );
 
-    return this.userRepository.save(user);
+    const passwordHash = await bcrypt.hash(createUserDto.password, 10);
+    // `scope` bir DTO alanı ama User entity'sinde kolon değil — ...spread ile
+    // User.create()'e sızmasın. (no-unused-vars: rest destructuring'de
+    // atılan alanı adlandırmadan bırakmanın TS/ESLint yolu yok, bu yüzden
+    // `Omit` tipli bir kopya + `delete` kullanıldı.)
+    const userFields: Omit<CreateUserDto, 'scope'> = { ...createUserDto };
+    delete (userFields as Partial<CreateUserDto>).scope;
+
+    return this.dataSource.transaction(async (manager) => {
+      const userRepo = manager.getRepository(User);
+      const userScopeRepo = manager.getRepository(UserScope);
+
+      const user = userRepo.create({
+        ...userFields,
+        tenantId,
+        passwordHash,
+      });
+      const savedUser = await userRepo.save(user);
+
+      const scopeEntities = scopeRows.map((row) =>
+        userScopeRepo.create({
+          tenantId,
+          userId: savedUser.id,
+          cplId: row.cplId ?? undefined,
+          categoryId: row.categoryId ?? undefined,
+          isActive: true,
+          createdBy: savedUser.id,
+        }),
+      );
+      await userScopeRepo.save(scopeEntities);
+
+      return savedUser;
+    });
+  }
+
+  /**
+   * T-241 — hangi kapsam satırlarının yazılacağına karar verir. Bir yetki
+   * HESAPLAMAZ (K-2.6.10): yalnız `WILDCARD_SCOPE_ROLES` ↔ `SCOPE_REQUIRED_ROLES`
+   * ayrımına göre satır listesi üretir/doğrular.
+   *
+   * `WILDCARD_SCOPE_ROLES` (ADMIN/FINANCE/READONLY): çağıran ne gönderirse
+   * göndersin, tek joker satır {cplId:null, categoryId:null} yazılır — bu
+   * seed'in (user-scope.seed.ts) davranışıyla birebir aynı.
+   *
+   * `SCOPE_REQUIRED_ROLES` (PLANNER/CATEGORY_MANAGER): `dto.scope` boşsa
+   * (DTO düzeyinde `ValidateIf`+`ArrayMinSize(1)` zaten 400 üretir — burası
+   * ikinci bir savunma hattı, DTO doğrulaması atlanarak çağrılan bir
+   * senaryoya karşı) `BadRequestException`. Referans verilen her `cplId`/
+   * `categoryId` bu TENANT'a ait olmalı — aksi hâlde cross-tenant scope
+   * sızıntısı sessizce oluşur (FK bunu yakalamaz: FK yalnız satırın BİR
+   * yerde var olduğunu doğrular, bu tenant'ta olduğunu değil).
+   *
+   * Diğer roller (bugün yok, ADIM 3'ten sonra olabilir): ne wildcard ne
+   * scope-required listesindeyse açık hata — sessiz varsayılan YOK (§2.5).
+   */
+  private async resolveScopeRowsToWrite(
+    tenantId: string,
+    dto: CreateUserDto,
+  ): Promise<UserScopePairDto[]> {
+    if (WILDCARD_SCOPE_ROLES.has(dto.role)) {
+      return [{ cplId: null, categoryId: null }];
+    }
+
+    if (SCOPE_REQUIRED_ROLES.has(dto.role)) {
+      if (!dto.scope || dto.scope.length === 0) {
+        throw new BadRequestException(
+          `role=${dto.role} için 'scope' alanı zorunludur (en az 1 (cplId, categoryId) ` +
+            'çifti) — kapsamsız kullanıcı yaratılamaz (T-241).',
+        );
+      }
+
+      const cplIds = [
+        ...new Set(
+          dto.scope
+            .map((pair) => pair.cplId)
+            .filter((id): id is string => id !== null && id !== undefined),
+        ),
+      ];
+      const categoryIds = [
+        ...new Set(
+          dto.scope
+            .map((pair) => pair.categoryId)
+            .filter((id): id is string => id !== null && id !== undefined),
+        ),
+      ];
+
+      await this.assertCplIdsBelongToTenant(tenantId, cplIds);
+      await this.assertCategoryIdsBelongToTenant(tenantId, categoryIds);
+
+      return dto.scope.map((pair) => ({
+        cplId: pair.cplId ?? null,
+        categoryId: pair.categoryId ?? null,
+      }));
+    }
+
+    // §2.5 sessiz sıfır yasağı: role, WILDCARD_SCOPE_ROLES ile
+    // SCOPE_REQUIRED_ROLES'ün tümleyeni olmalıydı (user-scope.entity.ts'in
+    // yorumu). İkisinde de yoksa bu bir kod tutarsızlığıdır — sessizce bir
+    // tarafa düşürülmez, açık hata.
+    throw new Error(
+      `UserService.create: role=${dto.role} ne WILDCARD_SCOPE_ROLES'ta ne ` +
+        "SCOPE_REQUIRED_ROLES'ta — user-scope.entity.ts'teki iki sabit " +
+        'güncel UserRole kümesini kapsamıyor olabilir.',
+    );
+  }
+
+  /**
+   * Multi-tenant izolasyon: FK, bir cplId'nin BİR YERDE var olduğunu
+   * doğrular, bu TENANT'a ait olduğunu değil. Bu kontrol olmadan bir admin
+   * (kasıtsız/kasıtlı) başka bir tenant'ın CPL'ini scope'a yazabilir —
+   * sessiz cross-tenant sızıntı.
+   */
+  private async assertCplIdsBelongToTenant(
+    tenantId: string,
+    ids: string[],
+  ): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    const found = await this.cplRepository.find({
+      where: { tenantId, id: In(ids) },
+      select: { id: true },
+    });
+    const foundIds = new Set(found.map((row) => row.id));
+    const missing = ids.filter((id) => !foundIds.has(id));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `scope içindeki cplId değer(ler)i bu tenant'ta bulunamadı: ${missing.join(', ')}`,
+      );
+    }
+  }
+
+  /** Bkz. assertCplIdsBelongToTenant — aynı gerekçe, categoryId için. */
+  private async assertCategoryIdsBelongToTenant(
+    tenantId: string,
+    ids: string[],
+  ): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    const found = await this.categoryRepository.find({
+      where: { tenantId, id: In(ids) },
+      select: { id: true },
+    });
+    const foundIds = new Set(found.map((row) => row.id));
+    const missing = ids.filter((id) => !foundIds.has(id));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `scope içindeki categoryId değer(ler)i bu tenant'ta bulunamadı: ${missing.join(', ')}`,
+      );
+    }
   }
 
   async login(tenantId: string, loginDto: LoginDto): Promise<LoginResponseDto> {
