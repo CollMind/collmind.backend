@@ -1,8 +1,8 @@
 # lint-ratchet baseline (backend) — T-113 ratchet reference
-# date:    2026-08-15
-# commit:  caaa6a5
+# date:    2026-08-20
+# commit:  1942c8c
 # guard:   lint-ratchet v1 (backend)
-# total:   210 (file,rule) tuples, 1087 problems, 183 files
+# total:   209 (file,rule) tuples, 1086 problems, 182 files
 # format:  <file> <ruleId> <errorCount+warningCount for that rule in that file>
 # KEY IS (file, rule), NOT file alone — see this script's header for why.
 src/common/guards/admin-restrictions.guard.ts @typescript-eslint/no-unused-vars 2
@@ -202,7 +202,6 @@ src/modules/user/strategies/jwt.strategy.ts @typescript-eslint/no-explicit-any 1
 src/modules/user/user.controller.ts @typescript-eslint/no-explicit-any 3
 src/modules/user/user.repository.ts @typescript-eslint/no-explicit-any 2
 src/modules/user/user.service.spec.ts @typescript-eslint/no-explicit-any 33
-src/modules/user/user.service.ts @typescript-eslint/no-unused-vars 1
 test/budget-transaction-logs-idempotency.e2e-spec.ts @typescript-eslint/no-explicit-any 2
 test/budget-transaction-logs-idempotency.e2e-spec.ts prettier/prettier 4
 test/budget-variance.e2e-spec.ts @typescript-eslint/no-explicit-any 2
