@@ -24,18 +24,45 @@
  *     settlement/dashboard specs) plan approve/reject için kullanılıyor;
  *     fail-closed (R-2) devreye girince scope'suz bırakılırsa tüm o testler
  *     kırılır.
- *   ADMIN/FINANCE_MANAGER/READONLY -> satır YOK (AccessScopeService bu
- *     rolleri UNRESTRICTED sayar, scope satırı gerekmez).
+ *   ADMIN/FINANCE/READONLY -> JOKER satır (cplId=null, categoryId=null),
+ *     HER kullanıcı için (T-235 ADIM 1, docs/verification/T235_OLCUM_1_VE_3.md §3).
+ *     K-2.6.8a: "Boş kapsam = erişim yok. Tüm veriye erişim, AÇIK BİR JOKER
+ *     ATAMASIYLA verilir." — access-scope.service.ts'deki `UNRESTRICTED_ROLES`
+ *     kod sabiti bugün bu üç rolü satırsız (0 scope row) koşulsuz UNRESTRICTED
+ *     sayıyor; bu K-2.6.8a'nın TERSİ (kural: boş = erişim YOK). Bu seed
+ *     mekanizmayı DEĞİŞTİRMEZ (`buildScope`'un `hasUnrestrictedRow` dalı
+ *     zaten joker satırı UNRESTRICTED'a çeviriyor — davranış AYNI kalır,
+ *     yalnız artık kural-uyumlu bir satırla). `UNRESTRICTED_ROLES` kod
+ *     sabitinin kaldırılması AYRI bir tur (T-235 ADIM 2, ⛔ SIRA BAĞLAYICI —
+ *     satırlar ÖNCE, kod dalı SONRA; ters sırada satırsız bir READONLY R-2
+ *     fail-closed ile hiçbir şey göremez).
  *
- * Idempotent: (tenantId, userId, cplId, categoryId) kombinasyonu bulunup
- * yoksa oluşturulur (unique index: user-scope.entity.ts).
+ * Idempotent: (tenantId, userId, cplId, categoryId) kombinasyonu, DB'nin
+ * UNIQUE index'ine değil, `upsertScopeRow`'un kendi SELECT'ine dayanır —
+ * `user_scopes`'un (user_id, cpl_id, category_id) UNIQUE index'i NULL'ları
+ * PostgreSQL semantiğiyle BİRBİRİNDEN FARKLI sayar (NULLS NOT DISTINCT yok,
+ * ölçüldü 2026-08-18), yani DB tekilliği İKİ joker satırı engellemez —
+ * idempotentlik bu dosyanın açık `IS NULL` sorgusundan gelir.
  */
-import { DataSource, IsNull } from 'typeorm';
-import { User } from '../entities/user.entity';
+import { Brackets, DataSource, IsNull } from 'typeorm';
+import { User, UserRole } from '../entities/user.entity';
 import { UserScope } from '../entities/user-scope.entity';
 import { Cpl } from '../entities/cpl.entity';
 import { Channel } from '../entities/channel.entity';
 import { Category } from '../entities/category.entity';
+
+/**
+ * T-235 ADIM 1 — K-2.6.8a: bu rollerin "tüm veriye erişimi" artık AÇIK bir
+ * joker satırla temsil edilir (ürün sahibi kararı, T-235.md "SIRA BAĞLAYICI"
+ * bölümü — İZLEYİCİ dahil, K-2.6.4c: "izleme yetenekleri seti, salt-okur
+ * bayrağı DEĞİL", yani kapsamı hiçbir yerde "her şey" diye yazılı değildi;
+ * joker satır bugünkü davranışı KORUYARAK kuralı ihlal etmeyen hâle getiriyor).
+ */
+const WILDCARD_SCOPE_ROLES = new Set<UserRole>([
+  UserRole.ADMIN,
+  UserRole.FINANCE,
+  UserRole.READONLY,
+]);
 
 const NKA_CHANNEL_CODE = 'NKA';
 const DISTRIBUTOR_CHANNEL_CODE = 'DISTRIBUTOR';
@@ -105,6 +132,7 @@ export async function seedUserScopes(
   const channelRepo = dataSource.getRepository(Channel);
   const cplRepo = dataSource.getRepository(Cpl);
   const categoryRepo = dataSource.getRepository(Category);
+  const userScopeRepo = dataSource.getRepository(UserScope);
 
   const findUser = (email: string): User => {
     const u = users.find((x) => x.email === email);
@@ -129,6 +157,44 @@ export async function seedUserScopes(
   // kategori scope'u verilir (BRD ihlali değil: gerçek bir CM'in görmesi
   // gereken kategoriler zaten bunlar).
   const managerAlias = findUser('manager@wella.com');
+
+  // T-235 ADIM 1 — ADMIN/FINANCE/READONLY: HER kullanıcı için joker satır
+  // (WILDCARD_SCOPE_ROLES, dosya başı yorumu). Sabit e-postalara bağlanmaz —
+  // `finance@wella.com` VE `finance.manager@wella.com` gibi aynı rolün birden
+  // fazla kullanıcısı olabilir; hepsi rol üzerinden yakalanır.
+  const wildcardScopeUsers = users.filter((u) =>
+    WILDCARD_SCOPE_ROLES.has(u.role),
+  );
+
+  // DUR koşulu (T-235.md): bu roldeki bir kullanıcının ZATEN dar (joker
+  // olmayan) bir scope satırı varsa, joker eklemek onun kapsamını sessizce
+  // GENİŞLETİR — bu bir ürün kararıdır, seed'in sessizce vereceği bir şey
+  // değil. Ölçüldü (2026-08-19, main.user_scopes): bugün ADMIN/FINANCE/
+  // READONLY'nin scope satırı 0 — bu blok gelecekte biri manuel bir dar
+  // satır eklerse sessiz genişlemeyi engeller.
+  for (const u of wildcardScopeUsers) {
+    const nonWildcardRow = await userScopeRepo
+      .createQueryBuilder('us')
+      .where('us.tenantId = :tenantId', { tenantId })
+      .andWhere('us.userId = :userId', { userId: u.id })
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where('us.cplId IS NOT NULL').orWhere('us.categoryId IS NOT NULL');
+        }),
+      )
+      .getOne();
+    if (nonWildcardRow) {
+      throw new Error(
+        `UserScope seed: user '${u.email}' (role ${u.role}) already has a ` +
+          `non-wildcard scope row (id=${nonWildcardRow.id}, cplId=` +
+          `${nonWildcardRow.cplId ?? 'null'}, categoryId=` +
+          `${nonWildcardRow.categoryId ?? 'null'}). Adding a wildcard row ` +
+          `would silently WIDEN this user's access — that is a product ` +
+          `decision (T-235 DUR condition), not a seed default. Resolve ` +
+          `manually before re-running the seed.`,
+      );
+    }
+  }
 
   const [nkaChannel, distributorChannel] = await Promise.all([
     channelRepo.findOne({ where: { tenantId, code: NKA_CHANNEL_CODE } }),
@@ -219,6 +285,14 @@ export async function seedUserScopes(
       cplId: null,
       categoryId: cat.id,
     })),
+    // T-235 ADIM 1 — ADMIN/FINANCE/READONLY: joker satır (cplId=null,
+    // categoryId=null) HER kullanıcı için. K-2.6.8a uyumu; davranış AYNI
+    // kalır (buildScope zaten bu satırı UNRESTRICTED'a çeviriyor).
+    ...wildcardScopeUsers.map((u) => ({
+      userId: u.id,
+      cplId: null,
+      categoryId: null,
+    })),
   ];
 
   let created = 0;
@@ -251,6 +325,12 @@ export async function seedUserScopes(
   );
   console.log(
     `   manager@wella.com (deprecated alias): cplId=null x [${CM1_CATEGORY_CODES.join(', ')}]`,
+  );
+  console.log(
+    `   Wildcard (ADMIN/FINANCE/READONLY): ${wildcardScopeUsers.length} user(s) ` +
+      `x cplId=null,categoryId=null — [${wildcardScopeUsers
+        .map((u) => u.email)
+        .join(', ')}]`,
   );
 
   return {
