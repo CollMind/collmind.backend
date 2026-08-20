@@ -450,4 +450,62 @@ GRANT INSERT ON :"schema".user_scopes TO app_runtime;
 GRANT UPDATE (created_by, updated_by, is_active, updated_at)
   ON :"schema".user_scopes TO app_runtime;
 
+-- ── S3 tur 23 ([[T-249]], 2026-08-20) — üç tablonun `app_runtime`'da
+--    SIFIR ayrıcalığı vardı ve ÜÇÜNÜN de canlı (üretim) rotası vardı; e2e
+--    kapsamı sıfır olduğu için bu S3 döngüsü hiç tetiklenmemişti
+--    (`docs/verification/DB_ROL_IZIN_ENVANTERI.md`'nin kendi öngörüsü:
+--    "yeni bir e2e/production yolu o tabloya dokunduğunda genişletilir" —
+--    üretim yolu zaten vardı, dokunan e2e yoktu). Ölçüldü: `SET ROLE
+--    app_runtime; SELECT count(*) FROM main.<tablo>` üçünde de
+--    "permission denied", POZ. KONTROL `main.agreements` (SELECT çalışır).
+--
+--    Fiiller TAHMİN EDİLMEDİ — kod okuması + `test/
+--    t249-app-runtime-live-route-grants.e2e-spec.ts`'in GRANT'siz koşumu
+--    (kırmızı, task raporunda tam log) + GRANT'li koşumu (yeşil, aynı
+--    dosya) ile ölçüldü.
+--
+--    `notifications` — SELECT (`findByRecipient`/`findUnreadByRecipient`),
+--      UPDATE (`markAsRead` → `save()` var olan satırda). INSERT
+--      BİLEREK VERİLMEDİ: `NotificationService#createNotification`'ın
+--      HİÇBİR üretim çağıranı yok (`grep -rn "createNotification" src`
+--      → yalnız tanım; `NotificationModule` yalnız kendi controller'ına
+--      inject ediliyor) — İlke 1, bugün ihtiyacı olmayan izin verilmez.
+GRANT SELECT, UPDATE ON :"schema".notifications TO app_runtime;
+--    `brands` — SELECT (`findAll`/`findOne`/`findByCode`), INSERT
+--      (`create` → `save()` yeni satır), UPDATE (`update`/`remove` →
+--      `save()`/`softRemove()`, ikisi de var olan satırda). Hard DELETE
+--      BİLEREK VERİLMEDİ: `remove()` → `softRemove()` (`deleted_at`
+--      UPDATE'i, BaseEntity `@DeleteDateColumn`) — hiçbir yol `.delete()`
+--      çağırmıyor.
+GRANT SELECT, INSERT, UPDATE ON :"schema".brands TO app_runtime;
+--    `mechanic_spend_breakdown` — ⚠️ görev dosyasının canlı rota atfı
+--    (`/finance-reporting`) YANLIŞ ÖLÇÜLMÜŞTÜ ve düzeltildi (T-249 task
+--    raporu): `finance-reporting.service.ts` VE `spend-calculation.
+--    service.ts`'in `mechanicSpendBreakdownRepository` enjeksiyonu İKİSİ
+--    DE ÖLÜ (constructor dışında hiç kullanılmıyor, ölçüldü: `grep -n
+--    "mechanicSpendBreakdownRepository\."`). TEK canlı tüketici
+--    `spend-distribution.service.ts` (`SpendDistributionService`),
+--    controller'ı `/spend-calculation/*`. SELECT (`getDistributionBreakdown`
+--    LEFT JOIN, `recalculateDistributionOnVolumeChange` `.find()`),
+--    INSERT (`saveBreakdowns` → yeni entity `.save()`), DELETE
+--    (`saveBreakdowns` → `.delete()`, HER ZAMAN var olan satırları silip
+--    yeniden yaratır). UPDATE BİLEREK VERİLMEDİ: bu tablonun hiçbir yolu
+--    var olan bir satırı `.save()` ile GÜNCELLEMİYOR.
+GRANT SELECT, INSERT, DELETE ON :"schema".mechanic_spend_breakdown TO app_runtime;
+--    `plan_mechanic_values` — AYRI BİR TABLO ama AYNI ölçüm turunda
+--    ortaya çıktı: bu tablo tur 4/5'te YALNIZ SELECT + DELETE almıştı,
+--    INSERT/UPDATE HİÇ GRANTED değildi — ve `SpendDistributionService`
+--    (yukarıdaki `mechanic_spend_breakdown` tüketicisiyle AYNI dosya)
+--    HEM yeni satır yaratıyor (`distributeMechanicSpend`, satır ~105,
+--    `PlanMechanicValue` yoksa `.create()` + `.save()`) HEM var olanı
+--    güncelliyor (satır ~173/269, hesaplanan spend'i yazan `.save()`).
+--    Bu tablonun TÜM yazıcıları aynı serviste (`grep -n
+--    "planMechanicValueRepository\.\(save\|create\)" src` → tek dosya) —
+--    yani `/spend-calculation/*`'ın YAZMA tarafı GRANT'siz DELİĞİN
+--    TAMAMIYDI, yalnız `mechanic_spend_breakdown` değil. Ölçüldü: bu
+--    dosyanın e2e'si GRANT'siz `POST /spend-calculation/distribute` ile
+--    "permission denied for table plan_mechanic_values" verdi (task
+--    raporu, tam log).
+GRANT INSERT, UPDATE ON :"schema".plan_mechanic_values TO app_runtime;
+
 COMMIT;

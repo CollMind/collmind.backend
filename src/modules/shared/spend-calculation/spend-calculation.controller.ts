@@ -30,7 +30,64 @@ import {
 } from './dto/validation-result.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { Roles } from '../../../common/decorators/roles.decorator';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
+import { UserRole } from '../../../database/entities/user.entity';
+
+// T-249 (devam turu) — bu 8 rotanın HİÇBİRİNDE `@Roles` yoktu →
+// `RolesGuard` fail-open. Bu dosya `mechanic_spend_breakdown`/
+// `plan_mechanic_values`'a AYNI turda `GRANT` aldı — yani rota tam şimdi
+// erişilebilir hâle geliyor; `@Roles`'suz bırakmak `0074 §B1`'in
+// ölçülmüş sınıfı ("yazma yapan rol-kısıtsız uçlar, ve içlerinde
+// hesaplama tetikleyenler") tam vakası olurdu. Ürün sahibi kararı
+// (2026-08-20): `@Roles` GRANT ile AYNI turda eklendi.
+//
+// Rol seti TEK LİSTE KOPYALANMADI — 8 rota AĞIRLIĞA göre 3 gruba ayrıldı,
+// her biri ÖLÇÜLMÜŞ bir emsale bağlandı (ürün sahibinin talimatı: "ölç,
+// genelleme"):
+//
+//   YAZMA (SPEND_WRITE_ROLES) — `distribute`/`recalculate-on-volume-change`
+//     ikisi de Plan→FU→SKU mekanik spend'ini MUTASYONA uğratıyor
+//     (`saveBreakdowns`: DELETE+INSERT `mechanic_spend_breakdown`,
+//     `planMechanicValueRepository.save`). Emsal `finance-reporting`
+//     DEĞİL — o modülün hiçbir yazma rotası yok, kıyaslanamaz. Emsal
+//     AYNI domain'deki `plan.controller.ts`'in yazma rotaları
+//     (`addFu`/`updateFuTactic`/`updateSkuVolume`/`recalculate`), HEPSİ
+//     `ADMIN, PLANNER` — plan düzenleme FINANCE/CATEGORY_MANAGER/READONLY
+//     işi değil.
+//
+//   OKUMA — FU/plan DETAY (SPEND_READ_ROLES) — `breakdown`/
+//     `validate-distribution`/`validate-inputs`/`validate-combinations`/
+//     `validate-before-submission`: hepsi TEK bir FU/plan'ın planlama-
+//     zamanı görünümü/doğrulaması, `finance-reporting`'in PLANNER
+//     İÇEREN TEK rotasıyla (`plan-performance`:
+//     `ADMIN, FINANCE, CATEGORY_MANAGER, PLANNER, READONLY`) AYNI
+//     granülerlik — plan'ı kuran PLANNER kendi girdisini görebilmeli,
+//     onaylayanlar (CM/FINANCE) submit öncesi inceleyebilmeli.
+//
+//   OKUMA — plan BÜTÇE KONTROLÜ (SPEND_BUDGET_CHECK_ROLES) —
+//     `validate-budget/:planId`: `finance-reporting`'in tenant-çapındaki
+//     `budget-at-risk`i (`ADMIN, FINANCE, READONLY`) BURAYA UYMUYOR —
+//     farklı granülerlik (tenant risk raporu, TEK plan değil). Daha
+//     GÜÇLÜ ve DOĞRUDAN emsal: AYNI işi yapan `plan.controller.ts`'in
+//     KENDİ `GET /plans/:id/budget-check` rotası
+//     (`ADMIN, PLANNER, CATEGORY_MANAGER, READONLY` — FINANCE YOK,
+//     ölçüldü `plan.controller.ts:150-156`). Bu grup diğer okuma
+//     grubundan FINANCE'ı bilerek dışarıda bırakıyor.
+const SPEND_WRITE_ROLES = [UserRole.ADMIN, UserRole.PLANNER] as const;
+const SPEND_READ_ROLES = [
+  UserRole.ADMIN,
+  UserRole.FINANCE,
+  UserRole.CATEGORY_MANAGER,
+  UserRole.PLANNER,
+  UserRole.READONLY,
+] as const;
+const SPEND_BUDGET_CHECK_ROLES = [
+  UserRole.ADMIN,
+  UserRole.PLANNER,
+  UserRole.CATEGORY_MANAGER,
+  UserRole.READONLY,
+] as const;
 
 @ApiTags('Spend Calculation')
 @ApiBearerAuth()
@@ -43,6 +100,7 @@ export class SpendCalculationController {
   ) {}
 
   @Post('distribute/:planFuId/:mechanicId')
+  @Roles(...SPEND_WRITE_ROLES)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Distribute mechanic spend from FU to SKUs' })
   @ApiResponse({
@@ -63,6 +121,7 @@ export class SpendCalculationController {
   }
 
   @Post('recalculate-on-volume-change/:skuId')
+  @Roles(...SPEND_WRITE_ROLES)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Recalculate distribution when SKU volume changes' })
   @ApiResponse({ status: 204, description: 'Distribution recalculated' })
@@ -79,6 +138,7 @@ export class SpendCalculationController {
   }
 
   @Get('breakdown/:planFuId')
+  @Roles(...SPEND_READ_ROLES)
   @ApiOperation({ summary: 'Get distribution breakdown for a FU' })
   @ApiResponse({
     status: 200,
@@ -96,6 +156,7 @@ export class SpendCalculationController {
   }
 
   @Get('validate-distribution/:planFuId')
+  @Roles(...SPEND_READ_ROLES)
   @ApiOperation({ summary: 'Validate distribution for a FU' })
   @ApiResponse({
     status: 200,
@@ -110,6 +171,7 @@ export class SpendCalculationController {
   }
 
   @Get('validate-inputs/:planFuId')
+  @Roles(...SPEND_READ_ROLES)
   @ApiOperation({ summary: 'Validate inputs for a FU' })
   @ApiResponse({
     status: 200,
@@ -124,6 +186,7 @@ export class SpendCalculationController {
   }
 
   @Get('validate-combinations/:planFuId')
+  @Roles(...SPEND_READ_ROLES)
   @ApiOperation({ summary: 'Validate mechanic combinations for a FU' })
   @ApiResponse({
     status: 200,
@@ -138,6 +201,7 @@ export class SpendCalculationController {
   }
 
   @Get('validate-budget/:planId')
+  @Roles(...SPEND_BUDGET_CHECK_ROLES)
   @ApiOperation({ summary: 'Validate budget impact for a plan' })
   @ApiResponse({
     status: 200,
@@ -152,6 +216,7 @@ export class SpendCalculationController {
   }
 
   @Get('validate-before-submission/:planId')
+  @Roles(...SPEND_READ_ROLES)
   @ApiOperation({
     summary: 'Validate plan before submission (all validations)',
   })
