@@ -14,8 +14,9 @@
 #
 # `#` ile başlayan satırlar ve boş satırlar yok sayılır.
 #
-# Geçerli guard adları:
-#   migration-schema | ledger-direction | financial-ordering | schema-isolation
+# Geçerli guard adları: tek doğruluk kaynağı `lib.sh`'teki GUARD_NAMES_VALID'dir
+# (bu satırda elle bir liste tutulmuyor — CLAUDE.md: "dokümanda sayı/liste yazma,
+# bayatlar"; `validate_allowlist` bilinmeyen bir ad görürse zaten parse hatası verir).
 #
 # ALLOWLIST SON ÇARE'DİR. Bilinen bir yanlış pozitif deseni varsa guard'ın
 # kendisi tanımalıdır — buraya satır eklenmemelidir. Örnek: `'main.x'::regclass`

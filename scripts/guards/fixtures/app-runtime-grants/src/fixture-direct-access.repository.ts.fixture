@@ -1,0 +1,23 @@
+// app-runtime-grants self-test fixture — kanal 3 (dataSource.getRepository,
+// DUR #1, T-250). `budget.repository.ts:488,502`'in gerçek deseninin
+// birebir kopyası: `this.dataSource.getRepository(X)`.
+import { Injectable } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import {
+  FixtureDirectGranted,
+  FixtureDirectMissing,
+} from '../entities/fixture.entity';
+
+@Injectable()
+export class FixtureDirectAccessRepository {
+  constructor(private readonly dataSource: DataSource) {}
+
+  async findGranted() {
+    return this.dataSource.getRepository(FixtureDirectGranted).find();
+  }
+
+  // "detector alive" pini — GRANT'siz, kanal 3'e özgü.
+  async findMissing() {
+    return this.dataSource.getRepository(FixtureDirectMissing).find();
+  }
+}

@@ -1,0 +1,19 @@
+// app-runtime-grants self-test fixture — kanal 2 (@InjectRepository).
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import {
+  FixtureInjected,
+  FixtureInjectedMissing,
+} from '../entities/fixture.entity';
+
+@Injectable()
+export class FixtureInjectedRepository {
+  constructor(
+    @InjectRepository(FixtureInjected)
+    private readonly repo: Repository<FixtureInjected>,
+    // "detector alive" pini — GRANT'siz, kanal 2'ye özgü (bkz. fixture.entity.ts.fixture)
+    @InjectRepository(FixtureInjectedMissing)
+    private readonly missingRepo: Repository<FixtureInjectedMissing>,
+  ) {}
+}

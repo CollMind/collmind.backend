@@ -97,6 +97,21 @@ else
   exit 1
 fi
 
+# app-runtime-grants'ın da kendi self-test'i AYRI bir dosyadır (T-250) —
+# aynı gerekçe: self-test.sh'in .ts.fixture/EXPECTED matrisi tek bir kaynak
+# ağacı bekler, bu guard ise ÜÇ ayrı kaynak ister (modül/servis ağacı,
+# entities dizini, grants.sql). Aynı zincirleme kuralı burada da geçerli —
+# self-test dosyası VAR ama hiçbir gerçek kapı yolu onu ÇAĞIRMIYORSA
+# "doğrulama bir kapıdır, durdurmuyorsa doğrulama değildir" ihlal edilir.
+echo "=== self-test (app-runtime-grants) ==="
+if bash "$DIR/app-runtime-grants-self-test.sh"; then
+  echo "(app-runtime-grants fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! app-runtime-grants kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0

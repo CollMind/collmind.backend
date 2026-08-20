@@ -1,0 +1,21 @@
+// app-runtime-grants self-test fixture — kanal 1 (TypeOrmModule.forFeature).
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import {
+  FixtureGranted,
+  FixtureIndexed,
+  FixtureMissing,
+  // FixtureGhost YALNIZ bu yorumda geçiyor, forFeature dizisinin İÇİNDE
+  // DEĞİL. Guard'ın `//` ayıklaması bunu kaynak A'ya SIZDIRMAMALI.
+} from '../entities/fixture.entity';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([
+      FixtureGranted,
+      FixtureIndexed,
+      FixtureMissing,
+    ]),
+  ],
+})
+export class FixtureModule {}

@@ -1,0 +1,70 @@
+// app-runtime-grants self-test fixture — sınıf → tablo eşlemesi.
+//
+// `FixtureIndexed` BİLEREK `@Entity(...)` ile `export class` arasına birden
+// fazla dekoratör satırı sokuşturuyor — T-249'un `grep -A2` tuzağının aynısı
+// (o pencere `export class`'a yetişmiyordu, on bir tablonun on biri
+// "entity=YOK" çıkmıştı). Bu fixture guard'ın SABİT PENCERE değil BLOK
+// SINIRI kullandığını pinler.
+import { Entity, Column, Index } from 'typeorm';
+
+@Entity({ name: 'fixture_granted', schema: 'main' })
+export class FixtureGranted {
+  @Column() id!: string;
+}
+
+@Entity({ name: 'fixture_indexed', schema: 'main' })
+@Index(['id'])
+@Index(['id', 'code'], { unique: true })
+export class FixtureIndexed {
+  @Column() id!: string;
+  @Column() code!: string;
+}
+
+// GRANT'siz bırakılan tek fixture — "detector alive" kontrolü bunun HER
+// koşumda bulgu vermesini bekler (lint-ratchet-self-test.sh'in "error
+// fixture"ıyla aynı rol).
+@Entity({ name: 'fixture_missing', schema: 'main' })
+export class FixtureMissing {
+  @Column() id!: string;
+}
+
+// Yalnız @InjectRepository kanalından enjekte edilir (forFeature'da GEÇMEZ) —
+// kanal 2'nin kendi başına yeterli olduğunu doğrular. GRANT'li — bulgu
+// OLMAMALI.
+@Entity({ name: 'fixture_injected', schema: 'main' })
+export class FixtureInjected {
+  @Column() id!: string;
+}
+
+// Kanal 2'nin (@InjectRepository) "detector alive" pini — YALNIZ bu kanalla
+// enjekte edilir, GRANT'siz bırakılır → HER koşumda bulgu vermeli. Kasten
+// FixtureMissing'den (kanal 1) AYRI bir sınıf: aynı entity iki kanalda
+// birden görünseydi, bir kanalın mutasyonla KÖRLEŞTİRİLMESİ testi hangi
+// kanalın çalıştığını AYIRT EDEMEZDİ (§2.7 #6).
+@Entity({ name: 'fixture_injected_missing', schema: 'main' })
+export class FixtureInjectedMissing {
+  @Column() id!: string;
+}
+
+// Kanal 3'ün (dataSource.getRepository — DUR #1, T-250) GRANT'li ucu —
+// YALNIZ bu kanalla erişilir, bulgu OLMAMALI (yanlış pozitif kontrolü).
+@Entity({ name: 'fixture_direct_granted', schema: 'main' })
+export class FixtureDirectGranted {
+  @Column() id!: string;
+}
+
+// Kanal 3'ün "detector alive" pini — YALNIZ dataSource.getRepository ile
+// erişilir, GRANT'siz bırakılır → HER koşumda bulgu vermeli.
+@Entity({ name: 'fixture_direct_missing', schema: 'main' })
+export class FixtureDirectMissing {
+  @Column() id!: string;
+}
+
+// Hiçbir modülde forFeature/InjectRepository/dataSource.getRepository ile
+// enjekte/erişilmez — yalnız bir yorumda anılır (bkz. fixture.module.ts).
+// Kaynak A'da GÖRÜNMEMELİ; göründüğü an yorum ayıklaması bozulmuş demektir
+// (yanlış pozitif kontrolü).
+@Entity({ name: 'fixture_ghost', schema: 'main' })
+export class FixtureGhost {
+  @Column() id!: string;
+}
