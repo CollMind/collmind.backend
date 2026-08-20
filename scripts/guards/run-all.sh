@@ -112,6 +112,22 @@ else
   exit 1
 fi
 
+# route-scope'un da kendi self-test'i AYRI bir dosyadır (T-252, ADIM 3 Faz B
+# B0) — aynı gerekçe: bu guard SRC_DIR'i (route-scope.awk çıktısı) fixture
+# ağacına yönlendirilerek sınanır, self-test.sh'in .ts.fixture/EXPECTED
+# matrisinden FARKLI bir mekanizmadır. Aynı zincirleme kuralı burada da
+# geçerli: self-test dosyası VAR ama hiçbir gerçek kapı yolu onu
+# ÇAĞIRMIYORSA "doğrulama bir kapıdır, durdurmuyorsa doğrulama değildir"
+# ihlal edilir.
+echo "=== self-test (route-scope) ==="
+if bash "$DIR/route-scope-self-test.sh"; then
+  echo "(route-scope fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! route-scope kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0

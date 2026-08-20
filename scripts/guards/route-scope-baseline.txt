@@ -1,0 +1,71 @@
+# route-scope baseline — ADIM 3 Faz B B0 ratchet reference (T-252)
+# date:    2026-08-21
+# commit:  0bb1195
+# scope:   238 rota (src/**/*.controller.ts, 34 dosya)
+# format:  F <dosya>|<YÖNTEM>|<yol> <satır>
+#   anahtar <dosya>|<YÖNTEM>|<yol> — RATCHET yalnız bunu karşılaştırır.
+#   <satır> BİLGİ AMAÇLIDIR (mode-split F-satırı deseni) — dosyanın
+#   başka bir yerine eklenen/silinen bir satır anahtarı DEĞİŞTİRMEZ,
+#   yalnız bu sütunu bayatlatır. Bu dosya KENDİNİ YAZMAZ — B2'de her
+#   uç bağlandıkça AYRI, gözden geçirilebilir bir commit'te güncellenir.
+F src/modules/customer/customer.controller.ts|GET|customers 76
+F src/modules/customer/customer.controller.ts|GET|customers/:id 150
+F src/modules/customer/customer.controller.ts|GET|customers/:id/stats 223
+F src/modules/customer/customer.controller.ts|GET|customers/channel-id/:channelId 114
+F src/modules/customer/customer.controller.ts|GET|customers/channel/:channel 100
+F src/modules/customer/customer.controller.ts|GET|customers/city/:city 128
+F src/modules/customer/customer.controller.ts|GET|customers/code/:code 165
+F src/modules/customer/customer.controller.ts|GET|customers/cpl/list 233
+F src/modules/customer/customer.controller.ts|GET|customers/search 87
+F src/modules/customer/customer.controller.ts|GET|customers/vip 139
+F src/modules/master-data/brand/brand.controller.ts|GET|master-data/brands 50
+F src/modules/master-data/brand/brand.controller.ts|GET|master-data/brands/:id 60
+F src/modules/master-data/category/category.controller.ts|GET|master-data/categories 53
+F src/modules/master-data/category/category.controller.ts|GET|master-data/categories/:id 67
+F src/modules/master-data/channel/channel.controller.ts|GET|master-data/channels 64
+F src/modules/master-data/channel/channel.controller.ts|GET|master-data/channels/:id 78
+F src/modules/master-data/cpl/cpl.controller.ts|GET|master-data/cpls 50
+F src/modules/master-data/cpl/cpl.controller.ts|GET|master-data/cpls/:id 61
+F src/modules/master-data/forecasting-unit/fu.controller.ts|GET|master-data/forecasting-units 50
+F src/modules/master-data/forecasting-unit/fu.controller.ts|GET|master-data/forecasting-units/:id 71
+F src/modules/master-data/generic-unit/gu.controller.ts|GET|master-data/generic-units 50
+F src/modules/master-data/generic-unit/gu.controller.ts|GET|master-data/generic-units/:id 64
+F src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis 51
+F src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/:id 91
+F src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/calculable 84
+F src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/grid 77
+F src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/grid/:planId 61
+F src/modules/master-data/mechanic/mechanic.controller.ts|GET|master-data/mechanics 67
+F src/modules/master-data/mechanic/mechanic.controller.ts|GET|master-data/mechanics/:id 86
+F src/modules/master-data/mechanic/mechanic.controller.ts|POST|master-data/mechanics/applicable 160
+F src/modules/master-data/mechanic/mechanic.controller.ts|POST|master-data/mechanics/check-combination 174
+F src/modules/master-data/region/region.controller.ts|GET|master-data/regions 53
+F src/modules/master-data/region/region.controller.ts|GET|master-data/regions/:id 63
+F src/modules/master-data/sku/sku.controller.ts|GET|master-data/skus 50
+F src/modules/master-data/sku/sku.controller.ts|GET|master-data/skus/:id 69
+F src/modules/master-data/tactic/tactic.controller.ts|GET|master-data/tactics 53
+F src/modules/master-data/tactic/tactic.controller.ts|GET|master-data/tactics/:id 63
+F src/modules/modes/actuals-first/settlement/settlement.controller.ts|GET|actuals-first/settlements/summary 48
+F src/modules/shared/budget/budget-allocation.controller.ts|GET|budget-allocations 70
+F src/modules/shared/budget/budget-allocation.controller.ts|GET|budget-allocations/:id 85
+F src/modules/shared/budget/budget-allocation.controller.ts|GET|budget-allocations/reports/utilization 210
+F src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/check-availability 122
+F src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/reports/forecast 227
+F src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes 51
+F src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id 58
+F src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id/reserved 95
+F src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id/transactions 142
+F src/modules/shared/budget/budget.controller.ts|GET|budget/status 152
+F src/modules/shared/lta/lta-agreement.controller.ts|GET|lta-agreements 60
+F src/modules/shared/lta/lta-agreement.controller.ts|GET|lta-agreements/:id 75
+F src/modules/shared/lta/lta-agreement.controller.ts|GET|lta-agreements/cpl/:cplId/active 140
+F src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/calculate/base-spend 174
+F src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/calculate/planned-spend 194
+F src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/context/rates 160
+F src/modules/tenant/tenant.controller.ts|GET|tenants/:id 61
+F src/modules/tenant/tenant.controller.ts|GET|tenants/:id/stats 113
+F src/modules/user/auth.controller.ts|POST|auth/logout 77
+F src/modules/user/user.controller.ts|GET|users/:id 159
+F src/modules/user/user.controller.ts|GET|users/me 82
+F src/modules/user/user.controller.ts|PATCH|users/me 93
+F src/modules/user/user.controller.ts|PATCH|users/me/password 118

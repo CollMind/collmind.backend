@@ -1,0 +1,15 @@
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../../../../src/common/guards/jwt-auth.guard';
+import { FixtureDomainGuard } from './fixture-domain-guard';
+
+// Kanal 4 (@UseGuards), CONTROLLER seviyesi -> bu dosyadaki HER rota
+// ALAN_GUARD olmalı (reversal.controller.ts'in gerçek deseni: tüm rotalar
+// class-level @UseGuards'tan miras alıyor).
+@Controller('fixture-domain')
+@UseGuards(JwtAuthGuard, FixtureDomainGuard)
+export class FixtureDomainController {
+  @Get('inherited')
+  inherited() {
+    return 'inherited';
+  }
+}

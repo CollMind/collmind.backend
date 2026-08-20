@@ -1,0 +1,46 @@
+import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Roles } from '../../../../src/common/decorators/roles.decorator';
+import { Public } from '../../../../src/common/decorators/public.decorator';
+import { UserRole } from '../../../../src/database/entities/user.entity';
+import { FixtureDomainGuard } from './fixture-domain-guard';
+
+@Controller('fixture-plain')
+export class FixturePlainController {
+  // Kanal 1 (rota dekoratörü) + hiçbir koruma yok -> FILTRESIZ olmalı.
+  @Get('gap')
+  gap() {
+    return 'gap';
+  }
+
+  // Kanal 3 (@Public) -> PUBLIC olmalı.
+  @Get('pub')
+  @Public()
+  pub() {
+    return 'pub';
+  }
+
+  // Kanal 2 (@Roles), tek satır -> ROLES olmalı.
+  @Get('roled')
+  @Roles(UserRole.ADMIN)
+  roled() {
+    return 'roled';
+  }
+
+  // Kanal 2 (@Roles), ÇOK SATIRLI -> ROLES olmalı (parantez derinliği testi).
+  @Get('roled-multiline')
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+  )
+  roledMultiline() {
+    return 'roled-multiline';
+  }
+
+  // Kanal 4 (@UseGuards), ROTA seviyesi -> ALAN_GUARD olmalı.
+  @Post('route-guard')
+  @UseGuards(FixtureDomainGuard)
+  routeGuard() {
+    return 'route-guard';
+  }
+}
