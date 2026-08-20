@@ -134,6 +134,25 @@ async function resolveFixtureTenantId(client) {
  * no e2e spec calls those endpoints, so they never fire here. If that ever
  * changes, this raw count will correctly go red — the fix then is to widen
  * the matching cleanup helper, not to loosen this invariant.
+ *
+ * T-244 (2026-08-20): this changed — measured, not guessed. `user.service.ts`
+ * (`POST /users`) now writes a SCOPE_UPDATE row on every successful create
+ * (`entity_id` = the new user's id), and user-scope-creation.e2e-spec.ts
+ * alone creates several. This DID go red exactly as predicted above
+ * (`adminAuditLogs: 35 -> 42`), and the fix taken was the one this comment
+ * prescribes: `cleanupTestUsers` (seed-e2e.ts) was widened to also delete
+ * the matching `admin_audit_logs` rows (keyed on `entity_id = ANY(userIds)`)
+ * before deleting the users themselves — the invariant was NOT loosened.
+ *
+ * ⚠️ `entity_type` for this producer was ITSELF corrected mid-review
+ * (code-review, `m1`, `DENETIM_SOZLUGU.md` `Z17`): the first implementation
+ * used `'user_scope'`, measured as the ONE exception to a 16/16 convention
+ * (`entity_type` names the table `entity_id` belongs to) — `entity_id` was
+ * never a `user_scopes.id`, always the affected user's id, so
+ * `JOIN user_scopes ON id = entity_id` always returned 0 rows. Corrected to
+ * `'user'` (`SCOPE_AUDIT_ENTITY_TYPE`, user-scope.entity.ts) — `seed-e2e.ts`
+ * imports that same constant so this comment and the DELETE it describes
+ * cannot drift apart again.
  */
 async function countRows(client, tenantId) {
   const s = schema();

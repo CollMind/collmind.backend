@@ -31,6 +31,7 @@ import { DataSource } from 'typeorm';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache } from './helpers/auth';
+import { closeAdminDataSource } from './helpers/admin-datasource';
 import {
   loadE2EFixture,
   E2EFixture,
@@ -104,6 +105,16 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
       );
     }
     await closeTestApp();
+    // J1 (T-244 code-review, 2026-08-20): `cleanupTestUsers` artık
+    // (T-244'ten beri) `getAdminDataSource()`'u dolaylı olarak açıyor
+    // (admin_audit_logs DELETE'i için, app_runtime bu tabloda DELETE
+    // hakkına sahip değil). M-2 kuralı: `closeAdminDataSource()` bu
+    // dosyanın KENDİ en-dış `afterAll`'ının SON satırı olarak,
+    // `closeTestApp()`'ten SONRA çağrılır (role-journey.e2e-spec.ts:281
+    // deseniyle birebir) — merkezi bir hook değil, çünkü lazy re-init
+    // döngüsü tam bunu önlemek için elendi (admin-datasource.ts'in
+    // dosya başı yorumu).
+    await closeAdminDataSource();
   });
 
   beforeEach(() => {

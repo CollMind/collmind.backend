@@ -21,6 +21,7 @@ import {
 import { UserScope } from '../../database/entities/user-scope.entity';
 import { Cpl } from '../../database/entities/cpl.entity';
 import { Category } from '../../database/entities/category.entity';
+import { AdminAuditService } from '../../common/services/admin-audit.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginDto } from './dto/login.dto';
@@ -48,6 +49,7 @@ describe('UserService', () => {
   let budgetEnvelopeRepository: jest.Mocked<Repository<BudgetEnvelope>>;
   let cplRepository: jest.Mocked<Repository<Cpl>>;
   let categoryRepository: jest.Mocked<Repository<Category>>;
+  let adminAuditService: jest.Mocked<AdminAuditService>;
   // T-241: create() now writes User + UserScope inside ONE
   // `dataSource.transaction`. The mock runs the callback synchronously with a
   // manager whose `getRepository` hands back these SAME mocks, so the
@@ -56,9 +58,25 @@ describe('UserService', () => {
   type MockEntityRepo = { create: jest.Mock; save: jest.Mock };
   let userEntityRepo: MockEntityRepo;
   let userScopeRepo: MockEntityRepo;
+  // J3/J4 (T-244 code-review): exposed so ordering/identity tests can
+  // (a) assert `options.manager` in the `logAdminAction` call is THIS EXACT
+  // object (identity, not `expect.anything()`), and (b) override
+  // `dataSourceMock.transaction`'s implementation per-test to record when
+  // the transaction "commits" (the callback's promise resolving) relative
+  // to `logAdminAction`/`flushPendingAlert`.
+  type MockManager = {
+    getRepository: (entity: typeof User | typeof UserScope) => MockEntityRepo;
+  };
+  let mockManager: MockManager;
+  let dataSourceMock: { transaction: jest.Mock };
 
   const mockTenantId = 'tenant-123';
   const mockUserId = 'user-123';
+  // T-244 (A1): the ACTOR is deliberately a different id/email than
+  // `mockUserId` — the whole point of the A1 pin is that `createdBy` must
+  // equal THIS, never the newly created user's own id.
+  const mockActorId = 'admin-actor-999';
+  const mockActorEmail = 'admin-actor@example.com';
   const mockUser: User = {
     id: mockUserId,
     email: 'test@example.com',
@@ -79,6 +97,25 @@ describe('UserService', () => {
   beforeEach(async () => {
     userEntityRepo = { create: jest.fn(), save: jest.fn() };
     userScopeRepo = { create: jest.fn(), save: jest.fn() };
+    mockManager = {
+      getRepository: (
+        entity: typeof User | typeof UserScope,
+      ): MockEntityRepo => {
+        if (entity === User) return userEntityRepo;
+        if (entity === UserScope) return userScopeRepo;
+        throw new Error(
+          `unexpected entity passed to manager.getRepository in test: ${entity.name}`,
+        );
+      },
+    };
+    // Default behaviour matches the ORIGINAL inline mock exactly (invoke the
+    // callback synchronously with `mockManager`, return its result) — tests
+    // that need to observe commit-ordering (J3) override this per-test.
+    dataSourceMock = {
+      transaction: jest.fn((cb: (manager: MockManager) => Promise<unknown>) =>
+        cb(mockManager),
+      ),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -134,25 +171,19 @@ describe('UserService', () => {
         },
         {
           provide: DataSource,
+          useValue: dataSourceMock,
+        },
+        // T-244: AdminAuditService is mocked at the DI boundary — it is
+        // NOT re-exercised here (that would be §2.7 #8's "test re-runs the
+        // control" trap); AdminAuditService has its own suite. This mock
+        // only proves UserService CALLS it correctly (actor, action type,
+        // manager option) and propagates the resulting log to
+        // flushPendingAlert.
+        {
+          provide: AdminAuditService,
           useValue: {
-            transaction: (
-              cb: (manager: {
-                getRepository: (
-                  entity: typeof User | typeof UserScope,
-                ) => MockEntityRepo;
-              }) => Promise<User>,
-            ) =>
-              cb({
-                getRepository: (
-                  entity: typeof User | typeof UserScope,
-                ): MockEntityRepo => {
-                  if (entity === User) return userEntityRepo;
-                  if (entity === UserScope) return userScopeRepo;
-                  throw new Error(
-                    `unexpected entity passed to manager.getRepository in test: ${entity.name}`,
-                  );
-                },
-              }),
+            logAdminAction: jest.fn(),
+            flushPendingAlert: jest.fn(),
           },
         },
       ],
@@ -176,6 +207,9 @@ describe('UserService', () => {
     categoryRepository = module.get(
       getRepositoryToken(Category),
     ) as jest.Mocked<Repository<Category>>;
+    adminAuditService = module.get(
+      AdminAuditService,
+    ) as jest.Mocked<AdminAuditService>;
 
     // Mock bcrypt
     (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
@@ -209,13 +243,26 @@ describe('UserService', () => {
       userScopeRepo.save.mockImplementation((rows: Partial<UserScope>[]) =>
         Promise.resolve(rows),
       );
+      // T-244: a fake log row — only `id`/`isHighRisk`/`alertSent` matter to
+      // callers here (flushPendingAlert reads them); the real shape is
+      // AdminAuditService's own responsibility, not UserService's.
+      (adminAuditService.logAdminAction as jest.Mock).mockResolvedValue({
+        id: 'audit-log-1',
+        isHighRisk: false,
+        alertSent: false,
+      });
     });
 
     it('should create a PLANNER with the given scope, atomically (user + scope in one transaction)', async () => {
       userRepository.findByEmail.mockResolvedValue(null);
       cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
 
-      const result = await service.create(mockTenantId, plannerScopeDto);
+      const result = await service.create(
+        mockTenantId,
+        plannerScopeDto,
+        mockActorId,
+        mockActorEmail,
+      );
 
       expect(userRepository.findByEmail).toHaveBeenCalledWith(
         mockTenantId,
@@ -235,17 +282,170 @@ describe('UserService', () => {
           cplId: 'cpl-1',
           categoryId: undefined,
           isActive: true,
+          createdBy: mockActorId,
         }),
       );
       expect(userScopeRepo.save).toHaveBeenCalled();
       expect(result).toEqual(expect.objectContaining({ id: mockUserId }));
     });
 
+    // ── T-244 (A1) — the bug this task exists to fix ─────────────────────
+    //
+    // Before the fix, `createdBy: savedUser.id` meant "this user granted
+    // their own access" could never NOT be true — the pin below makes that
+    // state unreachable rather than merely unobserved.
+    it("A1: createdBy is the ACTOR (admin who called POST /users), never the new user's own id", async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
+
+      await service.create(
+        mockTenantId,
+        plannerScopeDto,
+        mockActorId,
+        mockActorEmail,
+      );
+
+      const writtenRow = (userScopeRepo.create as jest.Mock).mock
+        .calls[0][0] as Partial<UserScope>;
+      expect(writtenRow.createdBy).toBe(mockActorId);
+      expect(writtenRow.createdBy).not.toBe(mockUserId);
+    });
+
+    // ── T-244 (A7) — kapsam verme artık denetim kaydına giriyor ───────────
+    it('A7: writes a SCOPE_UPDATE audit row inside the SAME transaction (options.manager), eski küme ∅', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
+
+      await service.create(
+        mockTenantId,
+        plannerScopeDto,
+        mockActorId,
+        mockActorEmail,
+        '10.0.0.1',
+      );
+
+      expect(adminAuditService.logAdminAction).toHaveBeenCalledTimes(1);
+      const call = (adminAuditService.logAdminAction as jest.Mock).mock
+        .calls[0];
+      const [
+        tenantId,
+        adminId,
+        adminEmail,
+        actionType,
+        entityType,
+        entityId,
+        ipAddress,
+        result,
+        beforeValues,
+        afterValues,
+        justification,
+        options,
+      ] = call;
+
+      expect(tenantId).toBe(mockTenantId);
+      // Sözlük "kim" = AKTÖR — A1'in kusurunun aynısını burada tekrarlamamak
+      // için ayrıca pinleniyor: adminId asla savedUser.id OLAMAZ.
+      expect(adminId).toBe(mockActorId);
+      expect(adminId).not.toBe(mockUserId);
+      expect(adminEmail).toBe(mockActorEmail);
+      expect(actionType).toBe('SCOPE_UPDATE');
+      // m1 (Z17, code-review düzeltmesi): 'user_scope' DEĞİL 'user' — hedef
+      // kullanıcının kapsamıdır, bir kapsam satırı değil (bkz.
+      // user-scope.entity.ts'teki SCOPE_AUDIT_ENTITY_TYPE JSDoc'u).
+      expect(entityType).toBe('user');
+      expect(entityId).toBe(mockUserId);
+      expect(ipAddress).toBe('10.0.0.1');
+      expect(result).toBe('SUCCESS');
+      // Yaratma anı — eski küme HER ZAMAN ∅ (Z16).
+      expect(beforeValues).toEqual({ scope: [] });
+      expect(afterValues).toEqual({
+        scope: [{ cplId: 'cpl-1', categoryId: null }],
+      });
+      expect(justification).toBeUndefined();
+      // J4 (code-review): KİMLİK kontrolü, şekil değil — `expect.anything()`
+      // yalnız null/undefined'ı eler, `{manager}` içine YABANCI bir nesne
+      // konsa bile geçerdi (ölçüldü: mutasyon `M4` bununla kırmızıya
+      // dönmüyordu). `options.manager` transaction callback'ine geçen
+      // NESNENİN TA KENDİSİ olmalı — ayrı bir connection/commit değil.
+      // ⚠️ `toBe` — `toEqual(objectContaining(...))` DEĞİL. Ölçüldü
+      // (2026-08-20, Team Lead): `toEqual` özyinelemeli eşitliktir, yani
+      // AYNI fonksiyon referanslarını paylaşan FARKLI bir nesne geçer
+      // (probe: `{...manager}` klonu `toEqual` ✅ / `toBe` ❌). Bugün o
+      // yolu `tsc` kapatıyor — `{ manager: { ...manager } }` mutasyonu
+      // TS2740 veriyor, çünkü `EntityManager` 50+ üyeli bir SINIF. Ama
+      // koruma tip kapısına DEVREDİLMEZ (CLAUDE.md: "bir sözleşmenin
+      // geçerliliği çağıranın bugünkü şekline bağlı olamaz").
+      expect(options.manager).toBe(mockManager);
+
+      // T-014 kalıbı: commit'ten SONRA flush edilir.
+      expect(adminAuditService.flushPendingAlert).toHaveBeenCalledTimes(1);
+      expect(adminAuditService.flushPendingAlert).toHaveBeenCalledWith(
+        await (adminAuditService.logAdminAction as jest.Mock).mock.results[0]
+          .value,
+      );
+    });
+
+    // ── J3 (code-review) — "commit'ten SONRA flush edilir" iddiası bir
+    // ÇAĞRI SIRASI iddiasıdır ve yukarıdaki test onu ÖLÇMÜYORDU (yalnız
+    // `toHaveBeenCalledWith` — HANGİ SIRADA çağrıldığını değil). Mutasyon
+    // `M2` (flush'ı transaction callback'inin İÇİNE taşımak) o testi kırmadı
+    // — bu test kırar: `dataSourceMock.transaction`'ın kendi implementasyonu
+    // callback'in (yani "commit"in) TAMAMLANMA anını `callOrder`'a yazar,
+    // settlement-close.service.spec.ts/reversal.service.spec.ts'nin aynı
+    // deseni. ──
+    it('J3: flushPendingAlert transaction COMMIT sonrası çağrılır (çağrı SIRASI pinlenir)', async () => {
+      userRepository.findByEmail.mockResolvedValue(null);
+      cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
+
+      const callOrder: string[] = [];
+      (adminAuditService.logAdminAction as jest.Mock).mockImplementation(
+        async () => {
+          callOrder.push('logAdminAction');
+          return { id: 'audit-log-1', isHighRisk: false, alertSent: false };
+        },
+      );
+      // `dataSource.transaction()`'ın GERÇEK sözleşmesi: callback'in promise'i
+      // resolve olduğunda transaction commit edilmiş sayılır (TypeORM bunu
+      // `transaction()`'ın kendi içinde, callback'ten SONRA yapar) — mock bu
+      // sözleşmeyi birebir taklit ediyor, 'transaction-commit'i callback
+      // AWAIT edildikten SONRA yazarak.
+      dataSourceMock.transaction.mockImplementation(
+        async (cb: (manager: typeof mockManager) => Promise<unknown>) => {
+          const result = await cb(mockManager);
+          callOrder.push('transaction-commit');
+          return result;
+        },
+      );
+      (adminAuditService.flushPendingAlert as jest.Mock).mockImplementation(
+        async () => {
+          callOrder.push('flushPendingAlert');
+        },
+      );
+
+      await service.create(
+        mockTenantId,
+        plannerScopeDto,
+        mockActorId,
+        mockActorEmail,
+      );
+
+      expect(callOrder).toEqual([
+        'logAdminAction',
+        'transaction-commit',
+        'flushPendingAlert',
+      ]);
+    });
+
     it('should throw ConflictException if user with email already exists (no writes attempted)', async () => {
       userRepository.findByEmail.mockResolvedValue(mockUser);
 
       await expect(
-        service.create(mockTenantId, plannerScopeDto),
+        service.create(
+          mockTenantId,
+          plannerScopeDto,
+          mockActorId,
+          mockActorEmail,
+        ),
       ).rejects.toThrow(ConflictException);
       expect(userRepository.findByEmail).toHaveBeenCalledWith(
         mockTenantId,
@@ -265,7 +465,12 @@ describe('UserService', () => {
       };
 
       await expect(
-        service.create(mockTenantId, dtoWithoutScope),
+        service.create(
+          mockTenantId,
+          dtoWithoutScope,
+          mockActorId,
+          mockActorEmail,
+        ),
       ).rejects.toThrow(BadRequestException);
       expect(userEntityRepo.create).not.toHaveBeenCalled();
       expect(userScopeRepo.create).not.toHaveBeenCalled();
@@ -279,7 +484,12 @@ describe('UserService', () => {
       };
 
       await expect(
-        service.create(mockTenantId, dtoWithEmptyScope),
+        service.create(
+          mockTenantId,
+          dtoWithEmptyScope,
+          mockActorId,
+          mockActorEmail,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -292,7 +502,7 @@ describe('UserService', () => {
         role: UserRole.ADMIN,
       };
 
-      await service.create(mockTenantId, adminDto);
+      await service.create(mockTenantId, adminDto, mockActorId, mockActorEmail);
 
       expect(userScopeRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -326,7 +536,12 @@ describe('UserService', () => {
       } as CreateUserDto;
 
       await expect(
-        service.create(mockTenantId, adminDtoWithScope),
+        service.create(
+          mockTenantId,
+          adminDtoWithScope,
+          mockActorId,
+          mockActorEmail,
+        ),
       ).rejects.toThrow(BadRequestException);
       expect(userEntityRepo.create).not.toHaveBeenCalled();
     });
@@ -340,7 +555,7 @@ describe('UserService', () => {
         role: UserRole.ADMIN,
       } as CreateUserDto;
 
-      await service.create(mockTenantId, adminDto);
+      await service.create(mockTenantId, adminDto, mockActorId, mockActorEmail);
 
       // ⚠️ `undefined`, `null` DEĞİL — ve bu bilinçli: `user.service.ts:112`
       // `row.cplId ?? undefined` yazıyor, çünkü TypeORM `undefined`'ı
@@ -358,7 +573,12 @@ describe('UserService', () => {
       userRepository.findByEmail.mockResolvedValue(null);
       cplRepository.find.mockResolvedValue([{ id: 'cpl-1' } as Cpl]);
 
-      await service.create(mockTenantId, plannerScopeDto);
+      await service.create(
+        mockTenantId,
+        plannerScopeDto,
+        mockActorId,
+        mockActorEmail,
+      );
       expect(
         (userScopeRepo.save as jest.Mock).mock.calls[0][0].length,
       ).toBeGreaterThanOrEqual(1);
@@ -372,7 +592,7 @@ describe('UserService', () => {
         fullName: 'New Admin 4',
         role: UserRole.ADMIN,
       };
-      await service.create(mockTenantId, adminDto);
+      await service.create(mockTenantId, adminDto, mockActorId, mockActorEmail);
       expect(
         (userScopeRepo.save as jest.Mock).mock.calls[0][0].length,
       ).toBeGreaterThanOrEqual(1);
@@ -385,7 +605,12 @@ describe('UserService', () => {
       cplRepository.find.mockResolvedValue([]); // not found for THIS tenant
 
       await expect(
-        service.create(mockTenantId, plannerScopeDto),
+        service.create(
+          mockTenantId,
+          plannerScopeDto,
+          mockActorId,
+          mockActorEmail,
+        ),
       ).rejects.toThrow(BadRequestException);
       expect(userEntityRepo.create).not.toHaveBeenCalled();
     });
@@ -406,7 +631,12 @@ describe('UserService', () => {
 
       // Yaratma BAŞARILI olmalı (cpl bulundu) — bu testin konusu reddedilme
       // değil, sorgunun ŞEKLİ.
-      await service.create(mockTenantId, plannerScopeDto);
+      await service.create(
+        mockTenantId,
+        plannerScopeDto,
+        mockActorId,
+        mockActorEmail,
+      );
 
       expect(cplRepository.find).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -435,7 +665,7 @@ describe('UserService', () => {
         ],
       };
 
-      await service.create(mockTenantId, cmDto);
+      await service.create(mockTenantId, cmDto, mockActorId, mockActorEmail);
 
       expect(userScopeRepo.create).toHaveBeenCalledTimes(2);
       expect(userScopeRepo.create).toHaveBeenNthCalledWith(
@@ -463,7 +693,12 @@ describe('UserService', () => {
       userScopeRepo.save.mockRejectedValue(dbError);
 
       await expect(
-        service.create(mockTenantId, plannerScopeDto),
+        service.create(
+          mockTenantId,
+          plannerScopeDto,
+          mockActorId,
+          mockActorEmail,
+        ),
       ).rejects.toThrow(dbError);
 
       // The user save WAS reached before the scope write failed — this is
@@ -484,7 +719,12 @@ describe('UserService', () => {
       } as CreateUserDto;
 
       await expect(
-        service.create(mockTenantId, dtoWithUnknownRole),
+        service.create(
+          mockTenantId,
+          dtoWithUnknownRole,
+          mockActorId,
+          mockActorEmail,
+        ),
       ).rejects.toThrow();
       expect(userEntityRepo.create).not.toHaveBeenCalled();
     });

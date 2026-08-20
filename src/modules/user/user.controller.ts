@@ -12,6 +12,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { Request as ExpressRequest } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -45,8 +46,24 @@ export class UserController {
     description: 'User created successfully',
     type: UserResponseDto,
   })
-  create(@TenantId() tenantId: string, @Body() createUserDto: CreateUserDto) {
-    return this.userService.create(tenantId, createUserDto);
+  create(
+    @TenantId() tenantId: string,
+    @Body() createUserDto: CreateUserDto,
+    // T-244 (A1): daha önce bu rota @CurrentUser() ALMIYORDU, yani
+    // user.service.ts kapsam satırının createdBy'ını yeni kullanıcının
+    // KENDİSİYLE dolduruyordu ("kullanıcı kendi erişimini verdi" — bir
+    // kusur). `email` de gerekli — A7'nin denetim kaydı için aktörün kimliği.
+    @CurrentUser() actor: { id: string; email: string; role: UserRole },
+    @Request() req: ExpressRequest,
+  ) {
+    const ipAddress = req.ip || req.socket?.remoteAddress;
+    return this.userService.create(
+      tenantId,
+      createUserDto,
+      actor.id,
+      actor.email,
+      ipAddress,
+    );
   }
 
   @Get()

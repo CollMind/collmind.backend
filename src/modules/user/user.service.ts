@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -32,13 +33,19 @@ import {
   UserScope,
   WILDCARD_SCOPE_ROLES,
   SCOPE_REQUIRED_ROLES,
+  ScopeAuditActionType,
+  SCOPE_AUDIT_ENTITY_TYPE,
+  sortScopeAuditPairsCanonically,
 } from '../../database/entities/user-scope.entity';
 import { Cpl } from '../../database/entities/cpl.entity';
 import { Category } from '../../database/entities/category.entity';
+import { AdminAuditService } from '../../common/services/admin-audit.service';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
   constructor(
     private readonly userRepository: UserRepository,
     private readonly jwtService: JwtService,
@@ -54,16 +61,19 @@ export class UserService {
     private readonly categoryRepository: Repository<Category>,
     // T-241: user + user_scopes tek transaction'a yazılır (aşağıdaki create()).
     private readonly dataSource: DataSource,
+    // T-244: kapsam verme SCOPE_UPDATE olarak aynı transaction'da loglanır.
+    private readonly adminAuditService: AdminAuditService,
   ) {}
 
   /**
    * T-241 — `POST /users` rol + kapsam BİRLİKTE alır; kapsamsız kullanıcı
    * YARATILMAZ (`.claude/backlog/tasks/T-241.md` karar (b)).
    *
-   * Atomiklik: kullanıcı satırı ve kapsam satır(lar)ı TEK transaction'da
-   * yazılır — kısmi başarı (kullanıcı var, kapsam yok) oluşamaz. Bu, R-2
-   * fail-closed'ın (AccessScopeService) tam olarak kaçınmaya çalıştığı
-   * "kullanıcı var ama scope satırı yok" deliğini yaratma anında kapatır.
+   * Atomiklik: kullanıcı satırı, kapsam satır(lar)ı VE denetim kaydı (T-244)
+   * TEK transaction'da yazılır — kısmi başarı (kullanıcı var, kapsam yok,
+   * denetim kaydı yok) oluşamaz. Bu, R-2 fail-closed'ın (AccessScopeService)
+   * tam olarak kaçınmaya çalıştığı "kullanıcı var ama scope satırı yok"
+   * deliğini yaratma anında kapatır.
    *
    * K-2.6.10 sınırı: bu metod bir kapsam YAZAR, bir yetki HESAPLAMAZ.
    * AccessScopeService#buildScope'un semantiğini (R-1 pair, R-2 fail-closed,
@@ -71,8 +81,26 @@ export class UserService {
    * çiftlerinin satır olarak var olacağına karar verir; o satırları nasıl
    * yorumlayacağı (UNRESTRICTED/SCOPED, CM normalizasyonu) okuma zamanında
    * yine AccessScopeService'tedir.
+   *
+   * T-244 (`A1` + `A7`, birlikte):
+   *   `A1` — `createdBy` daha önce `savedUser.id` yazıyordu, yani kapsam
+   *   satırının "bu erişimi kim verdi" alanı yeni kullanıcının KENDİSİNİ
+   *   gösteriyordu. Şimdi `actorId` — çağıran ADMIN'in kimliği — yazılıyor.
+   *   `A7` — kapsam verme daha önce hiçbir yere loglanmıyordu
+   *   (`grep -rni 'audit' src/modules/user/` → 0). Şimdi `AdminAuditService`
+   *   üzerinden `SCOPE_UPDATE` olarak, `docs/process/DENETIM_SOZLUGU.md`
+   *   `Madde 1`'in biçimiyle yazılıyor — yaratma anı eski küme `∅`
+   *   (`ScopeAuditActionType`, `Z16`: üçüncü olay türü açılmadı).
+   *   ⚠️ Kapsam DAR: yalnız kapsam VERME loglanır, kullanıcı YARATMA olayının
+   *   kendisi değil (`Z16`, sözlük `Madde 2` — ⛔ hâlâ açık).
    */
-  async create(tenantId: string, createUserDto: CreateUserDto): Promise<User> {
+  async create(
+    tenantId: string,
+    createUserDto: CreateUserDto,
+    actorId: string,
+    actorEmail: string,
+    ipAddress?: string,
+  ): Promise<User> {
     const existing = await this.userRepository.findByEmail(
       tenantId,
       createUserDto.email,
@@ -94,31 +122,101 @@ export class UserService {
     const userFields: Omit<CreateUserDto, 'scope'> = { ...createUserDto };
     delete (userFields as Partial<CreateUserDto>).scope;
 
-    return this.dataSource.transaction(async (manager) => {
-      const userRepo = manager.getRepository(User);
-      const userScopeRepo = manager.getRepository(UserScope);
+    const { savedUser, auditLog } = await this.dataSource.transaction(
+      async (manager) => {
+        const userRepo = manager.getRepository(User);
+        const userScopeRepo = manager.getRepository(UserScope);
 
-      const user = userRepo.create({
-        ...userFields,
-        tenantId,
-        passwordHash,
-      });
-      const savedUser = await userRepo.save(user);
-
-      const scopeEntities = scopeRows.map((row) =>
-        userScopeRepo.create({
+        const user = userRepo.create({
+          ...userFields,
           tenantId,
-          userId: savedUser.id,
-          cplId: row.cplId ?? undefined,
-          categoryId: row.categoryId ?? undefined,
-          isActive: true,
-          createdBy: savedUser.id,
-        }),
-      );
-      await userScopeRepo.save(scopeEntities);
+          passwordHash,
+        });
+        const savedUser = await userRepo.save(user);
 
-      return savedUser;
-    });
+        const scopeEntities = scopeRows.map((row) =>
+          userScopeRepo.create({
+            tenantId,
+            userId: savedUser.id,
+            cplId: row.cplId ?? undefined,
+            categoryId: row.categoryId ?? undefined,
+            isActive: true,
+            // A1 FIX: gerçek aktör (kapsamı VEREN admin), yeni kullanıcının
+            // kendisi DEĞİL.
+            createdBy: actorId,
+          }),
+        );
+        await userScopeRepo.save(scopeEntities);
+
+        // A7 FIX — DENETIM_SOZLUGU.md Madde 1: yaratma anında verilen ilk
+        // kapsam da SCOPE_UPDATE'tir, eski küme HER ZAMAN ∅ (Z16 — üçüncü
+        // olay türü yok). T-014 kalıbı: options.manager ile aynı
+        // transaction'ın içinde yazılır — rollback olursa denetim kaydı da
+        // hiç yazılmamış olur.
+        const auditLog = await this.adminAuditService.logAdminAction(
+          tenantId,
+          actorId,
+          actorEmail,
+          ScopeAuditActionType.SCOPE_UPDATE,
+          SCOPE_AUDIT_ENTITY_TYPE,
+          savedUser.id,
+          ipAddress,
+          'SUCCESS',
+          { scope: [] },
+          {
+            // m3: kanonik sıralı — T-242a'nın before/after karşılaştırması
+            // sıra farkını "değişti" sanmasın (bkz. sortScopeAuditPairsCanonically
+            // JSDoc'u, user-scope.entity.ts).
+            scope: sortScopeAuditPairsCanonically(
+              scopeEntities.map((row) => ({
+                cplId: row.cplId ?? null,
+                categoryId: row.categoryId ?? null,
+              })),
+            ),
+          },
+          undefined, // gerekçe: Madde 1'de UPDATE'te opsiyonel (REVOKE_ALL'da zorunlu)
+          { manager },
+        );
+
+        return { savedUser, auditLog };
+      },
+    );
+
+    // T-014 kalıbı: high-risk alarm yalnız commit'ten SONRA tetiklenir —
+    // rollback olan bir işlem için alarm gitmemesi gerekir. Bugün
+    // SCOPE_UPDATE `AdminAuditService.isHighRiskAction`'ın listesinde YOK
+    // — hem `actionType` ('SCOPE_UPDATE' !== 'UPDATE'/'DELETE') hem
+    // `entityType` ('user', Z17/m1) ölçüldü, listedeki `{UPDATE,user}`/
+    // `{DELETE,user}` satırlarıyla ÇAKIŞMIYOR (admin-audit.service.ts:
+    // 171-196, tam eşleşme — `.some(r => r.action === actionType &&
+    // r.entity === entityType)`). Yani bu çağrı bugün no-op; altı diğer
+    // transaction-aware çağrı yeri (agreement.service.ts × 4, reversal × 1,
+    // settlement-close × 1 — `sales-actuals.service.ts` BUNLARDAN BİRİ
+    // DEĞİL: orada `logAdminAction` `{manager}` ile 2 kez çağrılıyor ama
+    // `flushPendingAlert` HİÇ çağrılmıyor, ölçüldü; ayrı bir kusur, bkz.
+    // ilgili task) aynı deseni koşulsuz izliyor — liste ileride
+    // SCOPE_UPDATE'i kapsarsa davranış buradan gelir.
+    //
+    // J2 (T-244 code-review, `Z17`): ayrı try/catch — repodaki 6/6 emsel
+    // (agreement/reversal/settlement-close) bunu sarıyor, en yakın emsal
+    // `reversal.service.ts:199-203`'ün gerekçesiyle BİREBİR aynı: alarm
+    // gönderimi (kendi DB yazması içerir) başarısız olursa kullanıcı+kapsam
+    // zaten commit'li bir işlemi 500'e ÇEVİRMEMELİ — admin "başarısız oldu"
+    // sanıp tekrar dener ve email ÇAKIŞMASI yüzünden 409 alır (ConflictException,
+    // bu metodun en üstündeki `findByEmail` kontrolü). Alarm kaybı, başarılı
+    // bir işlemi başarısız göstermekten kat kat iyidir; hata burada yutulur
+    // ve yalnızca ERROR seviyesinde loglanır.
+    try {
+      await this.adminAuditService.flushPendingAlert(auditLog);
+    } catch (alertErr) {
+      this.logger.error(
+        `HIGH-RISK ALERT FAILED — user ${savedUser.id} scope granted successfully; alert not delivered: ${
+          alertErr instanceof Error ? alertErr.message : 'Unknown error'
+        }`,
+      );
+    }
+
+    return savedUser;
   }
 
   /**

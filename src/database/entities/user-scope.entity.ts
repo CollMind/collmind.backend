@@ -42,6 +42,95 @@ export const SCOPE_REQUIRED_ROLES: ReadonlySet<UserRole> = new Set([
 ]);
 
 /**
+ * T-244 — `docs/process/DENETIM_SOZLUGU.md` `Madde 1`'in İKİ olay türü, TEK
+ * kaynaktan. `[[T-244]]` (yaratma anı — eski küme HER ZAMAN `∅`) ve
+ * `[[T-242a]]` (güncelleme/boşaltma) BURADAN okur; sözlüğün "üçüncü tür
+ * AÇILMAZ" kararı (`Z16`) bu sabiti PAYLAŞARAK korunuyor — iki tür kendi
+ * dosyasında ayrı ayrı tanımlansaydı bir sonraki yazan üçüncü bir tür
+ * ekleyebilirdi.
+ *
+ * `SCOPE_UPDATE`: hedef küme boş DEĞİL (yaratmada eski küme `∅`, güncellemede
+ * eski küme önceki satırlar).
+ * `SCOPE_REVOKE_ALL`: kapsam tümüyle boşaltıldı — `K-2.6.8a` gereği boş
+ * kapsam erişim YOK demektir, yani bu bir güncelleme değil bir erişim
+ * kaldırmadır (Madde 1, ayrım ekseni "hedef küme boşalıyor mu").
+ *
+ * m2 (`Z17`): bu değer, `AdminAuditService.logAdminAction`'ın `actionType`
+ * ("ne") argümanına GİDER — ayrı bir "niyet" kolonu YOK. Uç tarafındaki
+ * `intent: UPDATE | REVOKE_ALL` (T-242a'nın DTO'su) girdi doğrulaması
+ * içindir; kayıt tarafında ikinci bir kolon hiçbir bilgi taşımazdı (iki tür
+ * zaten iki değer — `İlke 1`).
+ */
+export enum ScopeAuditActionType {
+  SCOPE_UPDATE = 'SCOPE_UPDATE',
+  SCOPE_REVOKE_ALL = 'SCOPE_REVOKE_ALL',
+}
+
+/**
+ * `AdminAuditService.logAdminAction`'ın `entityType` alanı — `'user'`
+ * (`DENETIM_SOZLUGU.md` `Madde 1` `Z17`, kod: `m1`).
+ *
+ * ⚠️ ÖNCEDEN `'user_scope'`'tu — DÜZELTİLDİ (code-review, T-244, `Z17`):
+ * repodaki 16 `logAdminAction` üreticisinin 16'sında `entityId`,
+ * `entityType`'ın ADLANDIRDIĞI TABLONUN id'sidir (`'AGREEMENT'` →
+ * `agreements.id`, `'mechanic'` → `mechanics.id`, ...). `'user_scope'` bu
+ * kalıbın TEK istisnasıydı ve ölçüldü: `entityId` hiçbir zaman bir
+ * `user_scopes.id` DEĞİL — her zaman ETKİLENEN KULLANICININ id'si, yani
+ * `JOIN user_scopes ON id = entity_id` HER ZAMAN 0 satır dönerdi.
+ *
+ * Olay, kullanıcının KAPSAMININ değişmesidir — bir kapsam SATIRININ değil.
+ * `replace` semantiğinde hedef bir küme, kümenin sahibi kullanıcı. Kapsam
+ * kümesinin kendisi `before_values`/`after_values`'ta yaşar (Madde 1:
+ * *"eski küme → yeni küme"*) — `entityType`'ın onu taşımasına gerek yok.
+ *
+ * Bir çağrı birden çok `user_scopes` satırı yazabilir/siler; denetim kaydı
+ * bunu tek bir olay (bir kullanıcı, bir küme değişimi) olarak taşır.
+ */
+export const SCOPE_AUDIT_ENTITY_TYPE = 'user';
+
+/** Bir kapsam denetim kaydının `before_values`/`after_values.scope`'unda taşınan çift. */
+export interface ScopeAuditPair {
+  cplId: string | null;
+  categoryId: string | null;
+}
+
+/**
+ * m3 (code-review, T-244): `[{A},{B}]` ile `[{B},{A}]` AYNI KÜME ama iki
+ * farklı JSON üretir. Bugün etkisiz (T-244'ün `before_values.scope` her
+ * zaman `[]` — yaratma anı) ama biçim BURADA donuyor: `[[T-242a]]` bir
+ * `before`↔`after` KARŞILAŞTIRMASI yapacak (hiçbir şey değişmedi mi?) ve
+ * kanonik sıralama olmadan aynı küme farklı sırayla yazılıp gelirse
+ * "değişti" görünür.
+ *
+ * `cplId`, sonra `categoryId`'ye göre, `NULL` önce (Postgres `NULLS FIRST`
+ * ile aynı sözleşme — joker satır `{null,null}` her zaman ilk sırada).
+ */
+export function sortScopeAuditPairsCanonically<T extends ScopeAuditPair>(
+  pairs: readonly T[],
+): T[] {
+  const compareNullableUuid = (a: string | null, b: string | null): number => {
+    if (a === b) {
+      return 0;
+    }
+    if (a === null) {
+      return -1;
+    }
+    if (b === null) {
+      return 1;
+    }
+    return a < b ? -1 : 1;
+  };
+
+  return [...pairs].sort((x, y) => {
+    const cplCmp = compareNullableUuid(x.cplId, y.cplId);
+    if (cplCmp !== 0) {
+      return cplCmp;
+    }
+    return compareNullableUuid(x.categoryId, y.categoryId);
+  });
+}
+
+/**
  * User Scope Entity
  *
  * Maps users to their authorized CPLs and Categories

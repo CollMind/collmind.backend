@@ -16,6 +16,10 @@ import { DataSource } from 'typeorm';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { loginAs } from './auth';
 import { getAdminDataSource } from './admin-datasource';
+// T-244/Z17: entity_type sabiti tek kaynaktan (m1 düzeltmesi öncesi
+// burada bir string literal olarak kopyalanmıştı — DELETE'in kendisi
+// yazıcıyla senkron kalmayı sabitin kendisine bağlı hale getiriyor).
+import { SCOPE_AUDIT_ENTITY_TYPE } from '../../src/database/entities/user-scope.entity';
 
 export interface E2EFixture {
   tenantId: string;
@@ -486,6 +490,28 @@ export async function cleanupTestUsers(
   if (userIds.length === 0) {
     return;
   }
+
+  // T-244: `POST /users` şimdi kapsam verme SCOPE_UPDATE olarak
+  // `admin_audit_logs`'a yazıyor (entity_type=SCOPE_AUDIT_ENTITY_TYPE
+  // ('user', Z17/m1 — ÖNCEDEN 'user_scope'ydu, düzeltildi), entity_id=
+  // <yaratılan kullanıcının id'si>). `main.user_scopes` satırları `users`'a
+  // CASCADE FK ile bağlı olduğu için aşağıdaki DELETE onları otomatik
+  // temizler — ama `admin_audit_logs.entity_id` polimorfik ve FK'siz
+  // (`cleanupTestAgreements`'taki AGREEMENT_TRANSACTION deseninin aynısı):
+  // kullanıcı silinince audit satırı orphan kalır ve T-047/T-060 satır-sayısı
+  // invaryantını (test/helpers/e2e-row-count.js) kırar — ölçüldü, T-244
+  // turunda `adminAuditLogs: 35 -> 42`.
+  // `app_runtime`'ın `admin_audit_logs`'ta DELETE hakkı YOK (K-2.6.13 Karar
+  // 1, cleanupTestAgreements'ın JSDoc'u) — bu yüzden `app_migrate`
+  // (`getAdminDataSource()`) kullanılıyor, `main.users` DELETE'i ise
+  // (aşağıda) `app_runtime` üzerinden kalıyor (mevcut, çalışan davranış).
+  const adminDataSource = await getAdminDataSource();
+  await adminDataSource.query(
+    `DELETE FROM main.admin_audit_logs
+      WHERE entity_type = $1 AND entity_id = ANY($2::uuid[])`,
+    [SCOPE_AUDIT_ENTITY_TYPE, userIds],
+  );
+
   const dataSource = app.get<DataSource>(getDataSourceToken());
   await dataSource.query(`DELETE FROM main.users WHERE id = ANY($1::uuid[])`, [
     userIds,
