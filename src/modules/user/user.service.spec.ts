@@ -22,8 +22,13 @@ import { UserScope } from '../../database/entities/user-scope.entity';
 import { Cpl } from '../../database/entities/cpl.entity';
 import { Category } from '../../database/entities/category.entity';
 import { AdminAuditService } from '../../common/services/admin-audit.service';
+import { AccessScopeService } from '../shared/access-scope/access-scope.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import {
+  UpdateUserScopeDto,
+  ScopeUpdateIntent,
+} from './dto/update-user-scope.dto';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import {
@@ -50,12 +55,20 @@ describe('UserService', () => {
   let cplRepository: jest.Mocked<Repository<Cpl>>;
   let categoryRepository: jest.Mocked<Repository<Category>>;
   let adminAuditService: jest.Mocked<AdminAuditService>;
+  let accessScopeService: jest.Mocked<Pick<AccessScopeService, 'clearCache'>>;
   // T-241: create() now writes User + UserScope inside ONE
   // `dataSource.transaction`. The mock runs the callback synchronously with a
   // manager whose `getRepository` hands back these SAME mocks, so the
   // transactional path is exercised (not stubbed away) — same pattern as
   // budget-allocation.service.spec.ts (T-096/2).
-  type MockEntityRepo = { create: jest.Mock; save: jest.Mock };
+  // T-242a: updateScope() ayrıca `manager.getRepository(UserScope).find(...)`
+  // çağırıyor (var olan satırları hedef kümeyle karşılaştırmak için) — `find`
+  // create()'in mock'unda kullanılmıyordu, updateScope testleri için eklendi.
+  type MockEntityRepo = {
+    create: jest.Mock;
+    save: jest.Mock;
+    find: jest.Mock;
+  };
   let userEntityRepo: MockEntityRepo;
   let userScopeRepo: MockEntityRepo;
   // J3/J4 (T-244 code-review): exposed so ordering/identity tests can
@@ -95,8 +108,8 @@ describe('UserService', () => {
   } as any;
 
   beforeEach(async () => {
-    userEntityRepo = { create: jest.fn(), save: jest.fn() };
-    userScopeRepo = { create: jest.fn(), save: jest.fn() };
+    userEntityRepo = { create: jest.fn(), save: jest.fn(), find: jest.fn() };
+    userScopeRepo = { create: jest.fn(), save: jest.fn(), find: jest.fn() };
     mockManager = {
       getRepository: (
         entity: typeof User | typeof UserScope,
@@ -186,6 +199,17 @@ describe('UserService', () => {
             flushPendingAlert: jest.fn(),
           },
         },
+        // m1 (T-242a code-review): updateScope() commit sonrası
+        // AccessScopeService.clearCache()'i çağırıyor. AccessScopeService'in
+        // KENDİ suite'i var (access-scope.service.spec.ts) — burada yalnız
+        // UserService'in onu DOĞRU ÇAĞIRDIĞI kanıtlanır (§2.7 #8'in
+        // "kontrolü yeniden uygulama" tuzağına düşmeden).
+        {
+          provide: AccessScopeService,
+          useValue: {
+            clearCache: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -210,6 +234,9 @@ describe('UserService', () => {
     adminAuditService = module.get(
       AdminAuditService,
     ) as jest.Mocked<AdminAuditService>;
+    accessScopeService = module.get(AccessScopeService) as jest.Mocked<
+      Pick<AccessScopeService, 'clearCache'>
+    >;
 
     // Mock bcrypt
     (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
@@ -977,6 +1004,337 @@ describe('UserService', () => {
           UserRole.ADMIN,
         ),
       ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  // ── [[T-242a]] — kapsam GÜNCELLEME/BOŞALTMA (`PATCH /users/:id/scope`) ──
+  //
+  // B2 (code-review BLOCKER, 2026-08-20): create()'in A7/J3/J4 testleri
+  // `logAdminAction`'ın 12 pozisyonel argümanını AYRI AYRI, `toBe` ile
+  // pinliyordu; updateScope() aynı çağrıyı yapıyordu ama bunun hiçbir pini
+  // yoktu (`grep -rn "SCOPE_UPDATE|SCOPE_REVOKE_ALL" test/` → 0, pozitif
+  // kontrol: `admin_audit_logs` 10+ dosyada eşleşiyor — desen ÇALIŞIYOR,
+  // yalnız bu yol hiç kapsanmamıştı). Aynı desen burada TEKRARLANIYOR,
+  // yeniden icat edilmiyor.
+  describe('updateScope', () => {
+    const mockCplId = 'cpl-1';
+    const mockCategoryId = 'cat-1';
+
+    // `mockUser`'in KENDİSİ `as any` ile tanımlı (`hashPassword`/
+    // `validatePassword` sınıf metodları fixture'da yok) — spread bu
+    // metodları YENİDEN kaybeder (TS spread'i DEĞERİN gerçek şeklinden
+    // türetir, `mockUser`'in bildirilen tipinden değil). `as unknown as
+    // User`, `makeExistingActiveRow`'un zaten kullandığı teknikle AYNI:
+    // `no-explicit-any` `any` anahtar kelimesini yakalar, `unknown`'ı
+    // değil — davranışsal olarak eşdeğer, lint ratchet'i GEREKSİZ YERE
+    // büyütmüyor.
+    const plannerUser: User = {
+      ...mockUser,
+      id: mockUserId,
+      role: UserRole.PLANNER,
+      tenantId: mockTenantId,
+    } as unknown as User;
+
+    // "gerçek eski küme" — B2'nin kabul şartı: before_values.scope BOŞ bir
+    // sabit DEĞİL, DB'den okunan (mock'lanan) aktif bir satırdan türüyor.
+    //
+    // ⚠️ FACTORY, sabit nesne DEĞİL: `updateScope()` `find()`'dan dönen
+    // satırları YERİNDE mutasyona uğratıyor (`row.isActive = false`,
+    // gerçek TypeORM entity semantiğiyle birebir — `find()` her çağrıda
+    // TAZE nesneler döner). Paylaşılan tek bir sabit nesne kullanılsaydı
+    // bir testin mutasyonu bir SONRAKİ testin "önceki" durumunu SESSİZCE
+    // bozardı (ölçüldü: ilk yazımda TAM BU oldu — UPDATE testi satırı
+    // deaktive etti, REVOKE_ALL testi onu zaten deaktive görüp
+    // `before_values.scope`'u BOŞ okudu, §2.7 #4'ün "kanıt kurulumu ölçülen
+    // durumu değiştiriyor" ailesi).
+    const makeExistingActiveRow = (): UserScope =>
+      ({
+        id: 'scope-row-1',
+        tenantId: mockTenantId,
+        userId: mockUserId,
+        cplId: mockCplId,
+        categoryId: null,
+        isActive: true,
+        createdBy: 'someone-else-999',
+        updatedBy: null,
+      }) as unknown as UserScope;
+
+    beforeEach(() => {
+      userRepository.findById.mockResolvedValue(plannerUser);
+      userScopeRepo.create.mockImplementation(
+        (data: Partial<UserScope>) => data,
+      );
+      // updateScope() `save()`'i TEK bir entity ile çağırır (create()'in
+      // aksine — orada bir DİZİ save edilir). Pass-through: gönderileni
+      // resolve eder.
+      userScopeRepo.save.mockImplementation((entity: Partial<UserScope>) =>
+        Promise.resolve(entity),
+      );
+      (adminAuditService.logAdminAction as jest.Mock).mockResolvedValue({
+        id: 'audit-log-scope-1',
+        isHighRisk: false,
+        alertSent: false,
+      });
+    });
+
+    it('B2: intent=UPDATE — logAdminAction 12 argümanı da ADINA GÖRE pinlenir; before_values GERÇEK eski küme taşır', async () => {
+      userScopeRepo.find.mockResolvedValue([makeExistingActiveRow()]);
+      categoryRepository.find.mockResolvedValue([
+        { id: mockCategoryId } as Category,
+      ]);
+
+      await service.updateScope(
+        mockTenantId,
+        mockUserId,
+        {
+          intent: ScopeUpdateIntent.UPDATE,
+          scope: [{ cplId: null, categoryId: mockCategoryId }],
+        } as UpdateUserScopeDto,
+        mockActorId,
+        mockActorEmail,
+        '10.0.0.2',
+      );
+
+      expect(adminAuditService.logAdminAction).toHaveBeenCalledTimes(1);
+      const call = (adminAuditService.logAdminAction as jest.Mock).mock
+        .calls[0];
+      const [
+        tenantId,
+        adminId,
+        adminEmail,
+        actionType,
+        entityType,
+        entityId,
+        ipAddress,
+        result,
+        beforeValues,
+        afterValues,
+        justification,
+        options,
+      ] = call;
+
+      expect(tenantId).toBe(mockTenantId);
+      // Sözlük "kim" = AKTÖR — A1'in kusurunun aynısı burada da tekrarlanmaz.
+      expect(adminId).toBe(mockActorId);
+      expect(adminId).not.toBe(mockUserId);
+      expect(adminEmail).toBe(mockActorEmail);
+      expect(actionType).toBe('SCOPE_UPDATE');
+      // Z17/m1: 'user' — hedef KULLANICI, kapsam satırı DEĞİL.
+      expect(entityType).toBe('user');
+      expect(entityId).toBe(mockUserId);
+      expect(ipAddress).toBe('10.0.0.2');
+      expect(result).toBe('SUCCESS');
+      // GERÇEK eski küme — sabit `{scope: []}` DEĞİL (o yalnız create()'in
+      // yaratma anı için doğrudur, Z16).
+      expect(beforeValues).toEqual({
+        scope: [{ cplId: mockCplId, categoryId: null }],
+      });
+      expect(afterValues).toEqual({
+        scope: [{ cplId: null, categoryId: mockCategoryId }],
+      });
+      expect(justification).toBeUndefined();
+      // J4 (aynı ders): KİMLİK, `expect.anything()` değil.
+      expect(options.manager).toBe(mockManager);
+
+      // T-014 kalıbı: commit'ten SONRA flush edilir.
+      expect(adminAuditService.flushPendingAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it('B2: intent=REVOKE_ALL — action_type SCOPE_REVOKE_ALL, after boş küme, justification DOLU', async () => {
+      userScopeRepo.find.mockResolvedValue([makeExistingActiveRow()]);
+
+      await service.updateScope(
+        mockTenantId,
+        mockUserId,
+        {
+          intent: ScopeUpdateIntent.REVOKE_ALL,
+          scope: [],
+          reason: 'kasıtlı boşaltma — B2 pin testi',
+        } as UpdateUserScopeDto,
+        mockActorId,
+        mockActorEmail,
+      );
+
+      const call = (adminAuditService.logAdminAction as jest.Mock).mock
+        .calls[0];
+      const [
+        ,
+        ,
+        ,
+        actionType,
+        ,
+        ,
+        ,
+        ,
+        beforeValues,
+        afterValues,
+        justification,
+      ] = call;
+
+      expect(actionType).toBe('SCOPE_REVOKE_ALL');
+      expect(beforeValues).toEqual({
+        scope: [{ cplId: mockCplId, categoryId: null }],
+      });
+      expect(afterValues).toEqual({ scope: [] });
+      expect(justification).toBe('kasıtlı boşaltma — B2 pin testi');
+    });
+
+    // ── atomiklik pini — create()'in "atomicity: scope write failing..."
+    // testiyle AYNI desen (satır 687 civarı): gerçek bir DB ROLLBACK'ini
+    // HTTP/unit katmanından tetiklemek mümkün değil; burada kanıtlanan,
+    // kapsam satırı yazımı BAŞARISIZ olursa denetim kaydının HİÇ
+    // yazılmadığı (transaction'ın İÇİNDE, satır yazımından SONRA çağrılıyor
+    // — bir rollback denetim kaydını da geri alırdı).
+    it('atomiklik: kapsam satırı yazımı başarısız olursa logAdminAction HİÇ çağrılmaz, clearCache de çağrılmaz', async () => {
+      userScopeRepo.find.mockResolvedValue([]);
+      categoryRepository.find.mockResolvedValue([
+        { id: mockCategoryId } as Category,
+      ]);
+      const dbError = new Error(
+        'simulated constraint violation on user_scopes',
+      );
+      userScopeRepo.save.mockRejectedValue(dbError);
+
+      await expect(
+        service.updateScope(
+          mockTenantId,
+          mockUserId,
+          {
+            intent: ScopeUpdateIntent.UPDATE,
+            scope: [{ cplId: null, categoryId: mockCategoryId }],
+          } as UpdateUserScopeDto,
+          mockActorId,
+          mockActorEmail,
+        ),
+      ).rejects.toThrow(dbError);
+
+      expect(adminAuditService.logAdminAction).not.toHaveBeenCalled();
+      // m1: cache invalidasyonu commit'ten SONRA çağrılır — bir transaction
+      // hiç commit olmadıysa (burada: hiç bitmediyse) çağrılmamalıdır.
+      expect(accessScopeService.clearCache).not.toHaveBeenCalled();
+    });
+
+    // ── m1 — cache invalidasyonu (code-review MINOR→düzelt) ──────────────
+    it('m1: clearCache() başarılı bir updateScope sonrası (REVOKE_ALL dahil) çağrılır', async () => {
+      userScopeRepo.find.mockResolvedValue([makeExistingActiveRow()]);
+
+      await service.updateScope(
+        mockTenantId,
+        mockUserId,
+        {
+          intent: ScopeUpdateIntent.REVOKE_ALL,
+          scope: [],
+          reason: 'm1 pin testi',
+        } as UpdateUserScopeDto,
+        mockActorId,
+        mockActorEmail,
+      );
+
+      expect(accessScopeService.clearCache).toHaveBeenCalledTimes(1);
+    });
+
+    it('m1: clearCache() intent=UPDATE sonrası da çağrılır', async () => {
+      userScopeRepo.find.mockResolvedValue([makeExistingActiveRow()]);
+      categoryRepository.find.mockResolvedValue([
+        { id: mockCategoryId } as Category,
+      ]);
+
+      await service.updateScope(
+        mockTenantId,
+        mockUserId,
+        {
+          intent: ScopeUpdateIntent.UPDATE,
+          scope: [{ cplId: null, categoryId: mockCategoryId }],
+        } as UpdateUserScopeDto,
+        mockActorId,
+        mockActorEmail,
+      );
+
+      expect(accessScopeService.clearCache).toHaveBeenCalledTimes(1);
+    });
+
+    // ── M2 (code-review MAJOR→düzelt) — reaktivasyonda createdBy GÜNCELLENİR
+    it('M2: reaktive edilen satırda createdBy GÜNCEL AKTÖRE yazılır (bayat eski vericide KALMAZ) — İKİ FARKLI aktör', async () => {
+      // İki farklı aktör KASITLI (code-reviewer'ın kendi probunun
+      // ayıramadığı vaka, §2.7 #6): admin1 önce boşaltır (satır isActive
+      // false olur), admin2 AYNI çifti geri verir (reaktivasyon).
+      const admin1 = 'admin-actor-A';
+      const admin2 = 'admin-actor-B';
+      const inactiveRow = { ...makeExistingActiveRow(), isActive: false };
+      // `updateScope` bu nesneyi YERİNDE mutasyona uğratır (gerçek TypeORM
+      // entity semantiği) — bayat değeri ÖNCEDEN, mutasyondan ÖNCE yakala.
+      // Mutasyondan SONRA `inactiveRow.createdBy` zaten YENİ değeri taşır
+      // (aynı referans `save()`'e geçiyor), o yüzden bu değişkene ihtiyaç var.
+      const originalCreatedBy = inactiveRow.createdBy;
+      userScopeRepo.find.mockResolvedValue([inactiveRow]);
+      cplRepository.find.mockResolvedValue([{ id: mockCplId } as Cpl]);
+
+      await service.updateScope(
+        mockTenantId,
+        mockUserId,
+        {
+          intent: ScopeUpdateIntent.UPDATE,
+          scope: [{ cplId: mockCplId, categoryId: null }],
+        } as UpdateUserScopeDto,
+        admin2,
+        'admin-b@example.com',
+      );
+
+      const savedRow = (userScopeRepo.save as jest.Mock).mock
+        .calls[0][0] as Partial<UserScope>;
+      expect(savedRow.createdBy).toBe(admin2);
+      expect(savedRow.createdBy).not.toBe(admin1);
+      expect(savedRow.createdBy).not.toBe(originalCreatedBy);
+      expect(originalCreatedBy).toBe('someone-else-999');
+      expect(savedRow.updatedBy).toBe(admin2);
+    });
+
+    it('WILDCARD_SCOPE_ROLES (ör. FINANCE) bu uçtan yönetilemez — 400, kapsam yazılmaz', async () => {
+      userRepository.findById.mockResolvedValue({
+        ...mockUser,
+        role: UserRole.FINANCE,
+      } as unknown as User);
+
+      await expect(
+        service.updateScope(
+          mockTenantId,
+          mockUserId,
+          {
+            intent: ScopeUpdateIntent.UPDATE,
+            scope: [{ cplId: mockCplId, categoryId: null }],
+          } as UpdateUserScopeDto,
+          mockActorId,
+          mockActorEmail,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(userScopeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('§2.5: intent=UPDATE + boş scope → RET (sessiz temizleme yok)', async () => {
+      await expect(
+        service.updateScope(
+          mockTenantId,
+          mockUserId,
+          { intent: ScopeUpdateIntent.UPDATE, scope: [] } as UpdateUserScopeDto,
+          mockActorId,
+          mockActorEmail,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('§2.5: intent=REVOKE_ALL + gerekçesiz → RET', async () => {
+      await expect(
+        service.updateScope(
+          mockTenantId,
+          mockUserId,
+          {
+            intent: ScopeUpdateIntent.REVOKE_ALL,
+            scope: [],
+          } as UpdateUserScopeDto,
+          mockActorId,
+          mockActorEmail,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 

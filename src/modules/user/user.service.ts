@@ -13,6 +13,10 @@ import { DataSource, In, Repository } from 'typeorm';
 import { UserRepository } from './user.repository';
 import { CreateUserDto, UserScopePairDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import {
+  ScopeUpdateIntent,
+  UpdateUserScopeDto,
+} from './dto/update-user-scope.dto';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import {
@@ -36,10 +40,12 @@ import {
   ScopeAuditActionType,
   SCOPE_AUDIT_ENTITY_TYPE,
   sortScopeAuditPairsCanonically,
+  ScopeAuditPair,
 } from '../../database/entities/user-scope.entity';
 import { Cpl } from '../../database/entities/cpl.entity';
 import { Category } from '../../database/entities/category.entity';
 import { AdminAuditService } from '../../common/services/admin-audit.service';
+import { AccessScopeService } from '../shared/access-scope/access-scope.service';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -63,6 +69,9 @@ export class UserService {
     private readonly dataSource: DataSource,
     // T-244: kapsam verme SCOPE_UPDATE olarak aynı transaction'da loglanır.
     private readonly adminAuditService: AdminAuditService,
+    // m1 (T-242a code-review): updateScope commit'ten SONRA çağırır —
+    // REVOKE_ALL'ın 5sn TTL boyunca fail-open kalmasını önler.
+    private readonly accessScopeService: AccessScopeService,
   ) {}
 
   /**
@@ -275,74 +284,7 @@ export class UserService {
         );
       }
 
-      // ⛔ B1 (code-review blocker, 2026-08-19) — JOKER YASAĞI
-      //
-      // Her iki boyutu da boş olan bir çift (`{}` ya da AÇIKÇA
-      // `{cplId:null, categoryId:null}`) `{null,null}` satırına dönüşür, ve
-      // AccessScopeService onu `hasUnrestrictedRow` ile UNRESTRICTED'a
-      // çevirir (access-scope.service.ts:205-210, ölçüldü) — yani kapsamı
-      // ZORUNLU olan bir rol SESSİZCE her şeyi görür. Yönü FAIL-OPEN, ve
-      // T-241'in tüm gerekçesinin tersi.
-      //
-      // ⚠️ Ve CATEGORY_MANAGER için bu BAYRAKTAN BAĞIMSIZ: bayrak yalnız
-      // PLANNER'ı kapsıyor (access-scope.service.ts:175-177), CM enforcement
-      // T-028b'den beri açık.
-      //
-      // Ürün sahibi kararı (2026-08-19): bu roller joker ALAMAZ. Joker
-      // isteniyorsa rol değiştirilir. İhmal (`[{}]`) hiçbir zaman "hepsi"
-      // anlamına gelemez — DTO doğrulaması onu geçiriyor (ölçüldü:
-      // class-validator `@ValidateIf` + `@IsOptional` ikilisi hem null hem
-      // undefined için tüm kuralları atlıyor), bu yüzden kapı BURADA.
-      const emptyPairIndex = dto.scope.findIndex(
-        (pair) =>
-          (pair.cplId ?? null) === null && (pair.categoryId ?? null) === null,
-      );
-      if (emptyPairIndex !== -1) {
-        throw new BadRequestException(
-          `role=${dto.role} için 'scope' çiftlerinin en az bir boyutu dolu ` +
-            `olmalıdır — ${emptyPairIndex}. çiftin hem 'cplId' hem ` +
-            `'categoryId' değeri boş. Boş bir çift JOKER kapsam (tüm CPL + ` +
-            'tüm kategori) anlamına gelir ve bu rol için verilemez (T-241, ' +
-            'ürün sahibi kararı 2026-08-19). Joker kapsam gereken bir ' +
-            'kullanıcı ADMIN/FINANCE/READONLY rollerinden biriyle yaratılır.',
-        );
-      }
-
-      // ⛔ R1 + A5 (ikinci tur code-review blocker, 2026-08-20) — CM'de DOLU
-      // `cplId` REDDEDİLİR.
-      //
-      // B1 kapısı yalnız İKİ boyutu da boş çifti yakalıyordu. CATEGORY_MANAGER
-      // için `{cplId: <geçerli>, categoryId: null}` o kapıdan GEÇİYOR ve AYNI
-      // sonucu üretiyor — çünkü okuma yolu CM'de `cplId`'yi ATIYOR:
-      //
-      //   access-scope.service.ts:213  CM dalı → {cplId: null, categoryId: r.categoryId ?? null}
-      //                                        → pairs = [{null, null}]
-      //   access-scope.service.ts:250  cplOk = (pair.cplId === null) → true
-      //   access-scope.service.ts:251  categoryOk = (null) → true    ⇒ HER ŞEY
-      //
-      // Yani joker YAZIMI farklı bir yoldan geri geliyordu, ve CM enforcement
-      // BAYRAKTAN BAĞIMSIZ olduğu için CANLIYDI.
-      //
-      // Ürün sahibi kararı (2026-08-20): REDDEDİLİR, normalize EDİLMEZ.
-      // Gerekçe: normalize etmek kullanıcının girdiği bir değeri SESSİZCE yok
-      // saymaktır (§2.5), ve T-214'te aynı karar verildi ("STANDARD + eşik
-      // gönderilirse reddedilsin"). Daha derini: CM için `cplId` ANLAMSIZ
-      // değil — okuma yolu onu atıyor, yani ANLAMI BELİRSİZ. 400 o belirsizliği
-      // kullanıcıya taşır, bir varsayımla kapatmaz.
-      if (dto.role === UserRole.CATEGORY_MANAGER) {
-        const cplPairIndex = dto.scope.findIndex(
-          (pair) => (pair.cplId ?? null) !== null,
-        );
-        if (cplPairIndex !== -1) {
-          throw new BadRequestException(
-            `role=${UserRole.CATEGORY_MANAGER} için 'scope' çiftleri 'cplId' ` +
-              `TAŞIYAMAZ — ${cplPairIndex}. çift dolu bir 'cplId' içeriyor. ` +
-              'Kategori müdürünün kapsamı yalnız KATEGORİ boyutundadır ' +
-              '(kanaldan bağımsız kategori sahibi); verilen cplId karar ' +
-              'anında yok sayılır ve yanıltıcı olur. Yalnız categoryId verin.',
-          );
-        }
-      }
+      this.assertScopePairsValidForRole(dto.role, dto.scope);
 
       const cplIds = [
         ...new Set(
@@ -377,6 +319,92 @@ export class UserService {
         "SCOPE_REQUIRED_ROLES'ta — user-scope.entity.ts'teki iki sabit " +
         'güncel UserRole kümesini kapsamıyor olabilir.',
     );
+  }
+
+  /**
+   * T-241 (B1) + T-241 (R1/A5) — SCOPE_REQUIRED_ROLES (PLANNER,
+   * CATEGORY_MANAGER) için geçerli iki şekil kuralı, hem YARATMA
+   * (`resolveScopeRowsToWrite`) hem GÜNCELLEME (`updateScope`, [[T-242a]])
+   * yolunda AYNI. Tek yerde tutuluyor — iki yerde ayrı ayrı yazılsaydı
+   * `İlke 4`'ün ("aynı yetenek birden çok kez yazılmasın") ihlaliydi, ve
+   * biri düzeltilip diğeri unutulabilirdi (bkz. CLAUDE.md §7.1: "kardeş
+   * yol etkilenmiyor iddiası ölçülmeden yazılamaz").
+   *
+   * B1: her iki boyutu da boş bir çift (`{}` ya da açıkça
+   * `{cplId:null, categoryId:null}`) JOKER kapsam anlamına gelir ve bu
+   * roller için YASAKTIR — normalize edilmez, reddedilir (§2.5).
+   * R1/A5: CATEGORY_MANAGER için dolu bir `cplId` de aynı sonuca (okuma
+   * yolu CM'de cplId'yi atar → fiilen joker) düşer, o yüzden ayrıca
+   * yasaktır.
+   */
+  private assertScopePairsValidForRole(
+    role: UserRole,
+    pairs: UserScopePairDto[],
+  ): void {
+    const emptyPairIndex = pairs.findIndex(
+      (pair) =>
+        (pair.cplId ?? null) === null && (pair.categoryId ?? null) === null,
+    );
+    if (emptyPairIndex !== -1) {
+      throw new BadRequestException(
+        `role=${role} için 'scope' çiftlerinin en az bir boyutu dolu ` +
+          `olmalıdır — ${emptyPairIndex}. çiftin hem 'cplId' hem ` +
+          `'categoryId' değeri boş. Boş bir çift JOKER kapsam (tüm CPL + ` +
+          'tüm kategori) anlamına gelir ve bu rol için verilemez (T-241, ' +
+          'ürün sahibi kararı 2026-08-19). Joker kapsam gereken bir ' +
+          'kullanıcı ADMIN/FINANCE/READONLY rollerinden biriyle yaratılır.',
+      );
+    }
+
+    if (role === UserRole.CATEGORY_MANAGER) {
+      const cplPairIndex = pairs.findIndex(
+        (pair) => (pair.cplId ?? null) !== null,
+      );
+      if (cplPairIndex !== -1) {
+        throw new BadRequestException(
+          `role=${UserRole.CATEGORY_MANAGER} için 'scope' çiftleri 'cplId' ` +
+            `TAŞIYAMAZ — ${cplPairIndex}. çift dolu bir 'cplId' içeriyor. ` +
+            'Kategori müdürünün kapsamı yalnız KATEGORİ boyutundadır ' +
+            '(kanaldan bağımsız kategori sahibi); verilen cplId karar ' +
+            'anında yok sayılır ve yanıltıcı olur. Yalnız categoryId verin.',
+        );
+      }
+    }
+
+    // §2.5: yinelenen bir çift (aynı cplId+categoryId birden fazla kez)
+    // sessizce tek satıra çökmemelidir (updateScope'un hedef-küme diff'i
+    // Map ile kurulur ve doğal olarak dedupe eder — bu kontrol olmadan
+    // çağıranın "iki satır istedim" niyeti sessizce "bir satır" olurdu).
+    //
+    // ⚠️ DÜZELTİLDİ (code-review, 2026-08-20) — bu yorum ÖNCE "create()
+    // yolunda bu durum DB'nin unique index'ine çarpıp GÜRÜLTÜLÜ başarısız
+    // olur" diyordu. Yanlıştı: `UQ_user_scopes_user_cpl_category` yazıldığı
+    // anda DÜZ bir UNIQUE'ti (migration 1779) ve PostgreSQL'de NULL'lar
+    // birbirinden AYRI sayılır — yani `{cplId:X, categoryId:null}` gibi bir
+    // çift (R1/A5 gereği PLANNER/CATEGORY_MANAGER çiftlerinin EZİCİ
+    // ÇOĞUNLUĞU bu şekilde, tam biri boş) İKİ kez gönderilse index HİÇ
+    // ateşlemezdi — create() SESSİZCE iki yinelenen satır yazardı, 500
+    // vermezdi (ölçüldü: mutasyonsuz, HEAD'de `POST /users` aynı çifti iki
+    // kez taşıyan bir `scope` dizisiyle 201 dönüyor, `user_scopes`'ta iki
+    // satır). Migration `1810000000000` (`NULLS NOT DISTINCT`, [[T-245]])
+    // bunu değiştirdi: artık NULL içeren yinelenen çiftler de DB
+    // seviyesinde `23505` verir — ama bu kontrol o migration'dan ÖNCE de
+    // yazılmıştı ve migration YOKKEN bile gerekliydi (aksi hâlde create()
+    // sessizce çift satır yazardı). Bugün ikinci bir savunma katmanı: DB
+    // artık AYNI kuralı zorluyor, ama uygulama katmanındaki bu kontrol daha
+    // iyi bir hata mesajı üretir ve migration'ın varlığına BAĞIMLI değildir.
+    const seen = new Set<string>();
+    for (let i = 0; i < pairs.length; i += 1) {
+      const key = `${pairs[i].cplId ?? 'NULL'}::${pairs[i].categoryId ?? 'NULL'}`;
+      if (seen.has(key)) {
+        throw new BadRequestException(
+          `'scope' içinde yinelenen çift: ${i}. çift daha önce geçen bir ` +
+            '(cplId, categoryId) çiftinin tekrarı. Her çift bir kez ' +
+            'verilmelidir — yineleme sessizce tek satıra indirilmez (§2.5).',
+        );
+      }
+      seen.add(key);
+    }
   }
 
   /**
@@ -424,6 +452,295 @@ export class UserService {
         `scope içindeki categoryId değer(ler)i bu tenant'ta bulunamadı: ${missing.join(', ')}`,
       );
     }
+  }
+
+  /**
+   * [[T-242a]] — kapsam GÜNCELLEME/BOŞALTMA yolu. `PATCH /users/:id/scope`.
+   *
+   * ADIM 0 ölçümü (2026-08-20): `PATCH /users/:id`'in genel gövdesi
+   * `scope`'u SESSİZCE yutuyordu — `Object.assign` `User` entity'sine
+   * yazıyordu, `User`'da böyle bir kolon yok, `save()` onu yok sayıyordu.
+   * `update-user.dto.ts`'te `scope` artık DTO'dan çıkarıldı (o yol artık
+   * 400 döner); kapsam güncellemesinin TEK ve CANLI yolu burasıdır.
+   *
+   * `Z15` KARAR 1 — TAM DEĞİŞTİRME: `dto.scope` (ya da `REVOKE_ALL`'da boş
+   * küme) HEDEF durumun tamamıdır. Bu metod DB'de var olan satırlarla hedef
+   * kümeyi KARŞILAŞTIRIR ve fark kadar yazar (upsert/deactivate) — ama bu
+   * içeride kalan bir DİFF'tir, çağırana sızmaz: çağıran hâlâ tek bir
+   * "hedef küme" gönderir, sıra bağımlı bir ekle/çıkar akışı YOKTUR.
+   *
+   * Diff neden gerekli (silme değil): `user_scopes`'un `(user_id, cpl_id,
+   * category_id)` üzerindeki UNIQUE INDEX'i PARTIAL DEĞİL (`is_active`
+   * koşulu yok, `1779000000000-CreateUserScopes.ts`) — yani bir satırı
+   * `isActive=false` yapmak o (cplId,categoryId) anahtarını YENİDEN
+   * kullanılabilir kılmaz. Aynı çifti tekrar hedef kümeye koymak (ör.
+   * boşalt → geri ver) bir bare INSERT ile çakışır — bu yüzden aşağıdaki
+   * kod önce `existingRows`'ta arıyor, kör bir INSERT denemiyor.
+   * `user-scope.seed.ts` aynı kısıt altında AYNI upsert desenini
+   * kullanıyor (mevcut satır varsa `isActive` günceller, yoksa INSERT
+   * eder) — burada o desen tekrar kullanıldı, yeniden icat edilmedi.
+   *
+   * ⚠️ DÜZELTİLDİ (code-review, 2026-08-20): "INSERT ile çakışır" ifadesi
+   * `1810000000000` migration'ından (`NULLS NOT DISTINCT`, [[T-245]])
+   * ÖNCE yalnız her İKİ boyutu da DOLU çiftler için garantiliydi — NULL
+   * içeren bir çiftin (ör. `{cplId:X, categoryId:null}`, PLANNER'ların
+   * ÇOĞUNLUĞU) bare INSERT'i eski düz UNIQUE'te HİÇ çakışmazdı (NULL'lar
+   * ayrı sayılırdı), yalnız iki aktif+pasif AYNI satır çoğalırdı. Kod bu
+   * riske migration'dan BAĞIMSIZ zaten dayanıklıydı, çünkü "önce ara, INSERT
+   * etme" deseni izliyordu — reaktivasyon mantığı hiçbir zaman DB
+   * çakışmasına GÜVENMEDİ. Migration 1810'dan SONRA artık DB de aynı kuralı
+   * (NULL dahil TÜM çiftlerde) zorluyor — iki katman şimdi TUTARLI, ama
+   * uygulama katmanı ondan önce de doğruydu.
+   *
+   * `Z15` KARAR 2 — BOŞALTMA izinli ama SESSİZ OLAMAZ: `intent` ZORUNLU;
+   * `intent=UPDATE` + boş küme → RET; `intent=REVOKE_ALL` + dolu küme →
+   * RET (tutarsız niyet); `intent=REVOKE_ALL` + gerekçesiz → RET
+   * (`DENETIM_SOZLUGU.md` Madde 1: REVOKE_ALL'da gerekçe zorunlu).
+   *
+   * `K-2.6.10` sınırı: bu metod bir kapsam YAZAR, bir yetki HESAPLAMAZ —
+   * `resolveScopeRowsToWrite`'ın yorumuyla birebir aynı sınır, aynı gerekçe.
+   *
+   * WILDCARD_SCOPE_ROLES (ADMIN/FINANCE/READONLY) bu uçtan YÖNETİLEMEZ:
+   * bu roller HER ZAMAN tek joker satır taşır (T-241 kararı) ve bunu
+   * değiştirmenin yolu rol değişimidir — o da [[T-242b]]'nin konusu ve
+   * ERTELENDİ. Burada izin verilseydi iki farklı mekanizma (bu uç +
+   * rol-değişim akışındaki `assertRoleChangeScopeConsistent`) aynı
+   * garantiyi (wildcard roller = wildcard satır) iki ayrı yerden
+   * korumaya çalışırdı — tek nokta (`İlke 4`) bunu burada REDDETMEK.
+   *
+   * Denetim: `docs/process/DENETIM_SOZLUGU.md` Madde 1 — `eski küme`/
+   * `yeni küme`, aktör (çağıran ADMIN, etkilenen kullanıcı DEĞİL — A1
+   * dersinin burada da geçerli olduğu), `entity_type='user'` (Z17).
+   * Atomiklik: kapsam satır değişimi + denetim kaydı AYNI transaction'da
+   * (`options.manager`, T-244 deseni).
+   */
+  async updateScope(
+    tenantId: string,
+    userId: string,
+    dto: UpdateUserScopeDto,
+    actorId: string,
+    actorEmail: string,
+    ipAddress?: string,
+  ): Promise<{ scope: ScopeAuditPair[] }> {
+    const user = await this.findOne(tenantId, userId);
+
+    if (WILDCARD_SCOPE_ROLES.has(user.role)) {
+      throw new BadRequestException(
+        `role=${user.role} için kapsam bu uçtan GÜNCELLENEMEZ — bu rol her ` +
+          'zaman JOKER kapsam taşır (tüm CPL + tüm kategori) ve bunu ' +
+          'değiştirmenin yolu rol değişimidir, kapsam güncellemesi değil ' +
+          "(kapsam-yönetilebilir bir role rol DEĞİŞİMİ [[T-242b]]'nin " +
+          'konusudur ve ERTELENDİ). Bugün bu rol için tek satır (null, ' +
+          'null) sabittir.',
+      );
+    }
+    if (!SCOPE_REQUIRED_ROLES.has(user.role)) {
+      // §2.5: role, WILDCARD_SCOPE_ROLES ile SCOPE_REQUIRED_ROLES'ün
+      // tümleyeni olmalıydı — resolveScopeRowsToWrite'ın aynı savunması.
+      throw new Error(
+        `UserService.updateScope: role=${user.role} ne WILDCARD_SCOPE_ROLES'ta ` +
+          "ne SCOPE_REQUIRED_ROLES'ta — user-scope.entity.ts'teki iki sabit " +
+          'güncel UserRole kümesini kapsamıyor olabilir.',
+      );
+    }
+
+    // ── Z15 KARAR 2: boş küme ∧ intent ≠ REVOKE_ALL → RET ────────────────
+    if (dto.intent === ScopeUpdateIntent.UPDATE && dto.scope.length === 0) {
+      throw new BadRequestException(
+        "intent='UPDATE' için 'scope' en az 1 çift taşımalıdır — kapsamı " +
+          "TÜMÜYLE boşaltmak için intent='REVOKE_ALL' kullanılmalıdır " +
+          '(Z15 KARAR 2). Boş bir dizi sessizce "temizle" anlamına gelmez.',
+      );
+    }
+    if (dto.intent === ScopeUpdateIntent.REVOKE_ALL) {
+      if (dto.scope.length > 0) {
+        throw new BadRequestException(
+          "intent='REVOKE_ALL' 'scope' alanıyla BİRLİKTE gelemez — " +
+            'REVOKE_ALL hedef kümeyi HER ZAMAN boşaltır. Belirli çiftler ' +
+            "bırakmak istiyorsanız intent='UPDATE' kullanın (tutarsız " +
+            'niyet sessizce çözülmez, §2.5).',
+        );
+      }
+      if (!dto.reason || dto.reason.trim().length === 0) {
+        throw new BadRequestException(
+          "intent='REVOKE_ALL' için 'reason' ZORUNLUDUR " +
+            '(DENETIM_SOZLUGU.md Madde 1) — kapsamı tümüyle boşaltmak ' +
+            'yıkıcı bir işlemdir, gerekçesiz yapılamaz.',
+        );
+      }
+    }
+
+    const targetPairs: UserScopePairDto[] =
+      dto.intent === ScopeUpdateIntent.REVOKE_ALL ? [] : dto.scope;
+
+    if (targetPairs.length > 0) {
+      this.assertScopePairsValidForRole(user.role, targetPairs);
+
+      const cplIds = [
+        ...new Set(
+          targetPairs
+            .map((pair) => pair.cplId)
+            .filter((id): id is string => id !== null && id !== undefined),
+        ),
+      ];
+      const categoryIds = [
+        ...new Set(
+          targetPairs
+            .map((pair) => pair.categoryId)
+            .filter((id): id is string => id !== null && id !== undefined),
+        ),
+      ];
+      await this.assertCplIdsBelongToTenant(tenantId, cplIds);
+      await this.assertCategoryIdsBelongToTenant(tenantId, categoryIds);
+    }
+
+    const targetKey = (p: {
+      cplId: string | null;
+      categoryId: string | null;
+    }): string => `${p.cplId ?? 'NULL'}::${p.categoryId ?? 'NULL'}`;
+
+    const { after, auditLog } = await this.dataSource.transaction(
+      async (manager) => {
+        const userScopeRepo = manager.getRepository(UserScope);
+
+        // Unique index TÜM satırları kapsar (isActive'e bakmaksızın, bkz.
+        // JSDoc) — bu yüzden reaktivasyon/deaktivasyon kararı için AKTİF
+        // OLMAYAN satırları da görmemiz gerekir.
+        const existingRows = await userScopeRepo.find({
+          where: { tenantId, userId },
+        });
+
+        const before: ScopeAuditPair[] = existingRows
+          .filter((r) => r.isActive)
+          .map((r) => ({
+            cplId: r.cplId ?? null,
+            categoryId: r.categoryId ?? null,
+          }));
+
+        const targetSet = new Map<string, UserScopePairDto>(
+          targetPairs.map((pair) => [
+            targetKey({
+              cplId: pair.cplId ?? null,
+              categoryId: pair.categoryId ?? null,
+            }),
+            pair,
+          ]),
+        );
+
+        // 1) Artık hedefte olmayan AKTİF satırları deaktive et.
+        for (const row of existingRows) {
+          const key = targetKey({
+            cplId: row.cplId ?? null,
+            categoryId: row.categoryId ?? null,
+          });
+          if (row.isActive && !targetSet.has(key)) {
+            row.isActive = false;
+            row.updatedBy = actorId;
+            await userScopeRepo.save(row);
+          }
+        }
+
+        // 2) Hedef kümedeki her çift için: var olan satırı reaktive et
+        //    (unique index nedeniyle yeniden INSERT edilemez), yoksa yenisini
+        //    yaz. Zaten aktif ve hedefte olan satıra dokunulmaz (idempotency).
+        for (const [key, pair] of targetSet) {
+          const existingRow = existingRows.find(
+            (row) =>
+              targetKey({
+                cplId: row.cplId ?? null,
+                categoryId: row.categoryId ?? null,
+              }) === key,
+          );
+          if (existingRow) {
+            if (!existingRow.isActive) {
+              // M2 (code-review, ürün sahibi kararı 2026-08-20): reaktivasyon
+              // YENİ bir verme eylemidir — satırın yeniden kullanılıyor
+              // olması olayın AYNI olduğu anlamına gelmez. `createdBy` da
+              // (yalnız `updatedBy` değil) GÜNCEL aktöre yazılır; aksi hâlde
+              // satır bayat bir aktörde kalır ve `created_by` kendi
+              // sorusuna ("bu erişimi kim verdi") yanlış cevap verir —
+              // denetim kaydına bakmaya mecbur kalmak alanın var olma
+              // sebebini ortadan kaldırır (A1'in aynı sınıfı: desen var,
+              // bu yolda kullanılmıyordu).
+              existingRow.isActive = true;
+              existingRow.createdBy = actorId;
+              existingRow.updatedBy = actorId;
+              await userScopeRepo.save(existingRow);
+            }
+          } else {
+            const created = userScopeRepo.create({
+              tenantId,
+              userId,
+              cplId: pair.cplId ?? undefined,
+              categoryId: pair.categoryId ?? undefined,
+              isActive: true,
+              createdBy: actorId,
+            });
+            await userScopeRepo.save(created);
+          }
+        }
+
+        const after: ScopeAuditPair[] = targetPairs.map((pair) => ({
+          cplId: pair.cplId ?? null,
+          categoryId: pair.categoryId ?? null,
+        }));
+
+        const actionType =
+          dto.intent === ScopeUpdateIntent.REVOKE_ALL
+            ? ScopeAuditActionType.SCOPE_REVOKE_ALL
+            : ScopeAuditActionType.SCOPE_UPDATE;
+
+        // DENETIM_SOZLUGU.md Madde 1: "kim" = AKTÖR (çağıran admin), "neye"
+        // = kullanıcı (Z17, entity_type='user'). T-014/T-244 deseni: aynı
+        // transaction (`{manager}`), rollback olursa denetim kaydı da hiç
+        // yazılmamış olur.
+        const auditLog = await this.adminAuditService.logAdminAction(
+          tenantId,
+          actorId,
+          actorEmail,
+          actionType,
+          SCOPE_AUDIT_ENTITY_TYPE,
+          userId,
+          ipAddress,
+          'SUCCESS',
+          { scope: sortScopeAuditPairsCanonically(before) },
+          { scope: sortScopeAuditPairsCanonically(after) },
+          dto.reason,
+          { manager },
+        );
+
+        return { before, after, auditLog };
+      },
+    );
+    // m1 (code-review, ürün sahibi kararı 2026-08-20): cache invalidasyonu
+    // COMMIT'TEN SONRA, transaction'ın DIŞINDA çağrılır — `flushPendingAlert`
+    // ile AYNI yerleşim gerekçesi. Transaction İÇİNDE çağrılsaydı ve sonra
+    // ROLLBACK olsaydı zararsız olurdu (cache'i boşuna temizlemiş olurduk),
+    // ama COMMIT'TEN ÖNCE çağrılsaydı bir yarış penceresi doğardı: başka bir
+    // istek commit'ten önceki eski (artık YANLIŞ) değeri okuyup cache'e
+    // yeniden yazabilirdi — cache invalidasyonu commit'ten sonra gelen bir
+    // okumanın DOĞRU değeri görmesini garanti eder, öncesinin değil. Bir
+    // erişim KALDIRMA işlemi (REVOKE_ALL) 5sn TTL boyunca bile gecikemez —
+    // kusurun yönü fail-open'dır (T-039'un aynı sınıfı, ikinci vaka).
+    this.accessScopeService.clearCache();
+
+    // T-014 kalıbı: create()'in aynı gerekçesi — alarm gönderimi başarısız
+    // olursa commit'li bir işlemi 500'e ÇEVİRMEMELİ. m2 (code-review) ile
+    // `SCOPE_REVOKE_ALL` artık `isHighRiskAction`'da (admin-audit.service.ts)
+    // — yani bu çağrı REVOKE_ALL'da GERÇEKTEN alarm üretir; `SCOPE_UPDATE`
+    // bilerek listede DEĞİL (olağan bir kapsam değişikliği), o dalda hâlâ
+    // no-op.
+    try {
+      await this.adminAuditService.flushPendingAlert(auditLog);
+    } catch (alertErr) {
+      this.logger.error(
+        `HIGH-RISK ALERT FAILED — user ${userId} scope updated successfully; alert not delivered: ${
+          alertErr instanceof Error ? alertErr.message : 'Unknown error'
+        }`,
+      );
+    }
+
+    return { scope: after };
   }
 
   async login(tenantId: string, loginDto: LoginDto): Promise<LoginResponseDto> {

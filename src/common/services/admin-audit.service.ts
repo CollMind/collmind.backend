@@ -188,6 +188,16 @@ export class AdminAuditService {
       // financial stakes than APPROVE/CANCEL/CLOSE/REVERSE.
       { action: 'APPROVE', entity: 'AGREEMENT' },
       { action: 'CANCEL', entity: 'AGREEMENT' },
+      // m2 (T-242a code-review, ürün sahibi kararı 2026-08-20): bir
+      // kullanıcının erişimini TÜMÜYLE kaldırmak (`SCOPE_REVOKE_ALL`,
+      // `docs/process/DENETIM_SOZLUGU.md` Madde 1) `{DELETE, user}` ile
+      // AYNI ağırlıkta — o kullanıcıyı silmek de erişimini kaldırmak da
+      // aynı soruyu doğurur: "neden hiçbir şey göremiyor". SCOPE_REVOKE_ALL'ı
+      // T-244'te AYRI bir olay türü yapmamızın gerekçesi tam buydu; alarm
+      // üretmezse o soru hiç sorulmadan kalır. `SCOPE_UPDATE` BİLEREK
+      // eklenmedi — olağan bir kapsam değişikliği, DELETE/REVOKE_ALL
+      // sınıfının yıkıcılığında değil.
+      { action: 'SCOPE_REVOKE_ALL', entity: 'user' },
     ];
 
     return highRiskActions.some(

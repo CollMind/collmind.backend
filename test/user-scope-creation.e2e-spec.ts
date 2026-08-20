@@ -405,6 +405,49 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
       expect(rows.length).toBe(0);
     });
 
+    // ── T-242a code-review — pinlenmemiş bir davranış değişikliği ────────
+    //
+    // ⚠️ ÖLÇÜLDÜ (2026-08-20, `git stash`/HEAD karşılaştırması DEĞİL —
+    // öncesi/sonrası gerçek koşum, §7.1'in "kanıt kurulumu doğru olmalı"
+    // kuralına uyularak): bu dedupe kapısı `assertScopePairsValidForRole`ya
+    // T-242a'da eklendi (`updateScope`/`create` PAYLAŞIYOR). ÖNCESİNDE
+    // (`T-241` tek başına) `POST /users` yinelenen bir çifti (aynı cplId +
+    // categoryId) SESSİZCE kabul ediyordu ve `user_scopes`'a İKİ satır
+    // yazıyordu — eski düz UNIQUE index NULL'ları ayrı saydığı için (ve bu
+    // örnekte her iki boyut da DOLU olsa bile, dedupe kontrolü o zaman HİÇ
+    // yoktu). Migration `1810000000000` (`NULLS NOT DISTINCT`) artık DB
+    // seviyesinde de bunu engeller, ama BU kapı DB'den ÖNCE ve DB'den
+    // BAĞIMSIZ çalışır (daha iyi hata mesajı, migration'ın varlığına
+    // bağımlı değil — bkz. `user.service.ts#assertScopePairsValidForRole`).
+    it('yinelenen bir scope çifti (aynı cplId+categoryId iki kez) → 400, kullanıcı YARATILMAZ', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-t242a-dup-pair-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
+
+      const res = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password: 'Collmind2026!',
+          fullName: 'T-242a duplicate pair (should not exist)',
+          role: 'PLANNER',
+          status: 'ACTIVE',
+          scope: [
+            { cplId: CPL_NKA, categoryId: null },
+            { cplId: CPL_NKA, categoryId: null },
+          ],
+        });
+
+      expect(res.status).toBe(400);
+
+      const rows = await dataSource.query(
+        `SELECT id FROM main.users WHERE email = $1`,
+        [email],
+      );
+      expect(rows.length).toBe(0);
+    });
+
     it('YARATILAN HER kullanıcının kapsam satırı ≥ 1 (invaryant — bu testin şimdiye kadar yarattığı tüm kullanıcılar)', async () => {
       expect(scratchUserIds.length).toBeGreaterThan(0);
       for (const userId of scratchUserIds) {

@@ -130,6 +130,19 @@ export function sortScopeAuditPairsCanonically<T extends ScopeAuditPair>(
   });
 }
 
+// ⚠️ [[T-245]] (migration 1810000000000): `UNIQUE NULLS NOT DISTINCT (user_id,
+// cpl_id, category_id)` TypeORM `@Index` dekoratörüyle ifade EDİLEMEZ —
+// `UQ_user_scopes_user_cpl_category` migration'da ham SQL ile kurulur.
+// Entity bu index'i BİLEREK TANIMLAMAZ (aksi hâlde `migration:generate`
+// standart bir düz UNIQUE INDEX önerir ve `NULLS NOT DISTINCT` klozunu
+// kaybettirirdi — `T-101` dersi). Aynı desen: `budget-policy.entity.ts`
+// (`UQ_budget_policies_tenant_channel_category`, `K-2.2.8b`).
+//
+// Önceki hâl (`@Index(['userId','cplId','categoryId'], {unique:true})`) düz
+// bir UNIQUE'di ve PostgreSQL'de NULL'lar birbirinden AYRI sayıldığı için
+// `(user_id, cpl_id, NULL)` gibi çiftlerde HİÇ ateşlemiyordu — `R1`/`A5`
+// gereği `CATEGORY_MANAGER`/`PLANNER` çiftlerinin ezici çoğunluğu bu şekilde.
+
 /**
  * User Scope Entity
  *
@@ -137,7 +150,6 @@ export function sortScopeAuditPairsCanonically<T extends ScopeAuditPair>(
  * Rule: Planner → sadece yetkili CPL + Category görür
  */
 @Entity({ name: 'user_scopes', schema: 'main' })
-@Index(['userId', 'cplId', 'categoryId'], { unique: true })
 @Index(['userId'])
 export class UserScope extends BaseEntity {
   @Column({ name: 'user_id', type: 'uuid' })

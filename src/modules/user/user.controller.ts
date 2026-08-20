@@ -22,6 +22,7 @@ import {
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserScopeDto } from './dto/update-user-scope.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -190,6 +191,37 @@ export class UserController {
       updateUserDto,
       user.id,
       user.role,
+    );
+  }
+
+  /**
+   * [[T-242a]] — kapsam GÜNCELLEME/BOŞALTMA. `PATCH /users/:id`'in genel
+   * gövdesi `scope`'u artık KABUL ETMİYOR (bilinmeyen alan → 400,
+   * `update-user.dto.ts`'in JSDoc'una bkz. — ADIM 0'ın ölçtüğü sessiz
+   * no-op'un kapatılması). RBAC `POST /users` ile TUTARLI: yalnız ADMIN.
+   */
+  @Patch(':id/scope')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary:
+      'Update user scope (TAM DEĞİŞTİRME — hedef durumu alır, ekle/çıkar değil)',
+  })
+  @ApiResponse({ status: 200, description: 'Scope updated' })
+  updateScope(
+    @TenantId() tenantId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateUserScopeDto: UpdateUserScopeDto,
+    @CurrentUser() actor: { id: string; email: string; role: UserRole },
+    @Request() req: ExpressRequest,
+  ) {
+    const ipAddress = req.ip || req.socket?.remoteAddress;
+    return this.userService.updateScope(
+      tenantId,
+      id,
+      updateUserScopeDto,
+      actor.id,
+      actor.email,
+      ipAddress,
     );
   }
 

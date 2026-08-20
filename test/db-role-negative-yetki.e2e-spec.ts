@@ -213,6 +213,26 @@ describe('K-2.6.13 AC#3 — app_runtime negatif yetki testleri', () => {
     expect(result).toBeDefined();
   });
 
+  it('envanter İÇİNDE bir tabloda, İZİNLİ OLMAYAN bir sütuna UPDATE reddedilir (user_scopes.user_id — M1, T-242a code-review)', async () => {
+    // M1: `user_scopes` KOLON düzeyinde kısıtlı (created_by, updated_by,
+    // is_active, updated_at) — `user_id`/`cpl_id`/`category_id` DIŞARIDA.
+    // Bu tablo ÖZELLİKLE kritik: kimin NEYİ GÖRDÜĞÜNÜ tanımlıyor —
+    // `app_runtime`'ın `user_id`'yi yazabilmesi bir kullanıcının kapsamını
+    // BAŞKASINA taşıyabilmesi demek (`K-2.6.13f` asgari yetki).
+    await expect(
+      runtimeDs.query(
+        `UPDATE ${SCHEMA}.user_scopes SET user_id = user_id WHERE false`,
+      ),
+    ).rejects.toThrow(/permission denied for table user_scopes/i);
+  });
+
+  it('POZİTİF KONTROL: aynı tabloda İZİNLİ sütuna (is_active) UPDATE reddedilmez (user_scopes)', async () => {
+    const result = await runtimeDs.query(
+      `UPDATE ${SCHEMA}.user_scopes SET is_active = is_active WHERE false`,
+    );
+    expect(result).toBeDefined();
+  });
+
   it.each(['ledger_entries', 'admin_audit_logs', 'agreement_transactions'])(
     'K-2.6.13 KARAR 1: %s üzerinde DELETE reddedilir (defter/denetim kaydı — K-2.3.4/K-2.11.6/K-2.11.7/INV-L-003, DB seviyesinde korunur)',
     async (table) => {

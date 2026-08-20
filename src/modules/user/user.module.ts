@@ -16,6 +16,7 @@ import { BudgetEnvelope } from '../../database/entities/budget-envelope.entity';
 import { UserScope } from '../../database/entities/user-scope.entity';
 import { Cpl } from '../../database/entities/cpl.entity';
 import { Category } from '../../database/entities/category.entity';
+import { AccessScopeModule } from '../shared/access-scope/access-scope.module';
 
 @Module({
   imports: [
@@ -48,6 +49,13 @@ import { Category } from '../../database/entities/category.entity';
     // AdminAuditService (CommonModule) — atomically, inside the same
     // dataSource.transaction as the user + user_scopes writes.
     CommonModule,
+    // m1 (T-242a code-review, 2026-08-20): UserService#updateScope
+    // AccessScopeService.clearCache()'i çağırıyor — REVOKE_ALL sonrası
+    // kaldırılmış bir kapsamın 5sn TTL boyunca fail-open kalmasını
+    // önlemek için. Döngüsel bağımlılık YOK: AccessScopeModule yalnız
+    // TypeOrmModule'e bağımlı, UserModule'e bağımlı değil (ölçüldü,
+    // access-scope.module.ts).
+    AccessScopeModule,
   ],
   controllers: [UserController, AuthController],
   providers: [UserService, UserRepository, JwtStrategy],

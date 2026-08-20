@@ -411,4 +411,43 @@ GRANT SELECT, UPDATE ON :"schema".approval_policies TO app_runtime;
 --    ([[T-242]]) — o task kendi GRANT ihtiyacını kendi S3 turunda ölçer.
 GRANT INSERT ON :"schema".user_scopes TO app_runtime;
 
+-- ── S3 tur 22 ([[T-242a]], 2026-08-20) — yukarıdaki notun öngördüğü tur.
+--    `UserService#updateScope` (`PATCH /users/:id/scope`, Z15 KARAR 1 — TAM
+--    DEĞİŞTİRME) `user_scopes`'un `(user_id, cpl_id, category_id)` üzerindeki
+--    UNIQUE INDEX'i PARTIAL OLMADIĞI için (bkz. user-scope.entity.ts'in
+--    JSDoc'u) var olan bir satırı deaktive edip aynı çifti yeniden INSERT
+--    edemez — reaktivasyon (`isActive: false → true`) ve deaktivasyon
+--    (`isActive: true → false`) UPDATE gerektirir. Ölçüldü: izole e2e koşumu
+--    (`test/user-scope-update.e2e-spec.ts`), `app_runtime` bağlantısı:
+--    "permission denied for table user_scopes" (UPDATE),
+--    `UPDATE "main"."user_scopes" SET "is_active" = ...`. Transaction bu
+--    hatayla ROLLBACK oldu (audit kaydı da geri alındı — atomiklik burada da
+--    tasarlandığı gibi çalıştı). DELETE hâlâ bilerek verilmedi: replace
+--    semantiği satırları SİLMEZ, `isActive` ile deaktive eder (T-244'ün
+--    audit-before/after okuma yolu ve seed'in idempotent upsert deseniyle
+--    tutarlı — aktif olmayan bir satır hâlâ okunabilir kalır, geri dönüşü
+--    bir DELETE'in tersine çevrilmesinden daha ucuzdur).
+--
+--    ⚠️ M1 (code-review, ürün sahibi kararı 2026-08-20) — KOLON DÜZEYİNE
+--    DARALTILDI. Dosyanın kendi kalıbı budur (`admin_audit_logs
+--    (alert_sent)` :348, `ledger_entries (is_reversed, updated_at)` :356,
+--    `agreement_transactions (...)` :363) ve bu tablo ÖZELLİKLE kritik:
+--    kimin NEYİ GÖRDÜĞÜNÜ tanımlıyor — `app_runtime`'ın `user_id`/`cpl_id`/
+--    `category_id`'yi yazabilmesi bir kullanıcının kapsamını BAŞKASINA
+--    taşıyabilmesi demek (`K-2.6.13f` asgari yetki). Liste TAHMİNDEN değil
+--    ÖLÇÜMDEN: `NODE_ENV=development` ile TypeORM SQL logu açılıp iki FARKLI
+--    aktörle (deaktivasyon admin1, reaktivasyon admin2) bir deaktivasyon +
+--    bir reaktivasyon koşturuldu (iki farklı aktör KASITLI — aynı aktör
+--    kullanılsaydı `updated_by`/`created_by` DEĞİŞMEZ görünüp TypeORM'un
+--    diff-tabanlı UPDATE'i o kolonu SET listesinden atlardı, liste eksik
+--    ölçülürdü). Sonuç (TAM SQL, `user.service.ts#updateScope`):
+--      UPDATE ... SET "updated_by"=$1, "is_active"=$2, "updated_at"=CURRENT_TIMESTAMP  (deaktivasyon)
+--      UPDATE ... SET "created_by"=$1, "updated_by"=$2, "is_active"=$3, "updated_at"=CURRENT_TIMESTAMP  (reaktivasyon, M2)
+--    `updated_at` `@UpdateDateColumn` ile OTOMATİK (parametre değil,
+--    `CURRENT_TIMESTAMP` literali) — GRANT listesine yine de dahil, kolon
+--    düzeyinde kısıtlanmış bir UPDATE `SET` listesindeki HER kolon için
+--    yetki ister (otomatik dolduruluyor olması istisna yapmaz).
+GRANT UPDATE (created_by, updated_by, is_active, updated_at)
+  ON :"schema".user_scopes TO app_runtime;
+
 COMMIT;
