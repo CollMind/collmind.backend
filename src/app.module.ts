@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { ClassSerializerInterceptor, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
@@ -72,6 +73,27 @@ import { AdminModule } from './modules/admin/admin.module';
     AdminModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // [[T-260]] — `user.entity.ts`'in 4 `@Exclude()` alanı (`passwordHash`,
+    // `refreshToken`, `emailVerificationToken`, `passwordResetToken`) hiçbir
+    // zaman uygulanmıyordu: `ClassSerializerInterceptor` repoda 0 kullanımdı
+    // ([[T-255]]'in kök nedeni). Kayıt `APP_INTERCEPTOR` token'ıyla — ÖLÇÜLDÜ:
+    // `test/helpers/app-bootstrap.ts` (e2e'lerin kullandığı tek bootstrap)
+    // yalnız `AppModule`'ü import edip `ValidationPipe` ekliyor,
+    // `src/main.ts`'in `bootstrap()`'ını HİÇ çağırmıyor — yani `main.ts`'e
+    // `app.useGlobalInterceptors(...)` eklemek e2e ortamında görünmezdi.
+    // `APP_INTERCEPTOR` DI token'ı olduğu için hem prod bootstrap'ta (main.ts)
+    // hem `Test.createTestingModule({ imports: [AppModule] })` ile kurulan
+    // her e2e'de otomatik etkindir. `Reflector` constructor bağımlılığı — DI
+    // üzerinden çözülüyor; ÖLÇÜLDÜ (2026-08-21): `Reflector`'ı bu providers
+    // listesine AYRICA eklemek gerekmiyor — `@nestjs/core`'un kendi kök
+    // container'ında zaten kayıtlı bir provider (auth.e2e-spec.ts açık
+    // provider'sız koşup 10/10 geçti; sonradan eklenip kaldırıldı).
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ClassSerializerInterceptor,
+    },
+  ],
 })
 export class AppModule {}
