@@ -1,6 +1,6 @@
 # route-scope baseline — ADIM 3 Faz B B0 ratchet reference (T-252)
 # date:    2026-08-21
-# commit:  4e973a0
+# commit:  e3fc4f6
 # scope:   238 rota (src/**/*.controller.ts, 34 dosya)
 # format:  F <dosya>|<YÖNTEM>|<yol> <satır>
 #   anahtar <dosya>|<YÖNTEM>|<yol> — RATCHET yalnız bunu karşılaştırır.
@@ -62,8 +62,7 @@ F src/modules/shared/lta/lta-agreement.controller.ts|GET|lta-agreements/cpl/:cpl
 F src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/calculate/base-spend 174
 F src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/calculate/planned-spend 194
 F src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/context/rates 160
-F src/modules/tenant/tenant.controller.ts|GET|tenants/:id 61
-F src/modules/tenant/tenant.controller.ts|GET|tenants/:id/stats 113
+F src/modules/tenant/tenant.controller.ts|GET|tenants/:id/stats 118
 F src/modules/user/auth.controller.ts|POST|auth/logout 77
 F src/modules/user/user.controller.ts|GET|users/me 84
 F src/modules/user/user.controller.ts|PATCH|users/me 99
