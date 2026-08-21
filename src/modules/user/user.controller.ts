@@ -47,7 +47,7 @@ export class UserController {
     description: 'User created successfully',
     type: UserResponseDto,
   })
-  create(
+  async create(
     @TenantId() tenantId: string,
     @Body() createUserDto: CreateUserDto,
     // T-244 (A1): daha önce bu rota @CurrentUser() ALMIYORDU, yani
@@ -58,13 +58,14 @@ export class UserController {
     @Request() req: ExpressRequest,
   ) {
     const ipAddress = req.ip || req.socket?.remoteAddress;
-    return this.userService.create(
+    const user = await this.userService.create(
       tenantId,
       createUserDto,
       actor.id,
       actor.email,
       ipAddress,
     );
+    return UserResponseDto.fromEntity(user);
   }
 
   @Get()
@@ -75,8 +76,9 @@ export class UserController {
     description: 'List of users',
     type: [UserResponseDto],
   })
-  findAll(@TenantId() tenantId: string) {
-    return this.userService.findAll(tenantId);
+  async findAll(@TenantId() tenantId: string) {
+    const users = await this.userService.findAll(tenantId);
+    return UserResponseDto.fromEntities(users);
   }
 
   @Get('me')
@@ -86,8 +88,12 @@ export class UserController {
     description: 'User profile',
     type: UserResponseDto,
   })
-  getProfile(@Request() req: any) {
-    return this.userService.getProfile(req.user.tenantId, req.user.sub);
+  async getProfile(@Request() req: any) {
+    const user = await this.userService.getProfile(
+      req.user.tenantId,
+      req.user.sub,
+    );
+    return UserResponseDto.fromEntity(user);
   }
 
   @Patch('me')
@@ -97,7 +103,7 @@ export class UserController {
     description: 'Profile updated',
     type: UserResponseDto,
   })
-  updateProfile(
+  async updateProfile(
     @Request() req: any,
     @Body() updateUserDto: UpdateUserDto,
     @CurrentUser() user: { id: string; role: UserRole },
@@ -106,13 +112,14 @@ export class UserController {
     if (updateUserDto.role) {
       delete updateUserDto.role;
     }
-    return this.userService.update(
+    const updated = await this.userService.update(
       req.user.tenantId,
       req.user.sub,
       updateUserDto,
       user.id,
       user.role,
     );
+    return UserResponseDto.fromEntity(updated);
   }
 
   @Patch('me/password')
@@ -156,7 +163,29 @@ export class UserController {
     return this.userService.getDashboardSummary(tenantId);
   }
 
+  /**
+   * [[T-255]] ⛔ P0, ürün sahibi kararı (2026-08-21) — DUR kapandı:
+   *
+   * `(3)` (entity ham dönüyor) `UserResponseDto.fromEntity` ile
+   * düzeltildi — kimlik materyali (`passwordHash` · `refreshToken` ·
+   * `passwordResetToken` · `emailVerificationToken`) artık HİÇBİR role
+   * dönmez.
+   *
+   * `(1)`/`(2)` (sahiplik/rol) — KARAR: `@Roles(UserRole.ADMIN)`.
+   * Gerekçe: `GET /users/me` `READ_OWN`'ın örneği (yüklemi zaten doğru,
+   * `req.user.sub`); `GET /users/:id` bir YÖNETİM UCU (T-241/T-242a'nın
+   * kullanıcı yönetimi akışının parçası) — `Z18` taksonomisinin ayrımı.
+   * BAŞKA rol başkasının kaydını okuyamaz.
+   *
+   * ⚠️ `route-scope-baseline.txt:68`'deki
+   * `F src/modules/user/user.controller.ts|GET|users/:id 159` satırı bu
+   * yüzden AYRI bir commit'te düşürülmeli (B2 deseni, T-252) — bu
+   * dosyanın commit'i O satırı GÜNCEL OLMAYAN bırakır, ratchet bunu
+   * "iyileşme" olarak görüp DURACAK; baseline güncellemesi Team Lead
+   * tarafından ayrı commit'te yapılır.
+   */
   @Get(':id')
+  @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Get user by ID' })
   @ApiResponse({
     status: 200,
@@ -164,11 +193,12 @@ export class UserController {
     type: UserResponseDto,
   })
   @ApiResponse({ status: 404, description: 'User not found' })
-  findOne(
+  async findOne(
     @TenantId() tenantId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.userService.findOne(tenantId, id);
+    const user = await this.userService.findOne(tenantId, id);
+    return UserResponseDto.fromEntity(user);
   }
 
   @Patch(':id')
@@ -179,19 +209,20 @@ export class UserController {
     description: 'User updated successfully',
     type: UserResponseDto,
   })
-  update(
+  async update(
     @TenantId() tenantId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateUserDto: UpdateUserDto,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    return this.userService.update(
+    const updated = await this.userService.update(
       tenantId,
       id,
       updateUserDto,
       user.id,
       user.role,
     );
+    return UserResponseDto.fromEntity(updated);
   }
 
   /**
@@ -242,22 +273,24 @@ export class UserController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Activate user' })
   @ApiResponse({ status: 200, description: 'User activated' })
-  activate(
+  async activate(
     @TenantId() tenantId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.userService.activate(tenantId, id);
+    const user = await this.userService.activate(tenantId, id);
+    return UserResponseDto.fromEntity(user);
   }
 
   @Post(':id/deactivate')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Deactivate user' })
   @ApiResponse({ status: 200, description: 'User deactivated' })
-  deactivate(
+  async deactivate(
     @TenantId() tenantId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.userService.deactivate(tenantId, id);
+    const user = await this.userService.deactivate(tenantId, id);
+    return UserResponseDto.fromEntity(user);
   }
 
   @Delete(':id')
