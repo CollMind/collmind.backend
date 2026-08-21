@@ -58,7 +58,12 @@ export class TenantController {
     return this.tenantService.findAll();
   }
 
+  // [[T-258]] ⛔ P0 (2026-08-21): @Roles YOK'tu → her rol (READONLY dahil)
+  // erişiyordu, ve servis 9 kullanıcının HAM kaydını (passwordHash dahil)
+  // `relations: ['users']` ile yüklüyordu. İkisi birlikte düzeltildi:
+  // @Roles(ADMIN) burada, relations kaldırma tenant.service.ts#findOne'da.
   @Get(':id')
+  @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Get tenant by ID' })
   @ApiResponse({
     status: 200,

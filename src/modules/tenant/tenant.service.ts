@@ -2,7 +2,6 @@ import {
   Injectable,
   ConflictException,
   NotFoundException,
-  BadRequestException,
 } from '@nestjs/common';
 import { TenantRepository } from './tenant.repository';
 import { CreateTenantDto } from './dto/create-tenant.dto';
@@ -55,10 +54,34 @@ export class TenantService {
     });
   }
 
+  /**
+   * [[T-258]] ⛔ P0 — `relations: ['users']` KALDIRILDI (2026-08-21).
+   *
+   * Ölçüldü: bu metodun ürünündeki tek çağıranları `TenantController` (GET
+   * `/:id`) ve bu servisin kendi `update`/`remove`/`activate`/`suspend`
+   * metotlarıydı (`this.findOne(id)`, dört yer) — ve hiçbiri döndürülen
+   * `tenant.users` alanını OKUMUYORDU (`grep -rn 'tenant\.users' src/` → 0
+   * kullanım dışında `tenant.repository.ts`'in ayrı bir raw query'si).
+   * Yani ilişki YÜKLENİYOR ama hiçbir yerde KULLANILMIYORDU — controller
+   * entity'yi ham döndürdüğü için (`ClassSerializerInterceptor` yok,
+   * `TenantResponseDto` hiç uygulanmamış) her `User` kolonu, `passwordHash`
+   * ve iki token dahil, HTTP yanıtına sızıyordu. Kanıt (READONLY token,
+   * en düşük yetki): `GET /tenants/:id` → 200, `users`: 9 kayıt × 31 alan,
+   * `passwordHash`/`refreshToken`/`passwordResetToken` hepsi doluydu.
+   *
+   * Tek tüketici olduğu için kök düzeltme: ilişkiyi HİÇ YÜKLEME. `users`
+   * alanını DTO ile filtrelemek (yükleyip sonra atmak) burada gereksiz bir
+   * ikinci katman olurdu — İlke 1: uç bu veriyi zaten hiç İSTEMEMELİ.
+   *
+   * ⛔ ÜÇÜNCÜ KUSUR — BU DÜZELTMENİN KAPSAMI DIŞINDA: bu sorgu `id` dışında
+   * hiçbir tenant-scope predicate'i taşımıyor — bir `ADMIN` başka bir
+   * tenant'ın kaydını `id` ile isteyebilir. Bugün gösterilemiyor (dev DB'de
+   * tek tenant var), ama `@Roles(ADMIN)` bunu KAPATMAZ. Adresi `ADIM 5`
+   * (RLS) — bkz. `docs/` FAZ1_PLAN §7. Kasten dokunulmadı.
+   */
   async findOne(id: string): Promise<Tenant> {
     const tenant = await this.tenantRepository.findOne({
       where: { id },
-      relations: ['users'],
     });
 
     if (!tenant) {

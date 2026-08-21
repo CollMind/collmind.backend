@@ -157,9 +157,10 @@ describe('TenantService', () => {
 
       const result = await service.findOne(mockTenantId);
 
+      // [[T-258]] relations: ['users'] KALDIRILDI — tek tüketici ölçüldü
+      // ve hiçbiri `.users` okumuyordu; ilişki artık hiç yüklenmiyor.
       expect(tenantRepository.findOne).toHaveBeenCalledWith({
         where: { id: mockTenantId },
-        relations: ['users'],
       });
       expect(result).toEqual(mockTenant);
     });
@@ -252,7 +253,6 @@ describe('TenantService', () => {
 
       expect(tenantRepository.findOne).toHaveBeenCalledWith({
         where: { id: mockTenantId },
-        relations: ['users'],
       });
       expect(tenantRepository.softRemove).toHaveBeenCalledWith(mockTenant);
     });
