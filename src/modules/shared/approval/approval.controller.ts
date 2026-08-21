@@ -1,8 +1,6 @@
 import {
   Controller,
   Get,
-  Post,
-  Body,
   Param,
   ParseUUIDPipe,
   Query,
@@ -10,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ApprovalService } from './approval.service';
-import { ApproveRequestDto, RejectRequestDto } from './dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
@@ -90,38 +87,24 @@ export class ApprovalController {
     return this.approvalService.findById(id, tenantId);
   }
 
-  @Post(':id/approve')
-  @Roles(UserRole.CATEGORY_MANAGER)
-  @ApiOperation({ summary: 'Approve a request' })
-  approve(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: ApproveRequestDto,
-    @TenantId() tenantId: string,
-    @CurrentUser('id') userId: string,
-  ) {
-    return this.approvalService.approve(id, tenantId, userId, dto);
-  }
-
-  @Post(':id/reject')
-  @Roles(UserRole.CATEGORY_MANAGER)
-  @ApiOperation({ summary: 'Reject a request' })
-  reject(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: RejectRequestDto,
-    @TenantId() tenantId: string,
-    @CurrentUser('id') userId: string,
-  ) {
-    return this.approvalService.reject(id, tenantId, userId, dto);
-  }
-
-  @Post(':id/cancel')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
-  @ApiOperation({ summary: 'Cancel own pending request' })
-  cancel(
-    @Param('id', ParseUUIDPipe) id: string,
-    @TenantId() tenantId: string,
-    @CurrentUser('id') userId: string,
-  ) {
-    return this.approvalService.cancel(id, tenantId, userId);
-  }
+  // T-257: `POST :id/approve` · `POST :id/reject` · `POST :id/cancel` KALDIRILDI.
+  // Gerekçe (İlke 1 — ölçülmüş, T-257): bugün 0 tüketici (frontend: 0 çağrı,
+  // poz. kontrol /plans deseni → 11; backend: HTTP ucunun tek çağıranı KENDİ
+  // controller'ıydı) VE genel `approve`/`reject` `K-2.5.6`'nın atomikliğini
+  // ihlal ediyordu (approval_requests=APPROVED yazılırken plan/agreement
+  // durum makinesi ve bütçe taahhüdü hiç yazılmıyordu — sahte onay).
+  // `cancel` de aynı ölçümle (0 tüketici) aynı turda kaldırıldı.
+  //
+  // Servis metotları (`ApprovalService.approve/reject/cancel`) KALDI —
+  // domain akışları (`plan.service.ts:1602/1695` ·
+  // `agreement.service.ts:757/878` · `approval-workflow.service.ts:546/626`)
+  // onları KENDİ transaction'ları içinde çağırmaya devam ediyor. Yalnız
+  // genel HTTP giriş noktası gitti.
+  //
+  // K-2.5.11 (self-approval reddi) pini: plan tarafı zaten domain akışında
+  // bağımsız sınanıyordu (plan.service.ts:1401, approval-workflow.service.ts:369
+  // — kendi guard'ları var). Agreement tarafının KENDİ guard'ı YOKTU — koruma
+  // tamamen `ApprovalService.approve/reject`'in paylaşılan kontrolüne
+  // dayanıyor; o pin `test/role-journey.e2e-spec.ts` C7 (approve) ve C9b
+  // (reject) testlerine TAŞINDI. Bkz. `.claude/backlog/tasks/T-257.md`.
 }

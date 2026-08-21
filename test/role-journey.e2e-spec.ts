@@ -4412,11 +4412,31 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .set(admin.authHeader())
         .expect(200);
 
-      // NOT: Aynı kullanıcı (ADMIN) hem submit hem approve ederse
-      // ApprovalService "You cannot approve your own request" (403) döner —
-      // bu BEKLENEN/DOĞRU bir self-approval segregation-of-duties davranışı
-      // (approval.service.ts:104). Bu yüzden approve için FINANCE_MANAGER
-      // kullanılır (T-028e: CATEGORY_MANAGER artık kategori-scope'una tabi).
+      // T-257: genel `/approvals/:id/approve` ucu (K-2.5.11'in generik pini
+      // orada duruyordu) KALDIRILDI. `agreement.service.ts`'in — plan.service.ts
+      // ve approval-workflow.service.ts'in aksine — KENDİ self-approval guard'ı
+      // YOK; koruma tamamen ApprovalService.approve()'un paylaşılan kontrolüne
+      // dayanıyor (approval.service.ts:114, "You cannot approve your own
+      // request"). Bu yüzden pin BURAYA (agreement domain akışına) taşındı —
+      // önceden yalnız bir yorumdu, şimdi gerçek bir assertion.
+      const selfApproveRes = await request(app.getHttpServer())
+        .post(`/agreements/${agreementReversalId}/approve`)
+        .set(admin.authHeader())
+        .send({ comments: 'self-approval attempt (T-257 pin)' });
+
+      expect(selfApproveRes.status).toBe(403);
+      expect(selfApproveRes.body.message).toMatch(/own request/i);
+
+      // Ve durum değişmedi: transaction (budget RESERVE + approval decision)
+      // bütünüyle geri alındı, agreement hâlâ PENDING.
+      const stillPending = await request(app.getHttpServer())
+        .get(`/agreements/${agreementReversalId}`)
+        .set(admin.authHeader())
+        .expect(200);
+      expect(stillPending.body.status).toBe('PENDING');
+
+      // Onaylayan FINANCE_MANAGER kullanılır (T-028e: CATEGORY_MANAGER artık
+      // kategori-scope'una tabi, bu senaryo için uygun değil).
       const approveRes = await request(app.getHttpServer())
         .post(`/agreements/${agreementReversalId}/approve`)
         .set(financeApprover.authHeader())
@@ -4428,7 +4448,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         endpoint: 'POST /agreements + submit + approve (reversal fixture)',
         expected: 'APPROVED',
         actual: approveRes.body.status,
-        note: `agreementId=${agreementReversalId} — self-approval doğru şekilde 403 ile engelleniyor (approval.service.ts), bu yüzden approve farklı rol ile yapıldı`,
+        note: `agreementId=${agreementReversalId} — self-approval GERÇEKTEN sınandı (403, approval.service.ts:114), sonra approve farklı rol ile yapıldı`,
       });
     });
 
@@ -4495,12 +4515,17 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     });
 
     it('C9b. T-032: REJECT agreement lifecycle audit row exists in admin_audit_logs (SQL kanıtı)', async () => {
-      const planner = await loginAs(app, 'PLANNER');
       const fm = await loginAs(app, 'FINANCE_MANAGER');
+      // T-257 pin için: self-rejection denemesinin RolesGuard'a değil
+      // ApprovalService'in kontrolüne çarpması gerekiyor — bu yüzden
+      // submitter, `/agreements/:id/reject`'e de erişimi olan ADMIN
+      // (PLANNER reject uçuna hiç giremez: @Roles(ADMIN, CATEGORY_MANAGER,
+      // FINANCE), agreement.controller.ts:219).
+      const admin = await loginAs(app, 'ADMIN');
 
       const createRes = await request(app.getHttpServer())
         .post('/agreements')
-        .set(planner.authHeader())
+        .set(admin.authHeader())
         .send({
           agreementName: `E2E-ROLE-JOURNEY-T032-REJECT-${Date.now()}`,
           agreementType: 'STA',
@@ -4521,9 +4546,23 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
       await request(app.getHttpServer())
         .post(`/agreements/${rejectAgreementId}/submit`)
-        .set(planner.authHeader())
+        .set(admin.authHeader())
         .send({})
         .expect(200);
+
+      // T-257: `agreement.service.ts#reject`'in — plan.service.ts'in aksine —
+      // KENDİ self-rejection guard'ı YOK; koruma tamamen
+      // ApprovalService.reject()'in paylaşılan kontrolüne dayanıyor
+      // (approval.service.ts:179, "You cannot reject your own request").
+      // Genel `/approvals/:id/reject` ucu kaldırıldığı için bu pin BURAYA
+      // (agreement domain akışına) taşındı. `planner` KULLANILMADI (reject
+      // uçuna erişimi yok — RBAC 403'ü self-rejection 403'ü ile karıştırırdı).
+      const selfRejectRes = await request(app.getHttpServer())
+        .post(`/agreements/${rejectAgreementId}/reject`)
+        .set(admin.authHeader())
+        .send({ reason: 'self-rejection attempt (T-257 pin)' });
+      expect(selfRejectRes.status).toBe(403);
+      expect(selfRejectRes.body.message).toMatch(/own request/i);
 
       const rejectRes = await request(app.getHttpServer())
         .post(`/agreements/${rejectAgreementId}/reject`)

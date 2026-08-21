@@ -55,6 +55,18 @@
  * cancel` yalnız `approval_requests` satırını okur/yazar; plan tarafına
  * hiç dokunmaz. Yani gerçek bir plan submit akışı kurmak bu davranışı
  * ölçmek için GEREKMEZ ve dört tabloya daha satır sızdırırdı.
+ *
+ * ── T-257 GÜNCELLEMESİ (2026-08-21) ──────────────────────────────────────
+ * `POST /approvals/:id/{approve,reject,cancel}` genel HTTP uçları
+ * KALDIRILDI (ölçüldü: 0 tüketici — frontend 0 çağrı, backend'de tek
+ * çağıran kendi controller'ıydı — VE `approve`/`reject` `K-2.5.6`'nın
+ * atomikliğini ihlal ediyordu: approval_requests=APPROVED yazılırken
+ * plan/agreement durum makinesi ve bütçe taahhüdü hiç yazılmıyordu).
+ * Yukarıdaki paragraflar hâlâ doğru — T-256'nın düzelttiği kusuru ve o
+ * turdaki ölçümü anlatıyorlar — ama artık TARİHSEL kayıt: bu dosyada o
+ * üç ucu sınayan describe blokları yok. K-2.5.11 (self-approval) ve
+ * self-rejection pinleri `test/role-journey.e2e-spec.ts`'e (C7 · C9b)
+ * TAŞINDI — bkz. `.claude/backlog/tasks/T-257.md`.
  */
 
 import request from 'supertest';
@@ -101,14 +113,6 @@ describe("T-256 — @CurrentUser('id') aktör kimliği (approvals)", () => {
     const id: string = rows[0].id;
     createdIds.push(id);
     return id;
-  }
-
-  async function statusOf(id: string): Promise<string> {
-    const rows = await dataSource.query(
-      `SELECT status FROM main.approval_requests WHERE id = $1`,
-      [id],
-    );
-    return rows[0]?.status;
   }
 
   beforeAll(async () => {
@@ -187,123 +191,16 @@ describe("T-256 — @CurrentUser('id') aktör kimliği (approvals)", () => {
     });
   });
 
-  describe('POST /approvals/:id/cancel — sahiplik', () => {
-    it('GERÇEK SAHİP iptal edebilir → 201 + CANCELLED', async () => {
-      const own = await seedRequest(planner.userId);
-
-      const res = await request(app.getHttpServer())
-        .post(`/approvals/${own}/cancel`)
-        .set(planner.authHeader())
-        .send({});
-
-      // Düzeltmeden önce burası 403'tü — string !== obje HER ZAMAN doğruydu.
-      expect(res.status).toBe(201);
-      expect(await statusOf(own)).toBe('CANCELLED');
-    });
-
-    it('BAŞKASININ talebini iptal edemez → 403 + satır PENDING kalır', async () => {
-      const foreign = await seedRequest(planner2.userId);
-
-      const res = await request(app.getHttpServer())
-        .post(`/approvals/${foreign}/cancel`)
-        .set(planner.authHeader())
-        .send({});
-
-      expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/requester/i);
-      expect(await statusOf(foreign)).toBe('PENDING');
-    });
-  });
-
-  describe('POST /approvals/:id/approve — EA-001 / K-2.5.11 self-approval', () => {
-    it('⛔ KENDİ talebini onaylayamaz → 403 + satır PENDING kalır', async () => {
-      const own = await seedRequest(categoryManager.userId);
-
-      const res = await request(app.getHttpServer())
-        .post(`/approvals/${own}/approve`)
-        .set(categoryManager.authHeader())
-        .send({ comments: 'T-256 self-approval pin' });
-
-      // Düzeltmeden ÖNCE bu 201'di ve satır APPROVED oluyordu —
-      // K-2.5.11'in canlı ihlali. Koruma yazılıydı ve hiç ateşlemiyordu.
-      expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/own request/i);
-      expect(await statusOf(own)).toBe('PENDING');
-    });
-
-    it('✅ POZİTİF KONTROL: BAŞKASININ talebini onaylayabilir → 201 + APPROVED', async () => {
-      const foreign = await seedRequest(planner.userId);
-
-      const res = await request(app.getHttpServer())
-        .post(`/approvals/${foreign}/approve`)
-        .set(categoryManager.authHeader())
-        .send({ comments: 'T-256 positive control' });
-
-      // Bu olmadan yukarıdaki 403'ün sebebi ayırt edilemez: rol kapısı,
-      // guard, ya da self-approval — üçü de 403 verir.
-      expect(res.status).toBe(201);
-      expect(await statusOf(foreign)).toBe('APPROVED');
-
-      // ⚠️ YENİ ERİŞİLEBİLİR OLAN BULGU (T-256 kapsamı DIŞI, rapor edildi):
-      // bu satırın `entity_id`'si VAR OLMAYAN bir plan id'sidir ve uç yine
-      // 201 döndü — yani `/approvals/:id/approve` yalnız approval_requests
-      // satırını yazar; plan/agreement durum makinesine, bütçe rezervine ve
-      // audit'e HİÇ dokunmaz (`approval.service.ts` `approve()` gövdesinde
-      // yalnız `this.findById` + `this.approvalRepo.updateStatus` var).
-      // Düzeltmeden önce bu yol 500 verdiği için ERİŞİLEMEZDİ; düzeltme onu
-      // erişilebilir kıldı. `plan.service.ts:1602` / `agreement.service.ts:760`
-      // aynı servisi ÇEVRELEYEN bir transaction içinde çağırıyor — bu genel
-      // ucun onların yerine geçip geçemeyeceği bir ÜRÜN KARARIDIR.
-    });
-
-    it('BULGU: entity_id var olmayan bir plana işaret etse bile 201 (uç entity doğrulamıyor)', async () => {
-      const orphan = await seedRequest(planner.userId);
-      const before = await dataSource.query(
-        `SELECT entity_id FROM main.approval_requests WHERE id = $1`,
-        [orphan],
-      );
-      const planExists = await dataSource.query(
-        `SELECT count(*)::int AS c FROM main.plans WHERE id = $1`,
-        [before[0].entity_id],
-      );
-      expect(planExists[0].c).toBe(0); // ← pozitif kontrol: plan GERÇEKTEN yok
-
-      const res = await request(app.getHttpServer())
-        .post(`/approvals/${orphan}/approve`)
-        .set(categoryManager.authHeader())
-        .send({});
-
-      expect(res.status).toBe(201);
-      expect(await statusOf(orphan)).toBe('APPROVED');
-    });
-  });
-
-  describe('POST /approvals/:id/reject — self-rejection', () => {
-    it('⛔ KENDİ talebini reddedemez → 403 + satır PENDING kalır', async () => {
-      const own = await seedRequest(categoryManager.userId);
-
-      const res = await request(app.getHttpServer())
-        .post(`/approvals/${own}/reject`)
-        .set(categoryManager.authHeader())
-        .send({ reason: 'T-256 self-rejection pin' });
-
-      expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/own request/i);
-      expect(await statusOf(own)).toBe('PENDING');
-    });
-
-    it('✅ POZİTİF KONTROL: BAŞKASININ talebini reddedebilir → 201 + REJECTED', async () => {
-      const foreign = await seedRequest(planner.userId);
-
-      const res = await request(app.getHttpServer())
-        .post(`/approvals/${foreign}/reject`)
-        .set(categoryManager.authHeader())
-        .send({ reason: 'T-256 positive control' });
-
-      expect(res.status).toBe(201);
-      expect(await statusOf(foreign)).toBe('REJECTED');
-    });
-  });
+  // T-257: `POST /approvals/:id/cancel` · `:id/approve` · `:id/reject`
+  // KALDIRILDI (0 tüketici — İlke 1). Bu üç describe bloğu buradaydı ve
+  // silindi. K-2.5.11 (self-approval) ve self-rejection pinleri
+  // `test/role-journey.e2e-spec.ts`'e (C7 · C9b, agreement domain akışı)
+  // TAŞINDI — agreement.service.ts'in approve/reject'inin KENDİ guard'ı
+  // olmadığı, koruma tamamen ApprovalService'in paylaşılan kontrolüne
+  // dayandığı için domain akışında sınanmaları GEREKİYORDU (CLAUDE.md
+  // T-257 ŞART 2). "Başkasının talebini iptal edemez" ve entity-doğrulamayan
+  // `approve` BULGUSU (T-256 kapsamı dışı) genel uçla birlikte gitti — o
+  // uç artık yok, o davranış artık yok. Bkz. `.claude/backlog/tasks/T-257.md`.
 
   describe('REGRESYON — argümansız @CurrentUser() bozulmadı', () => {
     it('GET /agreements (kapsam çözümü user.id/user.role üzerinden) → 200', async () => {
