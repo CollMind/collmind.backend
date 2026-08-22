@@ -60,9 +60,21 @@ NO_BASELINE="$TMP/no-such-baseline.txt"
 
 FAIL=0
 
+# ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK=1: bu grubun testleri (CASE 1, S, 2, 3,
+# 4a, 4b, R1-R3) route-scope.awk'ın @UseGuards TANIMASINI kasten bozuyor —
+# ve o AYNI mekanizma RolesGuard'ı da topluyor (cg/rg). Bu grup SINIFLANDIRMA
+# mantığını (FILTRESIZ/PUBLIC/ALAN_GUARD ayrımını) sınıyor, "@Roles var ama
+# RolesGuard yok" KURULUM HATASI kontrolünü değil — ve fixture-plain'in
+# 'roled'/'roled-multiline' rotaları o kontrolü KASITLI OLARAK RolesGuard'sız
+# bırakıyor (yalnız ROLES bucket sınıflandırmasını sınamak için). Bu bayrak
+# olmadan o kontrol devreye girer ve bu grubun HİÇBİRİ kendi konusu OLMAYAN
+# bir SETUP HATASI'yla kırılırdı. Yeni kontrol AŞAĞIDA, İZOLE fixture'larla,
+# bu bayrak OLMADAN ayrıca sınanıyor (CASE G).
 run() { # [extra env already exported by caller]
   ROUTE_SCOPE_SRC_DIR="$SRC_DIR" ROUTE_SCOPE_BASELINE="$NO_BASELINE" \
-    ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" GUARD_MODE=report bash "$GUARD"
+    ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" \
+    ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK=1 \
+    GUARD_MODE=report bash "$GUARD"
 }
 
 # =============================================================================
@@ -324,7 +336,7 @@ mkdir -p "$UNKNOWN_SRC"
 cp "$FIXDIR/fixture-plain.controller.ts.fixture" "$UNKNOWN_SRC/unknown.controller.ts"
 # ROUTE_SCOPE_DOMAIN_GUARDS bu koşuda VERİLMİYOR (varsayılan: Reversal/Settlement)
 # — fixture'ın kullandığı FixtureDomainGuard o listede YOK, yani "bilinmeyen".
-ROUTE_SCOPE_SRC_DIR="$UNKNOWN_SRC" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" > /tmp/route-scope-case-u.log 2>&1
+ROUTE_SCOPE_SRC_DIR="$UNKNOWN_SRC" ROUTE_SCOPE_BASELINE="$NO_BASELINE" ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK=1 GUARD_MODE=report bash "$GUARD" > /tmp/route-scope-case-u.log 2>&1
 RCU=$?
 if [ "$RCU" -ne 2 ]; then
   echo "!! self-test FAIL [case U: bilinmeyen guard]: exit 2 (SETUP HATASI/DUR) bekleniyordu, $RCU bulundu" >&2
@@ -347,7 +359,7 @@ F src/fixture-plain.controller.ts|GET|fixture-plain/gap 10
 EOF
 
 # R1: baseline'daki rota AYNEN duruyor → YEŞİL (RC=0), İYİLEŞTİ/GONE mesajı YOK.
-OUT_R1="$(ROUTE_SCOPE_SRC_DIR="$SRC_DIR" ROUTE_SCOPE_BASELINE="$FIX_BASELINE" ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" GUARD_MODE=block bash "$GUARD" 2>&1)"
+OUT_R1="$(ROUTE_SCOPE_SRC_DIR="$SRC_DIR" ROUTE_SCOPE_BASELINE="$FIX_BASELINE" ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK=1 GUARD_MODE=block bash "$GUARD" 2>&1)"
 RC_R1=$?
 if [ "$RC_R1" -ne 0 ]; then
   echo "!! self-test FAIL [case R1]: değişmemiş baseline rotası için exit 0 bekleniyordu, $RC_R1 bulundu" >&2
@@ -375,7 +387,7 @@ new_route = "\n  @Get('new-gap')\n  newGap() {\n    return 'new-gap';\n  }\n"
 s2 = s.rstrip()[:idx] + new_route + "}\n"
 open(p, "w").write(s2)
 PY
-OUT_R2="$(ROUTE_SCOPE_SRC_DIR="$SRC_DIR_R2" ROUTE_SCOPE_BASELINE="$FIX_BASELINE" ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" GUARD_MODE=block bash "$GUARD" 2>&1)"
+OUT_R2="$(ROUTE_SCOPE_SRC_DIR="$SRC_DIR_R2" ROUTE_SCOPE_BASELINE="$FIX_BASELINE" ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK=1 GUARD_MODE=block bash "$GUARD" 2>&1)"
 RC_R2=$?
 if [ "$RC_R2" -ne 1 ]; then
   echo "!! self-test FAIL [case R2: pozitif kontrol]: YENİ filtresiz rota eklendi, exit 1 bekleniyordu, $RC_R2 bulundu" >&2
@@ -402,7 +414,7 @@ assert s.count(old) == 1
 new = "  @Get('gap')\n  @Roles(UserRole.ADMIN)\n  gap() {"
 open(p, "w").write(s.replace(old, new, 1))
 PY
-OUT_R3="$(ROUTE_SCOPE_SRC_DIR="$SRC_DIR_R3" ROUTE_SCOPE_BASELINE="$FIX_BASELINE" ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" GUARD_MODE=block bash "$GUARD" 2>&1)"
+OUT_R3="$(ROUTE_SCOPE_SRC_DIR="$SRC_DIR_R3" ROUTE_SCOPE_BASELINE="$FIX_BASELINE" ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK=1 GUARD_MODE=block bash "$GUARD" 2>&1)"
 RC_R3=$?
 if [ "$RC_R3" -ne 0 ]; then
   echo "!! self-test FAIL [case R3]: baseline rotası @Roles kazandı, exit 0 (İYİLEŞME bloklamaz) bekleniyordu, $RC_R3 bulundu" >&2
@@ -414,6 +426,193 @@ elif ! printf '%s\n' "$OUT_R3" | grep -q "İYİLEŞTİ.*fixture-plain/gap.*ROLES
   FAIL=1
 else
   echo "-- [case R3] baseline'daki rota @Roles kazandı → YEŞİL kalır + İYİLEŞTİ mesajı (T-252 üçüncü sınav)"
+fi
+
+# =============================================================================
+# CASE G — @Roles VAR AMA RolesGuard ZİNCİRDE YOK → SETUP HATASI (exit 2)
+# (T-252 YENİDEN AÇILDI, T-267'nin kör noktası)
+#
+# İZOLE fixture'lar kullanılır, $SRC_DIR'İN PARÇASI DEĞİL: yukarıdaki grup
+# (CASE 1, S, 2, 3, 4a, 4b, R1-R3) ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK=1 ile
+# bu kontrolü KAPALI tutuyor (gerekçe: run()'ın üstündeki yorum). Bu kontrol
+# BURADA, o bayrak OLMADAN, kendi fixture'larıyla sınanır.
+# =============================================================================
+
+# --- G-route: ROTA seviyesinde RolesGuard (gerçek repo deseni:
+#     auth.controller.ts logout — @UseGuards route-level) ------------------
+G_ROUTE_SRC="$TMP/g-route/src"
+mkdir -p "$G_ROUTE_SRC"
+cat > "$G_ROUTE_SRC/roles-route.controller.ts" << 'EOF'
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Roles } from '../../../../src/common/decorators/roles.decorator';
+import { RolesGuard } from '../../../../src/common/guards/roles.guard';
+import { JwtAuthGuard } from '../../../../src/common/guards/jwt-auth.guard';
+import { UserRole } from '../../../../src/database/entities/user.entity';
+
+@Controller('roles-route')
+export class RolesRouteController {
+  // ROTA seviyesinde RolesGuard — gerçek repo deseni (auth.controller.ts logout).
+  @Get('protected')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  protectedRoute() {
+    return 'protected';
+  }
+}
+EOF
+
+# G1: sağlıklı hâl (ROTA seviyesinde RolesGuard MEVCUT) → exit 0, yanlış
+# pozitif YOK.
+OUT_G1="$(ROUTE_SCOPE_SRC_DIR="$G_ROUTE_SRC" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_G1=$?
+if [ "$RC_G1" -ne 0 ]; then
+  echo "!! self-test FAIL [case G1: rota-seviyesi RolesGuard MEVCUT]: exit 0 bekleniyordu, $RC_G1 bulundu" >&2
+  printf '%s\n' "$OUT_G1" >&2
+  FAIL=1
+else
+  echo "-- [case G1] rota-seviyesi RolesGuard MEVCUT → exit 0 (yanlış pozitif YOK)"
+fi
+
+# G2: ROTA seviyesinden RolesGuard KALDIRILINCA → exit 2 (POZİTİF KONTROL).
+G_ROUTE_SRC2="$TMP/g-route2/src"
+mkdir -p "$G_ROUTE_SRC2"
+cp "$G_ROUTE_SRC/roles-route.controller.ts" "$G_ROUTE_SRC2/"
+echo "-- [case G2 mutasyon] ROTA seviyesinden RolesGuard kaldırılıyor, ESKİ satır:"
+grep -n "UseGuards(JwtAuthGuard, RolesGuard)" "$G_ROUTE_SRC2/roles-route.controller.ts" | sed 's/^/   /'
+python3 - "$G_ROUTE_SRC2/roles-route.controller.ts" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "@UseGuards(JwtAuthGuard, RolesGuard)"
+assert s.count(old) == 1, f"case G2 marker count={s.count(old)}"
+open(p, "w").write(s.replace(old, "@UseGuards(JwtAuthGuard)", 1))
+PY
+echo "-- [case G2 mutasyon] YENİ satır:"
+grep -n "UseGuards(JwtAuthGuard)" "$G_ROUTE_SRC2/roles-route.controller.ts" | sed 's/^/   /'
+OUT_G2="$(ROUTE_SCOPE_SRC_DIR="$G_ROUTE_SRC2" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_G2=$?
+if [ "$RC_G2" -ne 2 ]; then
+  echo "!! self-test FAIL [case G2: pozitif kontrol, ROTA seviyesi]: exit 2 bekleniyordu, $RC_G2 bulundu" >&2
+  printf '%s\n' "$OUT_G2" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT_G2" | grep -qF "roles-route.controller.ts" || ! printf '%s\n' "$OUT_G2" | grep -qF "roles-route/protected"; then
+  echo "!! self-test FAIL [case G2]: hata mesajı etkilenen rotayı İSİMLENDİRMEDİ" >&2
+  printf '%s\n' "$OUT_G2" >&2
+  FAIL=1
+else
+  echo "-- [case G2] ROTA seviyesinden RolesGuard kaldırılınca → exit 2 (POZİTİF KONTROL, rota isimlendirildi)"
+fi
+
+# --- G-class: CONTROLLER seviyesinde RolesGuard (gerçek repo deseni:
+#     settlement.controller.ts — @UseGuards class-level, rota miras alır) --
+G_CLASS_SRC="$TMP/g-class/src"
+mkdir -p "$G_CLASS_SRC"
+cat > "$G_CLASS_SRC/roles-class.controller.ts" << 'EOF'
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Roles } from '../../../../src/common/decorators/roles.decorator';
+import { RolesGuard } from '../../../../src/common/guards/roles.guard';
+import { JwtAuthGuard } from '../../../../src/common/guards/jwt-auth.guard';
+import { UserRole } from '../../../../src/database/entities/user.entity';
+
+// CONTROLLER seviyesinde RolesGuard — gerçek repo deseni (settlement.controller.ts).
+@Controller('roles-class')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class RolesClassController {
+  @Get('protected')
+  @Roles(UserRole.ADMIN)
+  protectedRoute() {
+    return 'protected';
+  }
+}
+EOF
+
+# G3: sağlıklı hâl (CONTROLLER seviyesinde RolesGuard MEVCUT, rota miras
+# alıyor) → exit 0, yanlış pozitif YOK.
+OUT_G3="$(ROUTE_SCOPE_SRC_DIR="$G_CLASS_SRC" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_G3=$?
+if [ "$RC_G3" -ne 0 ]; then
+  echo "!! self-test FAIL [case G3: controller-seviyesi RolesGuard MEVCUT]: exit 0 bekleniyordu, $RC_G3 bulundu" >&2
+  printf '%s\n' "$OUT_G3" >&2
+  FAIL=1
+else
+  echo "-- [case G3] controller-seviyesi RolesGuard MEVCUT (miras) → exit 0 (yanlış pozitif YOK)"
+fi
+
+# G4: CONTROLLER seviyesinden RolesGuard KALDIRILINCA → exit 2 (POZİTİF
+# KONTROL, İKİNCİ SEVİYE — G2'den AYRI fixture, AYRI mutasyon).
+G_CLASS_SRC2="$TMP/g-class2/src"
+mkdir -p "$G_CLASS_SRC2"
+cp "$G_CLASS_SRC/roles-class.controller.ts" "$G_CLASS_SRC2/"
+echo "-- [case G4 mutasyon] CONTROLLER seviyesinden RolesGuard kaldırılıyor, ESKİ satır:"
+grep -n "@UseGuards(JwtAuthGuard, RolesGuard)" "$G_CLASS_SRC2/roles-class.controller.ts" | sed 's/^/   /'
+python3 - "$G_CLASS_SRC2/roles-class.controller.ts" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "@UseGuards(JwtAuthGuard, RolesGuard)"
+assert s.count(old) == 1, f"case G4 marker count={s.count(old)}"
+open(p, "w").write(s.replace(old, "@UseGuards(JwtAuthGuard)", 1))
+PY
+echo "-- [case G4 mutasyon] YENİ satır:"
+grep -n "@UseGuards(JwtAuthGuard)" "$G_CLASS_SRC2/roles-class.controller.ts" | sed 's/^/   /'
+OUT_G4="$(ROUTE_SCOPE_SRC_DIR="$G_CLASS_SRC2" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_G4=$?
+if [ "$RC_G4" -ne 2 ]; then
+  echo "!! self-test FAIL [case G4: pozitif kontrol, CONTROLLER seviyesi]: exit 2 bekleniyordu, $RC_G4 bulundu" >&2
+  printf '%s\n' "$OUT_G4" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT_G4" | grep -qF "roles-class.controller.ts" || ! printf '%s\n' "$OUT_G4" | grep -qF "roles-class/protected"; then
+  echo "!! self-test FAIL [case G4]: hata mesajı etkilenen rotayı İSİMLENDİRMEDİ" >&2
+  printf '%s\n' "$OUT_G4" >&2
+  FAIL=1
+else
+  echo "-- [case G4] CONTROLLER seviyesinden RolesGuard kaldırılınca → exit 2 (POZİTİF KONTROL, İKİNCİ SEVİYE)"
+fi
+
+# G5: NEGATİF KONTROL — @Roles TAŞIMAYAN rotalarda (filtresiz · @Public ·
+# alan-guard'lı) RolesGuard YOKLUĞU bulgu ÜRETMEMELİ. Üretmezse @Public
+# uçları ve alan-guard'lı uçlar (ReversalGuard/SettlementGuard) bu yeni
+# kontrol tarafından YANLIŞ yakalanır.
+G_NEG_SRC="$TMP/g-neg/src"
+mkdir -p "$G_NEG_SRC"
+cat > "$G_NEG_SRC/roles-negative.controller.ts" << 'EOF'
+import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Public } from '../../../../src/common/decorators/public.decorator';
+import { FixtureDomainGuard } from './fixture-domain-guard';
+
+@Controller('roles-negative')
+export class RolesNegativeController {
+  // @Roles YOK, RolesGuard YOK — filtresiz bir rota; YENİ kontrolün
+  // KONUSU DEĞİL (o, FILTRESIZ ratchet'inin konusu, bu kontrolün değil).
+  @Get('no-roles')
+  noRoles() {
+    return 'no-roles';
+  }
+
+  // @Public — @Roles YOK, RolesGuard YOK. Bulgu ÜRETMEMELİ.
+  @Get('pub')
+  @Public()
+  pub() {
+    return 'pub';
+  }
+
+  // alan-guard'lı — @Roles YOK, RolesGuard YOK (guard kendi İÇİNDE rol
+  // zorluyor, K-2.6.6 ⛔ şartı). Bulgu ÜRETMEMELİ.
+  @Post('domain')
+  @UseGuards(FixtureDomainGuard)
+  domain() {
+    return 'domain';
+  }
+}
+EOF
+OUT_G5="$(ROUTE_SCOPE_SRC_DIR="$G_NEG_SRC" ROUTE_SCOPE_BASELINE="$NO_BASELINE" ROUTE_SCOPE_DOMAIN_GUARDS="FixtureDomainGuard" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_G5=$?
+if [ "$RC_G5" -ne 0 ]; then
+  echo "!! self-test FAIL [case G5: negatif kontrol]: @Roles taşımayan rotalar RolesGuard eksikliğinden REDDEDİLMEMELİ, exit 0 bekleniyordu, $RC_G5 bulundu" >&2
+  printf '%s\n' "$OUT_G5" >&2
+  FAIL=1
+else
+  echo "-- [case G5] @Roles taşımayan rotalar (filtresiz/@Public/alan-guard'lı) → bulgu ÜRETİLMEDİ (negatif kontrol)"
 fi
 
 if [ "$FAIL" -ne 0 ]; then

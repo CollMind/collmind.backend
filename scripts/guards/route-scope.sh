@@ -49,6 +49,13 @@
 #   talimatı: "üçüncü bir koruma kanalı bulursan DUR, kapsamı kendi başına
 #   genişletme." Bu kontrol o DUR'u MEKANİZMAYA bağlar.
 #
+# @Roles DEKORATÖRÜ YETMEZ — GUARD ZİNCİRİ de gerekir (T-252 YENİDEN AÇILDI,
+#   T-267'nin kör noktası). @Roles(...) yazılmış bir rota, RolesGuard
+#   CONTROLLER'da da ROTA'da da @UseGuards içinde YOKSA metadata'sı HİÇ
+#   OKUNMAZ (roles.guard.ts:16-18) — RBAC KOZMETİK kalır. Bu bir kova değil,
+#   KURULUM HATASIDIR: exit 2, sessizce bir kovaya sınıflandırılmaz (aşağıda
+#   "@Roles YAZILMIŞ AMA RolesGuard ZİNCİRDE DEĞİL" bloğu).
+#
 # GUARD_MODE=block (varsayılan) → yeni FILTRESIZ rota varsa exit 1
 # GUARD_MODE=report             → bulguları bas, exit 0
 # --baseline                    → bugünkü FILTRESIZ envanterini stdout'a bas
@@ -63,6 +70,14 @@ ALLOWLIST="$ROOT/scripts/guards/allowlist.txt"
 AWK_ROUTE="$ROOT/scripts/guards/route-scope.awk"
 BASELINE="${ROUTE_SCOPE_BASELINE:-$ROOT/scripts/guards/route-scope-baseline.txt}"
 # Fixture yönlendirmesi için (self-test) — üretimde set edilmez.
+# FIXTURE_MODE: ROUTE_SCOPE_SRC_DIR'in KENDİSİ (varsayılana düşmeden ÖNCE)
+# set edilip edilmediğini kaydeder. Team Lead ölçümü: ROUTE_SCOPE_SKIP_ROLES_
+# GUARD_CHECK'i set eden BEŞ yerin BEŞİ de ROUTE_SCOPE_SRC_DIR'i de set
+# ediyor — yani bu bayrak gerçek repoyu (SRC_DIR ayarlanmamış) ayırt etmek
+# için YETERLİ bir sinyal. Aşağıdaki skip kontrolü BUNA bağlanır, ham env
+# değişkenine değil — böylece kaçış kapısı gerçek repoda YAPISAL olarak
+# kapalı kalır (bir yoruma değil bir koşula bağlı).
+if [ -n "${ROUTE_SCOPE_SRC_DIR:-}" ]; then ROUTE_SCOPE_FIXTURE_MODE=1; else ROUTE_SCOPE_FIXTURE_MODE=0; fi
 SRC_DIR="${ROUTE_SCOPE_SRC_DIR:-$ROOT/src}"
 cd "$ROOT"
 # shellcheck source=lib.sh
@@ -157,6 +172,78 @@ if [ -n "$UNKNOWN" ]; then
     echo "!! DUR'. Bu guard onu otomatik sınıflandırmaz; ölçüm YAPILMADI."
   } >&2
   exit 2
+fi
+
+# --- @Roles YAZILMIŞ AMA RolesGuard ZİNCİRDE DEĞİL — KURULUM HATASI --------
+# (T-252 YENİDEN AÇILDI, T-267'nin kör noktası, 2026-08-22)
+#
+# roles.guard.ts:16-18: requiredRoles metadata'sı bulunamazsa canActivate
+# TRUE döner. Yani @Roles(...) dekoratörü YAZILMIŞ olsa bile, RolesGuard
+# zincirde (CONTROLLER YA DA ROTA seviyesinde @UseGuards içinde) YOKSA o
+# metadata HİÇ OKUNMAZ ve dekoratör KOZMETİK kalır — RBAC UYGULANMAZ.
+#
+# ⛔ Bu bir KOVA (FILTRESIZ/ROLES/PUBLIC/ALAN_GUARD) DEĞİL — bir KURULUM
+# HATASIDIR: "@Roles yazılmış ama okunmuyor" bir sınıflandırma sorusu değil,
+# guard zincirinin YANLIŞ KURULDUĞUNUN kanıtıdır. T-267 aynı hatayı iki
+# controller'da (settlement.controller sınıf seviyesi · auth.controller
+# logout rota seviyesi) BULUP düzelttiği için bu kontrol bugün 0 bulguyla
+# geçer — ama düzeltme kalıcı değildir, bir sonraki @Roles eklendiğinde
+# RolesGuard unutulabilir. Ratchet değil KAPI: bu bir kurulum hatası, ratchet
+# konusu (K-2.6.6, tanımlanmamış uç) değil.
+#
+# guardsCSV ($7) zaten CONTROLLER (cg) ve ROTA (rg) seviyesi guard adlarının
+# BİRLEŞİMİ (route-scope.awk: csv_from_sets(cg, rg)) — yani TEK bir token
+# taraması HER İKİ seviyeyi de kapsar; seviye ayrımı için ayrı kod GEREKMEZ
+# (İlke: mevcut mekanizmayı yeniden kullan).
+#
+# ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK=1 — YALNIZ self-test için. S/2/3/4a/4b
+# kanal-bağımsızlığı testleri route-scope.awk'ın @UseGuards TANIMASINI
+# KASTEN bozuyor — ve o AYNI mekanizma RolesGuard'ı da topluyor (rg/cg). O
+# testler SINIFLANDIRMA mantığını (FILTRESIZ/PUBLIC/ALAN_GUARD ayrımını)
+# sınıyor, bu KURULUM HATASI kontrolünü değil; bu değişken olmadan o
+# testlerin paylaştığı $SRC_DIR'e bu kontrolü tetikleyecek bir @Roles+
+# RolesGuard rotası eklemek, kendi konusu OLMAYAN bir SETUP HATASI'yla
+# kırılırlardı (route-scope-self-test.sh'in G-serisi bu kontrolü AYRI,
+# izole fixture'larla, bu değişken OLMADAN sınar).
+#
+# ⛔ BU BAYRAK YALNIZ FIXTURE MODUNDA ONURLANDIRILIR (ROUTE_SCOPE_FIXTURE_MODE
+# — yani ROUTE_SCOPE_SRC_DIR set edilmişse). GERÇEK REPODA (SRC_DIR set
+# DEĞİLse) YOK SAYILIR — kontrol HER ZAMAN koşar. Gerekçe: "doğrulama bir
+# KAPIDIR — durdurmuyorsa doğrulama değildir" ve bir kontrolü kapatabilen bir
+# bayrak, kapatıldığında SESSİZ olur ve o kontrol artık bir kapı değildir.
+# Ölçüldü (Team Lead, 2026-08-22): bu bayrağı set eden BEŞ yerin BEŞİ de
+# ROUTE_SCOPE_SRC_DIR'i de set ediyor (self-test'in run()/R1/R2/R3/CASE U
+# çağrıları) — yani bu koşul gerçek repoyu güvenilir şekilde ayırt eder.
+# Üretimde (npm run guards, gerçek src/ taraması) bu bayrak HİÇBİR ZAMAN
+# set edilmez VE set edilse bile FIXTURE_MODE=0 olduğu için YOK SAYILIR.
+if [ "${ROUTE_SCOPE_SKIP_ROLES_GUARD_CHECK:-0}" = "1" ] && [ "$ROUTE_SCOPE_FIXTURE_MODE" = "1" ]; then
+  : # fixture modunda bilinçli atlama — aşağıdaki blok koşulun DIŞINDA kalır
+else
+  ROLES_NO_GUARD="$(awk -F'\t' '
+    $5 == 1 {
+      has_rg = 0
+      if ($7 != "-") {
+        n = split($7, g, ",")
+        for (i = 1; i <= n; i++) if (g[i] == "RolesGuard") { has_rg = 1; break }
+      }
+      if (!has_rg) printf "%s|%s|%s\n", $1, $3, $4
+    }
+  ' "$CUR")"
+
+  if [ -n "$ROLES_NO_GUARD" ]; then
+    {
+      echo "!! [$GUARD_NAME] SETUP HATASI: @Roles taşıyan rota(lar) RolesGuard ZİNCİRDE DEĞİL:"
+      printf '%s\n' "$ROLES_NO_GUARD" | sed 's/^/!!   /'
+      echo "!! @Roles DEKORATÖRÜ YETMEZ — GUARD ZİNCİRİ de gerekir. roles.guard.ts:16-18:"
+      echo "!! requiredRoles metadata'sı bulunamazsa canActivate TRUE döner; yani RolesGuard"
+      echo "!! (CONTROLLER ya da ROTA seviyesinde @UseGuards içinde) zincirde olmadan bu"
+      echo "!! metadata HİÇ OKUNMAZ ve @Roles KOZMETİK kalır. Çözüm: @UseGuards(...,"
+      echo "!! RolesGuard) ekleyin (sınıf ya da rota seviyesi fark etmez — guardsCSV"
+      echo "!! ikisinin birleşimidir). Bu bir KOVA DEĞİL, KURULUM HATASIDIR (T-252"
+      echo "!! YENİDEN AÇILDI, T-267'nin kör noktası)."
+    } >&2
+    exit 2
+  fi
 fi
 
 # --- sınıflandırma -----------------------------------------------------------
