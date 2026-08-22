@@ -137,31 +137,21 @@ export class UserController {
     );
   }
 
-  /**
-   * @deprecated Use GET /dashboard/summary instead.
-   * This endpoint is preserved for backward compatibility while the frontend migrates.
-   * Delegate to the same underlying user.service logic; the canonical implementation
-   * lives in DashboardService (shared/dashboard).
-   */
-  @Get('dashboard-summary')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
-  @ApiOperation({
-    summary: '[DEPRECATED] Get dashboard summary — use GET /dashboard/summary',
-    deprecated: true,
-    description:
-      'Preserved for backward compatibility. Migrate to GET /dashboard/summary which provides ' +
-      'richer data, Planner CPL-scoping, and delegated budget utilization.',
-  })
-  @ApiResponse({ status: 200, description: 'Legacy dashboard summary data' })
-  getDashboardSummary(@TenantId() tenantId: string) {
-    return this.userService.getDashboardSummary(tenantId);
-  }
+  // T-253: `GET /users/dashboard-summary` (@deprecated) kaldırıldı —
+  // `userService.getDashboardSummary(tenantId)` yalnız tenantId alıyordu,
+  // userId/role hiç geçmiyordu (AccessScopeService enjekte edilmemişti),
+  // yani her rol tüm tenant'ı görüyordu (canlı kapsam bypass'ı, ölçüldü
+  // 2026-08-21: planner (11 CPL) ve planner2 (17 CPL) BİREBİR AYNI yanıtı
+  // alıyordu). ÇAĞIRAN ölçümü (2026-08-22): backend'de yalnız kendi
+  // controller/service/spec'i — ⚠️ bu bir ÇAĞIRAN sayısıdır, bir ATIF
+  // sayısı değil: `capabilities.ts` (B1 taksonomisi) ve
+  // `TEST_DOCUMENTATION.md` rotayı metinde anıyor, ikisi de yorum/belge.
+  // collmind.frontend'de `dashboard-summary` /
+  // `getDashboardSummary` / `users/dashboard` 0 eşleşme (pozitif kontrol:
+  // aynı grep aracı `/dashboard/summary` — kardeş rota — için eşleşiyor);
+  // hiçbir e2e/seed bu rotaya değinmiyor. Kardeş rota `GET /dashboard/summary`
+  // (`DashboardService`) zaten `resolveScopedCplIds` ile doğru kapsıyor ve
+  // frontend onu kullanıyor. Bkz. `.claude/backlog/tasks/T-253.md`.
 
   /**
    * [[T-255]] ⛔ P0, ürün sahibi kararı (2026-08-21) — DUR kapandı:

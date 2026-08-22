@@ -10,9 +10,6 @@ import { UserService } from './user.service';
 import { UserRepository } from './user.repository';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { User } from '../../database/entities/user.entity';
-import { Plan } from '../../database/entities/plan.entity';
-import { Agreement } from '../../database/entities/agreement.entity';
-import { BudgetEnvelope } from '../../database/entities/budget-envelope.entity';
 import { UserScope } from '../../database/entities/user-scope.entity';
 import { Cpl } from '../../database/entities/cpl.entity';
 import { Category } from '../../database/entities/category.entity';
@@ -25,15 +22,10 @@ import { AccessScopeModule } from '../shared/access-scope/access-scope.module';
     // bağımlılığını burada da açık tutmak için forFeature'a eklendi),
     // Cpl/Category (scope referanslarının tenant-aidiyet kontrolü,
     // @InjectRepository ile doğrudan kullanılıyor).
-    TypeOrmModule.forFeature([
-      User,
-      Plan,
-      Agreement,
-      BudgetEnvelope,
-      UserScope,
-      Cpl,
-      Category,
-    ]),
+    // T-253: Plan/Agreement/BudgetEnvelope buradan kaldırıldı — yalnız
+    // silinen `getDashboardSummary` onları kullanıyordu (0 başka tüketici,
+    // ölçüldü).
+    TypeOrmModule.forFeature([User, UserScope, Cpl, Category]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

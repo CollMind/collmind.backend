@@ -9,15 +9,6 @@ import {
   UserStatus,
   UserRole,
 } from '../../database/entities/user.entity';
-import { Plan, PlanStatus } from '../../database/entities/plan.entity';
-import {
-  Agreement,
-  AgreementStatus,
-} from '../../database/entities/agreement.entity';
-import {
-  BudgetEnvelope,
-  BudgetEnvelopeStatus,
-} from '../../database/entities/budget-envelope.entity';
 import { UserScope } from '../../database/entities/user-scope.entity';
 import { Cpl } from '../../database/entities/cpl.entity';
 import { Category } from '../../database/entities/category.entity';
@@ -49,9 +40,6 @@ describe('UserService', () => {
   let service: UserService;
   let userRepository: jest.Mocked<UserRepository>;
   let jwtService: jest.Mocked<JwtService>;
-  let planRepository: jest.Mocked<Repository<Plan>>;
-  let agreementRepository: jest.Mocked<Repository<Agreement>>;
-  let budgetEnvelopeRepository: jest.Mocked<Repository<BudgetEnvelope>>;
   let cplRepository: jest.Mocked<Repository<Cpl>>;
   let categoryRepository: jest.Mocked<Repository<Category>>;
   let adminAuditService: jest.Mocked<AdminAuditService>;
@@ -153,24 +141,6 @@ describe('UserService', () => {
           },
         },
         {
-          provide: getRepositoryToken(Plan),
-          useValue: {
-            find: jest.fn(),
-          },
-        },
-        {
-          provide: getRepositoryToken(Agreement),
-          useValue: {
-            find: jest.fn(),
-          },
-        },
-        {
-          provide: getRepositoryToken(BudgetEnvelope),
-          useValue: {
-            find: jest.fn(),
-          },
-        },
-        {
           provide: getRepositoryToken(Cpl),
           useValue: {
             find: jest.fn(),
@@ -216,15 +186,6 @@ describe('UserService', () => {
     service = module.get<UserService>(UserService);
     userRepository = module.get(UserRepository) as jest.Mocked<UserRepository>;
     jwtService = module.get(JwtService) as jest.Mocked<JwtService>;
-    planRepository = module.get(getRepositoryToken(Plan)) as jest.Mocked<
-      Repository<Plan>
-    >;
-    agreementRepository = module.get(
-      getRepositoryToken(Agreement),
-    ) as jest.Mocked<Repository<Agreement>>;
-    budgetEnvelopeRepository = module.get(
-      getRepositoryToken(BudgetEnvelope),
-    ) as jest.Mocked<Repository<BudgetEnvelope>>;
     cplRepository = module.get(getRepositoryToken(Cpl)) as jest.Mocked<
       Repository<Cpl>
     >;
@@ -1493,62 +1454,8 @@ describe('UserService', () => {
     });
   });
 
-  describe('getDashboardSummary', () => {
-    it('should return dashboard summary with correct calculations', async () => {
-      const plans = [
-        { id: '1', status: PlanStatus.APPROVED },
-        { id: '2', status: PlanStatus.DRAFT },
-      ] as Plan[];
-
-      const agreements = [
-        { id: '1', status: AgreementStatus.ACTIVE },
-        { id: '2', status: AgreementStatus.DRAFT },
-      ] as Agreement[];
-
-      const envelopes = [
-        {
-          id: '1',
-          status: BudgetEnvelopeStatus.ACTIVE,
-          allocatedAmount: 1000,
-          consumedAmount: 500,
-          period: 'Q1',
-        },
-        {
-          id: '2',
-          status: BudgetEnvelopeStatus.ACTIVE,
-          allocatedAmount: 2000,
-          consumedAmount: 1000,
-          period: 'Q1',
-        },
-      ] as any[];
-
-      planRepository.find.mockResolvedValue(plans);
-      agreementRepository.find.mockResolvedValue(agreements);
-      budgetEnvelopeRepository.find.mockResolvedValue(envelopes);
-
-      const result = await service.getDashboardSummary(mockTenantId);
-
-      expect(result).toHaveProperty('activeOperations');
-      expect(result).toHaveProperty('drafts');
-      expect(result).toHaveProperty('managedBudget');
-      expect(result).toHaveProperty('budgetUsage');
-      expect(result.activeOperations).toBe(2); // 1 approved plan + 1 active agreement
-      expect(result.drafts).toBe(2); // 1 draft plan + 1 draft agreement
-      expect(result.managedBudget).toBe(3000); // 1000 + 2000
-      expect(result.budgetUsage).toBe(50); // (500 + 1000) / (1000 + 2000) * 100
-    });
-
-    it('should handle empty data correctly', async () => {
-      planRepository.find.mockResolvedValue([]);
-      agreementRepository.find.mockResolvedValue([]);
-      budgetEnvelopeRepository.find.mockResolvedValue([]);
-
-      const result = await service.getDashboardSummary(mockTenantId);
-
-      expect(result.activeOperations).toBe(0);
-      expect(result.drafts).toBe(0);
-      expect(result.managedBudget).toBe(0);
-      expect(result.budgetUsage).toBe(0);
-    });
-  });
+  // T-253: `getDashboardSummary` describe bloğu kaldırıldı — metot silindi.
+  // Not: bu iki test yalnız `tenantId` geçiyordu, hiçbir zaman iki farklı
+  // userId/role için farklı sonuç sınamıyordu — yani kusuru (kapsamsız
+  // sorgu) PİNLİYORDU, ondan korumuyordu.
 });

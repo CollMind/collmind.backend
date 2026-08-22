@@ -279,11 +279,25 @@ import { UserRole } from '../../database/entities/user.entity';
  * union otomatik **çöküş**: `GET /users` (tüm tenant kullanıcı listesi,
  * bugün ADMIN+FINANCE) CATEGORY_MANAGER/PLANNER/READONLY'a da açılırdı.
  *
+ * > ⚠️ **REVİZE — `T-253` (2026-08-22): bu hücrenin ÇÖKÜŞ ÖNCÜLÜ ORTADAN
+ * > KALKTI.** `dashboard-summary` bir kapsam bypass'ıydı (`planner` 11 CPL
+ * > ve `planner2` 17 CPL **birebir aynı** yanıtı alıyordu) ve tüketicisi
+ * > `0` ölçüldüğü için **silindi**. `USER_READ`'de kalan uçlar:
+ * > `GET /users` (`{ADMIN,FINANCE}`) · `GET /users/me` · `GET /users/:id`
+ * > (`@Roles(ADMIN)`, `T-255`). **`5/5` taşıyan üye kalmadı → union artık
+ * > çökmüyor.** Hücre `⛔ DUR`'da kalmaya devam ediyor, ama gerekçesi
+ * > değişti: geriye `GET /users` (tenant kullanıcı listesi) ile `me`
+ * > (self-servis kimlik) **aynı yetenekte mi** sorusu kaldı — `K-2.6.6`.
+ * > Eski satır silinmedi (`Z1` append-only): çöküş bir kez ölçülmüştü ve
+ * > onu ortadan kaldıran şey bir yeniden yorum değil, bir **silme**.
+ *
  * ---
  *
  * #### `5/5` ROL TAŞIYAN ROUTE'LAR — ölçüldü, ve HİPOTEZ ÇÜRÜDÜ
  *
- * Üç `READ` hücresinin çöküşünün kaynağı **`18` route** (ilk sayım `14`
+ * Üç `READ` hücresinin çöküşünün kaynağı **`18` route** (`T-253`'ten
+ * sonra **17** — `dashboard-summary` silindi; sayı burada güncellenmiyor,
+ * çünkü aşağıdaki sınıflandırma o `18`'in üzerine yapıldı) (ilk sayım `14`
  * demişti — parser iç içe sabiti (`READ_ROLES = [...WRITE_ROLES, …]`) tek
  * geçişte çözemiyordu; **fixpoint** ile düzeltildi, çözülemeyen sabit `0`).
  *
@@ -300,10 +314,16 @@ import { UserRole } from '../../database/entities/user.entity';
  *   agreement findAll · findOne · tactics/available
  *   dashboard summary · pending-tasks · cpl-status
  *
- * SINIF B · ÖLÜ İKİZ
- *   user /dashboard-summary  @deprecated — GET /dashboard/summary'nin ikizi
- *                            (user.controller.ts:116). Bir yetenek sorusu
- *                            DEĞİL, bir `İlke 4` kalıntısı.
+ * SINIF B · ÖLÜ İKİZ  →  ⚠️ `T-253` (2026-08-22) ile **KOVA BOŞALDI**
+ *   user /dashboard-summary  @deprecated — GET /dashboard/summary'nin ikizi.
+ *                            Bir yetenek sorusu DEĞİL, bir `İlke 4`
+ *                            kalıntısı. **SİLİNDİ** — ve teşhis eksikti:
+ *                            yalnız ölü bir ikiz değil, CANLI bir kapsam
+ *                            bypass'ıydı (`getDashboardSummary(tenantId)`,
+ *                            0 `AccessScopeService` atıf). Kardeşi
+ *                            `dashboard.service.ts:82` `resolveScopedCplIds`
+ *                            çağırıyor. `İlke 4`'ün maliyeti bu vakada bir
+ *                            tekrar değil, bir GÜVENLİK açığıydı.
  *
  * SINIF C · scope YOK, özet DEĞİL  ⛔ HİPOTEZİ ÇÜRÜTEN
  *   sales-actuals /batches · /batches/:batchId · /batches/:batchId/rows

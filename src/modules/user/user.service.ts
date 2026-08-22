@@ -24,15 +24,6 @@ import {
   UserStatus,
   UserRole,
 } from '../../database/entities/user.entity';
-import { Plan, PlanStatus } from '../../database/entities/plan.entity';
-import {
-  Agreement,
-  AgreementStatus,
-} from '../../database/entities/agreement.entity';
-import {
-  BudgetEnvelope,
-  BudgetEnvelopeStatus,
-} from '../../database/entities/budget-envelope.entity';
 import {
   UserScope,
   WILDCARD_SCOPE_ROLES,
@@ -55,12 +46,6 @@ export class UserService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly jwtService: JwtService,
-    @InjectRepository(Plan)
-    private readonly planRepository: Repository<Plan>,
-    @InjectRepository(Agreement)
-    private readonly agreementRepository: Repository<Agreement>,
-    @InjectRepository(BudgetEnvelope)
-    private readonly budgetEnvelopeRepository: Repository<BudgetEnvelope>,
     @InjectRepository(Cpl)
     private readonly cplRepository: Repository<Cpl>,
     @InjectRepository(Category)
@@ -1025,76 +1010,6 @@ export class UserService {
     await this.userRepository.save(user);
   }
 
-  async getDashboardSummary(tenantId: string) {
-    // Get all plans and agreements (excluding soft-deleted)
-    const [plans, agreements, envelopes] = await Promise.all([
-      this.planRepository.find({
-        where: { tenantId },
-        select: ['id', 'status'],
-      }),
-      this.agreementRepository.find({
-        where: { tenantId },
-        select: ['id', 'status'],
-      }),
-      this.budgetEnvelopeRepository.find({
-        where: { tenantId },
-        select: ['id', 'status', 'allocatedAmount', 'consumedAmount', 'period'],
-      }),
-    ]);
-
-    // Calculate active operations (APPROVED plans + ACTIVE/APPROVED agreements)
-    const activePlans = plans.filter((p) => p.status === PlanStatus.APPROVED);
-    const activeAgreements = agreements.filter(
-      (a) =>
-        a.status === AgreementStatus.ACTIVE ||
-        a.status === AgreementStatus.APPROVED,
-    );
-    const activeOperations = activePlans.length + activeAgreements.length;
-
-    // Calculate drafts (DRAFT plans + DRAFT agreements)
-    const draftPlans = plans.filter((p) => p.status === PlanStatus.DRAFT);
-    const draftAgreements = agreements.filter(
-      (a) => a.status === AgreementStatus.DRAFT,
-    );
-    const drafts = draftPlans.length + draftAgreements.length;
-
-    // Calculate managed budget (total allocated amount from all active envelopes)
-    const activeEnvelopes = envelopes.filter(
-      (e) => e.status === BudgetEnvelopeStatus.ACTIVE,
-    );
-    const managedBudget = activeEnvelopes.reduce(
-      (sum, e) => sum + Number(e.allocatedAmount || 0),
-      0,
-    );
-
-    // Calculate Q1 budget status (usage percentage)
-    // Get current quarter
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const q1Envelopes = activeEnvelopes.filter(
-      (e) => e.period === 'Q1' || e.period?.startsWith(`${currentYear}-Q1`),
-    );
-
-    let budgetUsage = 0;
-    if (q1Envelopes.length > 0) {
-      const totalAllocated = q1Envelopes.reduce(
-        (sum, e) => sum + Number(e.allocatedAmount || 0),
-        0,
-      );
-      const totalConsumed = q1Envelopes.reduce(
-        (sum, e) => sum + Number(e.consumedAmount || 0),
-        0,
-      );
-      if (totalAllocated > 0) {
-        budgetUsage = (totalConsumed / totalAllocated) * 100;
-      }
-    }
-
-    return {
-      activeOperations,
-      drafts,
-      managedBudget,
-      budgetUsage: Math.round(budgetUsage * 10) / 10, // Round to 1 decimal place
-    };
-  }
+  // T-253: getDashboardSummary(tenantId) kaldırıldı — bkz. user.controller.ts
+  // (dashboard-summary rotasının kaldırma gerekçesi orada, tek yerde).
 }
