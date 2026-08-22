@@ -32,4 +32,3 @@ src/modules/shared/lta/lta-agreement.controller.ts|GET|lta-agreements/cpl/:cplId
 src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/calculate/base-spend	# CPL-bağlı LTA oran verisi hesaplıyor, caller'ın kapsamına karşı doğrulanmıyor
 src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/calculate/planned-spend	# CPL-bağlı LTA oran verisi hesaplıyor, caller'ın kapsamına karşı doğrulanmıyor
 src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/context/rates	# CPL-bağlı LTA oran verisi hesaplıyor, caller'ın kapsamına karşı doğrulanmıyor
-src/modules/user/user.controller.ts|GET|users/dashboard-summary	# T-253 sınıfı — deprecated ama erişilebilir, userService.getDashboardSummary 0 accessScope atıf, tenant-geneli

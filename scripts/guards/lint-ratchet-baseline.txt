@@ -201,7 +201,7 @@ src/modules/user/auth.controller.ts @typescript-eslint/no-explicit-any 2
 src/modules/user/strategies/jwt.strategy.ts @typescript-eslint/no-explicit-any 1
 src/modules/user/user.controller.ts @typescript-eslint/no-explicit-any 3
 src/modules/user/user.repository.ts @typescript-eslint/no-explicit-any 2
-src/modules/user/user.service.spec.ts @typescript-eslint/no-explicit-any 33
+src/modules/user/user.service.spec.ts @typescript-eslint/no-explicit-any 32
 test/budget-transaction-logs-idempotency.e2e-spec.ts @typescript-eslint/no-explicit-any 2
 test/budget-transaction-logs-idempotency.e2e-spec.ts prettier/prettier 4
 test/budget-variance.e2e-spec.ts @typescript-eslint/no-explicit-any 2
