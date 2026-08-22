@@ -1,0 +1,35 @@
+# scope-ratchet: A2 — kapsam GEREKLİ, UYGULANMIYOR, borç defteri (BUGÜN BLOKLAMAZ, listede)
+# T-266 (Z19b) — kapsam ratchet'i. Format: <dosya>|<YÖNTEM>|<yol><TAB># <gerekçe>
+# anahtar route-scope.awk'ın ürettiğiyle AYNI (<dosya>|<YÖNTEM>|<yol>).
+# date:   2026-08-22
+# commit: 9be2264
+#
+# Alan A (money-float-domain-a.txt) DIŞI modüller: customer · approval · lta-agreement · user
+#
+src/modules/customer/customer.controller.ts|DELETE|customers/:id	# müşteri CPL'e ait (K-2.1.4), yazma yolu okumadan dar olmalı (Karar 2)
+src/modules/customer/customer.controller.ts|GET|customers	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/:id	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/:id/stats	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/channel-id/:channelId	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/channel/:channel	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/city/:city	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/code/:code	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/cpl/list	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/search	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|GET|customers/vip	# müşteri verisi CPL'e bağlı, customer.service 0 accessScope atıf
+src/modules/customer/customer.controller.ts|PATCH|customers/:id	# müşteri CPL'e ait, yazma yolu okumadan dar olmalı (Karar 2)
+src/modules/customer/customer.controller.ts|POST|customers	# müşteri CPL'e ait, yazma yolu okumadan dar olmalı (Karar 2)
+src/modules/customer/customer.controller.ts|POST|customers/:id/activate	# müşteri CPL'e ait, yazma yolu okumadan dar olmalı (Karar 2)
+src/modules/customer/customer.controller.ts|POST|customers/:id/deactivate	# müşteri CPL'e ait, yazma yolu okumadan dar olmalı (Karar 2)
+src/modules/customer/customer.controller.ts|POST|customers/bulk	# müşteri CPL'e ait, yazma yolu okumadan dar olmalı (Karar 2)
+src/modules/customer/customer.controller.ts|POST|customers/import	# müşteri CPL'e ait, yazma yolu okumadan dar olmalı (Karar 2)
+src/modules/shared/approval/approval.controller.ts|GET|approvals	# findAll(tenantId) tenant-geneli, kapsam yok — approval.service 0 accessScope atıf
+src/modules/shared/approval/approval.controller.ts|GET|approvals/:id	# findById(id,tenantId) CPL kontrolü yok — approval.service 0 accessScope atıf
+src/modules/shared/approval/approval.controller.ts|GET|approvals/pending	# findPendingForUser userId'yi HİÇ kullanmıyor — tenant-geneli, kapsam yok
+src/modules/shared/lta/lta-agreement.controller.ts|GET|lta-agreements	# LTA agreement CPL'e bağlı (cpl/:cplId/active kanıtı) — 0 accessScope atıf, tüm rollere açık
+src/modules/shared/lta/lta-agreement.controller.ts|GET|lta-agreements/:id	# LTA agreement CPL'e bağlı — 0 accessScope atıf, tüm rollere açık
+src/modules/shared/lta/lta-agreement.controller.ts|GET|lta-agreements/cpl/:cplId/active	# verilen cplId caller'ın kapsamına karşı hiç doğrulanmıyor
+src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/calculate/base-spend	# CPL-bağlı LTA oran verisi hesaplıyor, caller'ın kapsamına karşı doğrulanmıyor
+src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/calculate/planned-spend	# CPL-bağlı LTA oran verisi hesaplıyor, caller'ın kapsamına karşı doğrulanmıyor
+src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/context/rates	# CPL-bağlı LTA oran verisi hesaplıyor, caller'ın kapsamına karşı doğrulanmıyor
+src/modules/user/user.controller.ts|GET|users/dashboard-summary	# T-253 sınıfı — deprecated ama erişilebilir, userService.getDashboardSummary 0 accessScope atıf, tenant-geneli

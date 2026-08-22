@@ -128,6 +128,23 @@ else
   exit 1
 fi
 
+# scope-ratchet'in de kendi self-test'i AYRI bir dosyadır ([[T-266]], Z19b) —
+# aynı gerekçe: bu guard hem SRC_DIR'i (route-scope.awk çıktısı) hem DÖRT
+# sınıflandırma listesini (A1/A2/B/C) fixture'a yönlendirilerek sınanır, VE
+# A1 ratchet'i git HEAD'e karşı çalıştığı için self-test İZOLE, tek kullanımlık
+# bir git deposu kurar (CLAUDE.md: "yan etkisi olan bir aracı İZOLE hedefte
+# sına"). Aynı zincirleme kuralı burada da geçerli: self-test dosyası VAR ama
+# hiçbir gerçek kapı yolu onu ÇAĞIRMIYORSA "doğrulama bir kapıdır, durdurmuyorsa
+# doğrulama değildir" ihlal edilir.
+echo "=== self-test (scope-ratchet) ==="
+if bash "$DIR/scope-ratchet-self-test.sh"; then
+  echo "(scope-ratchet fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! scope-ratchet kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0

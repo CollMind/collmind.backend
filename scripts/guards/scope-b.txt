@@ -1,0 +1,45 @@
+# scope-ratchet: B — kapsam GEREKLİ ve UYGULANIYOR (büyüyebilir, iyileşme)
+# T-266 (Z19b) — kapsam ratchet'i. Format: <dosya>|<YÖNTEM>|<yol><TAB># <gerekçe>
+# anahtar route-scope.awk'ın ürettiğiyle AYNI (<dosya>|<YÖNTEM>|<yol>).
+# date:   2026-08-22
+# commit: 9be2264
+#
+#
+src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/grid/:planId	# getGridKpisForPlan → planService.findById(actor) ile GERÇEK scope (assertReadScope) — kod doğrulandı
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|DELETE|agreements/:id	# delete → findById(actor) → isInScope/assertEntityInScope gerçek kontrol
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|GET|agreements	# findAll(actor) → accessScope.resolveScope gerçek kontrol
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|GET|agreements/:id	# findById(actor) → isInScope/assertEntityInScope gerçek kontrol
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|PATCH|agreements/:id	# update → findById(actor) gerçek kontrol
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|POST|agreements	# create → accessScope.resolveScope + assertEntityInScope gerçek kontrol
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|POST|agreements/:id/approve	# approve → assertCmDecisionScope gerçek kontrol (CM kategori kesişimi)
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|POST|agreements/:id/cancel	# cancel → findById(actor) gerçek kontrol
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|POST|agreements/:id/reject	# reject → assertCmDecisionScope gerçek kontrol (CM kategori kesişimi)
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|POST|agreements/:id/submit	# submit → findById(actor) gerçek kontrol
+src/modules/modes/actuals-first/settlement/settlement.controller.ts|GET|actuals-first/settlements/summary	# settlement-summary.service → accessScope.resolveScope + applyToQueryBuilder gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|DELETE|plans/:id	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|DELETE|plans/:id/fus/:fuId	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|GET|plans	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|GET|plans/:id	# planService.findById → assertReadScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|GET|plans/:id/analysis	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|GET|plans/:id/approval-history	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|GET|plans/:id/budget-check	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|GET|plans/approval-queue	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|GET|plans/pending-approvals	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|PATCH|plans/:id	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|PATCH|plans/:id/fus/:fuId/skus/:skuId/volume	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|PATCH|plans/:id/fus/:fuId/tactics	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/approve	# approval-workflow.service → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/calculate-kpis	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/escalate-to-finance	# approval-workflow.service → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/fus	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/recalculate	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/reject	# approval-workflow.service → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/return-to-draft	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/review	# approval-workflow.service → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/submit	# planService → accessScope gerçek kontrol
+src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/submit-for-approval	# planService → accessScope gerçek kontrol
+src/modules/shared/dashboard/dashboard.controller.ts|GET|dashboard/cpl-status	# resolveScopedCplIds → accessScopeService.resolveScope gerçek kontrol
+src/modules/shared/dashboard/dashboard.controller.ts|GET|dashboard/pending-tasks	# resolveScopedCplIds → accessScopeService.resolveScope gerçek kontrol
+src/modules/shared/dashboard/dashboard.controller.ts|GET|dashboard/summary	# resolveScopedCplIds → accessScopeService.resolveScope gerçek kontrol
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/budget-variance	# getBudgetVarianceReport → accessScopeService.resolveScope gerçek kontrol

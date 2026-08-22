@@ -1,0 +1,110 @@
+# scope-ratchet: C — kapsam EKSENİ YOK (gerekçeli — veri sınıfından türer)
+# T-266 (Z19b) — kapsam ratchet'i. Format: <dosya>|<YÖNTEM>|<yol><TAB># <gerekçe>
+# anahtar route-scope.awk'ın ürettiğiyle AYNI (<dosya>|<YÖNTEM>|<yol>).
+# date:   2026-08-22
+# commit: 9be2264
+#
+#
+src/app.controller.ts|GET|	# public health-check — kimlik/tenant/CPL ekseni yok
+src/modules/admin/admin-audit.controller.ts|GET|admin/audit-log	# tenant-geneli denetim kaydı, ADMIN-only, CPL ekseni yok
+src/modules/admin/admin-audit.controller.ts|GET|admin/audit-log/high-risk	# tenant-geneli denetim kaydı, ADMIN-only, CPL ekseni yok
+src/modules/master-data/brand/brand.controller.ts|DELETE|master-data/brands/:id	# master-data — bir marka CPL'e ait değil, kapsam ekseni yok
+src/modules/master-data/brand/brand.controller.ts|GET|master-data/brands	# master-data — bir marka CPL'e ait değil, kapsam ekseni yok
+src/modules/master-data/brand/brand.controller.ts|GET|master-data/brands/:id	# master-data — bir marka CPL'e ait değil, kapsam ekseni yok
+src/modules/master-data/brand/brand.controller.ts|PATCH|master-data/brands/:id	# master-data — bir marka CPL'e ait değil, kapsam ekseni yok
+src/modules/master-data/brand/brand.controller.ts|POST|master-data/brands	# master-data — bir marka CPL'e ait değil, kapsam ekseni yok
+src/modules/master-data/category/category.controller.ts|DELETE|master-data/categories/:id	# master-data — kategori kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/category/category.controller.ts|GET|master-data/categories	# master-data — kategori kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/category/category.controller.ts|GET|master-data/categories/:id	# master-data — kategori kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/category/category.controller.ts|PATCH|master-data/categories/:id	# master-data — kategori kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/category/category.controller.ts|POST|master-data/categories	# master-data — kategori kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/channel/channel.controller.ts|DELETE|master-data/channels/:id	# master-data — kanal kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/channel/channel.controller.ts|GET|master-data/channels	# master-data — kanal kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/channel/channel.controller.ts|GET|master-data/channels/:id	# master-data — kanal kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/channel/channel.controller.ts|PATCH|master-data/channels/:id	# master-data — kanal kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/channel/channel.controller.ts|POST|master-data/channels	# master-data — kanal kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/cpl/cpl.controller.ts|DELETE|master-data/cpls/:id	# CPL'in KENDİ tanım kataloğu — CPL'e ait değil, CPL'İ tanımlıyor
+src/modules/master-data/cpl/cpl.controller.ts|GET|master-data/cpls	# CPL'in KENDİ tanım kataloğu — CPL'e ait değil, CPL'İ tanımlıyor
+src/modules/master-data/cpl/cpl.controller.ts|GET|master-data/cpls/:id	# CPL'in KENDİ tanım kataloğu — CPL'e ait değil, CPL'İ tanımlıyor
+src/modules/master-data/cpl/cpl.controller.ts|PATCH|master-data/cpls/:id	# CPL'in KENDİ tanım kataloğu — CPL'e ait değil, CPL'İ tanımlıyor
+src/modules/master-data/cpl/cpl.controller.ts|POST|master-data/cpls	# CPL'in KENDİ tanım kataloğu — CPL'e ait değil, CPL'İ tanımlıyor
+src/modules/master-data/forecasting-unit/fu.controller.ts|DELETE|master-data/forecasting-units/:id	# master-data — FU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/forecasting-unit/fu.controller.ts|GET|master-data/forecasting-units	# master-data — FU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/forecasting-unit/fu.controller.ts|GET|master-data/forecasting-units/:id	# master-data — FU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/forecasting-unit/fu.controller.ts|PATCH|master-data/forecasting-units/:id	# master-data — FU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/forecasting-unit/fu.controller.ts|POST|master-data/forecasting-units	# master-data — FU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/generic-unit/gu.controller.ts|DELETE|master-data/generic-units/:id	# master-data — GU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/generic-unit/gu.controller.ts|GET|master-data/generic-units	# master-data — GU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/generic-unit/gu.controller.ts|GET|master-data/generic-units/:id	# master-data — GU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/generic-unit/gu.controller.ts|PATCH|master-data/generic-units/:id	# master-data — GU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/generic-unit/gu.controller.ts|POST|master-data/generic-units	# master-data — GU tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/kpi/kpi.controller.ts|DELETE|master-data/kpis/:id	# KPI tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis	# KPI tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/:id	# KPI tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/calculable	# KPI tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/grid	# tenant-geneli grid katalog sorgusu (findGridKpis) — plan verisi DEĞİL
+src/modules/master-data/kpi/kpi.controller.ts|PATCH|master-data/kpis/:id	# KPI tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/kpi/kpi.controller.ts|POST|master-data/kpis	# KPI tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/kpi/kpi.controller.ts|POST|master-data/kpis/seed-defaults	# KPI tanım kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/kpi/kpi.controller.ts|POST|master-data/kpis/validate-formula	# saf formül doğrulama, tenant/CPL verisi dönmüyor
+src/modules/master-data/mechanic/mechanic.controller.ts|DELETE|master-data/mechanics/:id	# master-data — mekanik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/mechanic/mechanic.controller.ts|GET|master-data/mechanics	# master-data — mekanik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/mechanic/mechanic.controller.ts|GET|master-data/mechanics/:id	# master-data — mekanik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/mechanic/mechanic.controller.ts|PATCH|master-data/mechanics/:id	# master-data — mekanik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/mechanic/mechanic.controller.ts|POST|master-data/mechanics	# master-data — mekanik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/mechanic/mechanic.controller.ts|POST|master-data/mechanics/:id/clone	# master-data — mekanik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/mechanic/mechanic.controller.ts|POST|master-data/mechanics/applicable	# hesaplama yardımcı ucu, tenant-geneli katalogdan türetiliyor, CPL ekseni yok
+src/modules/master-data/mechanic/mechanic.controller.ts|POST|master-data/mechanics/check-combination	# hesaplama yardımcı ucu, tenant-geneli katalogdan türetiliyor, CPL ekseni yok
+src/modules/master-data/mechanic/mechanic.controller.ts|POST|master-data/mechanics/validate-formula	# saf formül doğrulama, tenant/CPL verisi dönmüyor
+src/modules/master-data/region/region.controller.ts|DELETE|master-data/regions/:id	# master-data — bölge kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/region/region.controller.ts|GET|master-data/regions	# master-data — bölge kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/region/region.controller.ts|GET|master-data/regions/:id	# master-data — bölge kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/region/region.controller.ts|PATCH|master-data/regions/:id	# master-data — bölge kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/region/region.controller.ts|POST|master-data/regions	# master-data — bölge kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/sku/sku.controller.ts|DELETE|master-data/skus/:id	# master-data — SKU kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/sku/sku.controller.ts|GET|master-data/skus	# master-data — SKU kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/sku/sku.controller.ts|GET|master-data/skus/:id	# master-data — SKU kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/sku/sku.controller.ts|PATCH|master-data/skus/:id	# master-data — SKU kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/sku/sku.controller.ts|POST|master-data/skus	# master-data — SKU kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/tactic/tactic.controller.ts|DELETE|master-data/tactics/:id	# master-data — taktik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/tactic/tactic.controller.ts|GET|master-data/tactics	# master-data — taktik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/tactic/tactic.controller.ts|GET|master-data/tactics/:id	# master-data — taktik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/tactic/tactic.controller.ts|PATCH|master-data/tactics/:id	# master-data — taktik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/master-data/tactic/tactic.controller.ts|POST|master-data/tactics	# master-data — taktik kataloğu tenant-geneli, CPL ekseni yok
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/template/csv	# statik şablon indirme, veri döndürmüyor
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/template/excel	# statik şablon indirme, veri döndürmüyor
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|GET|agreements/tactics/available	# tactic/channel katalog yardımcı ucu, agreement/CPL verisi dönmüyor
+src/modules/modes/actuals-first/on-invoice/on-invoice.controller.ts|GET|on-invoice/template/csv	# statik şablon indirme, veri döndürmüyor
+src/modules/modes/actuals-first/on-invoice/on-invoice.controller.ts|GET|on-invoice/template/excel	# statik şablon indirme, veri döndürmüyor
+src/modules/notification/notification.controller.ts|GET|notifications	# kişiye özel görünüm (recipientId=user.id), CPL ekseni yok
+src/modules/notification/notification.controller.ts|GET|notifications/unread	# kişiye özel görünüm (recipientId=user.id), CPL ekseni yok
+src/modules/notification/notification.controller.ts|POST|notifications/:id/read	# kişiye özel görünüm (recipientId=user.id), CPL ekseni yok
+src/modules/shared/approval/approval-policy.controller.ts|PATCH|approval-policies/:id	# tenant-geneli politika konfigürasyonu, ADMIN-only, CPL ekseni yok
+src/modules/shared/approval/approval.controller.ts|GET|approvals/my-requests	# requesterId=userId ile filtreli, kişiye özel — CPL ekseni yok
+src/modules/shared/lta/lta-agreement.controller.ts|PATCH|lta-agreements/:id	# yalnız ADMIN çağırabilir, ADMIN AccessScopeService'te koşulsuz UNRESTRICTED (kod dalı) — mekanizma bu rolde hiçbir zaman kısıtlama üretmez
+src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements	# yalnız ADMIN çağırabilir, ADMIN koşulsuz UNRESTRICTED
+src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/:id/activate	# yalnız ADMIN çağırabilir, ADMIN koşulsuz UNRESTRICTED
+src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/:id/terminate	# yalnız ADMIN çağırabilir, ADMIN koşulsuz UNRESTRICTED
+src/modules/tenant/tenant.controller.ts|DELETE|tenants/:id	# tenant yönetimi CPL ekseninin ÜSTÜNDE, ADMIN-only, süper-admin işlevi
+src/modules/tenant/tenant.controller.ts|GET|tenants	# tenant yönetimi CPL ekseninin ÜSTÜNDE, ADMIN-only
+src/modules/tenant/tenant.controller.ts|GET|tenants/:id	# tenant yönetimi CPL ekseninin ÜSTÜNDE, ADMIN-only
+src/modules/tenant/tenant.controller.ts|GET|tenants/:id/stats	# tenant yönetimi CPL ekseninin ÜSTÜNDE (kardeşler ADMIN-only)
+src/modules/tenant/tenant.controller.ts|PATCH|tenants/:id	# tenant yönetimi CPL ekseninin ÜSTÜNDE, ADMIN-only
+src/modules/tenant/tenant.controller.ts|POST|tenants	# tenant yönetimi CPL ekseninin ÜSTÜNDE, ADMIN-only
+src/modules/tenant/tenant.controller.ts|POST|tenants/:id/activate	# tenant yönetimi CPL ekseninin ÜSTÜNDE, ADMIN-only
+src/modules/tenant/tenant.controller.ts|POST|tenants/:id/suspend	# tenant yönetimi CPL ekseninin ÜSTÜNDE, ADMIN-only
+src/modules/user/auth.controller.ts|POST|auth/login	# kimlik doğrulama öncesi — tenant/CPL ekseni henüz yok
+src/modules/user/auth.controller.ts|POST|auth/logout	# kimlik doğrulama — tenant/CPL ekseni yok, req.user.sub ile kendi oturumu
+src/modules/user/auth.controller.ts|POST|auth/refresh	# kimlik doğrulama öncesi — tenant/CPL ekseni henüz yok
+src/modules/user/user.controller.ts|DELETE|users/:id	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
+src/modules/user/user.controller.ts|GET|users	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN/FINANCE-only
+src/modules/user/user.controller.ts|GET|users/:id	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
+src/modules/user/user.controller.ts|GET|users/me	# READ_OWN — req.user.sub, kendi kaydı
+src/modules/user/user.controller.ts|PATCH|users/:id	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
+src/modules/user/user.controller.ts|PATCH|users/:id/password	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
+src/modules/user/user.controller.ts|PATCH|users/:id/scope	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
+src/modules/user/user.controller.ts|PATCH|users/me	# self-write — req.user.sub, kendi kaydı
+src/modules/user/user.controller.ts|PATCH|users/me/password	# self-write — req.user.sub, kendi kaydı
+src/modules/user/user.controller.ts|POST|users	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
+src/modules/user/user.controller.ts|POST|users/:id/activate	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
+src/modules/user/user.controller.ts|POST|users/:id/deactivate	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only

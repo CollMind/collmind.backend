@@ -1,0 +1,77 @@
+# scope-ratchet: A1 — kapsam GEREKLİ, UYGULANMIYOR, Alan A (ratchet'in KAPISI, tek yön aşağı)
+# T-266 (Z19b) — kapsam ratchet'i. Format: <dosya>|<YÖNTEM>|<yol><TAB># <gerekçe>
+# anahtar route-scope.awk'ın ürettiğiyle AYNI (<dosya>|<YÖNTEM>|<yol>).
+# date:   2026-08-22
+# commit: 9be2264
+#
+# TABAN: scripts/guards/money-float-domain-a.txt (ADR 0007) ∩ (0 accessScope atıf)
+# EKLEME (gerekçeli): finance-reporting (T-254 kanıtlı fail-open) · sales-actuals (C sınıfının kendisi) · reversal (Alan A çekirdeği)
+# ÖNCELİK: shared/budget YAZMA uçları (reserve/commit/split/adjust) — modülde kapsam atfı 0 VE bütçe YAZIYOR (T-253'ten ağır: orada okuma, burada yazma)
+#
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions	# Alan A (money-float-domain-a.txt) — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/:id	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/agreement/:agreementId	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/agreement/:agreementId/total	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/batch/:batchId	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/budget-impact/:agreementId	# Alan A — 0 accessScope atıf; agreementService.findById actor'süz çağrılıyor
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/count	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/stats/summary	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|POST|agreement-transactions	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|POST|agreement-transactions/batch	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|POST|agreement-transactions/upload	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|POST|agreement-transactions/validate-and-import	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/agreement/agreement.controller.ts|GET|agreements/pending-approvals	# findPendingApprovals(tenantId) hiçbir kapsam parametresi almıyor — CM tüm tenant'ı görür
+src/modules/modes/actuals-first/ledger/ledger.controller.ts|GET|ledger	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/ledger/ledger.controller.ts|GET|ledger/:id	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/ledger/ledger.controller.ts|GET|ledger/agreement/:agreementId	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/ledger/ledger.controller.ts|GET|ledger/agreement/:agreementId/consumed	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/ledger/ledger.controller.ts|GET|ledger/envelope/:envelopeId	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/ledger/ledger.controller.ts|GET|ledger/envelope/:envelopeId/consumed	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/on-invoice/on-invoice.controller.ts|GET|on-invoice/batch/:batchId	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/on-invoice/on-invoice.controller.ts|GET|on-invoice/count	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/on-invoice/on-invoice.controller.ts|GET|on-invoice/entries	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/on-invoice/on-invoice.controller.ts|POST|on-invoice/:batchId/process	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/on-invoice/on-invoice.controller.ts|POST|on-invoice/:batchId/validate	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/on-invoice/on-invoice.controller.ts|POST|on-invoice/upload	# Alan A — 0 accessScope atıf
+src/modules/modes/actuals-first/reversal/reversal.controller.ts|POST|actuals-first/reversals/agreement-transaction/:transactionId	# ters kayıt — K-2.3.4/ADR 0012, Alan A çekirdeği, CM CPL kontrolü yok
+src/modules/modes/actuals-first/sales-actuals/sales-actuals.controller.ts|GET|actuals-first/sales-actuals/batches	# C sınıfının kendisi (0072 §4c) — ham finansal veri, kapsam yok
+src/modules/modes/actuals-first/sales-actuals/sales-actuals.controller.ts|GET|actuals-first/sales-actuals/batches/:batchId	# ham finansal veri, kapsam yok
+src/modules/modes/actuals-first/sales-actuals/sales-actuals.controller.ts|GET|actuals-first/sales-actuals/batches/:batchId/rows	# ham finansal veri, kapsam yok
+src/modules/modes/actuals-first/sales-actuals/sales-actuals.controller.ts|GET|actuals-first/sales-actuals/summary	# ham finansal veri, kapsam yok
+src/modules/modes/actuals-first/sales-actuals/sales-actuals.controller.ts|POST|actuals-first/sales-actuals/upload	# ham finansal veri, kapsam yok
+src/modules/modes/actuals-first/settlement/settlement.controller.ts|POST|actuals-first/settlements/close/:agreementId	# settlement-close.service 0 accessScope atıf — CM CPL kontrolü yok
+src/modules/shared/budget/budget-allocation.controller.ts|GET|budget-allocations	# Alan A — 0 accessScope atıf (poz. kontrol: dashboard.service → 5)
+src/modules/shared/budget/budget-allocation.controller.ts|GET|budget-allocations/:id	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget-allocation.controller.ts|GET|budget-allocations/reports/utilization	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget-allocation.controller.ts|PATCH|budget-allocations/:id	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/adjust	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
+src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/check-availability	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/commit	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
+src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/release	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
+src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/reports/forecast	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/reserve	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
+src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id/reserved	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id/transactions	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget.controller.ts|GET|budget/status	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget.controller.ts|POST|budget/envelopes	# Alan A — 0 accessScope atıf
+src/modules/shared/budget/budget.controller.ts|POST|budget/envelopes/:id/split	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
+src/modules/shared/budget/budget.controller.ts|POST|budget/reserve	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/budget-at-risk	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/budget-utilization	# [[T-254]] KANITLI fail-open — boş kapsam kısıtı düşürüyor
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/cash-flow-projection	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/mechanic-effectiveness	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/plan-performance	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/spend-composition	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/spend-trend	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta
+src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/variance-analysis	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta
+src/modules/shared/spend-calculation/spend-calculation.controller.ts|GET|spend-calculation/breakdown/:planFuId	# Alan A (ADR 0007 E10) — 0 accessScope atıf
+src/modules/shared/spend-calculation/spend-calculation.controller.ts|GET|spend-calculation/validate-before-submission/:planId	# Alan A — 0 accessScope atıf
+src/modules/shared/spend-calculation/spend-calculation.controller.ts|GET|spend-calculation/validate-budget/:planId	# Alan A — 0 accessScope atıf
+src/modules/shared/spend-calculation/spend-calculation.controller.ts|GET|spend-calculation/validate-combinations/:planFuId	# Alan A — 0 accessScope atıf
+src/modules/shared/spend-calculation/spend-calculation.controller.ts|GET|spend-calculation/validate-distribution/:planFuId	# Alan A — 0 accessScope atıf
+src/modules/shared/spend-calculation/spend-calculation.controller.ts|GET|spend-calculation/validate-inputs/:planFuId	# Alan A — 0 accessScope atıf
+src/modules/shared/spend-calculation/spend-calculation.controller.ts|POST|spend-calculation/distribute/:planFuId/:mechanicId	# Alan A — 0 accessScope atıf
+src/modules/shared/spend-calculation/spend-calculation.controller.ts|POST|spend-calculation/recalculate-on-volume-change/:skuId	# Alan A — 0 accessScope atıf
