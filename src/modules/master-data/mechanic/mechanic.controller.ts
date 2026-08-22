@@ -64,6 +64,15 @@ export class MechanicController {
     );
   }
 
+  // T-267 (B1 §1c) — modül-READ, 5 rol. Aynı gerekçe 1a ile (K-2.6.4, her
+  // rol için ayrı cümle) — bkz. brand.controller.ts.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get()
   @ApiOperation({ summary: 'Get all mechanics' })
   @ApiResponse({
@@ -83,6 +92,14 @@ export class MechanicController {
     );
   }
 
+  // T-267 (B1 §1c) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get(':id')
   @ApiOperation({ summary: 'Get mechanic by ID' })
   @ApiResponse({ status: 200, description: 'Mechanic details', type: Mechanic })
@@ -157,6 +174,18 @@ export class MechanicController {
     );
   }
 
+  // T-267 (B1 §S2, "Ölçüm 3") — TÜKETİCİSİZ (mechanicEndpoints.getApplicable
+  // çağıranı: 0). T-257 dersi: "silinecekse bile silinene kadar açık
+  // kalamaz" — kader kararı [[T-265]]'e bırakılır, B2 bekletilmez. Rol
+  // seti: KARDEŞ uç — aynı controller'ın okuma ucu (§1c, yukarı) 5 rol
+  // taşıyor; bu uç ölçüldü YAZMA:0 (B1 "Ölçüm 1"), okuma niteliğinde.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Post('applicable')
   @ApiOperation({ summary: 'Get applicable mechanics for plan context' })
   @ApiResponse({
@@ -171,6 +200,15 @@ export class MechanicController {
     return this.mechanicService.getApplicableMechanics(tenantId, planContext);
   }
 
+  // T-267 (B1 §S2) — TÜKETİCİSİZ (0 çağıran, ölçüldü). Aynı gerekçe
+  // (yukarı bkz.): KARDEŞ uç §1c, YAZMA:0.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Post('check-combination')
   @ApiOperation({ summary: 'Check if mechanic combination is valid' })
   @ApiResponse({

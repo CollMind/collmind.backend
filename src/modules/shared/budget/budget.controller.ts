@@ -48,6 +48,27 @@ export class BudgetController {
     return this.budgetService.createEnvelope(tenantId, createDto);
   }
 
+  // T-267 (B1 §S3 final karar, ürün sahibi 2026-08-21) — BEŞ ROL, union
+  // DEĞİL, her rol için K-2.6.4'ten ayrı cümle:
+  //   YÖNETİCİ: tanım gereği
+  //   FİNANS: "eşik üstü onay · transfer · mutabakat" — zarf BAKİYESİNİ
+  //     görmeden yapamaz
+  //   KATEGORİ MÜDÜRÜ: "kategori bütçe sahibi" — kendi zarfını görmek
+  //     TANIMSAL
+  //   PLANLAMACI: POST /budget/reserve'de ZATEN VAR (kardeş uç, satır 69)
+  //     — yazabildiği bir zarfı okuyamaması TUTARSIZ olurdu
+  //   İZLEYİCİ: "salt görüntüleme" — bütçe durumu izlemenin ÇEKİRDEĞİ
+  // ⚠️ KAPSAM SÜTUNU ❌ — resolveScope/AccessScope bu serviste 0 atıf
+  // (ölçüldü). Bir CATEGORY_MANAGER başka kategorinin zarfını görebilir.
+  // Bu B2'nin kapsamı DIŞINDA — [[T-253]]/[[T-254]], KAPSAM RATCHET'ine
+  // (Z19b, [[T-266]]) girer, scope-a1-baseline.txt'e BURADA DOKUNULMADI.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get('envelopes')
   @ApiOperation({ summary: 'Get all budget envelopes' })
   @ApiResponse({ status: 200, description: 'List of budget envelopes' })
@@ -55,6 +76,15 @@ export class BudgetController {
     return this.budgetService.findAllEnvelopes(tenantId);
   }
 
+  // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
+  // şekilde bu turun dışında.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get('envelopes/:id')
   @ApiOperation({ summary: 'Get budget envelope by ID' })
   @ApiResponse({ status: 200, description: 'Budget envelope details' })
@@ -92,6 +122,15 @@ export class BudgetController {
     );
   }
 
+  // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
+  // şekilde bu turun dışında.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get('envelopes/:id/reserved')
   @ApiOperation({
     summary: 'Get reserved amount for an envelope (computed from transactions)',
@@ -139,6 +178,15 @@ export class BudgetController {
     );
   }
 
+  // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
+  // şekilde bu turun dışında.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get('envelopes/:id/transactions')
   @ApiOperation({ summary: 'Get all transactions for an envelope' })
   @ApiResponse({ status: 200, description: 'List of transactions' })
@@ -149,6 +197,15 @@ export class BudgetController {
     return this.budgetService.getTransactionsByEnvelope(tenantId, id);
   }
 
+  // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
+  // şekilde bu turun dışında.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get('status')
   @ApiOperation({ summary: 'Get budget status for channel and category' })
   @ApiResponse({

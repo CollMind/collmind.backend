@@ -48,6 +48,15 @@ export class KpiController {
     return this.kpiService.create(tenantId, createKpiDto);
   }
 
+  // T-267 (B1 §1b) — modül-READ, 5 rol. Aynı gerekçe 1a ile (K-2.6.4, her rol
+  // için ayrı cümle) — bkz. brand.controller.ts.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get()
   @ApiOperation({ summary: 'Get all KPI definitions' })
   @ApiResponse({ status: 200, description: 'List of KPIs', type: [Kpi] })
@@ -58,6 +67,17 @@ export class KpiController {
     return this.kpiService.findAll(tenantId, activeOnly === 'true');
   }
 
+  // T-267 (B1 §2d) — bu uç master-data DEĞİL, PLAN verisi döndürüyor
+  // ("bir planın verisi" — VERİ SINIFI bazında sınıflandırma, T-255 dersi).
+  // Gerekçe kaynağı: KARDEŞ uç — plan.controller.ts `GET /plans/:id`
+  // (aynı 5 rol, plan.controller.ts:201-208).
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('grid/:planId')
   @ApiOperation({
     summary: 'Get KPIs visible in planning grid for a specific plan',
@@ -74,6 +94,15 @@ export class KpiController {
     });
   }
 
+  // T-267 (B1 §2d) — aynı gerekçe (yukarı bkz.): PLAN verisi, plan.controller
+  // kardeşi.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('grid')
   @ApiOperation({ summary: 'Get KPIs visible in planning grid' })
   @ApiResponse({ status: 200, description: 'Grid KPIs', type: [Kpi] })
@@ -81,6 +110,14 @@ export class KpiController {
     return this.kpiService.findGridKpis(tenantId);
   }
 
+  // T-267 (B1 §1b) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('calculable')
   @ApiOperation({ summary: 'Get all calculable KPIs in order' })
   @ApiResponse({ status: 200, description: 'Calculable KPIs', type: [Kpi] })
@@ -88,6 +125,14 @@ export class KpiController {
     return this.kpiService.findCalculableKpis(tenantId);
   }
 
+  // T-267 (B1 §1b) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get(':id')
   @ApiOperation({ summary: 'Get KPI by ID' })
   @ApiResponse({ status: 200, description: 'KPI details', type: Kpi })

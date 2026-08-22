@@ -24,14 +24,22 @@ import {
   CloseSettlementDto,
 } from './dto';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { Roles } from '../../../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../../database/entities/user.entity';
 
+// T-267: RolesGuard sınıf seviyesine EKLENDİ — `@Roles` metadata'sı
+// RolesGuard olmadan İNERT'tir (roles.guard.ts:16-18: metadata okunamazsa
+// canActivate `true` döner, ama guard zincirinde HİÇ yoksa @Roles hiç
+// OKUNMAZ). `close/:agreementId` etkilenmiyor: o rota @Roles TAŞIMIYOR,
+// RolesGuard onun için `requiredRoles` bulamaz → true (fail-open, mevcut
+// davranış korunur); erişimi hâlâ tek başına SettlementGuard denetliyor.
 @ApiTags('Settlements (Actuals-First)')
 @ApiBearerAuth()
 @Controller('actuals-first/settlements')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class SettlementController {
   constructor(
     private readonly summaryService: SettlementSummaryService,
@@ -45,6 +53,17 @@ export class SettlementController {
    * Planner: yalnızca kendi CPL scope'undaki agreements. Scope boşsa boş summary.
    * Admin/Manager/Finance: tenant-wide.
    */
+  // T-267 (B1 §1f) — ÖZET hücresi, 5 rol (ölçülmüş DAVRANIŞ, "ÖLÇÜM 1"):
+  // servis içeride resolveScope çağırıyor (planner → yalnız kendi CPL
+  // scope'u, diğerleri tenant-wide) — @Roles(ALL) bu davranışı DEĞİŞTİRMEZ,
+  // yalnız RolesGuard'ı gerçek kılar (yukarı bkz.).
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('summary')
   @ApiOperation({
     summary: 'Get settlement summary report',

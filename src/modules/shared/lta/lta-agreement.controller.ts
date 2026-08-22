@@ -6,7 +6,6 @@ import {
   Patch,
   Param,
   ParseUUIDPipe,
-  Delete,
   Query,
   UseGuards,
   HttpCode,
@@ -57,6 +56,21 @@ export class LTAAgreementController {
     return this.ltaAgreementService.createAgreement(tenantId, createDto);
   }
 
+  // T-267 (B1 §"sayım hatası düzeltildi") — bu iki uç (list/:id) HİÇBİR
+  // yere konmamıştı, ölçüldü: 0 frontend tüketicisi → tüketicisiz aileye
+  // katıldı (S2+S3 ile aynı aile, "12 tüketicisiz uç"). T-257 dersi:
+  // "silinecekse bile silinene kadar açık kalamaz" — kader [[T-265]]'e
+  // bırakılır, B2 bekletilmez. Rol seti: KARDEŞ uç — mechanic.controller'ın
+  // aynı şekilli okuma/hesaplama ucu (§1c) 5 rol taşıyor; LTA aynı
+  // "planlama girdisi hesaplama" sınıfı (`0072`'nin işaretlediği
+  // "hesaplama uçları").
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get()
   @ApiOperation({ summary: 'Get all LTA agreements' })
   @ApiResponse({
@@ -72,6 +86,14 @@ export class LTAAgreementController {
     return this.ltaAgreementService.findAll(tenantId, status as any);
   }
 
+  // T-267 — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get(':id')
   @ApiOperation({ summary: 'Get LTA agreement by ID' })
   @ApiResponse({
@@ -137,6 +159,22 @@ export class LTAAgreementController {
     );
   }
 
+  // T-267 (B1 §S1, Z19a — ürün sahibi 2026-08-21) — rol katmanı UYGULANIR,
+  // kapsam AYRI ([[T-266]] kapsam ratchet'ine girer, bu turda EKLENMEZ).
+  // customer.controller.ts'in S1 gerekçesiyle AYNI aile (kapsam sorusu
+  // "CPL'e bağlı müşteri" ile birebir aynı yapı). Rol seti K-2.6.4'ten:
+  //   YÖNETİCİ: tanım gereği
+  //   PLANLAMACI: plan girdisi olarak LTA oranını görmesi gerekiyor
+  //   KATEGORİ MÜDÜRÜ: kategori bazlı anlaşma onayı/izlemesi
+  //   FİNANS: mutabakat — anlaşma bazlı harcamayı eşleştirmesi gerekiyor
+  //   İZLEYİCİ: salt görüntüleme — K-2.6.4c izleme yetenekleri seti
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get('cpl/:cplId/active')
   @ApiOperation({ summary: 'Get active LTA agreement for CPL' })
   @ApiResponse({
@@ -157,6 +195,17 @@ export class LTAAgreementController {
     );
   }
 
+  // T-267 (B1 §S2, "Ölçüm 1": YAZMA:0 · "Ölçüm 3": 0 tüketici) —
+  // hesaplama, yazma DEĞİL, TÜKETİCİSİZ. Aynı gerekçe (yukarı bkz.): BEŞ
+  // ROL, mechanic.controller'ın kardeş hesaplama uçlarıyla (§1c ekinde)
+  // aynı sınıf.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Post('context/rates')
   @ApiOperation({ summary: 'Get LTA rates for plan context' })
   @ApiResponse({
@@ -171,6 +220,17 @@ export class LTAAgreementController {
     return this.ltaAgreementService.getLTAForPlanContext(tenantId, planContext);
   }
 
+  // T-267 (B1 §S2, "Ölçüm 1": YAZMA:0 · "Ölçüm 3": 0 tüketici) —
+  // hesaplama, yazma DEĞİL, TÜKETİCİSİZ. Aynı gerekçe (yukarı bkz.): BEŞ
+  // ROL, mechanic.controller'ın kardeş hesaplama uçlarıyla (§1c ekinde)
+  // aynı sınıf.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Post('calculate/base-spend')
   @ApiOperation({ summary: 'Calculate base LTA spend for plan SKU' })
   @ApiResponse({
@@ -191,6 +251,17 @@ export class LTAAgreementController {
     );
   }
 
+  // T-267 (B1 §S2, "Ölçüm 1": YAZMA:0 · "Ölçüm 3": 0 tüketici) —
+  // hesaplama, yazma DEĞİL, TÜKETİCİSİZ. Aynı gerekçe (yukarı bkz.): BEŞ
+  // ROL, mechanic.controller'ın kardeş hesaplama uçlarıyla (§1c ekinde)
+  // aynı sınıf.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Post('calculate/planned-spend')
   @ApiOperation({ summary: 'Calculate planned LTA spend for plan SKU' })
   @ApiResponse({

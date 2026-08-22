@@ -67,6 +67,22 @@ export class BudgetAllocationController {
     );
   }
 
+  // T-267 (B1 §S2+S3, "12 tüketicisiz uç, tek aile") — bu HTTP controller
+  // TÜKETİCİSİZ (frontend '/budget-allocations' → 0 eşleşme, ölçüldü);
+  // BudgetAllocationService'in kendisi CANLI (spend-validation,
+  // finance-reporting üzerinden) ama BU rota YÜZEYİ değil. T-257 dersi:
+  // "silinecekse bile silinene kadar açık kalamaz" — kader kararı
+  // [[T-265]]'e bırakılır, B2 bekletilmez.
+  // Rol seti: KARDEŞ uç — budget.controller.ts'in aynı domain'deki 5 okuma
+  // ucu bu turda BEŞ ROL aldı (B1 §S3 final karar); bu controller onun ölü
+  // ikizi (B1 S3: "iki paralel bütçe yüzeyi") — aynı rol seti uygulanır.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get()
   @ApiOperation({ summary: 'Get all budget allocations' })
   @ApiResponse({
@@ -75,13 +91,24 @@ export class BudgetAllocationController {
     type: [BudgetAllocation],
   })
   findAll(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stub, öncesinden TODO
     @TenantId() tenantId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stub, öncesinden TODO
     @Query('fiscalYear') fiscalYear?: number,
   ) {
     // TODO: Implement findAll method in service
     return [];
   }
 
+  // T-267 (B1 §S2/S3) — aynı gerekçe (yukarı bkz.): TÜKETİCİSİZ, BEŞ ROL
+  // budget.controller kardeşinden.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get(':id')
   @ApiOperation({ summary: 'Get budget allocation by ID' })
   @ApiResponse({
@@ -90,7 +117,9 @@ export class BudgetAllocationController {
     type: BudgetAllocation,
   })
   findOne(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stub, öncesinden TODO
     @TenantId() tenantId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stub, öncesinden TODO
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     // TODO: Implement findOne method in service
@@ -119,6 +148,15 @@ export class BudgetAllocationController {
     );
   }
 
+  // T-267 (B1 §S2, "Ölçüm 1": YAZMA:0) — hesaplama, yazma DEĞİL; TÜKETİCİSİZ
+  // (aynı aile, yukarı bkz.). Rol seti aynı: BEŞ ROL.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Post('check-availability')
   @ApiOperation({ summary: 'Check budget availability for a plan' })
   @ApiResponse({
@@ -207,6 +245,15 @@ export class BudgetAllocationController {
     );
   }
 
+  // T-267 (B1 §S2/S3) — aynı gerekçe (yukarı bkz.): TÜKETİCİSİZ, BEŞ ROL
+  // budget.controller kardeşinden.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Get('reports/utilization')
   @ApiOperation({ summary: 'Get budget utilization report' })
   @ApiResponse({
@@ -224,6 +271,15 @@ export class BudgetAllocationController {
     );
   }
 
+  // T-267 (B1 §S2, "Ölçüm 1": YAZMA:0) — hesaplama, yazma DEĞİL; TÜKETİCİSİZ
+  // (aynı aile, yukarı bkz.). Rol seti aynı: BEŞ ROL.
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.FINANCE,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.PLANNER,
+    UserRole.READONLY,
+  )
   @Post('reports/forecast')
   @ApiOperation({ summary: 'Get budget forecast report' })
   @ApiResponse({

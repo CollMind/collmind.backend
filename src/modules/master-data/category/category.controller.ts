@@ -50,6 +50,20 @@ export class CategoryController {
     return this.categoryService.create(tenantId, createCategoryDto);
   }
 
+  // T-267 (B1 §1a) — modül-READ, 5 rol. Kardeş POST/PATCH/DELETE ADMIN'dir;
+  // bu iki GET okuma ucu K-2.6.4 rol TANIMINDAN ayrı ayrı gerekçeleniyor:
+  //   YÖNETİCİ: "tanımlar" — bu veriyi O yazıyor
+  //   PLANLAMACI: "plan · taktik · hacim girişi" — katalog OKUMADAN yapılamaz
+  //   KATEGORİ MÜDÜRÜ: "kategori bütçe sahibi" — kataloğu okumak zorunda
+  //   FİNANS: "mutabakat · içe aktarma" — kalem eşleştirmek için katalog gerekir
+  //   İZLEYİCİ: "salt görüntüleme" — K-2.6.4c izleme yetenekleri seti
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get()
   @ApiOperation({ summary: 'Get all categories' })
   @ApiResponse({
@@ -64,6 +78,14 @@ export class CategoryController {
     return this.categoryService.findAll(tenantId, activeOnly === 'true');
   }
 
+  // T-267 (B1 §1a) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get(':id')
   @ApiOperation({ summary: 'Get category by ID' })
   @ApiResponse({ status: 200, description: 'Category details', type: Category })

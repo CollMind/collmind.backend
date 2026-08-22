@@ -73,6 +73,24 @@ export class CustomerController {
     return this.customerService.createBulk(tenantId, customers);
   }
 
+  // T-267 (B1 §S1, Z19a — ürün sahibi 2026-08-21) — rol katmanı UYGULANIR,
+  // kapsam katmanı AYRI (T-253/T-254, [[T-266]] kapsam ratchet'ine girer;
+  // bu turda EKLENMEZ). Rol seti K-2.6.4'ten, her rol için ayrı cümle:
+  //   YÖNETİCİ: tanım gereği
+  //   PLANLAMACI: kardeş yazma uçlarında (create/update/delete/import) ZATEN
+  //     var — oluşturduğu müşteriyi okuyamaması TUTARSIZ olurdu
+  //   KATEGORİ MÜDÜRÜ: kategori bazlı plan/bütçe onayı yaparken müşteri/CPL
+  //     bağlamını görmesi gerekiyor
+  //   FİNANS: mutabakat · içe aktarma sırasında müşteri kaydını eşleştirmesi
+  //     gerekiyor (1a ile aynı gerekçe)
+  //   İZLEYİCİ: salt görüntüleme — K-2.6.4c izleme yetenekleri seti
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get()
   @ApiOperation({ summary: 'Get all customers' })
   @ApiResponse({
@@ -84,6 +102,14 @@ export class CustomerController {
     return this.customerService.findAll(tenantId, filters);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('search')
   @ApiOperation({ summary: 'Search customers' })
   @ApiResponse({
@@ -97,6 +123,14 @@ export class CustomerController {
     } as CustomerFilterDto);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('channel/:channel')
   @ApiOperation({ summary: 'Get customers by channel' })
   @ApiResponse({
@@ -111,6 +145,14 @@ export class CustomerController {
     return this.customerService.findByChannel(tenantId, channel);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('channel-id/:channelId')
   @ApiOperation({ summary: 'Get customers by channel ID' })
   @ApiResponse({
@@ -125,6 +167,14 @@ export class CustomerController {
     return this.customerService.findByChannelId(tenantId, channelId);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('city/:city')
   @ApiOperation({ summary: 'Get customers by city' })
   @ApiResponse({
@@ -136,6 +186,14 @@ export class CustomerController {
     return this.customerService.findByCity(tenantId, city);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('vip')
   @ApiOperation({ summary: 'Get VIP customers' })
   @ApiResponse({
@@ -147,6 +205,14 @@ export class CustomerController {
     return this.customerService.findVipCustomers(tenantId);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get(':id')
   @ApiOperation({ summary: 'Get customer by ID' })
   @ApiResponse({
@@ -162,6 +228,14 @@ export class CustomerController {
     return this.customerService.findOne(tenantId, id);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('code/:code')
   @ApiOperation({ summary: 'Get customer by code' })
   @ApiResponse({
@@ -220,6 +294,14 @@ export class CustomerController {
     return this.customerService.deactivate(tenantId, id);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get customer statistics' })
   @ApiResponse({ status: 200, description: 'Customer statistics' })
@@ -230,6 +312,14 @@ export class CustomerController {
     return this.customerService.getStats(tenantId, id);
   }
 
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.PLANNER,
+    UserRole.CATEGORY_MANAGER,
+    UserRole.FINANCE,
+    UserRole.READONLY,
+  )
   @Get('cpl/list')
   @ApiOperation({
     summary: 'Get CPL list with statistics (customer count, active agreements)',

@@ -115,6 +115,9 @@ export class TenantController {
     return this.tenantService.suspend(id);
   }
 
+  // T-267 (B1 §1e) — KARDEŞ uç: tenant.controller'ın yedi kardeşinin
+  // yedisi de @Roles(ADMIN); tek istisna buydu.
+  @Roles(UserRole.ADMIN)
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get tenant statistics' })
   @ApiResponse({ status: 200, description: 'Tenant statistics' })
