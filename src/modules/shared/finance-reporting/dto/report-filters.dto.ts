@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsDateString,
   IsArray,
@@ -32,7 +32,19 @@ export class ReportFilters {
   @IsOptional()
   endDate?: string;
 
-  @ApiPropertyOptional({ description: 'CPL IDs to filter', type: [String] })
+  /**
+   * ⛔ [[T-254]] — `[]` "filtre yok" DEĞİLDİR:
+   *   alan yok / `undefined` → bu boyut kısıtlanmıyor
+   *   `[]`                   → BOŞ KÜME → hiçbir satır (`K-2.6.8a`)
+   * Sözleşmenin tek tanımı: `src/common/query/array-filter.ts`. Bu alan
+   * `dashboard.service.ts` tarafından KAPSAMDAN doldurulur — `.length > 0`
+   * ile kontrol eden her okuyucu bir fail-open üretir.
+   */
+  @ApiPropertyOptional({
+    description:
+      'CPL IDs to filter. Absent = unfiltered; [] = empty set (no rows, K-2.6.8a).',
+    type: [String],
+  })
   @IsArray()
   @IsUUID('4', { each: true })
   @IsOptional()

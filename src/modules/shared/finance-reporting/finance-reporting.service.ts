@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In, SelectQueryBuilder } from 'typeorm';
-import { Plan, PlanStatus } from '../../../database/entities/plan.entity';
-import { PlanFu, PlanSku } from '../../../database/entities/plan.entity';
+import { Repository, Between, In } from 'typeorm';
+import { Plan } from '../../../database/entities/plan.entity';
+import { PlanFu } from '../../../database/entities/plan.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
@@ -18,6 +18,8 @@ import {
   BudgetThresholds,
 } from '../budget/budget-threshold.service';
 import { AccessScopeService } from '../access-scope/access-scope.service';
+// [[T-254]] — `[]` = "boş küme = hiçbir satır" sözleşmesinin TEK tanımı.
+import { arrayFilterWhere } from '../../../common/query/array-filter';
 import {
   ReportFilters,
   PaginationParams,
@@ -159,9 +161,24 @@ export class FinanceReportingService {
       where: {
         tenantId,
         periodStart: Between(startDate, endDate),
-        ...(filters.cplIds && filters.cplIds.length > 0
-          ? { cplId: In(filters.cplIds) }
-          : {}),
+        // [[T-254]] — `cplIds` bu metoda KAPSAMDAN gelebilen tek boyuttur
+        // (tek çağıran: `dashboard.service.ts#getSummary`, `cplIdsFromScope`
+        // üzerinden). Eskiden burada `filters.cplIds.length > 0` vardı ve boş
+        // dizi "filtre yok"a çözülüyordu: kapsamı boşaltılmış bir kullanıcı
+        // TÜM TENANT'ın tahsislerini görüyordu (`K-2.6.8a` ihlali, fail-open).
+        // `[]`'in anlamı artık TEK YERDE: `common/query/array-filter.ts`.
+        ...arrayFilterWhere('cplId', filters.cplIds),
+        // ⚠️ Aşağıdaki iki boyut KASTEN dokunulmadı ve bu bir ölçüme dayanıyor,
+        // bir varsayıma değil: `channels`/`categories` bu metoda hiçbir zaman
+        // kapsamdan gelmez — `getBudgetUtilization`'ın iki çağıranı var
+        // (`dashboard.service.ts` `budgetFilters` yalnız `startDate`/
+        // `endDate`/`cplIds` gönderir; `finance-reporting.controller.ts`'in
+        // `@Get('budget-utilization')` ucu kullanıcının kendi rapor
+        // filtresini gönderir), yani boş dizileri bir ERİŞİM kararı
+        // değil, bir RAPOR filtresidir ve bugün fail-open üretmezler.
+        // Sınıfın tamamı [[T-254]] raporunda listeli (16 eşleşme); bu turda
+        // kapsam bilinçli olarak TEK NOKTA tutuldu (task DUR koşulu: 5+ bulgu
+        // → kapsamı kendi başına genişletme).
         ...(filters.channels && filters.channels.length > 0
           ? { channel: In(filters.channels) }
           : {}),
@@ -693,8 +710,8 @@ export class FinanceReportingService {
             : null,
         totalSpend,
         // T-172: `null` ROI bir İŞ YARGISINA çökmez. `|| 0` "hesaplanamadı"yı
-          // "%0, hedefin altında" diye gösteriyordu — INV-N-004 ailesi.
-          gpRoi: plan.overallRoi ?? null,
+        // "%0, hedefin altında" diye gösteriyordu — INV-N-004 ailesi.
+        gpRoi: plan.overallRoi ?? null,
         riskLevel: plan.ragStatus === 'RED' ? 'HIGH' : 'MEDIUM',
       };
 

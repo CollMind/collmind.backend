@@ -20,6 +20,8 @@ import {
 import { UserRole } from '../../../database/entities/user.entity';
 import { FinanceReportingService } from '../finance-reporting/finance-reporting.service';
 import { ReportFilters } from '../finance-reporting/dto/report-filters.dto';
+// [[T-254]] — `[]` = "boş küme = hiçbir satır" sözleşmesinin TEK tanımı.
+import { arrayFilterField } from '../../../common/query/array-filter';
 import { DashboardSummaryResponseDto } from './dto/dashboard-summary.dto';
 import { diagnosticsOf } from '../../../common/errors/diagnostics';
 import {
@@ -107,10 +109,19 @@ export class DashboardService {
       ]);
 
     // 4. Budget utilization — fully delegated to FinanceReportingService
+    //
+    // [[T-254]] — `cplIds` üç durumu TAŞIR ve üçü de ayrıdır:
+    //   null  → UNRESTRICTED → alan hiç yazılmaz → alıcı "filtre yok" okur
+    //   []    → BOŞ KAPSAM   → `[]` gönderilir   → alıcı "hiçbir satır" okur
+    //   [a,b] → o CPL'ler
+    // Sözleşmenin TEK tanımı `common/query/array-filter.ts`'te; alıcı taraf
+    // (`finance-reporting.service.ts#getBudgetUtilization`) AYNI dosyayı
+    // okur. Öncesinde alıcı `[]`'i "filtre yok" sayıyordu ve boş kapsamlı bir
+    // kullanıcı tüm tenant'ın tahsislerini görüyordu (`K-2.6.8a` ihlali).
     const budgetFilters: ReportFilters = {
       startDate,
       endDate,
-      ...(cplIds !== null ? { cplIds } : {}),
+      ...arrayFilterField('cplIds', cplIds),
     };
 
     let budgetUtilization: DashboardSummaryResponseDto['budgetUtilization'] =
