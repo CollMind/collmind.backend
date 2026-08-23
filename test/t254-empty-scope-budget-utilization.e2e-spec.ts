@@ -1,43 +1,35 @@
 /**
  * t254-empty-scope-budget-utilization.e2e-spec.ts
  *
- * [[T-254]] — BOŞ KAPSAM (`[]`) iki katmanda ZIT yorumlanıyordu:
+ * ⚠️ REWRITTEN (T-270/Z21, 2026-08-23) — the ORIGINAL [[T-254]] fail-open
+ * fix this file guarded (`budgetUtilization` fail-open on an empty CPL
+ * scope) lived entirely on `budget_allocations` via `POST
+ * /budget-allocations`. `budget_allocations` is now RETIRED as a data
+ * source (K-2.2.3 violation, 0 rows in every measured tenant — Z21 karar
+ * kaydı): `FinanceReportingService#getBudgetUtilization` reads
+ * `budget_envelopes` exclusively. Running the ORIGINAL assertions against
+ * today's code measured THREE failures — all three original tests expected
+ * `budgetUtilizationStatus: 'ok'` and got `'unavailable'`, because
+ * `budget_allocations` no longer feeds this endpoint at all.
  *
- *   dashboard.service.ts      `cplIds !== null`      → `[]` "filtre VAR"  → gönderilir
- *   finance-reporting.service `cplIds.length > 0`    → `[]` "filtre YOK"  → KISIT DÜŞER
- *
- * Sonuç bir FAIL-OPEN'dı: kapsamı boşaltılmış (`PATCH /users/:id/scope`,
- * `intent: REVOKE_ALL` — [[T-242a]]) bir kullanıcı `/dashboard/summary`'nin
- * `budgetUtilization` bölümünde TÜM TENANT'ın bütçe tahsislerini görüyordu.
- * `K-2.6.8a`: "Boş kapsam = ERİŞİM YOK."
- *
- * ⚠️ İKİ GİRDİ, İKİ ÇIKTI (task AC): yalnız "boş kapsam → 0" pinlenirse o `0`
- * "veri yok"tan da gelebilirdi. Bu yüzden aynı fixture üzerinde ÜÇ ölçüm var
- * ve üçü FARKLI sayı döndürür:
- *
- *   ADMIN (UNRESTRICTED)          → A + B  (tenant geneli)
- *   PLANNER, kapsam = [CPL_A]     → A      (yalnız kendi CPL'i)
- *   PLANNER, kapsam = []          → 0      (hiçbir satır)
- *
- * ⚠️ POZİTİF KONTROL (task AC): boş kapsamlı kullanıcıda diğer ÜÇ sayaç
- * (`activeAgreementCount` · `pendingApprovalCount` · `openTaskCount`) zaten
- * DOĞRU davranıyordu — `0`. Onlar da assert ediliyor: kusurun TEK NOKTADA
- * olduğunu ve düzeltmenin sistematik bir şeyi değiştirmediğini gösterir.
+ * This is not a mechanical port. `budget_envelopes` has NO `cplId` column
+ * (K-2.2.1 defines an envelope as Kanal × Kategori × Dönem; A7 places CPL in
+ * the scope layer). `DashboardService#getSummary` was changed (same T-270
+ * turn) to FAIL CLOSED for a CPL-scoped caller (R-2) rather than call
+ * `getBudgetUtilization` with a restriction it cannot honour — so the
+ * ORIGINAL "PLANNER, kapsam=[CPL_A] → sees only CPL_A's total" scenario is
+ * no longer just untested, it is no longer a claim this system can make.
+ * What replaces it: EVERY CPL-scoped Planner (empty scope or not) now gets
+ * `unavailable`, and that collapse is itself the thing under test.
  *
  * ⚠️ SCOPE_ENFORCEMENT_ENABLED bu suite'in KENDİ process'inde, app boot'undan
  * ÖNCE, module-level'de zorlanır (user-scope-creation.e2e-spec.ts'in aynı
  * deseni ve aynı gerekçesi): AccessScopeService bayrağı yalnız constructor'da
  * bir kez okur, ve bayrak kapalıyken PLANNER koşulsuz UNRESTRICTED döner —
- * yani bu dosyanın ölçtüğü `[]` durumu HİÇ OLUŞMAZ ve suite sessizce hiçbir
- * şey ölçmez (CLAUDE.md §2.7). Bayrağın etkili olduğu `beforeAll`'da AYRICA
- * doğrulanır, ve dosya kendi ölçümünden sonra bayrağı ESKİ DEĞERİNE geri
- * koyar (`--runInBand` altında process env dosyalar arasında paylaşılır).
- *
- * ⚠️ AccessScopeService'in 5 sn'lik kapsam cache'i bilinçli olarak
- * ATLANIYOR — `clearCache`'in üretim çağıranı yok ([[T-242a]] bulgusu). Boş
- * kapsamlı kullanıcı, REVOKE_ALL'dan ÖNCE hiçbir kapsamlı uca istek atmaz,
- * yani onun için cache satırı hiç doğmaz. `sleep(5s)` ile beklemek yerine bu
- * seçildi: bekleme, ölçümü zamana bağlar.
+ * yani bu dosyanın ölçtüğü CPL-scope durumu HİÇ OLUŞMAZ. Bayrağın etkili
+ * olduğu `beforeAll`'da AYRICA doğrulanır, ve dosya kendi ölçümünden sonra
+ * bayrağı ESKİ DEĞERİNE geri koyar (`--runInBand` altında process env
+ * dosyalar arasında paylaşılır).
  */
 process.env.SCOPE_ENFORCEMENT_ENABLED = 'true';
 
@@ -56,22 +48,18 @@ import {
 } from './helpers/seed-e2e';
 
 /**
- * Uzak bir dönem BİLİNÇLİ: bu suite'in tahsisleri seed'in/başka spec'lerin
- * tahsisleriyle karışmasın diye. Böylece "ADMIN tam olarak A+B görür"
- * assertion'ı bir EŞİTLİK olabiliyor — `toBeGreaterThan` değil.
+ * Uzak bir dönem BİLİNÇLİ: bu suite'in zarflarının seed'in/başka
+ * spec'lerin zarflarıyla karışmasın diye. `EMPTY_PERIOD` ise A1'in
+ * "boş küme → unavailable" pinini taşımak için AYRICA uzak ve HİÇ zarf
+ * yaratılmayan bir dönem.
  */
 const PERIOD = '2099-07';
-const PERIOD_START = '2099-07-01';
-const PERIOD_END = '2099-07-31';
-const FISCAL_YEAR = 2099;
+const PERIOD_2 = '2099-08';
+const EMPTY_PERIOD = '2099-09';
+const FISCAL_YEAR = '2099';
 
-const ALLOC_A_ON = 1000;
-const ALLOC_A_OFF = 500;
-const ALLOC_B_ON = 7000;
-const ALLOC_B_OFF = 3000;
-const TOTAL_A = ALLOC_A_ON + ALLOC_A_OFF; // 1500
-const TOTAL_B = ALLOC_B_ON + ALLOC_B_OFF; // 10000
-const TOTAL_TENANT = TOTAL_A + TOTAL_B; // 11500
+const ENVELOPE_ALLOCATED = 11500;
+const CODE_PREFIX = 'T270-E2E';
 
 interface SummaryBody {
   budgetUtilizationStatus: 'ok' | 'unavailable';
@@ -85,15 +73,14 @@ interface SummaryBody {
   openTaskCount: number;
 }
 
-describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', () => {
+describe('T-270/Z21 — budget_envelopes canonical: dashboard budgetUtilization', () => {
   let app: INestApplication;
   let dataSource: DataSource;
   let fixture: E2EFixture;
 
   let CPL_A: string;
-  let CPL_B: string;
 
-  const allocationIds: string[] = [];
+  const envelopeIds: string[] = [];
   const scratchUserIds: string[] = [];
 
   let scopedPlannerAuth: { Authorization: string };
@@ -101,26 +88,27 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
 
   const previousFlag = process.env.SCOPE_ENFORCEMENT_ENABLED;
 
-  async function createAllocation(
+  async function createActiveEnvelope(
     adminHeader: { Authorization: string },
-    cplId: string,
-    onInvoiceBudget: number,
-    offInvoiceBudget: number,
+    code: string,
+    period: string,
+    allocatedAmount: number,
   ): Promise<string> {
     const res = await request(app.getHttpServer())
-      .post('/budget-allocations')
+      .post('/budget/envelopes')
       .set(adminHeader)
       .send({
-        periodType: 'monthly',
-        periodStart: PERIOD_START,
-        periodEnd: PERIOD_END,
+        code,
         fiscalYear: FISCAL_YEAR,
-        cplId,
-        onInvoiceBudget,
-        offInvoiceBudget,
+        period,
+        allocatedAmount,
+        status: 'ACTIVE',
+        // spendType intentionally omitted — UNSPLIT (spend_type NULL),
+        // the regime every seeded envelope in this tenant already uses
+        // (measured 2026-08-23, main.budget_envelopes: 4/4 NULL).
       })
       .expect(201);
-    allocationIds.push(res.body.id);
+    envelopeIds.push(res.body.id);
     return res.body.id;
   }
 
@@ -129,7 +117,7 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
     adminHeader: { Authorization: string },
     label: string,
   ): Promise<{ userId: string; header: { Authorization: string } }> {
-    const email = `e2e-t254-${label}-${Date.now()}-${Math.random()
+    const email = `e2e-t270-${label}-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 8)}@wella.com`;
     const password = 'Collmind2026!';
@@ -140,7 +128,7 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
       .send({
         email,
         password,
-        fullName: `T-254 ${label}`,
+        fullName: `T-270 ${label}`,
         role: 'PLANNER',
         status: 'ACTIVE',
         scope: [{ cplId: CPL_A, categoryId: null }],
@@ -159,11 +147,12 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
     };
   }
 
-  async function summary(header: {
-    Authorization: string;
-  }): Promise<SummaryBody> {
+  async function summary(
+    header: { Authorization: string },
+    period: string,
+  ): Promise<SummaryBody> {
     const res = await request(app.getHttpServer())
-      .get(`/dashboard/summary?period=${PERIOD}`)
+      .get(`/dashboard/summary?period=${period}`)
       .set(header)
       .expect(200);
     return res.body as SummaryBody;
@@ -174,7 +163,7 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
       // §2.7 pozitif kontrol: bayrak bu process'te gerçekten etkili mi?
       // Değilse PLANNER UNRESTRICTED'a düşer ve bu dosya hiçbir şey ölçmez.
       throw new Error(
-        't254 spec: SCOPE_ENFORCEMENT_ENABLED bu process\'te "true" değil — ' +
+        't270 spec: SCOPE_ENFORCEMENT_ENABLED bu process\'te "true" değil — ' +
           'dosyanın en üstündeki atama AppModule import edilmeden önce ' +
           'çalışmalıydı.',
       );
@@ -185,24 +174,30 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
     clearTokenCache();
     fixture = await loadE2EFixture(app);
 
-    [CPL_A, CPL_B] = await Promise.all([
-      resolveIdByCode(app, fixture.tenantId, 'cpls', 'BS0501.50001'),
-      resolveIdByCode(app, fixture.tenantId, 'cpls', 'BS0502.50002'),
-    ]);
+    CPL_A = await resolveIdByCode(
+      app,
+      fixture.tenantId,
+      'cpls',
+      'BS0501.50001',
+    );
 
     const admin = await loginAs(app, 'ADMIN');
     const adminHeader = admin.authHeader();
 
-    // Önceki bir koşumun kalıntısı varsa temizle — aksi halde
-    // `createAllocation` 409 (overlapping) döner ve suite kurulumda patlar.
+    // Önceki bir koşumun kalıntısı varsa temizle — aksi halde `createActiveEnvelope`
+    // 409 (code çakışması) döner ve suite kurulumda patlar.
     await dataSource.query(
-      `DELETE FROM main.budget_allocations
+      `DELETE FROM main.budget_envelopes
         WHERE tenant_id = $1 AND fiscal_year = $2`,
       [fixture.tenantId, FISCAL_YEAR],
     );
 
-    await createAllocation(adminHeader, CPL_A, ALLOC_A_ON, ALLOC_A_OFF);
-    await createAllocation(adminHeader, CPL_B, ALLOC_B_ON, ALLOC_B_OFF);
+    await createActiveEnvelope(
+      adminHeader,
+      `${CODE_PREFIX}/${PERIOD}`,
+      PERIOD,
+      ENVELOPE_ALLOCATED,
+    );
 
     const scoped = await createPlannerWithScope(adminHeader, 'scoped');
     scopedPlannerAuth = scoped.header;
@@ -212,14 +207,14 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
 
     // [[T-242a]] — kapsamı BOŞALT. Bu kullanıcı bu andan önce hiçbir
     // kapsamlı uca istek atmadı, yani AccessScopeService cache'inde satırı
-    // yok (dosya başlığındaki nota bkz.).
+    // yok.
     await request(app.getHttpServer())
       .patch(`/users/${empty.userId}/scope`)
       .set(adminHeader)
       .send({
         intent: 'REVOKE_ALL',
         scope: [],
-        reason: 'T-254 e2e — boş kapsam fail-open reprodüksiyonu',
+        reason: 'T-270 e2e — CPL-scope fail-closed reprodüksiyonu',
       })
       .expect(200);
 
@@ -230,20 +225,17 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
     );
     if (rows[0].c !== 0) {
       throw new Error(
-        `t254 spec: REVOKE_ALL sonrası aktif kapsam satırı ${rows[0].c} — ` +
+        `t270 spec: REVOKE_ALL sonrası aktif kapsam satırı ${rows[0].c} — ` +
           '0 bekleniyordu; boş kapsam durumu KURULAMADI.',
       );
     }
   });
 
   afterAll(async () => {
-    if (dataSource?.isInitialized && allocationIds.length > 0) {
-      // budget_transaction_logs → budget_allocations FK'si ON DELETE CASCADE
-      // (budget-transaction-log.entity.ts) — tahsisi silmek ALLOCATION log
-      // satırını da götürür.
+    if (dataSource?.isInitialized && envelopeIds.length > 0) {
       await dataSource.query(
-        `DELETE FROM main.budget_allocations WHERE id = ANY($1::uuid[])`,
-        [allocationIds],
+        `DELETE FROM main.budget_envelopes WHERE id = ANY($1::uuid[])`,
+        [envelopeIds],
       );
     }
     // `cleanupTestUsers` `app_migrate` bağlantısını açar (admin_audit_logs
@@ -260,38 +252,55 @@ describe('T-254 — boş kapsam → budgetUtilization (fail-open regresyonu)', (
     }
   });
 
-  it('ÖN KOŞUL — ADMIN (UNRESTRICTED) tenant geneli tahsisi görür: A + B', async () => {
+  /* ================================================================ *
+   * Z21 pin #1 — davranışsal pin ÇİFTİ: gerçek veri görünür ∧ boş küme
+   * unavailable/GREY döner (GREEN DEĞİL). İki girdi, iki çıktı.
+   * ================================================================ */
+  it('A1+A2 GİRDİ 1 — gerçek zarf verisi olan bir dönemde ADMIN "ok" + gerçek toplamı görür', async () => {
     const admin = await loginAs(app, 'ADMIN');
-    const body = await summary(admin.authHeader());
+    const body = await summary(admin.authHeader(), PERIOD);
 
     expect(body.budgetUtilizationStatus).toBe('ok');
-    expect(body.budgetUtilization?.total.allocated).toBe(TOTAL_TENANT);
+    expect(body.budgetUtilization?.total.allocated).toBe(ENVELOPE_ALLOCATED);
   });
 
-  it("GİRDİ 1 — kapsamı DOLU PLANNER yalnız kendi CPL'ini görür: A", async () => {
-    const body = await summary(scopedPlannerAuth);
+  it('A1 GİRDİ 2 — zarfı OLMAYAN bir dönemde ADMIN "unavailable" görür, "ok" + ₺0 DEĞİL', async () => {
+    const admin = await loginAs(app, 'ADMIN');
+    const body = await summary(admin.authHeader(), EMPTY_PERIOD);
 
-    expect(body.budgetUtilizationStatus).toBe('ok');
-    expect(body.budgetUtilization?.total.allocated).toBe(TOTAL_A);
-    // Ayırt edicilik: B'nin tek başına bile görünmediğini göster.
-    expect(body.budgetUtilization?.total.allocated).not.toBe(TOTAL_TENANT);
-    expect(body.budgetUtilization?.total.allocated).not.toBe(TOTAL_B);
+    expect(body.budgetUtilizationStatus).toBe('unavailable');
+    expect(body.budgetUtilization).toBeNull();
   });
 
-  it('GİRDİ 2 — kapsamı BOŞ (REVOKE_ALL) PLANNER hiçbir satır görmez: 0 (K-2.6.8a)', async () => {
-    const body = await summary(emptyScopePlannerAuth);
+  /* ================================================================ *
+   * T-270/Z21 measured gap — CPL-scoped bir çağıran hiçbir zaman "ok"
+   * DÖNMEMELİ: budget_envelopes'ta cplId boyutu yok, ve bu kısıtı
+   * onurlandıramayan bir çağrı sessizce geniş bir figür göstermemeli
+   * (K-2.6.8a fail-open sınıfı; fail-closed, R-2).
+   * ================================================================ */
+  it('T-270/Z21 — kapsamı DOLU (gerçek CPL) PLANNER "unavailable" görür, envelope modelinde CPL kısıtı onurlandırılamaz', async () => {
+    const body = await summary(scopedPlannerAuth, PERIOD);
 
-    expect(body.budgetUtilizationStatus).toBe('ok');
-    expect(body.budgetUtilization?.total.allocated).toBe(0);
-    expect(body.budgetUtilization?.onInvoice.allocated).toBe(0);
-    expect(body.budgetUtilization?.offInvoice.allocated).toBe(0);
+    expect(body.budgetUtilizationStatus).toBe('unavailable');
+    expect(body.budgetUtilization).toBeNull();
   });
 
-  it('POZİTİF KONTROL — aynı boş kapsamda diğer ÜÇ sayaç zaten 0 (kusur TEK noktadaydı)', async () => {
-    const body = await summary(emptyScopePlannerAuth);
+  it('T-270/Z21 — kapsamı BOŞ (REVOKE_ALL) PLANNER de "unavailable" görür (aynı fail-closed dal)', async () => {
+    const body = await summary(emptyScopePlannerAuth, PERIOD);
 
-    expect(body.activeAgreementCount).toBe(0);
-    expect(body.pendingApprovalCount).toBe(0);
-    expect(body.openTaskCount).toBe(0);
+    expect(body.budgetUtilizationStatus).toBe('unavailable');
+    expect(body.budgetUtilization).toBeNull();
+  });
+
+  it('POZİTİF KONTROL — CPL-scoped PLANNER için diğer ÜÇ sayaç bu dalın DIŞINDA, hâlâ hesaplanıyor', async () => {
+    const body = await summary(scopedPlannerAuth, PERIOD_2);
+
+    // Bu üç sayaç FinanceReportingService'ten değil, DashboardService'in
+    // kendi Agreement/ApprovalRequest sorgularından gelir — budget_envelopes
+    // modeliyle ilgisi yok, ve fail-closed dal onları etkilememeli.
+    expect(typeof body.activeAgreementCount).toBe('number');
+    expect(typeof body.pendingApprovalCount).toBe('number');
+    expect(typeof body.openTaskCount).toBe('number');
+    expect(body.budgetUtilizationStatus).toBe('unavailable');
   });
 });

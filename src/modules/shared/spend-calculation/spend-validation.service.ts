@@ -20,7 +20,7 @@ import {
   MechanicCategory,
 } from '../../../database/entities/mechanic.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
-import { BudgetAllocationService } from '../budget/budget-allocation.service';
+import { BudgetService } from '../budget/budget.service';
 import { MechanicService } from '../../master-data/mechanic/mechanic.service';
 import {
   InputValidationResult,
@@ -31,7 +31,7 @@ import {
   ErrorSeverity,
   ErrorCategory,
 } from './dto/validation-result.dto';
-import { BudgetCheckContext } from '../budget/dto/budget-check-context.dto';
+import { AvailabilityResult } from '../budget/dto/budget-check-context.dto';
 
 @Injectable()
 export class SpendValidationService {
@@ -52,7 +52,13 @@ export class SpendValidationService {
     private readonly mechanicRepository: Repository<Mechanic>,
     @InjectRepository(PlanMechanicValue)
     private readonly planMechanicValueRepository: Repository<PlanMechanicValue>,
-    private readonly budgetAllocationService: BudgetAllocationService,
+    // T-270/Z21 (A2): `BudgetAllocationService.checkAvailability` retired —
+    // it read `budget_allocations`, a K-2.2.3-violating dead model (0 rows,
+    // every measured tenant). `BudgetService#checkPlanBudgetAvailability` is
+    // the CANONICAL zarf-based availability check already used by
+    // `approval-workflow.service.ts`/`plan.service.ts` — İlke 4 (reuse, not
+    // a third implementation).
+    private readonly budgetService: BudgetService,
     private readonly mechanicService: MechanicService,
   ) {}
 
@@ -470,9 +476,7 @@ export class SpendValidationService {
         'planFus',
         'planFus.planMechanicValues',
         'planFus.planMechanicValues.mechanic',
-        'cpl',
         'channel',
-        'category',
       ],
     });
 
@@ -536,21 +540,72 @@ export class SpendValidationService {
       }
     }
 
-    // Check budget availability
-    const context: BudgetCheckContext = {
-      cplId: plan.cplId,
-      channel: plan.channel?.code || '',
-      category: plan.category?.code || '',
-      periodStart: plan.startDate.toISOString().split('T')[0],
-      periodEnd: plan.endDate.toISOString().split('T')[0],
-      estimatedOnInvoiceSpend: totalOnInvoiceSpend,
-      estimatedOffInvoiceSpend: totalOffInvoiceSpend,
-    };
-
-    const availability = await this.budgetAllocationService.checkAvailability(
+    // Check budget availability.
+    //
+    // T-270/Z21 (A2): routed through the CANONICAL envelope-based
+    // `BudgetService#checkPlanBudgetAvailability` — same method
+    // `approval-workflow.service.ts#submitForApproval` and
+    // `plan.service.ts#submit` already gate on (K-2.2.3: one dimension
+    // resolution for envelope lookups, not a per-caller reimplementation).
+    // `cplId`/`category` are NOT passed: K-2.2.1 defines an envelope as
+    // Kanal × Kategori × Dönem with CPL in the scope layer (A7), and
+    // `checkPlanBudgetAvailability` itself never takes a category either
+    // (`budget.service.ts:1298-1313` — matches by channel + period only).
+    //
+    // This also closes the "sıfır bacak" defect the retired call carried:
+    // `BudgetAllocationService.checkAvailability`'s no-allocation branch
+    // (`budget-allocation.service.ts:308-317`, since removed from this
+    // service's dependency chain) reported `sufficient: false` even for a
+    // ZERO estimated spend, producing a literal "Shortfall: 0.00" error for
+    // a plan that spent nothing of that type. `checkPlanBudgetAvailability`
+    // treats a zero amount as trivially sufficient regardless of envelope
+    // state (ADR 0004 Karar 2 eki, `budget.service.ts:1262-1269`) — in BOTH
+    // its UNSPLIT (shared-pool) and SPLIT branches — so that shape is no
+    // longer reachable through this call site.
+    const channelCode = plan.channel?.code || '';
+    const budgetCheck = await this.budgetService.checkPlanBudgetAvailability(
       tenantId,
-      context,
+      channelCode,
+      plan.periodMonth,
+      totalOnInvoiceSpend,
+      totalOffInvoiceSpend,
     );
+
+    const onInvoiceShortfall = Math.max(
+      0,
+      totalOnInvoiceSpend - budgetCheck.onInvoice.available,
+    );
+    const offInvoiceShortfall = Math.max(
+      0,
+      totalOffInvoiceSpend - budgetCheck.offInvoice.available,
+    );
+    // No `.toFixed()`-formatted reduction percentage here (unlike the
+    // retired `BudgetAllocationService.checkAvailability`, which computed
+    // one): `spend-validation.service.ts` is a Domain A file under
+    // `money-float.sh --ratchet`, and this would be a NEW call site, not a
+    // relocation the ratchet can see as neutral. The percentage was
+    // decorative — the caller already falls back to this exact generic
+    // string (`validateBudgetImpact` below, `|| 'Reduce On-Invoice
+    // spends'`) whenever no matching suggestion is found, so a plain
+    // message loses no information a reader could not already get from
+    // `onInvoiceShortfall`/`offInvoiceShortfall` themselves.
+    const availabilitySuggestions: string[] = [];
+    if (!budgetCheck.onInvoice.sufficient) {
+      availabilitySuggestions.push('Reduce On-Invoice spend to fit budget');
+    }
+    if (!budgetCheck.offInvoice.sufficient) {
+      availabilitySuggestions.push('Reduce Off-Invoice spend to fit budget');
+    }
+
+    const availability: AvailabilityResult = {
+      onInvoiceAvailable: budgetCheck.onInvoice.available,
+      offInvoiceAvailable: budgetCheck.offInvoice.available,
+      onInvoiceSufficient: budgetCheck.onInvoice.sufficient,
+      offInvoiceSufficient: budgetCheck.offInvoice.sufficient,
+      onInvoiceShortfall,
+      offInvoiceShortfall,
+      suggestions: availabilitySuggestions,
+    };
 
     const errors: ValidationError[] = [];
     const suggestions: string[] = [];

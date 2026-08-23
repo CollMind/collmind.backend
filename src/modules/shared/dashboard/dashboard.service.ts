@@ -138,28 +138,49 @@ export class DashboardService {
     // looking like it had proved something.
     let budgetUtilizationStatus: DashboardSummaryResponseDto['budgetUtilizationStatus'] =
       'unavailable';
-    try {
-      const raw = await this.financeReportingService.getBudgetUtilization(
-        tenantId,
-        budgetFilters,
-      );
-      budgetUtilization = {
-        onInvoice: raw.onInvoice,
-        offInvoice: raw.offInvoice,
-        total: raw.total,
-        periodStart: raw.periodStart,
-        periodEnd: raw.periodEnd,
-      };
-      budgetUtilizationStatus = 'ok';
-    } catch (err) {
-      // `diagnosticsOf` (T-098), not the bare error: Nest renders an Error
-      // argument with `Error.toString()`, so `context` — which is where the
-      // offending value lives now that the message is redacted — never reached
-      // the log. Measured in review, after a comment here claimed otherwise.
+    // ⚠️ T-270/Z21 MEASURED GAP (fail-closed, not one of Z21's four kabul
+    // şartı — flagged separately in T-270's report, needs a product
+    // decision): `budget_envelopes` (canonical as of A2) has NO `cplId`
+    // column — K-2.2.1/A7 place CPL in the scope layer, not the budget
+    // layer. Before A2 this did not matter: `budget_allocations` DID carry
+    // `cplId` but was always empty (0 rows, every tenant), so a CPL-scoped
+    // PLANNER's dashboard budget panel was already showing nothing of
+    // substance. After A2 there is REAL money in `budget_envelopes`
+    // (measured 2026-08-23: ₺1,600,000 across 4 envelopes), and
+    // `FinanceReportingService#getBudgetUtilization` has no way to honour a
+    // CPL restriction against it. Calling it anyway for a CPL-scoped user
+    // would silently WIDEN what they see (K-2.6.8a's fail-open class) —
+    // this env has `SCOPE_ENFORCEMENT_ENABLED=true`, so this is live for a
+    // real PLANNER account, not a hypothetical. Fail-closed instead (R-2):
+    // a restricted cplIds array means "unavailable", not "unrestricted".
+    if (cplIds !== null) {
       this.logger.warn(
-        'getBudgetUtilization failed — reporting budgetUtilizationStatus=unavailable',
-        diagnosticsOf(err),
+        'getBudgetUtilization skipped for a CPL-scoped caller — budget_envelopes has no cplId dimension to filter by (T-270/Z21 measured gap); reporting budgetUtilizationStatus=unavailable rather than an unscoped figure',
       );
+    } else {
+      try {
+        const raw = await this.financeReportingService.getBudgetUtilization(
+          tenantId,
+          budgetFilters,
+        );
+        budgetUtilization = {
+          onInvoice: raw.onInvoice,
+          offInvoice: raw.offInvoice,
+          total: raw.total,
+          periodStart: raw.periodStart,
+          periodEnd: raw.periodEnd,
+        };
+        budgetUtilizationStatus = 'ok';
+      } catch (err) {
+        // `diagnosticsOf` (T-098), not the bare error: Nest renders an Error
+        // argument with `Error.toString()`, so `context` — which is where the
+        // offending value lives now that the message is redacted — never reached
+        // the log. Measured in review, after a comment here claimed otherwise.
+        this.logger.warn(
+          'getBudgetUtilization failed — reporting budgetUtilizationStatus=unavailable',
+          diagnosticsOf(err),
+        );
+      }
     }
 
     const openTaskCount = activeWithConsumedSpend;

@@ -5,7 +5,6 @@ import { FinanceReportingController } from './finance-reporting.controller';
 import { Plan, PlanFu, PlanSku } from '../../../database/entities/plan.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
-import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
 import { BudgetEnvelope } from '../../../database/entities/budget-envelope.entity';
 import { BudgetModule } from '../budget/budget.module';
 import { AccessScopeModule } from '../access-scope/access-scope.module';
@@ -18,7 +17,10 @@ import { AccessScopeModule } from '../access-scope/access-scope.module';
       PlanSku,
       PlanMechanicValue,
       MechanicSpendBreakdown,
-      BudgetAllocation,
+      // T-270/Z21: `BudgetAllocation` removed — `FinanceReportingService` no
+      // longer reads `budget_allocations` (retired, K-2.2.3 violation; see
+      // Z21 karar kaydı). `budget-allocation.controller.ts`'s own module
+      // registration (`BudgetModule`) is untouched by this.
       BudgetEnvelope,
     ]),
     BudgetModule,

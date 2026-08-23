@@ -1,13 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { FinanceReportingService } from './finance-reporting.service';
-import { Plan, PlanFu, PlanSku, PlanStatus } from '../../../database/entities/plan.entity';
+import {
+  Plan,
+  PlanFu,
+  PlanStatus,
+} from '../../../database/entities/plan.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
-import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
 import { BudgetEnvelope } from '../../../database/entities/budget-envelope.entity';
 import { MechanicCategory } from '../../../database/entities/mechanic.entity';
-import { BudgetAllocationService } from '../budget/budget-allocation.service';
 import { BudgetRepository } from '../budget/budget.repository';
 import {
   BudgetThresholdService,
@@ -69,7 +71,11 @@ function buildMechanic(category: MechanicCategory, code = 'MECH'): any {
  * a `number`, via `MoneyTransformer` (was a STRING before T-197/T-221; see
  * the module comment above).
  */
-function buildPmv(calculatedSpend: number, category: MechanicCategory, code = 'MECH'): any {
+function buildPmv(
+  calculatedSpend: number,
+  category: MechanicCategory,
+  code = 'MECH',
+): any {
   return { calculatedSpend, mechanic: buildMechanic(category, code) };
 }
 
@@ -109,7 +115,15 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
   let service: FinanceReportingService;
   let planRepository: { createQueryBuilder: jest.Mock };
   let planFuRepository: { find: jest.Mock };
-  let budgetAllocationRepository: { find: jest.Mock };
+  // T-270/Z21 (A2): `getBudgetAtRisk` (below) reads budget totals through
+  // `computeBudgetUtilization`, now sourced from `BudgetEnvelope` (envelope
+  // model), not the retired `BudgetAllocation`. `getMany` resolves `[]` by
+  // default — same "no budget data" shape the old `find()` mock had, and
+  // the fixture this suite's `getBudgetAtRisk` test relies on (it never
+  // asserts on budget totals, only `redPlans`/`totalSpend`).
+  let budgetEnvelopeQueryBuilder: ReturnType<typeof buildQueryBuilder>;
+  let budgetEnvelopeRepository: { createQueryBuilder: jest.Mock };
+  let budgetRepository: { getAllBudgetSummaries: jest.Mock };
   let budgetThresholdService: {
     getThresholds: jest.Mock;
     toStatus: jest.Mock;
@@ -118,7 +132,15 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
   beforeEach(async () => {
     planRepository = { createQueryBuilder: jest.fn() };
     planFuRepository = { find: jest.fn() };
-    budgetAllocationRepository = { find: jest.fn().mockResolvedValue([]) };
+    budgetEnvelopeQueryBuilder = buildQueryBuilder({
+      getMany: jest.fn().mockResolvedValue([]),
+    });
+    budgetEnvelopeRepository = {
+      createQueryBuilder: jest.fn().mockReturnValue(budgetEnvelopeQueryBuilder),
+    };
+    budgetRepository = {
+      getAllBudgetSummaries: jest.fn().mockResolvedValue([]),
+    };
     budgetThresholdService = {
       getThresholds: jest.fn().mockResolvedValue(THRESHOLDS),
       toStatus: jest.fn((percent: number, t: BudgetThresholds) => {
@@ -136,13 +158,11 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
         { provide: getRepositoryToken(PlanMechanicValue), useValue: {} },
         { provide: getRepositoryToken(MechanicSpendBreakdown), useValue: {} },
         {
-          provide: getRepositoryToken(BudgetAllocation),
-          useValue: budgetAllocationRepository,
+          provide: getRepositoryToken(BudgetEnvelope),
+          useValue: budgetEnvelopeRepository,
         },
-        { provide: getRepositoryToken(BudgetEnvelope), useValue: {} },
-        { provide: BudgetAllocationService, useValue: {} },
         { provide: BudgetThresholdService, useValue: budgetThresholdService },
-        { provide: BudgetRepository, useValue: {} },
+        { provide: BudgetRepository, useValue: budgetRepository },
         { provide: AccessScopeService, useValue: {} },
       ],
     }).compile();
@@ -157,15 +177,17 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
         startDate: new Date('2026-01-01'),
         endDate: new Date('2026-01-31'),
       });
-      const qb = buildQueryBuilder({ getMany: jest.fn().mockResolvedValue([plan]) });
+      const qb = buildQueryBuilder({
+        getMany: jest.fn().mockResolvedValue([plan]),
+      });
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu(
         [
-          buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
-          buildPmv(50.00, MechanicCategory.OFF_INVOICE_DISCOUNT, 'OFF-MECH'),
+          buildPmv(100.0, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
+          buildPmv(50.0, MechanicCategory.OFF_INVOICE_DISCOUNT, 'OFF-MECH'),
         ],
-        [buildPlanSku(20.00, 5.00), buildPlanSku(10.00, 15.00)],
+        [buildPlanSku(20.0, 5.0), buildPlanSku(10.0, 15.0)],
       );
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -216,12 +238,14 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
         ragStatus: 'RED',
         overallRoi: 5,
       });
-      const qb = buildQueryBuilder({ getMany: jest.fn().mockResolvedValue([plan]) });
+      const qb = buildQueryBuilder({
+        getMany: jest.fn().mockResolvedValue([plan]),
+      });
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu([
-        buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT),
-        buildPmv(50.00, MechanicCategory.OFF_INVOICE_DISCOUNT),
+        buildPmv(100.0, MechanicCategory.ON_INVOICE_DISCOUNT),
+        buildPmv(50.0, MechanicCategory.OFF_INVOICE_DISCOUNT),
       ]);
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -253,8 +277,8 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu([
-        buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT),
-        buildPmv(50.00, MechanicCategory.OFF_INVOICE_DISCOUNT),
+        buildPmv(100.0, MechanicCategory.ON_INVOICE_DISCOUNT),
+        buildPmv(50.0, MechanicCategory.OFF_INVOICE_DISCOUNT),
       ]);
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -286,12 +310,14 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
         startDate: new Date('2026-01-01'),
         endDate: new Date('2026-01-31'),
       });
-      const qb = buildQueryBuilder({ getMany: jest.fn().mockResolvedValue([plan]) });
+      const qb = buildQueryBuilder({
+        getMany: jest.fn().mockResolvedValue([plan]),
+      });
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu([
-        buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT),
-        buildPmv(50.00, MechanicCategory.OFF_INVOICE_DISCOUNT),
+        buildPmv(100.0, MechanicCategory.ON_INVOICE_DISCOUNT),
+        buildPmv(50.0, MechanicCategory.OFF_INVOICE_DISCOUNT),
       ]);
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -299,8 +325,12 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
 
       expect(report.projections.length).toBeGreaterThan(0);
 
-      const onInvoiceProj = report.projections.find((p) => p.onInvoiceOutflow > 0);
-      const offInvoiceProj = report.projections.find((p) => p.offInvoiceOutflow > 0);
+      const onInvoiceProj = report.projections.find(
+        (p) => p.onInvoiceOutflow > 0,
+      );
+      const offInvoiceProj = report.projections.find(
+        (p) => p.offInvoiceOutflow > 0,
+      );
 
       expect(onInvoiceProj).toBeDefined();
       expect(offInvoiceProj).toBeDefined();
@@ -328,12 +358,14 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
   describe('getSpendComposition (~:405, GET /finance-reporting/spend-composition) — extra coverage', () => {
     it('sums two mechanic rows of the same category into a correct numeric amount', async () => {
       const plan = buildPlan({ id: 'plan-comp' });
-      const qb = buildQueryBuilder({ getMany: jest.fn().mockResolvedValue([plan]) });
+      const qb = buildQueryBuilder({
+        getMany: jest.fn().mockResolvedValue([plan]),
+      });
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu([
-        buildPmv(100.00, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
-        buildPmv(50.00, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
+        buildPmv(100.0, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
+        buildPmv(50.0, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
       ]);
       planFuRepository.find.mockResolvedValue([planFu]);
 
@@ -383,13 +415,23 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
         startDate: new Date('2026-01-01'),
         endDate: new Date('2026-01-31'),
       });
-      const qb = buildQueryBuilder({ getMany: jest.fn().mockResolvedValue([plan]) });
+      const qb = buildQueryBuilder({
+        getMany: jest.fn().mockResolvedValue([plan]),
+      });
       planRepository.createQueryBuilder.mockReturnValue(qb);
 
       const planFu = buildPlanFu(
         [
-          buildPmv('100.00' as any, MechanicCategory.ON_INVOICE_DISCOUNT, 'ON-MECH'),
-          buildPmv('50.00' as any, MechanicCategory.OFF_INVOICE_DISCOUNT, 'OFF-MECH'),
+          buildPmv(
+            '100.00' as any,
+            MechanicCategory.ON_INVOICE_DISCOUNT,
+            'ON-MECH',
+          ),
+          buildPmv(
+            '50.00' as any,
+            MechanicCategory.OFF_INVOICE_DISCOUNT,
+            'OFF-MECH',
+          ),
         ],
         [
           buildPlanSku('20.00' as any, '5.00' as any),

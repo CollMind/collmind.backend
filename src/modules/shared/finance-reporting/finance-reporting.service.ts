@@ -1,25 +1,23 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Plan } from '../../../database/entities/plan.entity';
 import { PlanFu } from '../../../database/entities/plan.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
-import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
 import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
+  BudgetSpendType,
 } from '../../../database/entities/budget-envelope.entity';
+import { BudgetSummaryView } from '../../../database/entities/budget-summary.view-entity';
 import { UserRole } from '../../../database/entities/user.entity';
-import { BudgetAllocationService } from '../budget/budget-allocation.service';
 import { BudgetRepository } from '../budget/budget.repository';
 import {
   BudgetThresholdService,
   BudgetThresholds,
 } from '../budget/budget-threshold.service';
 import { AccessScopeService } from '../access-scope/access-scope.service';
-// [[T-254]] — `[]` = "boş küme = hiçbir satır" sözleşmesinin TEK tanımı.
-import { arrayFilterWhere } from '../../../common/query/array-filter';
 import {
   ReportFilters,
   PaginationParams,
@@ -130,23 +128,68 @@ export class FinanceReportingService {
     private readonly planMechanicValueRepository: Repository<PlanMechanicValue>,
     @InjectRepository(MechanicSpendBreakdown)
     private readonly mechanicSpendBreakdownRepository: Repository<MechanicSpendBreakdown>,
-    @InjectRepository(BudgetAllocation)
-    private readonly budgetAllocationRepository: Repository<BudgetAllocation>,
     @InjectRepository(BudgetEnvelope)
     private readonly budgetEnvelopeRepository: Repository<BudgetEnvelope>,
-    private readonly budgetAllocationService: BudgetAllocationService,
     private readonly budgetThresholdService: BudgetThresholdService,
     private readonly budgetRepository: BudgetRepository,
     private readonly accessScopeService: AccessScopeService,
   ) {}
 
   /**
-   * Get budget utilization report
+   * Get budget utilization report.
+   *
+   * T-270/Z21 (A1 + A2): throws when the envelope+filter combination matches
+   * NO data at all — a caller must not render an all-zero/GREEN report for a
+   * period with no budget data (§2.5 sessiz sıfır, §2.3 "kapsama yoksa renk
+   * yok"). `DashboardService#getSummary` already has a dedicated catch branch
+   * for exactly this (`dashboard-summary.dto.ts:76-105`,
+   * `budgetUtilizationStatus = 'unavailable'`) — this throw is the branch
+   * that was missing to reach it. `getBudgetAtRisk`/`getVarianceAnalysis`
+   * below do NOT go through this throwing entry point — they call
+   * `computeBudgetUtilization` directly (see its own doc comment for why).
    */
   async getBudgetUtilization(
     tenantId: string,
     filters: ReportFilters,
   ): Promise<BudgetUtilizationReport> {
+    const { report, hasData } = await this.computeBudgetUtilization(
+      tenantId,
+      filters,
+    );
+    if (!hasData) {
+      throw new NotFoundException(
+        'No budget envelope data found for the requested period/filters — a utilization figure cannot be computed',
+      );
+    }
+    return report;
+  }
+
+  /**
+   * T-270/Z21 (A2): `budget_allocations` retired as a K-2.2.3 violation — a
+   * SECOND envelope-resolution path with its own (cplId + channel + category
+   * + date-range) dimension set, measured to have 0 rows in every tenant
+   * (Z21 karar kaydı). `budget_envelopes` + `v_budget_summary` is now the
+   * ONLY source this method reads.
+   *
+   * `cplId` is DELIBERATELY not a filter dimension here: K-2.2.1 defines an
+   * envelope as Kanal × Kategori × Dönem, and A7 places CPL in the SCOPE
+   * layer, not the budget layer — carrying it as a query dimension is
+   * exactly the "eksen ihlali" Z21 rejected for `budget_allocations`.
+   *
+   * ⚠️ MEASURED GAP (not one of Z21's four kabul şartı, flagged separately
+   * in T-270's report): `filters.cplIds` — the one scope dimension
+   * `DashboardService#getSummary` forwards for a CPL-scoped PLANNER — has no
+   * home on `BudgetEnvelope` (no `cplId` column) and cannot be applied here.
+   * `DashboardService` is responsible for not calling this method with a
+   * scope it cannot honour (see its own comment at the call site). This
+   * method does not silently narrow AND does not silently widen: it simply
+   * has no cplId predicate to apply, same as before A2 it had one that a
+   * dead, always-empty table made moot.
+   */
+  private async computeBudgetUtilization(
+    tenantId: string,
+    filters: ReportFilters,
+  ): Promise<{ report: BudgetUtilizationReport; hasData: boolean }> {
     const startDate = filters.startDate
       ? new Date(filters.startDate)
       : new Date();
@@ -156,37 +199,57 @@ export class FinanceReportingService {
     const thresholds =
       await this.budgetThresholdService.getThresholds(tenantId);
 
-    // Get budget allocations for the period
-    const allocations = await this.budgetAllocationRepository.find({
-      where: {
-        tenantId,
-        periodStart: Between(startDate, endDate),
-        // [[T-254]] — `cplIds` bu metoda KAPSAMDAN gelebilen tek boyuttur
-        // (tek çağıran: `dashboard.service.ts#getSummary`, `cplIdsFromScope`
-        // üzerinden). Eskiden burada `filters.cplIds.length > 0` vardı ve boş
-        // dizi "filtre yok"a çözülüyordu: kapsamı boşaltılmış bir kullanıcı
-        // TÜM TENANT'ın tahsislerini görüyordu (`K-2.6.8a` ihlali, fail-open).
-        // `[]`'in anlamı artık TEK YERDE: `common/query/array-filter.ts`.
-        ...arrayFilterWhere('cplId', filters.cplIds),
-        // ⚠️ Aşağıdaki iki boyut KASTEN dokunulmadı ve bu bir ölçüme dayanıyor,
-        // bir varsayıma değil: `channels`/`categories` bu metoda hiçbir zaman
-        // kapsamdan gelmez — `getBudgetUtilization`'ın iki çağıranı var
-        // (`dashboard.service.ts` `budgetFilters` yalnız `startDate`/
-        // `endDate`/`cplIds` gönderir; `finance-reporting.controller.ts`'in
-        // `@Get('budget-utilization')` ucu kullanıcının kendi rapor
-        // filtresini gönderir), yani boş dizileri bir ERİŞİM kararı
-        // değil, bir RAPOR filtresidir ve bugün fail-open üretmezler.
-        // Sınıfın tamamı [[T-254]] raporunda listeli (16 eşleşme); bu turda
-        // kapsam bilinçli olarak TEK NOKTA tutuldu (task DUR koşulu: 5+ bulgu
-        // → kapsamı kendi başına genişletme).
-        ...(filters.channels && filters.channels.length > 0
-          ? { channel: In(filters.channels) }
-          : {}),
-        ...(filters.categories && filters.categories.length > 0
-          ? { category: In(filters.categories) }
-          : {}),
-      },
-    });
+    const qb = this.budgetEnvelopeRepository
+      .createQueryBuilder('envelope')
+      .where('envelope.tenantId = :tenantId', { tenantId })
+      .andWhere('envelope.deletedAt IS NULL')
+      .andWhere('envelope.status = :status', {
+        status: BudgetEnvelopeStatus.ACTIVE,
+      });
+
+    // Period-range match. `envelope.period` is a free-form string column
+    // (entity JSDoc examples: "Jan", "Q1", "2024"), but every row measured
+    // in this tenant (2026-08-23, main.budget_envelopes) uses "YYYY-MM" —
+    // lexicographic comparison on that zero-padded shape is chronological.
+    // This is a reporting-only RANGE match, and a deliberately DIFFERENT
+    // query shape from `findEnvelopeByDimensions`'s exact/year-LIKE SINGLE-
+    // envelope resolution: that function answers "which one envelope does a
+    // reservation write land on" (K-2.2.3's concern); this one answers "sum
+    // every envelope whose period falls in this window" — a different
+    // question, not a second, competing answer to the same one.
+    const startPeriod = startDate.toISOString().slice(0, 7);
+    const endPeriod = endDate.toISOString().slice(0, 7);
+    qb.andWhere(
+      'envelope.period >= :startPeriod AND envelope.period <= :endPeriod',
+      { startPeriod, endPeriod },
+    );
+
+    // Channel/category use the SAME dedicated-column resolution as this
+    // file's `getBudgetVarianceReport` (below) — one derivation method for
+    // BudgetEnvelope dimensions in this file, not a second one. (Measured:
+    // today's seeded envelopes carry channel/category ONLY in `metadata`,
+    // not in these dedicated columns — same limitation `getBudgetVarianceReport`
+    // already has; not introduced here.)
+    if (filters.channels && filters.channels.length > 0) {
+      qb.andWhere('envelope.channel IN (:...channels)', {
+        channels: filters.channels,
+      });
+    }
+    if (filters.categories && filters.categories.length > 0) {
+      qb.andWhere('envelope.category IN (:...categories)', {
+        categories: filters.categories,
+      });
+    }
+
+    const envelopes = await qb.getMany();
+    const hasData = envelopes.length > 0;
+
+    const summaries = hasData
+      ? await this.budgetRepository.getAllBudgetSummaries(tenantId)
+      : [];
+    const summaryByEnvelopeId = new Map(
+      summaries.map((s) => [s.envelopeId, s]),
+    );
 
     // Aggregate totals
     let totalOnInvoiceAllocated = 0;
@@ -195,14 +258,48 @@ export class FinanceReportingService {
     let totalOffInvoiceAllocated = 0;
     let totalOffInvoiceUtilized = 0;
     let totalOffInvoiceReserved = 0;
+    // T-270/Z21 pinned behaviour-diff — UNSPLIT On/Off (ADR 0004 §5.5): an
+    // UNSPLIT envelope (`spendType IS NULL`) is ONE shared pool for both
+    // On- and Off-Invoice spend — `BudgetService#checkPlanBudgetAvailability`
+    // measures it as a single combined amount, never split (§5.5 "birleşik
+    // kural"). Attributing an UNSPLIT envelope's figures to a fabricated
+    // on/off split here would either double-count it in `total` or invent a
+    // division the data does not carry (§2.5 sessiz sıfır — a guessed split
+    // is a guessed number). It is counted ONLY in this combined pool, which
+    // feeds `total` but neither `onInvoice` nor `offInvoice`. Measured
+    // 2026-08-23: 4/4 seeded envelopes are UNSPLIT, so today `onInvoice` and
+    // `offInvoice` both report `allocated: 0` while `total` shows the real
+    // ₺1,600,000 — an honest "no typed split exists yet" rather than a
+    // fabricated one, not a residual defect of this change.
+    let poolAllocated = 0;
+    let poolUtilized = 0;
+    let poolReserved = 0;
 
-    for (const allocation of allocations) {
-      totalOnInvoiceAllocated += Number(allocation.onInvoiceBudget) || 0;
-      totalOnInvoiceUtilized += Number(allocation.onInvoiceUtilized) || 0;
-      totalOnInvoiceReserved += Number(allocation.onInvoiceReserved) || 0;
-      totalOffInvoiceAllocated += Number(allocation.offInvoiceBudget) || 0;
-      totalOffInvoiceUtilized += Number(allocation.offInvoiceUtilized) || 0;
-      totalOffInvoiceReserved += Number(allocation.offInvoiceReserved) || 0;
+    for (const envelope of envelopes) {
+      const summary = summaryByEnvelopeId.get(envelope.id);
+      if (!summary) {
+        this.logger.warn(
+          `Envelope ${envelope.id} (${envelope.code}) has no v_budget_summary row — skipped from budget-utilization`,
+        );
+        continue;
+      }
+      const allocated = Number(summary.allocatedAmount) || 0;
+      const reserved = Number(summary.reservedAmount) || 0;
+      const consumed = Number(summary.consumedAmount) || 0;
+
+      if (envelope.spendType === BudgetSpendType.ON_INVOICE) {
+        totalOnInvoiceAllocated += allocated;
+        totalOnInvoiceUtilized += consumed;
+        totalOnInvoiceReserved += reserved;
+      } else if (envelope.spendType === BudgetSpendType.OFF_INVOICE) {
+        totalOffInvoiceAllocated += allocated;
+        totalOffInvoiceUtilized += consumed;
+        totalOffInvoiceReserved += reserved;
+      } else {
+        poolAllocated += allocated;
+        poolUtilized += consumed;
+        poolReserved += reserved;
+      }
     }
 
     const onInvoiceAvailable =
@@ -248,48 +345,70 @@ export class FinanceReportingService {
       ),
     };
 
+    const totalAllocated =
+      totalOnInvoiceAllocated + totalOffInvoiceAllocated + poolAllocated;
+    const totalUtilized =
+      totalOnInvoiceUtilized + totalOffInvoiceUtilized + poolUtilized;
+    const totalReserved =
+      totalOnInvoiceReserved + totalOffInvoiceReserved + poolReserved;
+    const totalAvailable = totalAllocated - totalUtilized - totalReserved;
     const totalUtilizationPercent =
-      totalOnInvoiceAllocated + totalOffInvoiceAllocated > 0
-        ? ((totalOnInvoiceUtilized +
-            totalOnInvoiceReserved +
-            totalOffInvoiceUtilized +
-            totalOffInvoiceReserved) /
-            (totalOnInvoiceAllocated + totalOffInvoiceAllocated)) *
-          100
+      totalAllocated > 0
+        ? ((totalUtilized + totalReserved) / totalAllocated) * 100
         : 0;
 
     const total: BudgetSummary = {
-      allocated: totalOnInvoiceAllocated + totalOffInvoiceAllocated,
-      utilized: totalOnInvoiceUtilized + totalOffInvoiceUtilized,
-      reserved: totalOnInvoiceReserved + totalOffInvoiceReserved,
-      available: onInvoiceAvailable + offInvoiceAvailable,
+      allocated: totalAllocated,
+      utilized: totalUtilized,
+      reserved: totalReserved,
+      available: totalAvailable,
       utilizationPercent: totalUtilizationPercent,
       status: this.getUtilizationStatus(totalUtilizationPercent, thresholds),
     };
 
-    // Breakdown by dimensions (if requested)
-    const byCpl =
-      filters.cplIds && filters.cplIds.length > 0
-        ? undefined
-        : this.aggregateByCpl(allocations, thresholds);
+    // byCpl: CPL is not an envelope dimension (K-2.2.1/A7, Z21) — not
+    // computable under the envelope model, unlike under the retired
+    // `budget_allocations` shape. Always `undefined` (an already-optional
+    // DTO field, `ApiPropertyOptional`).
     const byChannel =
       filters.channels && filters.channels.length > 0
         ? undefined
-        : this.aggregateByChannel(allocations, thresholds);
+        : this.aggregateEnvelopesByDimension(
+            envelopes,
+            summaryByEnvelopeId,
+            thresholds,
+            (e) => e.channel ?? undefined,
+          ).map(({ key, onInvoice: on, offInvoice: off }) => ({
+            channel: key,
+            onInvoice: on,
+            offInvoice: off,
+          }));
     const byCategory =
       filters.categories && filters.categories.length > 0
         ? undefined
-        : this.aggregateByCategory(allocations, thresholds);
+        : this.aggregateEnvelopesByDimension(
+            envelopes,
+            summaryByEnvelopeId,
+            thresholds,
+            (e) => e.category ?? undefined,
+          ).map(({ key, onInvoice: on, offInvoice: off }) => ({
+            category: key,
+            onInvoice: on,
+            offInvoice: off,
+          }));
 
     return {
-      onInvoice,
-      offInvoice,
-      total,
-      periodStart: startDate.toISOString().split('T')[0],
-      periodEnd: endDate.toISOString().split('T')[0],
-      byCpl,
-      byChannel,
-      byCategory,
+      report: {
+        onInvoice,
+        offInvoice,
+        total,
+        periodStart: startDate.toISOString().split('T')[0],
+        periodEnd: endDate.toISOString().split('T')[0],
+        byCpl: undefined,
+        byChannel,
+        byCategory,
+      },
+      hasData,
     };
   }
 
@@ -726,8 +845,18 @@ export class FinanceReportingService {
 
     const totalAtRisk = redPlansSpend + amberPlansSpend;
 
-    // Get total budget for risk percentage
-    const budgetReport = await this.getBudgetUtilization(tenantId, filters);
+    // Get total budget for risk percentage. T-270/Z21: calls the
+    // non-throwing `computeBudgetUtilization` directly (not the public
+    // `getBudgetUtilization`) — this report's own zero-budget handling
+    // (`totalBudget > 0 ? ... : 0` below) already predates A1/A2 and is
+    // unrelated to the dashboard's false-GREEN defect this task closes;
+    // routing it through the new throw would newly break a live route
+    // (`GET /finance-reporting/budget-at-risk`) that never rendered a color
+    // off this figure in the first place.
+    const { report: budgetReport } = await this.computeBudgetUtilization(
+      tenantId,
+      filters,
+    );
     const totalBudget = budgetReport.total.allocated;
     const riskPercentage =
       totalBudget > 0 ? (totalAtRisk / totalBudget) * 100 : 0;
@@ -833,10 +962,20 @@ export class FinanceReportingService {
     let plannedTotal = 0;
 
     if (comparisonType === ComparisonType.BUDGET_VS_ACTUAL) {
-      const budgetReport = await this.getBudgetUtilization(tenantId, filters);
+      // T-270/Z21: `computeBudgetUtilization` directly (see the comment on
+      // `getBudgetAtRisk`'s identical call, above) — and `plannedTotal` is
+      // read from `total.allocated`, NOT `onInvoice.allocated +
+      // offInvoice.allocated`: an UNSPLIT envelope's amount is counted in
+      // `total` but deliberately NOT split into either bucket (see the
+      // "UNSPLIT On/Off" comment in `computeBudgetUtilization`), so the sum
+      // of the two buckets alone would silently drop it.
+      const { report: budgetReport } = await this.computeBudgetUtilization(
+        tenantId,
+        filters,
+      );
       plannedOnInvoice = budgetReport.onInvoice.allocated;
       plannedOffInvoice = budgetReport.offInvoice.allocated;
-      plannedTotal = plannedOnInvoice + plannedOffInvoice;
+      plannedTotal = budgetReport.total.allocated;
     } else if (comparisonType === ComparisonType.PREVIOUS_PERIOD) {
       // Calculate previous period
       const periodDays = Math.ceil(
@@ -1284,267 +1423,107 @@ export class FinanceReportingService {
     return this.budgetThresholdService.toStatus(percent, thresholds);
   }
 
-  private aggregateByCpl(
-    allocations: BudgetAllocation[],
+  /**
+   * T-270/Z21: single shared aggregation for BudgetEnvelope-based breakdowns
+   * (byChannel/byCategory) — the ORIGINAL `aggregateByCpl/Channel/Category`
+   * trio copy-pasted this logic three times ("Similar to X but by Y"). One
+   * function, keyed by a caller-supplied dimension accessor.
+   *
+   * UNSPLIT envelopes (`spendType IS NULL`) are excluded here — see the
+   * "UNSPLIT On/Off" comment in `computeBudgetUtilization` for why an
+   * on/off split cannot be honestly fabricated for them. Their money is
+   * still visible in the TOP-LEVEL `total` (Z21 pin #1); only this
+   * per-dimension on/off breakdown is degraded for envelopes that were
+   * never typed. Measured 2026-08-23: 4/4 seeded envelopes are UNSPLIT, so
+   * `byChannel`/`byCategory` are empty arrays today — an honest "nothing
+   * typed yet", not a fabricated split.
+   */
+  private aggregateEnvelopesByDimension(
+    envelopes: BudgetEnvelope[],
+    summaryByEnvelopeId: Map<string, BudgetSummaryView>,
     thresholds: BudgetThresholds,
+    keyOf: (envelope: BudgetEnvelope) => string | undefined,
   ): Array<{
-    cplId: string;
-    cplName: string;
+    key: string;
     onInvoice: BudgetSummary;
     offInvoice: BudgetSummary;
   }> {
     const map = new Map<
       string,
-      { onInvoice: number[]; offInvoice: number[] }
+      {
+        onAllocated: number;
+        onUtilized: number;
+        onReserved: number;
+        offAllocated: number;
+        offUtilized: number;
+        offReserved: number;
+      }
     >();
 
-    for (const alloc of allocations) {
-      if (!alloc.cplId) continue;
-      if (!map.has(alloc.cplId)) {
-        map.set(alloc.cplId, { onInvoice: [], offInvoice: [] });
+    for (const envelope of envelopes) {
+      if (envelope.spendType == null) continue;
+
+      const key = keyOf(envelope);
+      if (!key) continue;
+
+      const summary = summaryByEnvelopeId.get(envelope.id);
+      if (!summary) continue;
+
+      if (!map.has(key)) {
+        map.set(key, {
+          onAllocated: 0,
+          onUtilized: 0,
+          onReserved: 0,
+          offAllocated: 0,
+          offUtilized: 0,
+          offReserved: 0,
+        });
       }
-      const entry = map.get(alloc.cplId)!;
-      entry.onInvoice.push(
-        Number(alloc.onInvoiceBudget) || 0,
-        Number(alloc.onInvoiceUtilized) || 0,
-        Number(alloc.onInvoiceReserved) || 0,
-      );
-      entry.offInvoice.push(
-        Number(alloc.offInvoiceBudget) || 0,
-        Number(alloc.offInvoiceUtilized) || 0,
-        Number(alloc.offInvoiceReserved) || 0,
-      );
+      const entry = map.get(key)!;
+      const allocated = Number(summary.allocatedAmount) || 0;
+      const reserved = Number(summary.reservedAmount) || 0;
+      const consumed = Number(summary.consumedAmount) || 0;
+
+      if (envelope.spendType === BudgetSpendType.ON_INVOICE) {
+        entry.onAllocated += allocated;
+        entry.onUtilized += consumed;
+        entry.onReserved += reserved;
+      } else {
+        entry.offAllocated += allocated;
+        entry.offUtilized += consumed;
+        entry.offReserved += reserved;
+      }
     }
 
-    // TODO: Resolve CPL names from repository
-    return Array.from(map.entries()).map(([cplId, data]) => {
-      const onInvoiceAllocated = data.onInvoice
-        .filter((_, i) => i % 3 === 0)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceUtilized = data.onInvoice
-        .filter((_, i) => i % 3 === 1)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceReserved = data.onInvoice
-        .filter((_, i) => i % 3 === 2)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceAvailable =
-        onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
-      const onInvoicePercent =
-        onInvoiceAllocated > 0
-          ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100
+    return Array.from(map.entries()).map(([key, d]) => {
+      const onAvailable = d.onAllocated - d.onUtilized - d.onReserved;
+      const offAvailable = d.offAllocated - d.offUtilized - d.offReserved;
+      const onPercent =
+        d.onAllocated > 0
+          ? ((d.onUtilized + d.onReserved) / d.onAllocated) * 100
           : 0;
-
-      const offInvoiceAllocated = data.offInvoice
-        .filter((_, i) => i % 3 === 0)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceUtilized = data.offInvoice
-        .filter((_, i) => i % 3 === 1)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceReserved = data.offInvoice
-        .filter((_, i) => i % 3 === 2)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceAvailable =
-        offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
-      const offInvoicePercent =
-        offInvoiceAllocated > 0
-          ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) *
-            100
+      const offPercent =
+        d.offAllocated > 0
+          ? ((d.offUtilized + d.offReserved) / d.offAllocated) * 100
           : 0;
 
       return {
-        cplId,
-        cplName: cplId, // TODO: Resolve from CPL entity
+        key,
         onInvoice: {
-          allocated: onInvoiceAllocated,
-          utilized: onInvoiceUtilized,
-          reserved: onInvoiceReserved,
-          available: onInvoiceAvailable,
-          utilizationPercent: onInvoicePercent,
-          status: this.getUtilizationStatus(onInvoicePercent, thresholds),
+          allocated: d.onAllocated,
+          utilized: d.onUtilized,
+          reserved: d.onReserved,
+          available: onAvailable,
+          utilizationPercent: onPercent,
+          status: this.getUtilizationStatus(onPercent, thresholds),
         },
         offInvoice: {
-          allocated: offInvoiceAllocated,
-          utilized: offInvoiceUtilized,
-          reserved: offInvoiceReserved,
-          available: offInvoiceAvailable,
-          utilizationPercent: offInvoicePercent,
-          status: this.getUtilizationStatus(offInvoicePercent, thresholds),
-        },
-      };
-    });
-  }
-
-  private aggregateByChannel(
-    allocations: BudgetAllocation[],
-    thresholds: BudgetThresholds,
-  ): Array<{
-    channel: string;
-    onInvoice: BudgetSummary;
-    offInvoice: BudgetSummary;
-  }> {
-    // Similar to aggregateByCpl but by channel
-    const map = new Map<
-      string,
-      { onInvoice: number[]; offInvoice: number[] }
-    >();
-
-    for (const alloc of allocations) {
-      if (!alloc.channel) continue;
-      if (!map.has(alloc.channel)) {
-        map.set(alloc.channel, { onInvoice: [], offInvoice: [] });
-      }
-      const entry = map.get(alloc.channel)!;
-      entry.onInvoice.push(
-        Number(alloc.onInvoiceBudget) || 0,
-        Number(alloc.onInvoiceUtilized) || 0,
-        Number(alloc.onInvoiceReserved) || 0,
-      );
-      entry.offInvoice.push(
-        Number(alloc.offInvoiceBudget) || 0,
-        Number(alloc.offInvoiceUtilized) || 0,
-        Number(alloc.offInvoiceReserved) || 0,
-      );
-    }
-
-    return Array.from(map.entries()).map(([channel, data]) => {
-      const onInvoiceAllocated = data.onInvoice
-        .filter((_, i) => i % 3 === 0)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceUtilized = data.onInvoice
-        .filter((_, i) => i % 3 === 1)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceReserved = data.onInvoice
-        .filter((_, i) => i % 3 === 2)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceAvailable =
-        onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
-      const onInvoicePercent =
-        onInvoiceAllocated > 0
-          ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100
-          : 0;
-
-      const offInvoiceAllocated = data.offInvoice
-        .filter((_, i) => i % 3 === 0)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceUtilized = data.offInvoice
-        .filter((_, i) => i % 3 === 1)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceReserved = data.offInvoice
-        .filter((_, i) => i % 3 === 2)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceAvailable =
-        offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
-      const offInvoicePercent =
-        offInvoiceAllocated > 0
-          ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) *
-            100
-          : 0;
-
-      return {
-        channel,
-        onInvoice: {
-          allocated: onInvoiceAllocated,
-          utilized: onInvoiceUtilized,
-          reserved: onInvoiceReserved,
-          available: onInvoiceAvailable,
-          utilizationPercent: onInvoicePercent,
-          status: this.getUtilizationStatus(onInvoicePercent, thresholds),
-        },
-        offInvoice: {
-          allocated: offInvoiceAllocated,
-          utilized: offInvoiceUtilized,
-          reserved: offInvoiceReserved,
-          available: offInvoiceAvailable,
-          utilizationPercent: offInvoicePercent,
-          status: this.getUtilizationStatus(offInvoicePercent, thresholds),
-        },
-      };
-    });
-  }
-
-  private aggregateByCategory(
-    allocations: BudgetAllocation[],
-    thresholds: BudgetThresholds,
-  ): Array<{
-    category: string;
-    onInvoice: BudgetSummary;
-    offInvoice: BudgetSummary;
-  }> {
-    // Similar to aggregateByChannel but by category
-    const map = new Map<
-      string,
-      { onInvoice: number[]; offInvoice: number[] }
-    >();
-
-    for (const alloc of allocations) {
-      if (!alloc.category) continue;
-      if (!map.has(alloc.category)) {
-        map.set(alloc.category, { onInvoice: [], offInvoice: [] });
-      }
-      const entry = map.get(alloc.category)!;
-      entry.onInvoice.push(
-        Number(alloc.onInvoiceBudget) || 0,
-        Number(alloc.onInvoiceUtilized) || 0,
-        Number(alloc.onInvoiceReserved) || 0,
-      );
-      entry.offInvoice.push(
-        Number(alloc.offInvoiceBudget) || 0,
-        Number(alloc.offInvoiceUtilized) || 0,
-        Number(alloc.offInvoiceReserved) || 0,
-      );
-    }
-
-    return Array.from(map.entries()).map(([category, data]) => {
-      const onInvoiceAllocated = data.onInvoice
-        .filter((_, i) => i % 3 === 0)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceUtilized = data.onInvoice
-        .filter((_, i) => i % 3 === 1)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceReserved = data.onInvoice
-        .filter((_, i) => i % 3 === 2)
-        .reduce((sum, v) => sum + v, 0);
-      const onInvoiceAvailable =
-        onInvoiceAllocated - onInvoiceUtilized - onInvoiceReserved;
-      const onInvoicePercent =
-        onInvoiceAllocated > 0
-          ? ((onInvoiceUtilized + onInvoiceReserved) / onInvoiceAllocated) * 100
-          : 0;
-
-      const offInvoiceAllocated = data.offInvoice
-        .filter((_, i) => i % 3 === 0)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceUtilized = data.offInvoice
-        .filter((_, i) => i % 3 === 1)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceReserved = data.offInvoice
-        .filter((_, i) => i % 3 === 2)
-        .reduce((sum, v) => sum + v, 0);
-      const offInvoiceAvailable =
-        offInvoiceAllocated - offInvoiceUtilized - offInvoiceReserved;
-      const offInvoicePercent =
-        offInvoiceAllocated > 0
-          ? ((offInvoiceUtilized + offInvoiceReserved) / offInvoiceAllocated) *
-            100
-          : 0;
-
-      return {
-        category,
-        onInvoice: {
-          allocated: onInvoiceAllocated,
-          utilized: onInvoiceUtilized,
-          reserved: onInvoiceReserved,
-          available: onInvoiceAvailable,
-          utilizationPercent: onInvoicePercent,
-          status: this.getUtilizationStatus(onInvoicePercent, thresholds),
-        },
-        offInvoice: {
-          allocated: offInvoiceAllocated,
-          utilized: offInvoiceUtilized,
-          reserved: offInvoiceReserved,
-          available: offInvoiceAvailable,
-          utilizationPercent: offInvoicePercent,
-          status: this.getUtilizationStatus(offInvoicePercent, thresholds),
+          allocated: d.offAllocated,
+          utilized: d.offUtilized,
+          reserved: d.offReserved,
+          available: offAvailable,
+          utilizationPercent: offPercent,
+          status: this.getUtilizationStatus(offPercent, thresholds),
         },
       };
     });

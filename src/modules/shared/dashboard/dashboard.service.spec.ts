@@ -372,7 +372,17 @@ describe('DashboardService', () => {
   // -------------------------------------------------------------------------
 
   describe('getSummary — PLANNER scope', () => {
-    it('passes Planner cplIds to getBudgetUtilization', async () => {
+    // T-270/Z21 (A2, measured gap): `budget_envelopes` (canonical as of A2)
+    // has no `cplId` column — K-2.2.1/A7 place CPL in the scope layer, not
+    // the budget layer — so `FinanceReportingService#getBudgetUtilization`
+    // has no way to honour a CPL-scoped restriction. Calling it anyway
+    // would silently WIDEN what a scoped Planner sees (K-2.6.8a's
+    // fail-open class) now that `budget_envelopes` carries real money
+    // (unlike the always-empty `budget_allocations` it replaces). Fail
+    // closed instead (R-2): a CPL-scoped Planner gets `unavailable`, not an
+    // unscoped figure. This REPLACES the pre-A2 "cplIds forwarded to
+    // getBudgetUtilization" expectation — that contract no longer exists.
+    it('does NOT call getBudgetUtilization for a CPL-scoped Planner — reports unavailable instead of an unscoped figure', async () => {
       accessScopeService.resolveScope.mockResolvedValue(
         scopedPairs([{ cplId: CPL_ID_1 }]),
       );
@@ -389,13 +399,18 @@ describe('DashboardService', () => {
         mockBudgetUtilization,
       );
 
-      await service.getSummary(TENANT_ID, USER_PLANNER_ID, UserRole.PLANNER, {
-        period: '2026-06',
-      });
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+        { period: '2026-06' },
+      );
 
-      const callArgs = financeReportingService.getBudgetUtilization.mock
-        .calls[0] as [string, { cplIds?: string[] }];
-      expect(callArgs[1].cplIds).toEqual([CPL_ID_1]);
+      expect(
+        financeReportingService.getBudgetUtilization,
+      ).not.toHaveBeenCalled();
+      expect(result.budgetUtilization).toBeNull();
+      expect(result.budgetUtilizationStatus).toBe('unavailable');
     });
 
     it('returns empty counts when Planner has no CPL assignments', async () => {

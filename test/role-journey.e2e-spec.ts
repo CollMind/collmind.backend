@@ -1099,6 +1099,29 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       }
     });
 
+    /**
+     * ⚠️ STALE PREMISE, CORRECTED (T-270/Z21, 2026-08-23): this test used to
+     * assert `200` — that was correct for RBAC (the T-028a fix these two
+     * tests were written for is untouched), but NOT correct for what the
+     * route returns for a callER with no explicit `startDate`/`endDate` —
+     * both default to `new Date()` (today), i.e. a single-day window with
+     * no matching `budget_envelopes` row in this tenant. Before T-270/Z21,
+     * `getBudgetUtilization` silently rendered an all-zero/GREEN report for
+     * that (§2.5 sessiz sıfır) — the fix now throws `NotFoundException`
+     * (404) instead of computing a figure for a window with no data (A1,
+     * `dashboard-summary.dto.ts:76-105`'s `unavailable` contract's sibling
+     * on the direct route, which has no status field to carry "unavailable"
+     * in — a 404 is the honest equivalent). This is the DEFECT T-270/Z21
+     * exists to close, measured on a THIRD call site (this direct
+     * controller route) neither Z21's four kabul şartı nor the dashboard
+     * pin enumerated.
+     *
+     * RBAC is verified SEPARATELY below (`not.toBe(403)`) — same
+     * discipline as `t249-app-runtime-live-route-grants.e2e-spec.ts`'s
+     * "guard passed, data path is a separate concern" pattern: a role
+     * filter produces 403, a data-availability guard produces 404, and the
+     * two must not be conflated.
+     */
     it('A13. FINANCE_MANAGER → GET /finance-reporting/budget-utilization', async () => {
       const fm = await loginAs(app, 'FINANCE_MANAGER');
 
@@ -1110,14 +1133,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         step: 'A13',
         role: 'FINANCE_MANAGER',
         endpoint: 'GET /finance-reporting/budget-utilization',
-        expected: 200,
+        expected: 404,
         actual: res.status,
-        note: 'T-028a (F8) FIX: finance-reporting Roles listesi FINANCE (deprecated) yerine FINANCE_MANAGER içeriyor.',
+        note: 'T-028a (F8) FIX: RBAC guard passed (not 403). T-270/Z21: 404, not 200 — no budget_envelopes row for the default (today-only) date window; this is the intended fail-closed behaviour, not a regression.',
       });
 
-      // T-028a (F8) FIX: deprecated FINANCE alias'ı FINANCE_MANAGER'a
-      // konsolide edildi → Finance Manager artık kendi raporunu okuyabiliyor.
-      expect(res.status).toBe(200);
+      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(404);
     });
 
     it('A13b. FINANCE (deprecated alias, seed: finance@wella.com) → GET /finance-reporting/budget-utilization', async () => {
@@ -1131,15 +1153,17 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         step: 'A13b',
         role: 'FINANCE (deprecated alias user, now stores FINANCE_MANAGER)',
         endpoint: 'GET /finance-reporting/budget-utilization',
-        expected: 200,
+        expected: 404,
         actual: res.status,
-        note: `items=${Array.isArray(res.body) ? res.body.length : JSON.stringify(res.body).slice(0, 100)}`,
+        note: `T-270/Z21: 404 expected (see A13's comment). items=${Array.isArray(res.body) ? res.body.length : JSON.stringify(res.body).slice(0, 100)}`,
       });
 
       // T-028a: migration 1791000000000-ConsolidateRolesToBrd, finance@wella.com
       // seed satırı da FINANCE → FINANCE_MANAGER'a taşındı (e-posta korunur) →
-      // bu kullanıcı artık DB'de FINANCE_MANAGER rolüyle giriş yapıyor.
-      expect(res.status).toBe(200);
+      // bu kullanıcı artık DB'de FINANCE_MANAGER rolüyle giriş yapıyor (RBAC
+      // guard geçiliyor, 403 DEĞİL). T-270/Z21: 404, not 200 — see A13.
+      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(404);
     });
 
     // ────────────────────────────────────────────────────────────────────

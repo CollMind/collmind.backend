@@ -10,7 +10,7 @@ import {
   InputType,
 } from '../../../database/entities/mechanic.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
-import { BudgetAllocationService } from '../budget/budget-allocation.service';
+import { BudgetService } from '../budget/budget.service';
 import { MechanicService } from '../../master-data/mechanic/mechanic.service';
 import { ErrorSeverity, ErrorCategory } from './dto/validation-result.dto';
 
@@ -141,7 +141,7 @@ interface ServiceHarness {
   planFuRepo: jest.Mocked<Repository<PlanFu>>;
   mechanicRepo: jest.Mocked<Repository<Mechanic>>;
   planMechanicValueRepo: jest.Mocked<Repository<PlanMechanicValue>>;
-  budgetAllocationService: jest.Mocked<BudgetAllocationService>;
+  budgetService: jest.Mocked<BudgetService>;
   mechanicService: jest.Mocked<MechanicService>;
 }
 
@@ -166,8 +166,8 @@ async function createHarness(): Promise<ServiceHarness> {
         useValue: { findOne: jest.fn(), find: jest.fn() },
       },
       {
-        provide: BudgetAllocationService,
-        useValue: { checkAvailability: jest.fn() },
+        provide: BudgetService,
+        useValue: { checkPlanBudgetAvailability: jest.fn() },
       },
       {
         provide: MechanicService,
@@ -182,8 +182,42 @@ async function createHarness(): Promise<ServiceHarness> {
     planFuRepo: module.get(getRepositoryToken(PlanFu)),
     mechanicRepo: module.get(getRepositoryToken(Mechanic)),
     planMechanicValueRepo: module.get(getRepositoryToken(PlanMechanicValue)),
-    budgetAllocationService: module.get(BudgetAllocationService),
+    budgetService: module.get(BudgetService),
     mechanicService: module.get(MechanicService),
+  };
+}
+
+/**
+ * T-270/Z21 (A2): shape `BudgetService#checkPlanBudgetAvailability` returns
+ * — replaces the retired `BudgetAllocationService.checkAvailability`'s
+ * `AvailabilityResult` shape as the collaborator this file mocks.
+ */
+function makeBudgetCheck(
+  overrides: {
+    onAvailable?: number;
+    offAvailable?: number;
+    onSufficient?: boolean;
+    offSufficient?: boolean;
+  } = {},
+) {
+  const {
+    onAvailable = 100000,
+    offAvailable = 100000,
+    onSufficient = true,
+    offSufficient = true,
+  } = overrides;
+  return {
+    onInvoice: {
+      available: onAvailable,
+      requested: 0,
+      sufficient: onSufficient,
+    },
+    offInvoice: {
+      available: offAvailable,
+      requested: 0,
+      sufficient: offSufficient,
+    },
+    overallSufficient: onSufficient && offSufficient,
   };
 }
 
@@ -416,6 +450,7 @@ describe('SpendValidationService', () => {
         id: PLAN_ID,
         tenantId: TENANT_ID,
         cplId: 'cpl-1',
+        periodMonth: '2026-01',
         startDate: new Date('2026-01-01'),
         endDate: new Date('2026-01-31'),
         channel: { code: 'NKA' } as any,
@@ -426,19 +461,13 @@ describe('SpendValidationService', () => {
       // Same mocked plan object services both `planRepository.findOne` calls
       // inside `validateBeforeSubmission` (relations: ['planFus']) and inside
       // `validateBudgetImpact` (relations incl. planFus.planMechanicValues,
-      // cpl, channel, category) — the mock does not filter by relations, so
-      // one fixture with everything both call sites need is sufficient.
+      // channel) — the mock does not filter by relations, so one fixture
+      // with everything both call sites need is sufficient.
       h.planRepo.findOne.mockResolvedValue(plan as Plan);
       h.planFuRepo.findOne.mockResolvedValue(planFu);
-      h.budgetAllocationService.checkAvailability.mockResolvedValue({
-        onInvoiceAvailable: 100000,
-        offInvoiceAvailable: 100000,
-        onInvoiceSufficient: true,
-        offInvoiceSufficient: true,
-        onInvoiceShortfall: 0,
-        offInvoiceShortfall: 0,
-        suggestions: [],
-      } as any);
+      h.budgetService.checkPlanBudgetAvailability.mockResolvedValue(
+        makeBudgetCheck(),
+      );
 
       const result = await h.service.validateBeforeSubmission(
         TENANT_ID,
@@ -492,6 +521,7 @@ describe('SpendValidationService', () => {
         id: PLAN_ID,
         tenantId: TENANT_ID,
         cplId: 'cpl-1',
+        periodMonth: '2026-01',
         startDate: new Date('2026-01-01'),
         endDate: new Date('2026-01-31'),
         channel: { code: 'NKA' } as any,
@@ -531,30 +561,25 @@ describe('SpendValidationService', () => {
       const plan = buildPlan([planFu]);
 
       h.planRepo.findOne.mockResolvedValue(plan as Plan);
-      h.budgetAllocationService.checkAvailability.mockResolvedValue({
-        onInvoiceAvailable: 100000,
-        offInvoiceAvailable: 100000,
-        onInvoiceSufficient: true,
-        offInvoiceSufficient: true,
-        onInvoiceShortfall: 0,
-        offInvoiceShortfall: 0,
-        suggestions: [],
-      } as any);
+      h.budgetService.checkPlanBudgetAvailability.mockResolvedValue(
+        makeBudgetCheck(),
+      );
 
       const result = await h.service.validateBudgetImpact(TENANT_ID, PLAN_ID);
 
-      expect(h.budgetAllocationService.checkAvailability).toHaveBeenCalledTimes(
+      expect(h.budgetService.checkPlanBudgetAvailability).toHaveBeenCalledTimes(
         1,
       );
-      const [, context] =
-        h.budgetAllocationService.checkAvailability.mock.calls[0];
-      expect(typeof context.estimatedOnInvoiceSpend).toBe('number');
-      expect(typeof context.estimatedOffInvoiceSpend).toBe('number');
-      expect(Number.isNaN(context.estimatedOnInvoiceSpend)).toBe(false);
-      expect(Number.isNaN(context.estimatedOffInvoiceSpend)).toBe(false);
+      // Positional args: (tenantId, channelCode, periodMonth, onAmount, offAmount).
+      const [, , , onAmount, offAmount] =
+        h.budgetService.checkPlanBudgetAvailability.mock.calls[0];
+      expect(typeof onAmount).toBe('number');
+      expect(typeof offAmount).toBe('number');
+      expect(Number.isNaN(onAmount)).toBe(false);
+      expect(Number.isNaN(offAmount)).toBe(false);
       // Not "0100.0050.25" -> NaN; the real arithmetic sum.
-      expect(context.estimatedOnInvoiceSpend).toBe(150.25);
-      expect(context.estimatedOffInvoiceSpend).toBe(35.75);
+      expect(onAmount).toBe(150.25);
+      expect(offAmount).toBe(35.75);
       expect(result.isSufficient).toBe(true);
     });
   });
@@ -568,36 +593,59 @@ describe('SpendValidationService', () => {
    * computed `available >= NaN` (always false, so EVERY plan reported
    * "Insufficient On-Invoice budget" regardless of real budget) and
    * `Math.max(0, NaN - available)` (NaN shortfall) -> rendered here as the
-   * literal string "Shortfall: NaN". Mocking BudgetAllocationService (as the
-   * harness above does) cannot reproduce that chain — this block wires the
-   * REAL BudgetAllocationService.checkAvailability behind
-   * SpendValidationService instead, both plain classes constructed directly
-   * (no Nest DI needed for either).
+   * literal string "Shortfall: NaN". Mocking the collaborator (as the
+   * harness above does) cannot reproduce that chain — this block wires a
+   * REAL `BudgetService.checkPlanBudgetAvailability` behind
+   * `SpendValidationService` instead, both plain classes constructed
+   * directly (no Nest DI needed for either).
+   *
+   * T-270/Z21 (A2): rewired from the retired `BudgetAllocationService` (its
+   * `budget_allocations` model is now K-2.2.3-dead) to the CANONICAL
+   * envelope-based `BudgetService` — only `BudgetRepository`'s two calls
+   * (`findEnvelopeByDimensions`, `checkBudgetAvailability`) need mocking;
+   * `BudgetService` itself is real, same principle as the original test.
+   * Two DIFFERENT envelopes (SPLIT regime) reproduce the original scenario:
+   * on-invoice env has 100 available (real shortfall), off-invoice env has
+   * 100000 (never binds, no off-invoice mechanic in this fixture).
    * ================================================================ */
-  describe('validateBudgetImpact — T-091 end-to-end (real checkAvailability, "Shortfall: NaN" message)', () => {
+  describe('validateBudgetImpact — T-091 end-to-end (real checkPlanBudgetAvailability, "Shortfall: NaN" message)', () => {
     function createEndToEndHarness() {
-      const queryBuilder = {
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        getOne: jest.fn(),
-      };
-      const allocationRepo = {
-        createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
-      };
-      const thresholdService = {
-        getThresholds: jest.fn(),
-        isExceeded: jest.fn(),
+      const budgetRepo = {
+        findEnvelopeByDimensions: jest.fn(
+          (
+            _tenantId: string,
+            _channel: string,
+            _periodMonth: string,
+            _category?: string,
+            spendType?: string,
+          ) => {
+            if (spendType === 'ON_INVOICE') {
+              return Promise.resolve({ id: 'env-on' });
+            }
+            if (spendType === 'OFF_INVOICE') {
+              return Promise.resolve({ id: 'env-off' });
+            }
+            return Promise.resolve(null);
+          },
+        ),
+        checkBudgetAvailability: jest.fn(
+          (envelopeId: string, _tenantId: string, amount: number) => {
+            const available = envelopeId === 'env-on' ? 100 : 100000;
+            return Promise.resolve({
+              available,
+              sufficient: available >= amount,
+            });
+          },
+        ),
       };
 
-      const realBudgetAllocationService = new BudgetAllocationService(
-        allocationRepo as any,
+      const realBudgetService = new BudgetService(
+        budgetRepo as any,
+        // BudgetThresholdService, BudgetReservationService, DataSource —
+        // none of `checkPlanBudgetAvailability`'s call graph touches these.
         {} as any,
         {} as any,
-        // T-096/2: DataSource, injected so balance writes and their transaction
-        // logs share one transaction. Unused on this path.
         {} as any,
-        thresholdService as any,
       );
 
       const spendPlanRepo = { findOne: jest.fn() };
@@ -607,15 +655,15 @@ describe('SpendValidationService', () => {
         {} as any,
         {} as any,
         {} as any,
-        realBudgetAllocationService,
+        realBudgetService,
         {} as any,
       );
 
-      return { service, spendPlanRepo, queryBuilder };
+      return { service, spendPlanRepo, budgetRepo };
     }
 
     it('produces a numeric "Shortfall: X.XX" message — not the literal "Shortfall: NaN" — for a multi-mechanic on-invoice overspend', async () => {
-      const { service, spendPlanRepo, queryBuilder } = createEndToEndHarness();
+      const { service, spendPlanRepo } = createEndToEndHarness();
 
       const onMechanic1 = makeMechanic({
         code: 'ON_E2E_1',
@@ -640,6 +688,7 @@ describe('SpendValidationService', () => {
         id: PLAN_ID,
         tenantId: TENANT_ID,
         cplId: 'cpl-1',
+        periodMonth: '2026-01',
         startDate: new Date('2026-01-01'),
         endDate: new Date('2026-01-31'),
         channel: { code: 'NKA' } as any,
@@ -647,13 +696,6 @@ describe('SpendValidationService', () => {
         planFus: [planFu],
       };
       spendPlanRepo.findOne.mockResolvedValue(plan as Plan);
-
-      // Real allocation with only 100 available on-invoice -> real shortfall.
-      queryBuilder.getOne.mockResolvedValue({
-        id: 'alloc-e2e',
-        onInvoiceAvailable: 100,
-        offInvoiceAvailable: 100000,
-      });
 
       const result = await service.validateBudgetImpact(TENANT_ID, PLAN_ID);
 
@@ -670,6 +712,55 @@ describe('SpendValidationService', () => {
         'Insufficient On-Invoice budget. Shortfall: 1000.00',
       );
       expect(budgetError!.message).not.toContain('NaN');
+    });
+
+    it('does NOT report a shortfall for a zero-spend leg even when no envelope exists for it (T-270/Z21 "sıfır bacak" fix)', async () => {
+      const { service, spendPlanRepo, budgetRepo } = createEndToEndHarness();
+
+      // No off-invoice envelope at all for this dimension set.
+      budgetRepo.findEnvelopeByDimensions.mockImplementation(
+        (
+          _tenantId: string,
+          _channel: string,
+          _periodMonth: string,
+          _category?: string,
+          spendType?: string,
+        ) => {
+          if (spendType === 'ON_INVOICE') {
+            return Promise.resolve({ id: 'env-on' });
+          }
+          return Promise.resolve(null); // OFF_INVOICE: no envelope
+        },
+      );
+
+      const onMechanic = makeMechanic({
+        code: 'ON_ZERO_LEG',
+        category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      });
+      // Only an on-invoice mechanic — totalOffInvoiceSpend stays 0.
+      const pmvs = [buildPmv(onMechanic, null, { calculatedSpend: 50.0 })];
+      const planFu = buildPlanFu(pmvs);
+      const plan: Partial<Plan> = {
+        id: PLAN_ID,
+        tenantId: TENANT_ID,
+        cplId: 'cpl-1',
+        periodMonth: '2026-01',
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2026-01-31'),
+        channel: { code: 'NKA' } as any,
+        category: { code: 'DAIRY' } as any,
+        planFus: [planFu],
+      };
+      spendPlanRepo.findOne.mockResolvedValue(plan as Plan);
+
+      const result = await service.validateBudgetImpact(TENANT_ID, PLAN_ID);
+
+      expect(result.isSufficient).toBe(true);
+      expect(result.offInvoiceShortfall).toBe(0);
+      const offBudgetError = result.errors.find((e) =>
+        e.message.includes('Insufficient Off-Invoice budget'),
+      );
+      expect(offBudgetError).toBeUndefined();
     });
   });
 
@@ -804,7 +895,7 @@ describe('SpendValidationService', () => {
       ).toBe(false);
     });
 
-    it('does not produce a decimal-place error for a PRICE_SUP-shaped units/AMOUNT_PER_UNIT mechanic with a 4-decimal entry (consistent with C3\'s unit-amount exemption)', async () => {
+    it("does not produce a decimal-place error for a PRICE_SUP-shaped units/AMOUNT_PER_UNIT mechanic with a 4-decimal entry (consistent with C3's unit-amount exemption)", async () => {
       // `entered` is a NUMBER here: `mechanicType: AMOUNT_PER_UNIT` reads
       // through `entered_unit_amount`, which carries `UnitPriceTransformer`
       // as of T-197/T-221 — see `buildPmv`'s doc comment.

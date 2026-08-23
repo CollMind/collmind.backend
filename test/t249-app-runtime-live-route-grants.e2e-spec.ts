@@ -525,27 +525,29 @@ describe('T-249 — app_runtime canlı rota GRANT kapsaması', () => {
     });
 
     /**
-     * ⚠️ Bu pozitif kontrol TEMİZ bir 200 ALAMIYOR — ölçüldü, ve sebebi
-     * `@Roles`'la İLGİSİZ, ÜÇÜNCÜ bir yeni bulgu: `spend-validation.
-     * service.ts:544` `validateBudgetImpact` içinde
-     * `plan.startDate.toISOString()` çağırıyor — ama `Plan.startDate`
-     * `@Column({ type: 'date' })` (`plan.entity.ts:68`), ve TypeORM/`pg`
-     * bu tipi transformer'sız STRING olarak döndürür (`Date` DEĞİL).
-     * Sonuç HER planda, HER rolde: `TypeError: plan.startDate.toISOString
-     * is not a function`. Bu, `mechanic_spend_breakdown`'ın FK kusurundan
-     * ([[T-251]]) TAMAMEN AYRI bir kusur, aynı serviste.
+     * ⚠️ STALE PREMISE, CORRECTED (T-270/Z21, 2026-08-23, measured live via
+     * this exact test): this comment used to say the guard is passed but the
+     * ADMIN call still 500s — `validateBudgetImpact` called
+     * `plan.startDate.toISOString()` on a transformer-less `date` column
+     * (a STRING at runtime, not a `Date`), throwing `TypeError:
+     * plan.startDate.toISOString is not a function` for every plan/role.
      *
-     * ⛔ DÜZELTİLMEDİ — bu turun sınırı "yalnız @Roles ekle, servis
-     * mantığına dokunma". Team Lead'e raporlandı (yeni task adayı).
+     * T-270's A2 (envelope-model migration, `spend-validation.service.ts`)
+     * removed that call entirely — `checkPlanBudgetAvailability` takes
+     * `plan.periodMonth` (already a string column) instead of a derived
+     * `periodStart`/`periodEnd` pair, so the `.toISOString()` call this
+     * comment described no longer exists on this path. Measured: this call
+     * now returns **200** with a real `AvailabilityResult` body (not 500).
+     * This was a SIDE EFFECT of A2, not a task T-270 set out to fix — flagged
+     * in T-270's report rather than claimed as a deliberate repair.
      *
-     * Pozitif kontrolün ANLAMI korunuyor: izinli bir rol GUARD'DAN GEÇİYOR
-     * mu (403 ALMIYOR mu)? Guard geçildiğinde hata artık SERVİSİN İÇİNDEN
-     * geliyor (500, `TypeError`) — `RolesGuard` değil. Bu, `FINANCE`'ın
-     * 403'ünün sebebinin GERÇEKTEN rol filtresi olduğunu, kırık bir rota
-     * olmadığını AYIRT EDİYOR: rol filtresi 403 ÜRETİYOR, servis kusuru
-     * 500 ÜRETİYOR — ikisi karışmıyor.
+     * Pozitif kontrolün ANLAMI hâlâ korunuyor: izinli bir rol GUARD'DAN
+     * GEÇİYOR mu (403 ALMIYOR mu)? Artık hem guard hem servis geçiliyor —
+     * ama assertion bilinçli olarak yalnız "403 değil" diyor (guard'ın işini
+     * ölçüyor, servisin durumunu değil), o yüzden bu düzeltme testi
+     * BOZMADI.
      */
-    it('RBAC POZİTİF KONTROL — aynı çağrı ADMIN ile 403 ALMIYOR (guard geçildi — SPEND_BUDGET_CHECK_ROLES içinde); 500 AYRI bir servis kusuru ([[T-251]] dışı, kapsam dışı)', async () => {
+    it('RBAC POZİTİF KONTROL — aynı çağrı ADMIN ile 403 ALMIYOR (guard geçildi — SPEND_BUDGET_CHECK_ROLES içinde); artık 200 (T-270/Z21 side effect, [[T-251]] dışı)', async () => {
       const admin = await loginAs(app, 'ADMIN');
 
       const res = await request(app.getHttpServer())
