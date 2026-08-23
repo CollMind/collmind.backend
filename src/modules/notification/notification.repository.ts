@@ -18,9 +18,17 @@ export class NotificationRepository {
     return this.notificationRepository.save(newNotification);
   }
 
-  async findById(tenantId: string, id: string): Promise<Notification | null> {
+  // T-275: `recipientId` ZORUNLU parametre — `findByRecipient`/`findUnreadByRecipient`/
+  // `countUnread` kardeşleriyle AYNI şart. Tenant-scope tek başına yeterli değildi:
+  // aynı tenant içindeki HERHANGİ bir kullanıcının bildirimini döndürüyordu
+  // (ölçüldü: PLANNER2, ADMIN'in bildirimini `markAsRead` ile okuyup işaretleyebiliyordu).
+  async findById(
+    tenantId: string,
+    recipientId: string,
+    id: string,
+  ): Promise<Notification | null> {
     return this.notificationRepository.findOne({
-      where: { tenantId, id },
+      where: { tenantId, recipientId, id },
     });
   }
 

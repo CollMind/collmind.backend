@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { NotificationRepository } from './notification.repository';
 import { EmailService } from './services/email.service';
 import {
@@ -234,16 +234,24 @@ Days remaining: ${metadata.daysRemaining || 0}
     }
   }
 
+  // T-275: `recipientId` ZORUNLU — WHERE'e girmezse tenant içindeki HERHANGİ bir
+  // kullanıcının bildirimi okundu işaretlenebilir ve yanıt gövdesi onun içeriğini
+  // (subject/body/recipientEmail) sızdırır. `404` bilerek: kayıt "var ama senin
+  // değil" ile "hiç yok" AYNI yanıtı verir — varlığın kendisi sızdırılmaz.
   async markAsRead(
     tenantId: string,
+    recipientId: string,
     notificationId: string,
   ): Promise<Notification> {
     const notification = await this.notificationRepository.findById(
       tenantId,
+      recipientId,
       notificationId,
     );
     if (!notification) {
-      throw new Error(`Notification with ID ${notificationId} not found`);
+      throw new NotFoundException(
+        `Notification with ID ${notificationId} not found`,
+      );
     }
 
     notification.status = NotificationStatus.READ;

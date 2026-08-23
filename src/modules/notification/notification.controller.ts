@@ -37,12 +37,14 @@ import { UserRole } from '../../database/entities/user.entity';
 // Bir rolü dışarıda bırakmak o rolün KENDİ bildirimlerini görememesi
 // demek olurdu, iş kuralı değil.
 //
-// ⚠️ Bu `@Roles` yalnız "KİM çağırabilir" sorusunu daraltır — `markAsRead`
-// hâlâ ÇAĞIRANIN `recipientId`'sini KONTROL ETMİYOR (bir UUID bilen
-// herhangi bir kimliklenmiş kullanıcı başkasının bildirimini okundu
-// işaretleyebilir). O ayrı sınıf, `ADIM 3`'ün (default-deny + kaynak
-// sahipliği) konusu — bilerek bu turda düzeltilmedi (T-249 görev
-// dosyası, "KAPSAM DIŞI" bölümü).
+// ⚠️ Bu `@Roles` yalnız "KİM çağırabilir" sorusunu daraltır — kaynak sahipliği
+// (`recipientId`) AYRI bir kontroldür. T-249 bunu bilerek erteledi ("markAsRead
+// hâlâ çağıranın recipientId'sini kontrol etmiyor"); T-249'un GRANT'i `500`
+// örtüsünü kaldırınca içteki kusur CANLI hâle geldi ve düzeltildi (T-275,
+// 2026-08-24): `markAsRead` artık `@CurrentUser('id')` alıyor ve
+// `NotificationRepository.findById` `recipientId`'yi WHERE'e katıyor —
+// kardeşleri (`findByRecipient`/`findUnreadByRecipient`/`countUnread`) ile
+// AYNI şart. Sahiplenmeyen/var olmayan kayıt ikisi de `404` (varlık sızmaz).
 const NOTIFICATION_ROLES = [
   UserRole.ADMIN,
   UserRole.FINANCE,
@@ -85,15 +87,22 @@ export class NotificationController {
     return this.notificationService.getUnreadNotifications(tenantId, user.id);
   }
 
+  // T-275: `recipientId` artık servise geçiyor — kardeşleri (`getAllNotifications`,
+  // `getUnreadNotifications`) zaten `user.id`'yi kullanıyordu, bu uç KULLANMIYORDU.
   @Post(':id/read')
   @Roles(...NOTIFICATION_ROLES)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark notification as read' })
   @ApiResponse({ status: 200, description: 'Notification marked as read' })
+  @ApiResponse({
+    status: 404,
+    description: 'Notification not found or not owned by caller',
+  })
   markAsRead(
     @TenantId() tenantId: string,
+    @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.notificationService.markAsRead(tenantId, id);
+    return this.notificationService.markAsRead(tenantId, userId, id);
   }
 }
