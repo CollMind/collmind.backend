@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   LTAAgreement,
   LTAAgreementStatus,
@@ -104,12 +104,23 @@ export class LTAAgreementRepository {
         terminated: LTAAgreementStatus.TERMINATED,
       })
       .andWhere(
+        // T-271 Kusur 4 — `:expiryDate`'in İLK kullanımı `IS NOT NULL`
+        // içindeydi ve bu bağlam Postgres'e hiçbir tip ipucu vermiyor.
+        // Extended query protocol'de (node-pg, TypeORM) client tip OID'i
+        // GÖNDERMEZ — Postgres'in "could not determine data type of
+        // parameter $5" ile HER ZAMAN düşmesine yol açıyordu (boş VE dolu
+        // `expiryDate` ile aynı hata, ölçüldü). `::date` cast'i (kolon
+        // tipiyle BİREBİR — `lta_agreements.expiry_date` `date`) ilk
+        // kullanıma tip bağlıyor; sonraki `:expiryDate` kullanımları zaten
+        // `date` kolonlarıyla karşılaştırıldığı için ayrıca cast GEREKMEZ,
+        // ama ikinci `IS NOT NULL` kullanımı da aynı riski taşıdığı için
+        // (aynı kalıp, aynı sınıf) o da cast'lendi.
         `(
           (lta.effectiveDate <= :effectiveDate AND (lta.expiryDate IS NULL OR lta.expiryDate >= :effectiveDate))
           OR
-          (:expiryDate IS NOT NULL AND lta.effectiveDate <= :expiryDate AND (lta.expiryDate IS NULL OR lta.expiryDate >= :expiryDate))
+          (:expiryDate::date IS NOT NULL AND lta.effectiveDate <= :expiryDate AND (lta.expiryDate IS NULL OR lta.expiryDate >= :expiryDate))
           OR
-          (lta.effectiveDate >= :effectiveDate AND (lta.expiryDate IS NULL OR (:expiryDate IS NOT NULL AND lta.expiryDate <= :expiryDate)))
+          (lta.effectiveDate >= :effectiveDate AND (lta.expiryDate IS NULL OR (:expiryDate::date IS NOT NULL AND lta.expiryDate <= :expiryDate)))
         )`,
         { effectiveDate, expiryDate },
       );

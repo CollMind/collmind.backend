@@ -542,4 +542,91 @@ GRANT INSERT, UPDATE ON :"schema".plan_mechanic_values TO app_runtime;
 --    gerektirir.
 GRANT SELECT ON :"schema".lta_plan_overrides TO app_runtime;
 
+-- ── S3 tur 25 ([[T-271]], 2026-08-23) — tur 24'ün "NOT (kapsam dışı)"
+--    ile bıraktığı boşluk: `lta_agreements`/`lta_rates` üzerinde
+--    `app_runtime`'ın SIFIR INSERT/UPDATE/DELETE'i vardı (yalnız SELECT —
+--    tur 10/11). Dört canlı `@Roles(ADMIN)` ucunun (create/update/
+--    activate/terminate) DÖRDÜ de bu yüzden `permission denied` ile 500
+--    veriyordu — ölçüldü, `SET ROLE app_runtime; INSERT INTO
+--    main.lta_agreements ...` → "permission denied for table
+--    lta_agreements".
+--
+--    KAPSAM — her fiil bir üretim yazma yoluna atıflı
+--    (`lta-agreement.service.ts`, `LTAAgreementRepository`/
+--    `ltaRateRepository` DI çağrıları grep'lendi):
+--
+--    lta_agreements INSERT — `createAgreement` → `ltaRepository.create()`
+--      + `.save()` (satır 81/93).
+--    lta_agreements UPDATE — `updateAgreement`/`activateAgreement`/
+--      `terminateAgreement`in HEPSİ `ltaRepository.save(agreement)` ile
+--      var olan satırı günceller (satır 242/270/291). DELETE VERİLMEDİ:
+--      `LTAAgreementRepository.softRemove` tanımlı ama sıfır çağıranı var
+--      — ölçüldü (`grep -n "ltaRepository\." src/modules/shared/lta/
+--      lta-agreement.service.ts` → `softRemove` hiç geçmiyor, controller'da
+--      DELETE ucu yok). İlke 1: bugün ihtiyacı olmayan izin verilmez.
+--
+--    lta_rates INSERT — `createAgreement` VE `updateAgreement`'ın rate
+--      güncellemesi, ikisi de `ltaRateRepository.create()` (yeni entity,
+--      id yok) + `.save()` — TypeORM `save()` id'siz entity'de HER ZAMAN
+--      INSERT üretir (satır 104/120, 224/239).
+--    lta_rates DELETE — `updateAgreement`, `dto.rates` gönderildiğinde
+--      var olan oranları `ltaRateRepository.delete({ ltaAgreementId: id
+--      })` ile siliyor, yeniden yaratmadan ÖNCE (satır 214).
+--
+--    ⚠️ lta_rates UPDATE — İLK ölçümde (yalnız `grep -n
+--    "ltaRateRepository\."` — DI-çağrı yüzeyi) "gerekmiyor" sanıldı: iki
+--    yazma yolu da (create/update) `.create()`+`.save()`, fetch-then-mutate
+--    yok. YANLIŞTI — canlı sorgu logu (`/private/tmp/backend-t269-2.log`)
+--    çürüttü: `LTAAgreement.rates` `{ cascade: true }` (`lta-agreement.
+--    entity.ts:67`), ve `findById` her zaman `rates` relation'ını yüklüyor
+--    (satır 34-41). `updateAgreement`/`activateAgreement`/
+--    `terminateAgreement` bu YÜKLÜ agreement'ı `.save()` ettiğinde, TypeORM
+--    cascade'i agreement alanları DEĞİŞMESE BİLE `rates` koleksiyonunun
+--    HER elemanını yeniden persist ediyor — ölçülmüş örnek (terminate):
+--      UPDATE "main"."lta_rates" SET "channel_id" = $1, "category_id" = $2,
+--        "updated_at" = CURRENT_TIMESTAMP WHERE "id" IN ($3)
+--      -- PARAMETERS: [null,null,"<var olan rate id>"]
+--    Bu, beşinci bir yüzey (`§ DÖRT YÜZEY`'in listelemediği): ORM
+--    CASCADE — DI çağrısı değil, ham SQL değil, `relations:[]` string'i
+--    değil, doğrudan repository erişimi de değil; bir `@OneToMany`
+--    dekoratör seçeneğinin (`cascade: true`) `.save(parent)` üzerindeki
+--    örtük yan etkisi. Grep bunu YAKALAMAZ — yalnız canlı sorgu logu
+--    yakaladı. UPDATE grant'i olmadan `updateAgreement`/`activateAgreement`/
+--    `terminateAgreement` ÜÇÜ de bu cascade UPDATE'te 500 veriyordu
+--    (`updateAgreement`'ın `dto.rates` GÖNDERMEDİĞİ, hiçbir oranı
+--    DEĞİŞTİRMEK NİYETİNDE OLMADIĞI çağrılarda bile).
+--
+--    ⚠️ RAPOR (Team Lead'e, bu turun kapsamı DIŞINDA — `touches:` yalnız
+--    `lta-agreement.repository.ts`/bu dosya/test dosyasını kapsıyor,
+--    `lta-agreement.service.ts`'e dokunulmadı): `LTAAgreement.planOverrides`
+--    de AYNI `{ cascade: true }` taşıyor (satır 70) ve `findById` onu da
+--    HER ZAMAN yüklüyor. Bugün boş dizi geldiği için (bu turda test edilen
+--    agreement'ların hiçbirinde override YOK) cascade hiç ateşlemedi —
+--    ama bir agreement'ın GERÇEK bir `lta_plan_overrides` satırı VARKEN
+--    `PATCH`/`activate`/`terminate` çağrılırsa, AYNI cascade mekanizması
+--    `lta_plan_overrides`'a da bir UPDATE/INSERT dener ve `permission
+--    denied for table lta_plan_overrides` ile 500 verir — o tabloda
+--    `app_runtime`'ın YALNIZ SELECT'i var (tur 24, BİLEREK: "bu tabloya
+--    yazan hiçbir üretim yolu yok" — o ölçüm INSERT/UPDATE'i DI-çağrı
+--    yüzeyinden aradı, cascade yüzeyini SAYMADI). Bu turda BOŞ dizi
+--    yüzünden gizli kaldığı için "DUR: yeni bir kusur bulursan ölçümü
+--    tamamla, raporla, kapsamı kendin genişletme" maddesi gereği
+--    GENİŞLETİLMEDİ — yeni bir task gerektirir, ve muhtemel iki çözüm
+--    var: (a) `lta_plan_overrides`'a da INSERT/UPDATE ver (yazma yolunun
+--    KENDİSİ cascade'e dönüşür, "yalnız migration yazıyor" varsayımı artık
+--    doğru değildir), (b) service'te `cascade:true`'yu kaldırıp
+--    `rates`/`planOverrides`'ı `save()`'in dışında tut. Karar ürün
+--    sahibine bırakılır — GRANT genişletmek K-2.6.13'ün "asgari ölçülmüş
+--    hak" ilkesini zayıflatabilir, kod tarafı ise `touches:` dışı.
+--
+--    Per-uç maskeleme notu (tur 24'ün NOT'unun devamı, [[T-271]] görev
+--    dosyası): `createAgreement`/`activateAgreement`
+--    `validateNoOverlappingAgreements`'a (raw SQL, GRANT'ten BAĞIMSIZ bir
+--    ayrı kusur — bkz. `lta-agreement.repository.ts` `findOverlappingAgreements`
+--    yorumu) HER ZAMAN uğradığı için bu GRANT'ten ÖNCE test edilseydi
+--    INSERT/UPDATE'e hiç ULAŞILMAYACAKTI; o kusur AYNI turda düzeltildi —
+--    aksi hâlde bu GRANT sessizce ölçülemez kalırdı.
+GRANT INSERT, UPDATE ON :"schema".lta_agreements TO app_runtime;
+GRANT INSERT, UPDATE, DELETE ON :"schema".lta_rates TO app_runtime;
+
 COMMIT;
