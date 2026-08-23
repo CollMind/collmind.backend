@@ -287,9 +287,31 @@ import { UserRole } from '../../database/entities/user.entity';
  * > (`@Roles(ADMIN)`, `T-255`). **`5/5` taşıyan üye kalmadı → union artık
  * > çökmüyor.** Hücre `⛔ DUR`'da kalmaya devam ediyor, ama gerekçesi
  * > değişti: geriye `GET /users` (tenant kullanıcı listesi) ile `me`
- * > (self-servis kimlik) **aynı yetenekte mi** sorusu kaldı — `K-2.6.6`.
+ * > (self-servis kimlik) **aynı yetenekte mi** sorusu kaldı.
  * > Eski satır silinmedi (`Z1` append-only): çöküş bir kez ölçülmüştü ve
  * > onu ortadan kaldıran şey bir yeniden yorum değil, bir **silme**.
+ *
+ * > ✅ **ÇÖZÜLDÜ — `Z20` (2026-08-23).** Soru `K-2.6.6`'nın değil
+ * > **`K-2.6.4`'ün** (rol kataloğu) konusuymuş. Hücre İKİYE ayrıldı:
+ * >
+ * > ```
+ * > USER_MANAGE   GET /users · /users/:id · yazma uçları   @Roles(ADMIN)
+ * > SELF          /users/me ailesi (3 uç)                  DÖRDÜNCÜ KOVA
+ * > ```
+ * >
+ * > `GET /users` = `/users/:id`'nin **liste hâli** → aynı veri sınıfı,
+ * > aynı rol. Emsalden türedi, union'dan değil (`Z18`).
+ * > `SELF` rol değil **kimlik** gerektirir; ve `B4`'ün `FILTRESIZ = 0`
+ * > ön koşulunu bu kova karşılıyor — `route-scope-baseline.txt`'teki üç
+ * > `F` satırı **tam olarak** `me` ailesi (ölçüldü).
+ * >
+ * > ⚠️ **ÜÇÜNCÜ hücre AÇIK — `USER_LOOKUP` (`T-268`).** `T-255`
+ * > `/users/:id`'yi `ADMIN`'e daralttı, ama frontend o ucu DÖRT yerden
+ * > `plan.createdBy` UUID'sini **görünen ada** çevirmek için çağırıyor.
+ * > Davranışsal (2026-08-23, poz.kontrol `/users/me` 4/4 `200`):
+ * > `ADMIN 200 · CM 403 · FIN 403 · PLANNER 403 · READONLY 403`.
+ * > Fallback sessiz — ekranda **ham UUID**. Yani bir yetenek ihtiyacı
+ * > bir YÖNETİM ucundan karşılanıyormuş; `T-255` ödünç yolu kapattı.
  *
  * ---
  *
