@@ -107,6 +107,41 @@
  * Dördü de görev raporunda; bu dosyaya ayrı bir e2e olarak eklenmedi
  * (kapsam: `touches:` bu dosyayı Kusur 3/4 pin testlerini ÇEVİRMEK için
  * listeliyor, yeni bir describe bloğu değil).
+ *
+ * ── Z23 ([[T-273]], 2026-08-23) — cascade KALDIRILDI, iki tablodan birden ──
+ *
+ * `LTAAgreement.rates`/`.planOverrides`'ın `{ cascade: true }`'ı kaldırıldı
+ * (`lta-agreement.entity.ts`). Gerekçe: bu seçenek grep'lenemeyen bir yazma
+ * yolu üretiyordu — `rates`'te KANITLI (yukarısı, S3 tur 25: fantom
+ * `UPDATE lta_rates SET channel_id=…`), `planOverrides`'ta AYNI SINIF bir
+ * risk taşıyordu (`app_runtime`'ın o tabloda YALNIZ `SELECT`'i var, S3 tur
+ * 24 — bilerek).
+ *
+ * ⚠️ ÖLÇÜM DÜZELTMESİ ([[T-273]] ŞART 2): `T-273` görev dosyasının
+ * varsaydığı "ilk gerçek override satırında 500 patlar" iddiası BUGÜNKÜ
+ * `relations` kümesiyle (`findById`: yalnız `'planOverrides'`, iç içe
+ * `.ltaRate`/`.plan`/`.ltaAgreement` join'i YOK) REPRODÜKLENMEDİ — canlı
+ * sorgu logu (düzeltmeden ÖNCE, cascade hâlâ açıkken) gerçek bir override
+ * satırıyla PATCH/activate/terminate'in HİÇBİRİNİN `lta_plan_overrides`'a
+ * SQL üretmediğini gösterdi (TypeORM'un diff motoru yüklenmiş/değişmemiş
+ * nesnede boş fark buluyor — `LTARate.channelId`/`categoryId`'nin çift-
+ * eşlemeli nullable ilişkisiyle AYNI mekanizma değil: `LTAPlanOverride`'ın
+ * `plan`/`ltaRate`/`ltaAgreement` ilişkileri `findById`'de hiç join
+ * edilmediği için `undefined` kalıyor ve TypeORM'un diff'ine hiç girmiyor).
+ * Kaldırma yine de uygulanır — CLAUDE.md §7.1: "kapsam, kusurun SINIFIYLA
+ * tanımlanır, bulunduğu ilk vakanın yazımıyla değil." `rates`'te ateşlediği
+ * kanıtlı bir mekanizmanın `planOverrides`'ta gelecekte (ör. bir sonraki
+ * turda `.ltaRate`/`.plan` join'i eklenirse) sessizce tekrarlanmasını
+ * ÖNLER.
+ *
+ * Bu describe bloğu iki şeyi birden pinler: (1) gerçek bir override satırı
+ * varken üç canlı yaşam-döngüsü ucu da (PATCH/activate/terminate) çalışmaya
+ * DEVAM EDER, (2) override satırı `updated_at`'ı DEĞİŞMEZ — cascade'in
+ * GERÇEKTEN sessiz kaldığının (yazmadığının), yalnız "hata vermediğinin"
+ * DEĞİL, kanıtı. `lta_plan_overrides`'ın 0-satır körlüğünü ([[T-269]]/
+ * [[T-271]] yorumlarının işaret ettiği, hiç ölçülememiş boşluk) kalıcı
+ * olarak kırar — [[T-047]] invaryantına dokunmadan (bu suite'in kendi
+ * `afterAll`'ı temizliyor).
  */
 
 import request from 'supertest';
@@ -632,6 +667,147 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
     it('ÇAKIŞMAYAN (expiryDate YOK — açık uçlu, effective base aralıktan SONRA) — 201 Created', async () => {
       const status = await attemptCreate('2027-10-01');
       expect(status).toBe(201);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Z23 ([[T-273]]) — cascade kaldırıldı; gerçek bir `lta_plan_overrides`
+  // satırıyla üç canlı uç (PATCH/activate/terminate) — poz. kontrollü:
+  // override satırı SESSİZCE değişmiyor (cascade artık hiç dokunmuyor).
+  // ────────────────────────────────────────────────────────────────────
+  describe('planOverrides dolu iken PATCH/activate/terminate — cascade kaldırıldı (Z23, [[T-273]])', () => {
+    let z23AgreementId: string;
+    let z23RateId: string;
+    let z23OverrideId: string;
+    let z23PlanId: string;
+    // node-pg `timestamp` kolonunu JS `Date`'e parse eder — `.toBe` (referans
+    // eşitliği) iki AYRI Date nesnesini karşılaştırır ve DEĞER eşit olsa bile
+    // düşer; bu yüzden `.getTime()` ile sayısal karşılaştırılıyor.
+    let overrideUpdatedAtBefore: number;
+
+    beforeAll(async () => {
+      const admin = await getAdminDataSource();
+
+      const [channelNka, categorySacBoyasi] = await Promise.all([
+        dataSource
+          .query(
+            `SELECT id FROM main.channels WHERE tenant_id = $1 AND code = 'NKA'`,
+            [fixture.tenantId],
+          )
+          .then((r) => r[0].id),
+        dataSource
+          .query(
+            `SELECT id FROM main.categories WHERE tenant_id = $1 AND code = 'CAT-SAC-BOYASI'`,
+            [fixture.tenantId],
+          )
+          .then((r) => r[0].id),
+      ]);
+
+      const planner = await loginAs(app, 'PLANNER');
+      const planRes = await request(app.getHttpServer())
+        .post('/plans')
+        .set(planner.authHeader())
+        .send({
+          planName: `E2E-T273-Z23-${Date.now()}`,
+          cplId: fixture.cplId,
+          channelId: channelNka,
+          categoryId: categorySacBoyasi,
+          startDate: '2026-01-05',
+          endDate: '2026-01-31',
+        })
+        .expect(201);
+      z23PlanId = planRes.body.id;
+
+      const agRows: Array<{ id: string }> = await admin.query(
+        `INSERT INTO main.lta_agreements
+           (tenant_id, cpl_id, agreement_name, agreement_code, effective_date, status)
+         VALUES ($1, $2, 'T-273 Z23 probe', $3, '2026-01-01', 'draft')
+         RETURNING id`,
+        [fixture.tenantId, fixture.cplId, `T273_Z23_${Date.now()}`],
+      );
+      z23AgreementId = agRows[0].id;
+
+      const rateRows: Array<{ id: string }> = await admin.query(
+        `INSERT INTO main.lta_rates
+           (tenant_id, lta_agreement_id, channel, category, on_invoice_percentage, off_invoice_percentage, is_active)
+         VALUES ($1, $2, 'ALL', 'ALL', 5, 3, true)
+         RETURNING id`,
+        [fixture.tenantId, z23AgreementId],
+      );
+      z23RateId = rateRows[0].id;
+
+      const ovrRows: Array<{ id: string; updated_at: string }> =
+        await admin.query(
+          `INSERT INTO main.lta_plan_overrides
+             (tenant_id, plan_id, lta_rate_id, lta_agreement_id,
+              override_on_invoice_pct, override_off_invoice_pct, override_reason)
+           VALUES ($1, $2, $3, $4, 9, 2, 'T-273 Z23 override — dokunulmamalı')
+           RETURNING id, updated_at`,
+          [fixture.tenantId, z23PlanId, z23RateId, z23AgreementId],
+        );
+      z23OverrideId = ovrRows[0].id;
+      overrideUpdatedAtBefore = new Date(ovrRows[0].updated_at).getTime();
+    });
+
+    afterAll(async () => {
+      const admin = await getAdminDataSource();
+      await admin.query(`DELETE FROM main.lta_plan_overrides WHERE id = $1`, [
+        z23OverrideId,
+      ]);
+      await admin.query(`DELETE FROM main.lta_agreements WHERE id = $1`, [
+        z23AgreementId,
+      ]);
+      await cleanupTestPlans(app, fixture.tenantId, 'E2E-T273-Z23-');
+    });
+
+    it('PATCH /lta-agreements/:id (ADMIN) — 200, planOverrides dolu iken de hâlâ çalışıyor', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const res = await request(app.getHttpServer())
+        .patch(`/lta-agreements/${z23AgreementId}`)
+        .set(admin.authHeader())
+        .send({ notes: 'T-273 Z23 patch' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.notes).toBe('T-273 Z23 patch');
+      expect(res.body.planOverrides).toHaveLength(1);
+      expect(res.body.planOverrides[0].id).toBe(z23OverrideId);
+    });
+
+    it('POST /lta-agreements/:id/activate (ADMIN) — 204, planOverrides dolu iken de hâlâ çalışıyor', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const res = await request(app.getHttpServer())
+        .post(`/lta-agreements/${z23AgreementId}/activate`)
+        .set(admin.authHeader());
+
+      expect(res.status).toBe(204);
+    });
+
+    it('POST /lta-agreements/:id/terminate (ADMIN) — 204, planOverrides dolu iken de hâlâ çalışıyor', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const res = await request(app.getHttpServer())
+        .post(`/lta-agreements/${z23AgreementId}/terminate`)
+        .set(admin.authHeader())
+        .send({ reason: 'T-273 Z23 terminate' });
+
+      expect(res.status).toBe(204);
+    });
+
+    it("POZ. KONTROL — override satırı ÜÇ yaşam-döngüsü çağrısı boyunca SESSİZCE değişmedi (cascade artık dokunmuyor, `app_runtime`'ın zaten INSERT/UPDATE hakkı YOK)", async () => {
+      const rows: Array<{
+        updated_at: string;
+        override_on_invoice_pct: string;
+        override_off_invoice_pct: string;
+      }> = await dataSource.query(
+        `SELECT updated_at, override_on_invoice_pct, override_off_invoice_pct
+           FROM main.lta_plan_overrides WHERE id = $1`,
+        [z23OverrideId],
+      );
+      expect(rows).toHaveLength(1);
+      expect(new Date(rows[0].updated_at).getTime()).toBe(
+        overrideUpdatedAtBefore,
+      );
+      expect(rows[0].override_on_invoice_pct).toBe('9.00');
+      expect(rows[0].override_off_invoice_pct).toBe('2.00');
     });
   });
 });

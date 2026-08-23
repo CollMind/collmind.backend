@@ -596,6 +596,13 @@ GRANT SELECT ON :"schema".lta_plan_overrides TO app_runtime;
 --    (`updateAgreement`'ın `dto.rates` GÖNDERMEDİĞİ, hiçbir oranı
 --    DEĞİŞTİRMEK NİYETİNDE OLMADIĞI çağrılarda bile).
 --
+--    ⚠️ REVİZE EDİLDİ (Z23, [[T-273]], 2026-08-23): bu UPDATE'in gerekçesi
+--    (yukarısı) artık GEÇERLİ DEĞİL — cascade'in KENDİSİ kaldırıldı
+--    (`lta-agreement.entity.ts`). Grant `GRANT INSERT, DELETE ON lta_rates`
+--    satırına indirildi (aşağıda, dosyanın sonunda). Bu blok SİLİNMEDİ:
+--    beşinci-yüzey dersinin (ORM cascade grep'e görünmez) kaydı hâlâ
+--    doğru, yalnız SONUCU (UPDATE grant'i gerekli) artık geçerli değil.
+--
 --    ⚠️ RAPOR (Team Lead'e, bu turun kapsamı DIŞINDA — `touches:` yalnız
 --    `lta-agreement.repository.ts`/bu dosya/test dosyasını kapsıyor,
 --    `lta-agreement.service.ts`'e dokunulmadı): `LTAAgreement.planOverrides`
@@ -627,6 +634,21 @@ GRANT SELECT ON :"schema".lta_plan_overrides TO app_runtime;
 --    INSERT/UPDATE'e hiç ULAŞILMAYACAKTI; o kusur AYNI turda düzeltildi —
 --    aksi hâlde bu GRANT sessizce ölçülemez kalırdı.
 GRANT INSERT, UPDATE ON :"schema".lta_agreements TO app_runtime;
-GRANT INSERT, UPDATE, DELETE ON :"schema".lta_rates TO app_runtime;
+
+-- ── Z23 ([[T-273]], 2026-08-23) — `lta_rates UPDATE` (yukarısı, S3 tur 25)
+--    YALNIZ `LTAAgreement.rates`'in `{ cascade: true }`'ının ürettiği
+--    fantom `UPDATE lta_rates SET channel_id=…,category_id=…` içindi —
+--    `updateAgreement`/`activateAgreement`/`terminateAgreement`'ın HİÇBİRİ
+--    `lta_rates` satırını doğrudan UPDATE ETMİYOR (yalnız `.delete()` +
+--    yeni satır `.create()+.save()` — bkz. `lta-agreement.service.ts`).
+--    Z23 kararıyla cascade KALDIRILDI (`lta-agreement.entity.ts`) — ölçüldü
+--    ([[T-273]] ŞART 2, canlı sorgu logu): cascade kaldırıldıktan SONRA
+--    PATCH/activate/terminate'in ÜÇÜ de `lta_rates`'e SIFIR SQL üretiyor.
+--    UPDATE artık hiçbir üretim yazma yoluna atıflı değil — İlke 1: bugün
+--    ihtiyacı olmayan izin verilmez. `lta_plan_overrides`'a INSERT/UPDATE
+--    hiç VERİLMEDİ (S3 tur 24 kararı korunuyor — cascade kaldırıldığı için
+--    zaten hiçbir yazma yolu yok, ölçüldü: cascade'in kendisi de BUGÜNKÜ
+--    `relations` kümesiyle o tabloya SIFIR SQL üretiyordu).
+GRANT INSERT, DELETE ON :"schema".lta_rates TO app_runtime;
 
 COMMIT;
