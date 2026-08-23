@@ -1,26 +1,33 @@
 /**
  * empty-scope-contract.e2e-spec.ts
  *
- * ⚠️ REWRITTEN (T-270/Z21, 2026-08-23) — the ORIGINAL [[T-254]] fail-open
- * fix this file guarded (`budgetUtilization` fail-open on an empty CPL
- * scope) lived entirely on `budget_allocations` via `POST
- * /budget-allocations`. `budget_allocations` is now RETIRED as a data
- * source (K-2.2.3 violation, 0 rows in every measured tenant — Z21 karar
- * kaydı): `FinanceReportingService#getBudgetUtilization` reads
- * `budget_envelopes` exclusively. Running the ORIGINAL assertions against
- * today's code measured THREE failures — all three original tests expected
- * `budgetUtilizationStatus: 'ok'` and got `'unavailable'`, because
- * `budget_allocations` no longer feeds this endpoint at all.
+ * ⚠️ DARALTILDI (T-272/Z22, 2026-08-23) — T-270/Z21 bu dosyayı "EVERY
+ * CPL-scoped Planner (empty scope or not) now gets `unavailable`" diye
+ * yazmıştı: `budget_envelopes`'ın `cplId` boyutu yok diye
+ * `DashboardService#getSummary` CPL-kapsamlı her çağıran için
+ * `getBudgetUtilization`'ı HİÇ ÇAĞIRMIYORDU (fail-closed kapı).
  *
- * This is not a mechanical port. `budget_envelopes` has NO `cplId` column
- * (K-2.2.1 defines an envelope as Kanal × Kategori × Dönem; A7 places CPL in
- * the scope layer). `DashboardService#getSummary` was changed (same T-270
- * turn) to FAIL CLOSED for a CPL-scoped caller (R-2) rather than call
- * `getBudgetUtilization` with a restriction it cannot honour — so the
- * ORIGINAL "PLANNER, kapsam=[CPL_A] → sees only CPL_A's total" scenario is
- * no longer just untested, it is no longer a claim this system can make.
- * What replaces it: EVERY CPL-scoped Planner (empty scope or not) now gets
- * `unavailable`, and that collapse is itself the thing under test.
+ * O beklenti `docs/decisions/PLAN_BUTCE_NETLESTIRME.md` `netleştirme-1` ile
+ * ÇELİŞİYORDU: kilitlemesiz model görünürlük olmadan savunulamaz, ve bir
+ * PLANNER zarf doluluğunu GÖNDERİMDEN ÖNCE GÖRMEK ZORUNDA. Kapı Z22 ile
+ * KALDIRILDI — gerekçe: `getBudgetUtilization` `filters.cplIds`'i zaten HİÇ
+ * UYGULAMIYORDU (`computeBudgetUtilization` JSDoc'u, A7: bütçe CPL
+ * ekseninde TANIMSAL olarak duyarsız), yani kapı bir kısıtı korumuyordu —
+ * yalnız bir yeteneği (görünürlüğü) kapatıyordu.
+ *
+ * `A1` ile bu karar KARIŞMAZ: veri yokluğu (`unavailable`) ile kapsam AYRI
+ * sinyallerdir, ve zarf özetinde kapsam UYGULANMAZ — bkz. `A1 GİRDİ 2`.
+ *
+ * ⚠️ Ve `K-2.6.8a` (`REVOKE_ALL` = erişim yok) bu kararla ÇELİŞMEZ:
+ * `REVOKE_ALL` MÜŞTERİ-SATIRI erişimini kaldırır (`Agreement`/
+ * `ApprovalRequest` sorguları — `cplIds` ile hâlâ filtrelenir, aşağıdaki
+ * poz.kontrol bunu ayrıca ölçer). Zarf özeti TENANT-YAPISAL veridir (katalog
+ * sınıfı — `Z22` karar kaydı) ve rol katmanının konusudur, kapsam katmanının
+ * değil. Tam kilitleme isteniyorsa aracı HESAP ASKIYA ALMADIR, kapsam
+ * boşaltma değil.
+ *
+ * ⛔ Bu dosya SİLİNMEDİ — daraltıldı: müşteri-verisi tarafında boş kapsam
+ * beklentisi hâlâ doğru (üç sayaç `0` kalır), yalnız zarf tarafında yanlıştı.
  *
  * ⚠️ SCOPE_ENFORCEMENT_ENABLED bu suite'in KENDİ process'inde, app boot'undan
  * ÖNCE, module-level'de zorlanır (user-scope-creation.e2e-spec.ts'in aynı
@@ -73,7 +80,7 @@ interface SummaryBody {
   openTaskCount: number;
 }
 
-describe('T-270/Z21 — budget_envelopes canonical: dashboard budgetUtilization', () => {
+describe('T-272/Z22 — budget_envelopes tenant-yapısal veridir: dashboard budgetUtilization kapsam-duyarsız', () => {
   let app: INestApplication;
   let dataSource: DataSource;
   let fixture: E2EFixture;
@@ -273,34 +280,86 @@ describe('T-270/Z21 — budget_envelopes canonical: dashboard budgetUtilization'
   });
 
   /* ================================================================ *
-   * T-270/Z21 measured gap — CPL-scoped bir çağıran hiçbir zaman "ok"
-   * DÖNMEMELİ: budget_envelopes'ta cplId boyutu yok, ve bu kısıtı
-   * onurlandıramayan bir çağrı sessizce geniş bir figür göstermemeli
-   * (K-2.6.8a fail-open sınıfı; fail-closed, R-2).
+   * T-272/Z22 pin #1 — kapı KALDIRILDI: CPL-kapsamlı bir PLANNER (dolu ya
+   * da boş kapsam) ADMIN'in gördüğü AYNI tenant toplamını görür. Bütçe CPL
+   * ekseninde TANIMSAL olarak duyarsız (A7) — kapsam bu dalı etkilemez.
    * ================================================================ */
-  it('T-270/Z21 — kapsamı DOLU (gerçek CPL) PLANNER "unavailable" görür, envelope modelinde CPL kısıtı onurlandırılamaz', async () => {
+  it('T-272/Z22 PİN 1 — kapsamı DOLU (gerçek CPL) PLANNER "ok" + ADMIN ile AYNI toplamı görür', async () => {
     const body = await summary(scopedPlannerAuth, PERIOD);
 
-    expect(body.budgetUtilizationStatus).toBe('unavailable');
-    expect(body.budgetUtilization).toBeNull();
+    expect(body.budgetUtilizationStatus).toBe('ok');
+    expect(body.budgetUtilization?.total.allocated).toBe(ENVELOPE_ALLOCATED);
   });
 
-  it('T-270/Z21 — kapsamı BOŞ (REVOKE_ALL) PLANNER de "unavailable" görür (aynı fail-closed dal)', async () => {
+  it('T-272/Z22 PİN 3 — kapsamı BOŞ (REVOKE_ALL) PLANNER de "ok" + AYNI toplamı görür (zarf paneli AÇIK)', async () => {
     const body = await summary(emptyScopePlannerAuth, PERIOD);
+
+    expect(body.budgetUtilizationStatus).toBe('ok');
+    expect(body.budgetUtilization?.total.allocated).toBe(ENVELOPE_ALLOCATED);
+  });
+
+  /* ================================================================ *
+   * A1 KORUNUR (T-272/Z22 pin #2) — veri yokluğu ile kapsam ayrı sinyal.
+   * Zarfı OLMAYAN bir dönemde REVOKE_ALL PLANNER da "unavailable" görür —
+   * kapsam genişledi diye YANLIŞ bir sıfır rakamı ASLA üretilmez.
+   * ================================================================ */
+  it('A1 KORUNUR — zarfı OLMAYAN dönemde REVOKE_ALL PLANNER "unavailable" görür, "ok" + ₺0 DEĞİL', async () => {
+    const body = await summary(emptyScopePlannerAuth, EMPTY_PERIOD);
 
     expect(body.budgetUtilizationStatus).toBe('unavailable');
     expect(body.budgetUtilization).toBeNull();
   });
 
   it('POZİTİF KONTROL — CPL-scoped PLANNER için diğer ÜÇ sayaç bu dalın DIŞINDA, hâlâ hesaplanıyor', async () => {
+    // ⚠️ ÖLÇÜLDÜ: PERIOD_2'de (2099-08) hiç zarf YOK — bu suite yalnız
+    // PERIOD'a (2099-07) zarf yaratıyor. Yani buradaki 'unavailable' A1'İN
+    // (veri yokluğu) cevabıdır, kapsamın DEĞİL — ilk taslak bunu 'ok'
+    // bekliyordu ve PERIOD_2'yi PERIOD ile karıştırıyordu (yanlış yöne
+    // yanılan bir ölçüm, ölçülüp düzeltildi). Kapsamın bu dalı etkilemediği
+    // zaten PİN 1/PİN 3 testlerinde (PERIOD, 'ok') ayrıca kanıtlı; bu test
+    // yalnız üç sayacın A1/A2 dalından BAĞIMSIZ hesaplandığını gösterir.
     const body = await summary(scopedPlannerAuth, PERIOD_2);
 
-    // Bu üç sayaç FinanceReportingService'ten değil, DashboardService'in
-    // kendi Agreement/ApprovalRequest sorgularından gelir — budget_envelopes
-    // modeliyle ilgisi yok, ve fail-closed dal onları etkilememeli.
     expect(typeof body.activeAgreementCount).toBe('number');
     expect(typeof body.pendingApprovalCount).toBe('number');
     expect(typeof body.openTaskCount).toBe('number');
     expect(body.budgetUtilizationStatus).toBe('unavailable');
+  });
+
+  /* ================================================================ *
+   * T-272/Z22 PİN 3 — DAVRANIŞSAL: "müşteri panelleri KAPALI · zarf paneli
+   * AÇIK" tek bir sayının aynı yönde yanılmadığını göstermek için İKİ FARKLI
+   * kapsamla ölçülür (fixture'ın ayırt etme gücü — CLAUDE.md "Fixture, iki
+   * tarafta FARKLI değer taşımalı"). `GET /dashboard/cpl-status` CPL
+   * (Customer × Product Line) satırı döner — müşteri-satırı verisi, ve
+   * REVOKE_ALL burada hâlâ KAPALI olmalı (K-2.6.8a bozulmadı); aynı anda
+   * `/dashboard/summary`'nin zarf paneli AÇIK.
+   * ================================================================ */
+  it("T-272/Z22 PİN 3 (davranışsal) — kapsamı DOLU PLANNER cpl-status'ta CPL_A'yı GÖRÜR", async () => {
+    const res = await request(app.getHttpServer())
+      .get('/dashboard/cpl-status')
+      .set(scopedPlannerAuth)
+      .expect(200);
+
+    expect(
+      (res.body.items as Array<{ cplId: string }>).some(
+        (item) => item.cplId === CPL_A,
+      ),
+    ).toBe(true);
+  });
+
+  it("T-272/Z22 PİN 3 (davranışsal) — kapsamı BOŞ (REVOKE_ALL) PLANNER cpl-status'ta HİÇBİR ŞEY GÖRMEZ — müşteri paneli KAPALI kalır", async () => {
+    const res = await request(app.getHttpServer())
+      .get('/dashboard/cpl-status')
+      .set(emptyScopePlannerAuth)
+      .expect(200);
+
+    expect(res.body.items).toEqual([]);
+
+    // Aynı kullanıcı, aynı anda: zarf paneli AÇIK. İki panel AYNI kapsamdan
+    // farklı sinyal üretiyor — kapsam katmanı ile bütçenin CPL-ekseni
+    // duyarsızlığı (A7) birbirine KARIŞMIYOR.
+    const budgetBody = await summary(emptyScopePlannerAuth, PERIOD);
+    expect(budgetBody.budgetUtilizationStatus).toBe('ok');
   });
 });

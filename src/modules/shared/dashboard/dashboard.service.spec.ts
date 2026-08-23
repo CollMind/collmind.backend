@@ -372,17 +372,20 @@ describe('DashboardService', () => {
   // -------------------------------------------------------------------------
 
   describe('getSummary — PLANNER scope', () => {
-    // T-270/Z21 (A2, measured gap): `budget_envelopes` (canonical as of A2)
-    // has no `cplId` column — K-2.2.1/A7 place CPL in the scope layer, not
-    // the budget layer — so `FinanceReportingService#getBudgetUtilization`
-    // has no way to honour a CPL-scoped restriction. Calling it anyway
-    // would silently WIDEN what a scoped Planner sees (K-2.6.8a's
-    // fail-open class) now that `budget_envelopes` carries real money
-    // (unlike the always-empty `budget_allocations` it replaces). Fail
-    // closed instead (R-2): a CPL-scoped Planner gets `unavailable`, not an
-    // unscoped figure. This REPLACES the pre-A2 "cplIds forwarded to
-    // getBudgetUtilization" expectation — that contract no longer exists.
-    it('does NOT call getBudgetUtilization for a CPL-scoped Planner — reports unavailable instead of an unscoped figure', async () => {
+    // T-272/Z22 (kaldırılan T-270/Z21 fail-closed kapısı): `budget_envelopes`
+    // (K-2.2.1: Kanal × Kategori × Dönem) hiçbir zaman `cplId` sütunu
+    // taşımayacak (A7 — CPL kapsam katmanında, bütçe katmanında değil). T-270
+    // bunu "kısıtı onurlandıramıyorsak hiç çağırma" diye okumuştu ve bir
+    // CPL-kapsamlı PLANNER'ın bütçe panelini KALICI olarak `unavailable`
+    // bıraktı. `docs/decisions/PLAN_BUTCE_NETLESTIRME.md` `netleştirme-1`
+    // bunun tersini gerektiriyor: kilitlemesiz model görünürlüksüz
+    // savunulamaz, ve bir PLANNER zarf doluluğunu GÖNDERİMDEN ÖNCE GÖRMEK
+    // ZORUNDA. `getBudgetUtilization` zaten `cplIds`'i UYGULAMIYOR (bkz.
+    // `finance-reporting.service.ts#computeBudgetUtilization` JSDoc'u) —
+    // yani çağrıyı atlamak bir kısıtı korumuyordu, yalnız bir yeteneği
+    // kapatıyordu. Karar (Z22): çağrı HER kapsam için yapılır, bütçe rakamı
+    // CPL ekseninde TANIMSAL olarak duyarsızdır.
+    it('calls getBudgetUtilization for a CPL-scoped Planner too — budget is CPL-axis-insensitive by definition (A7)', async () => {
       accessScopeService.resolveScope.mockResolvedValue(
         scopedPairs([{ cplId: CPL_ID_1 }]),
       );
@@ -408,7 +411,46 @@ describe('DashboardService', () => {
 
       expect(
         financeReportingService.getBudgetUtilization,
-      ).not.toHaveBeenCalled();
+      ).toHaveBeenCalledTimes(1);
+      // `cplIds` is still forwarded ([[T-254]] contract) even though the
+      // receiver ignores it on this path — the field is inert, not omitted.
+      const callArgs = financeReportingService.getBudgetUtilization.mock
+        .calls[0] as [string, { cplIds?: string[] }];
+      expect(callArgs[1].cplIds).toEqual([CPL_ID_1]);
+      expect(result.budgetUtilization).toEqual(mockBudgetUtilization);
+      expect(result.budgetUtilizationStatus).toBe('ok');
+    });
+
+    // A1 KORUNUR (Z22 pin #2): bir CPL-kapsamlı PLANNER için de veri
+    // yokluğu hâlâ 'unavailable' — kapsam ile veri-yokluğu AYRI sinyaller,
+    // ve bu test onları KARIŞTIRMADAN ayrı ayrı ölçer.
+    it('still reports unavailable for a CPL-scoped Planner when getBudgetUtilization finds no envelope data (A1, unrelated to scope)', async () => {
+      accessScopeService.resolveScope.mockResolvedValue(
+        scopedPairs([{ cplId: CPL_ID_1 }]),
+      );
+
+      agreementRepo.count.mockResolvedValue(0);
+
+      const approvalQb = buildMockQb(0);
+      approvalRequestRepo.createQueryBuilder.mockReturnValue(approvalQb);
+
+      const awaitingQb = buildMockQb(0);
+      agreementRepo.createQueryBuilder.mockReturnValue(awaitingQb);
+
+      financeReportingService.getBudgetUtilization.mockRejectedValue(
+        new Error('No budget envelope data found'),
+      );
+
+      const result = await service.getSummary(
+        TENANT_ID,
+        USER_PLANNER_ID,
+        UserRole.PLANNER,
+        { period: '2026-06' },
+      );
+
+      expect(
+        financeReportingService.getBudgetUtilization,
+      ).toHaveBeenCalledTimes(1);
       expect(result.budgetUtilization).toBeNull();
       expect(result.budgetUtilizationStatus).toBe('unavailable');
     });

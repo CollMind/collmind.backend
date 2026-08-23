@@ -114,10 +114,15 @@ export class DashboardService {
     //   null  → UNRESTRICTED → alan hiç yazılmaz → alıcı "filtre yok" okur
     //   []    → BOŞ KAPSAM   → `[]` gönderilir   → alıcı "hiçbir satır" okur
     //   [a,b] → o CPL'ler
-    // Sözleşmenin TEK tanımı `common/query/array-filter.ts`'te; alıcı taraf
-    // (`finance-reporting.service.ts#getBudgetUtilization`) AYNI dosyayı
-    // okur. Öncesinde alıcı `[]`'i "filtre yok" sayıyordu ve boş kapsamlı bir
-    // kullanıcı tüm tenant'ın tahsislerini görüyordu (`K-2.6.8a` ihlali).
+    // Sözleşmenin TEK tanımı `common/query/array-filter.ts`'te ve diğer
+    // `ReportFilters` tüketicileri (plan bazlı raporlar) onu uygular.
+    // ⚠️ `getBudgetUtilization` BUNUN DIŞINDA: `computeBudgetUtilization`
+    // (finance-reporting.service.ts) `filters.cplIds`'i hiç okumaz —
+    // `budget_envelopes`'ta bir `cplId` sütunu yok (K-2.2.1/A7, T-272/Z22).
+    // Alan yine de gönderilir ki sözleşme tek yerde tanımlı kalsın ve alıcı
+    // ileride bir cplId boyutu kazanırsa (`Z22`'nin gelecek-seçeneği) bu
+    // satır değişmeden doğru davransın — ama BUGÜN bu alanın hiçbir etkisi
+    // yoktur.
     const budgetFilters: ReportFilters = {
       startDate,
       endDate,
@@ -138,49 +143,46 @@ export class DashboardService {
     // looking like it had proved something.
     let budgetUtilizationStatus: DashboardSummaryResponseDto['budgetUtilizationStatus'] =
       'unavailable';
-    // ⚠️ T-270/Z21 MEASURED GAP (fail-closed, not one of Z21's four kabul
-    // şartı — flagged separately in T-270's report, needs a product
-    // decision): `budget_envelopes` (canonical as of A2) has NO `cplId`
-    // column — K-2.2.1/A7 place CPL in the scope layer, not the budget
-    // layer. Before A2 this did not matter: `budget_allocations` DID carry
-    // `cplId` but was always empty (0 rows, every tenant), so a CPL-scoped
-    // PLANNER's dashboard budget panel was already showing nothing of
-    // substance. After A2 there is REAL money in `budget_envelopes`
-    // (measured 2026-08-23: ₺1,600,000 across 4 envelopes), and
-    // `FinanceReportingService#getBudgetUtilization` has no way to honour a
-    // CPL restriction against it. Calling it anyway for a CPL-scoped user
-    // would silently WIDEN what they see (K-2.6.8a's fail-open class) —
-    // this env has `SCOPE_ENFORCEMENT_ENABLED=true`, so this is live for a
-    // real PLANNER account, not a hypothetical. Fail-closed instead (R-2):
-    // a restricted cplIds array means "unavailable", not "unrestricted".
-    if (cplIds !== null) {
-      this.logger.warn(
-        'getBudgetUtilization skipped for a CPL-scoped caller — budget_envelopes has no cplId dimension to filter by (T-270/Z21 measured gap); reporting budgetUtilizationStatus=unavailable rather than an unscoped figure',
+    // T-272/Z22 (kaldırılan T-270/Z21 fail-closed kapısı): `budget_envelopes`
+    // (K-2.2.1: Kanal × Kategori × Dönem) hiçbir zaman `cplId` boyutu
+    // taşımayacak — A7 CPL'i kapsam katmanına koyar, bütçe katmanına değil.
+    // `computeBudgetUtilization` (finance-reporting.service.ts) bu yüzden
+    // `filters.cplIds`'i zaten HİÇ okumaz — çağrı kısıtı ne daraltır ne
+    // genişletir, çünkü uygulayacak bir cplId sütunu yok. T-270'in kapısı
+    // ("cplIds !== null ise hiç çağırma") bunu yanlış teşhis etmişti: risk
+    // çağrının GENİŞLEMESİ değildi (zaten genişlemiyordu), risk çağrının HİÇ
+    // YAPILMAMASIYDI — ve `docs/decisions/PLAN_BUTCE_NETLESTIRME.md`
+    // `netleştirme-1` CPL-kapsamlı bir PLANNER'ın zarf doluluğunu
+    // GÖRMEK ZORUNDA olduğunu söylüyor (kilitlemesiz model görünürlüksüz
+    // savunulamaz). Karar (Z22): bütçe rakamı CPL ekseninde TANIMSAL olarak
+    // duyarsızdır (A7) — kapsamlı ya da kapsamsız her çağıran AYNI tenant
+    // toplamını görür; bu bir kapsam gevşetmesi DEĞİL, yanlış korumanın
+    // kaldırılmasıdır (bütçe hiçbir zaman CPL'e göre bölünmüyordu).
+    // `A1` (boş küme → 'unavailable') bundan AYRI ve KORUNUR: 'unavailable'
+    // veri yokluğunun cevabıdır, kapsamın değil — aşağıdaki try/catch A1'i
+    // hâlâ `getBudgetUtilization`'ın kendi `NotFoundException`'ından alır.
+    try {
+      const raw = await this.financeReportingService.getBudgetUtilization(
+        tenantId,
+        budgetFilters,
       );
-    } else {
-      try {
-        const raw = await this.financeReportingService.getBudgetUtilization(
-          tenantId,
-          budgetFilters,
-        );
-        budgetUtilization = {
-          onInvoice: raw.onInvoice,
-          offInvoice: raw.offInvoice,
-          total: raw.total,
-          periodStart: raw.periodStart,
-          periodEnd: raw.periodEnd,
-        };
-        budgetUtilizationStatus = 'ok';
-      } catch (err) {
-        // `diagnosticsOf` (T-098), not the bare error: Nest renders an Error
-        // argument with `Error.toString()`, so `context` — which is where the
-        // offending value lives now that the message is redacted — never reached
-        // the log. Measured in review, after a comment here claimed otherwise.
-        this.logger.warn(
-          'getBudgetUtilization failed — reporting budgetUtilizationStatus=unavailable',
-          diagnosticsOf(err),
-        );
-      }
+      budgetUtilization = {
+        onInvoice: raw.onInvoice,
+        offInvoice: raw.offInvoice,
+        total: raw.total,
+        periodStart: raw.periodStart,
+        periodEnd: raw.periodEnd,
+      };
+      budgetUtilizationStatus = 'ok';
+    } catch (err) {
+      // `diagnosticsOf` (T-098), not the bare error: Nest renders an Error
+      // argument with `Error.toString()`, so `context` — which is where the
+      // offending value lives now that the message is redacted — never reached
+      // the log. Measured in review, after a comment here claimed otherwise.
+      this.logger.warn(
+        'getBudgetUtilization failed — reporting budgetUtilizationStatus=unavailable',
+        diagnosticsOf(err),
+      );
     }
 
     const openTaskCount = activeWithConsumedSpend;

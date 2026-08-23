@@ -176,15 +176,23 @@ export class FinanceReportingService {
    * layer, not the budget layer — carrying it as a query dimension is
    * exactly the "eksen ihlali" Z21 rejected for `budget_allocations`.
    *
-   * ⚠️ MEASURED GAP (not one of Z21's four kabul şartı, flagged separately
-   * in T-270's report): `filters.cplIds` — the one scope dimension
-   * `DashboardService#getSummary` forwards for a CPL-scoped PLANNER — has no
-   * home on `BudgetEnvelope` (no `cplId` column) and cannot be applied here.
-   * `DashboardService` is responsible for not calling this method with a
-   * scope it cannot honour (see its own comment at the call site). This
-   * method does not silently narrow AND does not silently widen: it simply
-   * has no cplId predicate to apply, same as before A2 it had one that a
-   * dead, always-empty table made moot.
+   * `filters.cplIds` — the one scope dimension `DashboardService#getSummary`
+   * forwards for a CPL-scoped PLANNER — has no home on `BudgetEnvelope` (no
+   * `cplId` column) and is NOT applied here. This method does not silently
+   * narrow AND does not silently widen: it simply has no cplId predicate to
+   * apply, same as before A2 it had one that a dead, always-empty table made
+   * moot.
+   *
+   * T-272/Z22: an earlier revision (T-270/Z21) had `DashboardService` skip
+   * calling this method entirely for a CPL-scoped caller, reading the
+   * missing dimension as a reason to fail closed. That was reversed —
+   * `docs/decisions/PLAN_BUTCE_NETLESTIRME.md` `netleştirme-1` requires a
+   * CPL-scoped Planner to SEE envelope fill state before submitting (a
+   * visibility requirement, not an access-control one), and A7 makes the
+   * budget figure CPL-axis-insensitive BY DEFINITION — so there is no
+   * restriction here to fail closed on in the first place. Every caller,
+   * scoped or not, now reaches this method and gets the same tenant-wide
+   * figure; `filters.cplIds` is accepted but inert on this path.
    */
   private async computeBudgetUtilization(
     tenantId: string,
