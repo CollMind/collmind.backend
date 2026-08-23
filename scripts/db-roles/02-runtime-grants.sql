@@ -508,4 +508,38 @@ GRANT SELECT, INSERT, DELETE ON :"schema".mechanic_spend_breakdown TO app_runtim
 --    raporu, tam log).
 GRANT INSERT, UPDATE ON :"schema".plan_mechanic_values TO app_runtime;
 
+-- ── S3 tur 24 ([[T-269]], 2026-08-23) — `lta_plan_overrides` SIFIR
+--    ayrıcalığı vardı, ve `lta-agreement.repository.ts:39` `findById`'nin
+--    `relations` dizisi `'planOverrides'` taşıyordu — ölçüldü:
+--      `has_table_privilege('app_runtime','main.lta_plan_overrides','SELECT')`
+--      → f, POZ. KONTROL `main.lta_agreements` → t.
+--    `findById`'yi BEŞ metot çağırıyor, DÖRDÜ canlı `@Roles(ADMIN)` ucu
+--    (`createAgreement`/`updateAgreement`/`activateAgreement`/
+--    `terminateAgreement`), biri `findOne` (`GET /lta-agreements/:id`,
+--    T-265'in tüketicisiz ucu) — hepsi `permission denied for table
+--    lta_plan_overrides` ile 500 dönüyordu.
+--
+--    SELECT: `LTAAgreementRepository.findById`/`findActiveForCPL`'in
+--      `leftJoinAndSelect('lta.planOverrides', ...)` / relations okuması.
+--    INSERT/UPDATE/DELETE BİLEREK VERİLMEDİ — ölçüldü (`grep -rn
+--    "LTAPlanOverride\|ltaPlanOverride" src/modules` → yalnız
+--    `lta.module.ts`'in T-250 tarihli "BİLEREK burada YOK" yorumu, sıfır
+--    servis/repository/controller yazıcısı): bu tabloya yazan hiçbir
+--    üretim yolu yok, yalnız migration (`1771202000000`) ve
+--    `seeds/cleanup-data.ts` — ikisi de `app_migrate` ile çalışır
+--    (K-2.6.13), `app_runtime` ile DEĞİL. İlke 1: bugün ihtiyacı olmayan
+--    izin verilmez.
+--
+--    ⚠️ NOT (Team Lead'e rapor, bu turun kapsamı DIŞINDA): `lta_agreements`/
+--    `lta_rates` üzerinde `app_runtime`'ın INSERT/UPDATE'i de HİÇ YOK
+--    (yalnız SELECT — tur 10/11). Yani bu GRANT, DÖRT canlı ADMIN ucundan
+--    yalnız `findOne`'ı (GET, okuma) açar; `createAgreement`/
+--    `updateAgreement`/`activateAgreement`/`terminateAgreement` AYRI ve
+--    DAHA BÜYÜK bir izin boşluğu yüzünden 500 vermeye DEVAM EDER —
+--    T-269 task raporunda tam ölçüm (canlı `POST /lta-agreements` 500 +
+--    `SET ROLE app_runtime; INSERT/UPDATE ... lta_agreements` → "permission
+--    denied for table lta_agreements", satır YAZILMADI). Yeni bir task
+--    gerektirir.
+GRANT SELECT ON :"schema".lta_plan_overrides TO app_runtime;
+
 COMMIT;

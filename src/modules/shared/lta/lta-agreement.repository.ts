@@ -61,19 +61,32 @@ export class LTAAgreementRepository {
     cplId: string,
     date: Date,
   ): Promise<LTAAgreement | null> {
-    return this.repository
-      .createQueryBuilder('lta')
-      .where('lta.tenantId = :tenantId', { tenantId })
-      .andWhere('lta.cplId = :cplId', { cplId })
-      .andWhere('lta.status = :status', { status: LTAAgreementStatus.ACTIVE })
-      .andWhere('lta.effectiveDate <= :date', { date })
-      .andWhere('(lta.expiryDate IS NULL OR lta.expiryDate >= :date)', { date })
-      .leftJoinAndSelect('lta.cpl', 'cpl')
-      .leftJoinAndSelect('lta.rates', 'rates')
-      .leftJoinAndSelect('rates.channelEntity', 'channelEntity')
-      .leftJoinAndSelect('rates.categoryEntity', 'categoryEntity')
-      .orderBy('lta.effectiveDate', 'DESC')
-      .getOne();
+    return (
+      this.repository
+        .createQueryBuilder('lta')
+        .where('lta.tenantId = :tenantId', { tenantId })
+        .andWhere('lta.cplId = :cplId', { cplId })
+        .andWhere('lta.status = :status', { status: LTAAgreementStatus.ACTIVE })
+        .andWhere('lta.effectiveDate <= :date', { date })
+        .andWhere('(lta.expiryDate IS NULL OR lta.expiryDate >= :date)', {
+          date,
+        })
+        .leftJoinAndSelect('lta.cpl', 'cpl')
+        .leftJoinAndSelect('lta.rates', 'rates')
+        .leftJoinAndSelect('rates.channelEntity', 'channelEntity')
+        .leftJoinAndSelect('rates.categoryEntity', 'categoryEntity')
+        // T-269 Kusur 2: bu join YOKTU — `lta-agreement.service.ts:420`in
+        // `agreement.planOverrides` kontrolü HER ZAMAN undefined'a düşüyordu,
+        // yani plan bazlı müzakere edilmiş LTA oranı sessizce yok sayılıp
+        // varsayılan orana çöküyordu (`getLTAForPlanContext` bu metottan
+        // besleniyor). GRANT (bkz. 02-runtime-grants.sql) ile AYNI TURDA —
+        // yalnız GRANT verilseydi bu dal yine hiç ateşlemezdi (sessiz kusur
+        // örtülü kalırdı); yalnız join eklenseydi bu sorgu YENİ bir 500
+        // verirdi (`lta_plan_overrides` SELECT'i app_runtime'da yoktu).
+        .leftJoinAndSelect('lta.planOverrides', 'planOverrides')
+        .orderBy('lta.effectiveDate', 'DESC')
+        .getOne()
+    );
   }
 
   async findOverlappingAgreements(
