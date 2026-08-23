@@ -1,5 +1,5 @@
 /**
- * t254-empty-scope-budget-utilization.e2e-spec.ts
+ * empty-scope-contract.e2e-spec.ts
  *
  * ⚠️ REWRITTEN (T-270/Z21, 2026-08-23) — the ORIGINAL [[T-254]] fail-open
  * fix this file guarded (`budgetUtilization` fail-open on an empty CPL
