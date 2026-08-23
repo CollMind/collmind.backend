@@ -27,6 +27,31 @@
 #   - Done checklist'i        → .claude/backlog/BACKLOG.md
 set -uo pipefail
 
+# ── ORTAM HİJYENİ — UYARI, KAPI DEĞİL (2026-08-23, Z24 turu) ────────────────
+#
+# Ölçülmüş vaka: aynı DB'ye bağlı ÜÇ `nest start` süreci birikmişti (başlangıç
+# saatleri 3:06PM · 3:20PM · 8:30PM — beş saatlik yayılım). Bir e2e koşumunda
+# T-047 invaryantı DÜŞTÜ (plans 4→0, planSkus 159→0), sonraki iki koşumda geçti.
+# Çoklu yazar aynı fixture'a yazıyordu ve sonuç ARALIKLI bozuluyordu.
+#
+# ⚠️ Teşhis tuzağı: "ortam yavaş" ve "test kırılgan" açıklamaları hazır bekliyor.
+#    Üçüncüsü GÖRÜNMEZ — `docker ps` göstermez, `git status` göstermez, testin
+#    çıktısı göstermez.
+#
+# ⛔ NEDEN KAPI DEĞİL: dev ortamında TEK bir süreç meşrudur ve yaygındır. Kapı
+#    yapılsaydı her normal geliştirme koşumunu kırardı. "Kapıya terfi" kuralı:
+#    uyarı olarak doğar, yanlış-pozitif oranı ölçülür, SONRA karar verilir.
+#    (CLAUDE.md: "bağlanamıyorsa koşul tavsiyeye düşürülür ve öyle işaretlenir")
+_stale_procs="$(pgrep -f 'nest start' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "${_stale_procs:-0}" -gt 1 ]; then
+  echo "⚠️  UYARI (kapı DEĞİL): ${_stale_procs} adet 'nest start' süreci koşuyor." >&2
+  echo "    Birikmiş bayat süreçler aynı DB'ye yazar ve e2e invaryantlarını" >&2
+  echo "    ARALIKLI bozar. Bir e2e sonucu açıklanamıyorsa ÖNCE bunu ele:" >&2
+  echo "      ps aux | grep 'nest start' | grep -v grep" >&2
+  echo "      lsof -nP -iTCP:3000 -sTCP:LISTEN" >&2
+fi
+unset _stale_procs
+
 GUARD_MODE="${GUARD_MODE:-block}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Guard listesi lib.sh'teki tek doğruluk kaynağından gelir (S1).
