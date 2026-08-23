@@ -1,12 +1,10 @@
 import {
   Controller,
-  Get,
   Post,
   Body,
   Patch,
   Param,
   ParseUUIDPipe,
-  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -23,12 +21,6 @@ import {
   BudgetCheckContext,
   AvailabilityResult,
 } from './dto/budget-check-context.dto';
-import {
-  BudgetReportFilters,
-  BudgetReport,
-  ForecastContext,
-  BudgetForecast,
-} from './dto/budget-report.dto';
 import { SpendBreakdown } from '../spend-calculation/dto/spend-breakdown.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -65,65 +57,6 @@ export class BudgetAllocationController {
       user.id,
       createDto,
     );
-  }
-
-  // T-267 (B1 §S2+S3, "12 tüketicisiz uç, tek aile") — bu HTTP controller
-  // TÜKETİCİSİZ (frontend '/budget-allocations' → 0 eşleşme, ölçüldü);
-  // BudgetAllocationService'in kendisi CANLI (spend-validation,
-  // finance-reporting üzerinden) ama BU rota YÜZEYİ değil. T-257 dersi:
-  // "silinecekse bile silinene kadar açık kalamaz" — kader kararı
-  // [[T-265]]'e bırakılır, B2 bekletilmez.
-  // Rol seti: KARDEŞ uç — budget.controller.ts'in aynı domain'deki 5 okuma
-  // ucu bu turda BEŞ ROL aldı (B1 §S3 final karar); bu controller onun ölü
-  // ikizi (B1 S3: "iki paralel bütçe yüzeyi") — aynı rol seti uygulanır.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
-  @Get()
-  @ApiOperation({ summary: 'Get all budget allocations' })
-  @ApiResponse({
-    status: 200,
-    description: 'List of budget allocations',
-    type: [BudgetAllocation],
-  })
-  findAll(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stub, öncesinden TODO
-    @TenantId() tenantId: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stub, öncesinden TODO
-    @Query('fiscalYear') fiscalYear?: number,
-  ) {
-    // TODO: Implement findAll method in service
-    return [];
-  }
-
-  // T-267 (B1 §S2/S3) — aynı gerekçe (yukarı bkz.): TÜKETİCİSİZ, BEŞ ROL
-  // budget.controller kardeşinden.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
-  @Get(':id')
-  @ApiOperation({ summary: 'Get budget allocation by ID' })
-  @ApiResponse({
-    status: 200,
-    description: 'Budget allocation details',
-    type: BudgetAllocation,
-  })
-  findOne(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stub, öncesinden TODO
-    @TenantId() tenantId: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stub, öncesinden TODO
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
-    // TODO: Implement findOne method in service
-    return null;
   }
 
   @Patch(':id')
@@ -243,54 +176,5 @@ export class BudgetAllocationController {
       body.newAmounts,
       body.reason,
     );
-  }
-
-  // T-267 (B1 §S2/S3) — aynı gerekçe (yukarı bkz.): TÜKETİCİSİZ, BEŞ ROL
-  // budget.controller kardeşinden.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
-  @Get('reports/utilization')
-  @ApiOperation({ summary: 'Get budget utilization report' })
-  @ApiResponse({
-    status: 200,
-    description: 'Budget utilization report',
-    type: BudgetReport,
-  })
-  getUtilizationReport(
-    @TenantId() tenantId: string,
-    @Query() filters: BudgetReportFilters,
-  ) {
-    return this.budgetAllocationService.getBudgetUtilizationReport(
-      tenantId,
-      filters,
-    );
-  }
-
-  // T-267 (B1 §S2, "Ölçüm 1": YAZMA:0) — hesaplama, yazma DEĞİL; TÜKETİCİSİZ
-  // (aynı aile, yukarı bkz.). Rol seti aynı: BEŞ ROL.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
-  @Post('reports/forecast')
-  @ApiOperation({ summary: 'Get budget forecast report' })
-  @ApiResponse({
-    status: 200,
-    description: 'Budget forecast report',
-    type: BudgetForecast,
-  })
-  getForecastReport(
-    @TenantId() tenantId: string,
-    @Body() context: ForecastContext,
-  ) {
-    return this.budgetAllocationService.getForecastReport(tenantId, context);
   }
 }
