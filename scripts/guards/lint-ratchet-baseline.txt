@@ -151,7 +151,7 @@ src/modules/notification/notification.service.ts @typescript-eslint/no-explicit-
 src/modules/shared/access-scope/access-scope.service.spec.ts @typescript-eslint/no-explicit-any 11
 src/modules/shared/approval/approval.service.ts @typescript-eslint/no-explicit-any 2
 src/modules/shared/approval/approval.service.ts @typescript-eslint/no-unused-vars 1
-src/modules/shared/budget/budget-allocation.controller.ts @typescript-eslint/no-unused-vars 4
+src/modules/shared/budget/budget-allocation.controller.ts @typescript-eslint/no-unused-vars 0
 src/modules/shared/budget/budget-allocation.service.spec.ts @typescript-eslint/no-explicit-any 70
 src/modules/shared/budget/budget-allocation.service.spec.ts prettier/prettier 17
 src/modules/shared/budget/budget-reservation.service.spec.ts @typescript-eslint/no-explicit-any 12
