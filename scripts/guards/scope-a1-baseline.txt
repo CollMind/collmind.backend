@@ -40,13 +40,6 @@ src/modules/modes/actuals-first/sales-actuals/sales-actuals.controller.ts|GET|ac
 src/modules/modes/actuals-first/sales-actuals/sales-actuals.controller.ts|GET|actuals-first/sales-actuals/summary	# ham finansal veri, kapsam yok
 src/modules/modes/actuals-first/sales-actuals/sales-actuals.controller.ts|POST|actuals-first/sales-actuals/upload	# ham finansal veri, kapsam yok
 src/modules/modes/actuals-first/settlement/settlement.controller.ts|POST|actuals-first/settlements/close/:agreementId	# settlement-close.service 0 accessScope atıf — CM CPL kontrolü yok
-src/modules/shared/budget/budget-allocation.controller.ts|PATCH|budget-allocations/:id	# Alan A — 0 accessScope atıf
-src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations	# Alan A — 0 accessScope atıf
-src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/adjust	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
-src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/check-availability	# Alan A — 0 accessScope atıf
-src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/commit	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
-src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/release	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
-src/modules/shared/budget/budget-allocation.controller.ts|POST|budget-allocations/reserve	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
 src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes	# Alan A — 0 accessScope atıf
 src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id	# Alan A — 0 accessScope atıf
 src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id/reserved	# Alan A — 0 accessScope atıf
