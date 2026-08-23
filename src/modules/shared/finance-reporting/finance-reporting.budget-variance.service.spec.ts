@@ -1,16 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { FinanceReportingService } from './finance-reporting.service';
-import { Plan, PlanFu, PlanSku } from '../../../database/entities/plan.entity';
+import { Plan, PlanFu } from '../../../database/entities/plan.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
-import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
 import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
 } from '../../../database/entities/budget-envelope.entity';
 import { UserRole } from '../../../database/entities/user.entity';
-import { BudgetAllocationService } from '../budget/budget-allocation.service';
+// T-270/Z21/Z24: `BudgetAllocation`/`BudgetAllocationService` providers REMOVED —
+// `FinanceReportingService`'in constructor'ı hiçbirini enjekte etmiyordu (ölçüldü);
+// bu iki `providers[]` girdisi gereksizdi.
 import { BudgetRepository } from '../budget/budget.repository';
 import {
   BudgetThresholdService,
@@ -113,9 +114,7 @@ describe('FinanceReportingService — getBudgetVarianceReport (T-023)', () => {
         { provide: getRepositoryToken(PlanFu), useValue: {} },
         { provide: getRepositoryToken(PlanMechanicValue), useValue: {} },
         { provide: getRepositoryToken(MechanicSpendBreakdown), useValue: {} },
-        { provide: getRepositoryToken(BudgetAllocation), useValue: {} },
         { provide: getRepositoryToken(BudgetEnvelope), useValue: envelopeRepo },
-        { provide: BudgetAllocationService, useValue: {} },
         { provide: BudgetThresholdService, useValue: budgetThresholdService },
         { provide: BudgetRepository, useValue: budgetRepository },
         { provide: AccessScopeService, useValue: accessScopeService },

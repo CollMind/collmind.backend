@@ -1,18 +1,18 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BudgetController } from './budget.controller';
-import { BudgetAllocationController } from './budget-allocation.controller';
 import { BudgetService } from './budget.service';
 import { BudgetReservationService } from './budget-reservation.service';
-import { BudgetAllocationService } from './budget-allocation.service';
 import { BudgetThresholdService } from './budget-threshold.service';
 import { BudgetRepository } from './budget.repository';
 import { BudgetEnvelope } from '../../../database/entities/budget-envelope.entity';
 import { BudgetTransaction } from '../../../database/entities/budget-transaction.entity';
-import { BudgetAllocation } from '../../../database/entities/budget-allocation.entity';
-import { BudgetTransactionLog } from '../../../database/entities/budget-transaction-log.entity';
 import { BudgetAlertConfiguration } from '../../../database/entities/budget-alert-configuration.entity';
 import { Plan } from '../../../database/entities/plan.entity';
+// T-270/Z21/Z24: `BudgetAllocation`/`BudgetTransactionLog` (+ their controller/
+// service) REMOVED — `K-2.2.3` ihlali olarak doğan model, zarf modeline
+// (`BudgetEnvelope`/`BudgetTransaction`, yukarısı) taşındı ve tüketicisi kalmadı
+// (`Z24` migration 1811000000000, `.claude/backlog/tasks/T-265.md`).
 
 /**
  * Shared Budget Module
@@ -31,24 +31,20 @@ import { Plan } from '../../../database/entities/plan.entity';
     TypeOrmModule.forFeature([
       BudgetEnvelope,
       BudgetTransaction,
-      BudgetAllocation,
-      BudgetTransactionLog,
       BudgetAlertConfiguration,
       Plan,
     ]),
   ],
-  controllers: [BudgetController, BudgetAllocationController],
+  controllers: [BudgetController],
   providers: [
     BudgetService,
     BudgetReservationService,
-    BudgetAllocationService,
     BudgetThresholdService,
     BudgetRepository,
   ],
   exports: [
     BudgetService,
     BudgetReservationService,
-    BudgetAllocationService,
     BudgetThresholdService,
     BudgetRepository,
   ],

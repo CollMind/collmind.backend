@@ -92,12 +92,13 @@ GRANT UPDATE ON :"schema".users TO app_runtime;
 --      e2e'lerinin kendi geçici cross-tenant fixture'ı (bkz. test/
 --      optimistic-locking.e2e-spec.ts:900,927 — `INSERT INTO main.tenants`
 --      / `DELETE FROM main.tenants WHERE id = $1`).
---    INSERT `budget_allocations`: bütçe tahsisi oluşturma akışı.
+--    ⚠️ BAYAT (Z24, [[T-273]] takibi, 2026-08-23): `INSERT budget_allocations`
+--    KALDIRILDI — tablo düşürüldü (migration 1811000000000), tüketicisiz
+--    ölü model. Bkz. dosyanın sonundaki Z24 notu.
 --    DELETE `customers`: customer-import e2e'lerinin `cleanupTestCustomers`
 --      yardımcı fonksiyonu (`DELETE FROM main.customers WHERE tenant_id =
 --      $1 AND code LIKE $2`).
 GRANT SELECT ON :"schema".budget_alert_configurations TO app_runtime;
-GRANT SELECT, INSERT ON :"schema".budget_allocations TO app_runtime;
 GRANT SELECT ON :"schema".budget_transactions TO app_runtime;
 GRANT SELECT ON :"schema".categories TO app_runtime;
 GRANT SELECT ON :"schema".channels TO app_runtime;
@@ -117,16 +118,17 @@ GRANT INSERT, DELETE ON :"schema".tenants TO app_runtime;
 --    INSERT `plans` en büyük grup (49) — plan oluşturma/PATCH akışının
 --    optimistic-locking + kpi-optimistic-locking + recalc-perf e2e'lerinde
 --    tekrar tekrar tetiklenmesi.
---    DELETE `budget_allocations`: bütçe tahsisi temizleme (test cleanup).
+--    ⚠️ BAYAT (Z24, [[T-273]] takibi, 2026-08-23): `DELETE budget_allocations`
+--    KALDIRILDI — tablo düşürüldü, aynı gerekçe yukarısı (tur 3 notu).
 --    INSERT `admin_audit_logs`: her onay/iş işlemi audit satırı yazıyor
 --      (BRD "her işlem loglanır").
-GRANT DELETE ON :"schema".budget_allocations TO app_runtime;
 GRANT INSERT ON :"schema".admin_audit_logs TO app_runtime;
 -- `SELECT ... FOR UPDATE` (bütçe zarfı rezervasyon kilidi,
 -- budget-reservation.service.ts) SELECT'e ek olarak UPDATE ister — aynı
 -- `agreements` gerekçesi, ölçüldü aynı turda.
 GRANT SELECT, INSERT, UPDATE ON :"schema".budget_envelopes TO app_runtime;
-GRANT SELECT, INSERT ON :"schema".budget_transaction_logs TO app_runtime;
+-- ⚠️ BAYAT (Z24, 2026-08-23): `SELECT, INSERT budget_transaction_logs`
+-- KALDIRILDI — tablo düşürüldü, aynı gerekçe yukarısı.
 GRANT INSERT ON :"schema".customers TO app_runtime;
 GRANT SELECT, INSERT, UPDATE ON :"schema".mechanics TO app_runtime;
 GRANT INSERT ON :"schema".plans TO app_runtime;
@@ -651,4 +653,16 @@ GRANT INSERT, UPDATE ON :"schema".lta_agreements TO app_runtime;
 --    `relations` kümesiyle o tabloya SIFIR SQL üretiyordu).
 GRANT INSERT, DELETE ON :"schema".lta_rates TO app_runtime;
 
+-- ── Z24 (data-engineer, 2026-08-23) — `main.budget_allocations` +
+--    `main.budget_transaction_logs` DÜŞÜRÜLDÜ (migration 1811000000000,
+--    `Z21` şart 3+4 / `Z24`). Model `K-2.2.3` ihlali olarak doğdu ve
+--    tüketicisi kalmadı (`T-265`: `POST /budget-allocations` + kardeş
+--    uçların controller dışında SIFIR çağıranı; `BudgetAllocationService`nin
+--    SIFIR dış çağıranı — `A2` zarf modeline taşıdı; `BudgetTransactionLog`
+--    tek tüketicisi o servisti). İki tablo da `0` satır. Bu dosyanın
+--    yukarısındaki ÜÇ GRANT satırı (tur 3: `SELECT, INSERT budget_
+--    allocations`; tur 4: `DELETE budget_allocations`,
+--    `SELECT, INSERT budget_transaction_logs`) KALDIRILDI — İlke 1: bugün
+--    var olmayan bir tabloya izin verilmez. Bu bir GRANT genişletmesi
+--    DEĞİL, daralmadır; gerekçe "kapsam uygulandı" değil "tablo SİLİNDİ"dir.
 COMMIT;

@@ -71,8 +71,8 @@ import { MechanicSpendBreakdown } from './mechanic-spend-breakdown.entity';
 import { LTAAgreement } from './lta-agreement.entity';
 import { LTARate } from './lta-rate.entity';
 import { LTAPlanOverride } from './lta-plan-override.entity';
-import { BudgetAllocation } from './budget-allocation.entity';
-import { BudgetTransactionLog } from './budget-transaction-log.entity';
+// T-270/Z21/Z24: `BudgetAllocation`/`BudgetTransactionLog` entity'leri KALDIRILDI —
+// bkz. `budget.module.ts` başlığındaki not, migration `1811000000000`.
 import { BudgetAlertConfiguration } from './budget-alert-configuration.entity';
 import { PlanApprovalHistory } from './plan-approval-history.entity';
 
@@ -119,8 +119,6 @@ export const ALL_ENTITIES = [
   LTAAgreement,
   LTARate,
   LTAPlanOverride,
-  BudgetAllocation,
-  BudgetTransactionLog,
   BudgetAlertConfiguration,
   PlanApprovalHistory,
   // B dalgası (T-211)

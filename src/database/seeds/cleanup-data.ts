@@ -58,16 +58,16 @@ export async function cleanupAgreementsBudgetPlans(
 
     // 3. Budget related tables (delete in reverse dependency order)
     console.log('\n💰 Cleaning up Budget related tables...');
-    await queryRunner.query(`DELETE FROM main.budget_transaction_logs`);
-    console.log('   ✅ Deleted budget_transaction_logs');
 
     // T-225: `main.budget_reservations` düşürüldü (migration
     // 1805000000000-DropBudgetReservations) — ölü iskeleydi, hiç yazılmamıştı.
     // Bu DELETE satırı KASITLI olarak kaldırıldı; tablo artık yok, kalsaydı
     // `42P01 relation does not exist` ile patlardı.
 
-    await queryRunner.query(`DELETE FROM main.budget_allocations`);
-    console.log('   ✅ Deleted budget_allocations');
+    // Z24: `main.budget_transaction_logs` + `main.budget_allocations` düşürüldü
+    // (migration 1811000000000-DropBudgetAllocationsAndTransactionLogs) — tüketicisiz
+    // model, zarf modeline taşındı. Bu iki DELETE satırı da AYNI GEREKÇEYLE
+    // (T-225 deseni) kaldırıldı; tablolar artık yok, kalsaydı `42P01` ile patlardı.
 
     await queryRunner.query(`DELETE FROM main.budget_transactions`);
     console.log('   ✅ Deleted budget_transactions');
