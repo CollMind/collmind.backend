@@ -19,6 +19,7 @@ import { NotificationService } from './notification.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { SelfScoped } from '../../common/decorators/self-scoped.decorator';
 import { TenantId } from '../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../../database/entities/user.entity';
@@ -29,13 +30,17 @@ import { UserRole } from '../../database/entities/user.entity';
 // `ADIM 3`'ün (default-deny göçü) `Faz B`'si uzak, üç canlı uç o kadar
 // kırık kalamaz.
 //
-// Rol seti: TÜM beş `UserRole` — `dashboard.controller.ts#getSummary`
-// (`GET /dashboard/summary`) ile AYNI emsal: bildirimler bir iş
-// fonksiyonu kapısı değil, KİŞİYE ÖZEL bir veri görünümü (sorgu zaten
-// `tenantId` + `recipientId = user.id` ile daralıyor — `notification.
-// repository.ts` `findByRecipient`/`findUnreadByRecipient`/`findById`).
-// Bir rolü dışarıda bırakmak o rolün KENDİ bildirimlerini görememesi
-// demek olurdu, iş kuralı değil.
+// `Z26` (SELF kovası, 2026-08-23) ile GÖÇ: `getAllNotifications` ve
+// `getUnreadNotifications` sorgusu zaten `tenantId` + `recipientId =
+// user.id` ile daralıyor (`notification.repository.ts`
+// `findByRecipient`/`findUnreadByRecipient`) — bu, `@Roles`'un TÜM beş
+// rolü sayarak taklit ettiği "rolsüz" davranışın DOĞRU temsili
+// (`SELF_OLCUM_RAPORU.md §1`: "Bir rolü dışarıda bırakmak o rolün KENDİ
+// bildirimlerini görememesi demek olurdu, iş kuralı değil" — `Z18 §4`'ün
+// "union böyle dedi" gerekçesinin canlı vakasıydı). İki uç `@SelfScoped()`
+// aldı; `NOTIFICATION_ROLES` sabiti tek kalan tüketicisi (`markAsRead`)
+// için duruyor — o uç `Z26`'nın kapsamı DIŞINDA (bir SELF yüklemi değil,
+// `recipientId` sahiplik kontrolü AYRI bir sınıf, T-275).
 //
 // ⚠️ Bu `@Roles` yalnız "KİM çağırabilir" sorusunu daraltır — kaynak sahipliği
 // (`recipientId`) AYRI bir kontroldür. T-249 bunu bilerek erteledi ("markAsRead
@@ -61,7 +66,7 @@ export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
 
   @Get()
-  @Roles(...NOTIFICATION_ROLES)
+  @SelfScoped()
   @ApiOperation({ summary: 'Get all notifications for current user' })
   @ApiResponse({ status: 200, description: 'List of notifications' })
   getAllNotifications(
@@ -77,7 +82,7 @@ export class NotificationController {
   }
 
   @Get('unread')
-  @Roles(...NOTIFICATION_ROLES)
+  @SelfScoped()
   @ApiOperation({ summary: 'Get unread notifications for current user' })
   @ApiResponse({ status: 200, description: 'List of unread notifications' })
   getUnreadNotifications(

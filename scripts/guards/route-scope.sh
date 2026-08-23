@@ -13,8 +13,13 @@
 # düşürülür (mode-split/money-float ile AYNI ratchet deseni).
 #
 # NE ÖLÇER
-#   src/**/*.controller.ts altındaki HER rotayı üç kovaya ayırır:
+#   src/**/*.controller.ts altındaki HER rotayı DÖRT kovaya ayırır:
 #     PUBLIC       @Public() taşıyan rota (route-level)
+#     SELF         @SelfScoped() taşıyan rota (route-level) — `Z26`/`Z28`
+#                  (`docs/brd-v2/04_KARAR_KAYDI.md`): "kayıt benim mi"
+#                  yüklemi, bir rol kümesine BAĞLI DEĞİL. Ratchet'in KONUSU
+#                  DEĞİLDİR — PUBLIC/ALAN_GUARD gibi ayrı raporlanır, ASLA
+#                  "filtresiz" sayılmaz.
 #     ROLES        @Roles(...) taşıyan rota (route-level) — korunuyor
 #     ALAN_GUARD   @UseGuards(...) içinde JwtAuthGuard/RolesGuard DIŞINDA
 #                  bir guard adı taşıyan rota (controller VEYA route level) —
@@ -28,10 +33,15 @@
 #                  varlığı hiçbir şeyi kısıtlamaz; bu BİLGİ, kod okunarak
 #                  doğrulandı, varsayılmadı)
 #
-#   Ratchet'in KONUSU yalnız FILTRESIZ kovasıdır. PUBLIC ve ALAN_GUARD ayrı
-#   raporlanır ve ASLA "filtresiz" sayılmaz (T-252 ⛔ şartı — default-deny
-#   turunda bu ikisi YANLIŞ TEŞHİS'e yol açar: kırılma 403 olur ve
+#   Ratchet'in KONUSU yalnız FILTRESIZ kovasıdır. PUBLIC, SELF ve ALAN_GUARD
+#   ayrı raporlanır ve ASLA "filtresiz" sayılmaz (T-252 ⛔ şartı — default-deny
+#   turunda bunlar YANLIŞ TEŞHİS'e yol açar: kırılma 403 olur ve
 #   "default-deny çalışıyor" sanılır).
+#
+#   ⚠️ `SELF_OLCUM_RAPORU.md §4` (`Z28`): `@SelfScoped()` dekoratörünü
+#   TANIMAYAN bir ayrıştırıcı yeni bir `SELF` ucunu SESSİZCE FILTRESIZ'de
+#   bırakır — hiçbir şey kırmızıya dönmez. Bu yüzden dekoratör + bu dördüncü
+#   kova AYNI TURDA indi (`self-scoped.decorator.ts` ile birlikte).
 #
 # ROTA KİMLİĞİ
 #   <dosya>|<YÖNTEM>|<yol>  — SATIR NUMARASI DEĞİL. mode-split'in F-satırı
@@ -247,7 +257,12 @@ else
 fi
 
 # --- sınıflandırma -----------------------------------------------------------
-# bucket: PUBLIC | ROLES | ALAN_GUARD | FILTRESIZ
+# bucket: PUBLIC | SELF | ROLES | ALAN_GUARD | FILTRESIZ
+#
+# Öncelik sırası: PUBLIC > SELF > ROLES > ALAN_GUARD > FILTRESIZ. `SELF`
+# `ROLES`'ten ÖNCE kontrol edilir — `Z26`'nın göç ettirdiği uçlarda `@Roles`
+# zaten kaldırılmıştır, ama sıra bir rotanın YANLIŞLIKLA iki işaret taşıdığı
+# (geçiş anı) durumda da `SELF`'in `ROLES`'e YUTULMAMASINI garanti eder.
 classify() {
   awk -F'\t' -v domain="$KNOWN_DOMAIN_GUARDS" '
     function has_domain(csv,    n, g, i) {
@@ -259,6 +274,7 @@ classify() {
     {
       key = $1 "|" $3 "|" $4
       if ($6 == 1) bucket = "PUBLIC"
+      else if ($8 == 1) bucket = "SELF"
       else if ($5 == 1) bucket = "ROLES"
       else if (has_domain($7)) bucket = "ALAN_GUARD"
       else bucket = "FILTRESIZ"
@@ -270,6 +286,7 @@ CLASSIFIED="$TMP/classified.tsv"
 classify > "$CLASSIFIED"
 
 PUBLIC_N="$(awk -F'\t' '$1=="PUBLIC"' "$CLASSIFIED" | wc -l | tr -d ' ')"
+SELF_N="$(awk -F'\t' '$1=="SELF"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 ROLES_N="$(awk -F'\t' '$1=="ROLES"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 ALAN_N="$(awk -F'\t' '$1=="ALAN_GUARD"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 FILTRESIZ_N="$(awk -F'\t' '$1=="FILTRESIZ"' "$CLASSIFIED" | wc -l | tr -d ' ')"
@@ -291,12 +308,14 @@ if [ "${1:-}" = "--baseline" ]; then
 fi
 
 # --- kova özeti (HER ZAMAN basılır — GUARD_MODE'dan bağımsız) ---------------
-echo "=== [$GUARD_NAME] üç kova ==="
+echo "=== [$GUARD_NAME] dört kova ==="
 echo "  FILTRESIZ (ratchet'in konusu): $FILTRESIZ_N"
 awk -F'\t' '$1=="FILTRESIZ" { print "    " $2 }' "$CLASSIFIED" | LC_ALL=C sort | sed -n '1,5p'
 [ "$FILTRESIZ_N" -gt 5 ] && echo "    ... (+$((FILTRESIZ_N - 5)) diğer)"
 echo "  PUBLIC (bilinçli açık): $PUBLIC_N"
 awk -F'\t' '$1=="PUBLIC" { print "    " $2 }' "$CLASSIFIED" | LC_ALL=C sort
+echo "  SELF (kimlik-yüklemli, filtresiz DEĞİL — Z26/Z28): $SELF_N"
+awk -F'\t' '$1=="SELF" { print "    " $2 }' "$CLASSIFIED" | LC_ALL=C sort
 echo "  ALAN_GUARD (guard içinde rol zorluyor, filtresiz DEĞİL): $ALAN_N"
 awk -F'\t' '$1=="ALAN_GUARD" { print "    " $2 }' "$CLASSIFIED" | LC_ALL=C sort
 echo "  (bilgi) ROLES: $ROLES_N · TOPLAM rota: $TOTAL_ROUTES"

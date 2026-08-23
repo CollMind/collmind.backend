@@ -22,12 +22,14 @@ import {
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateSelfDto } from './dto/update-self.dto';
 import { UpdateUserScopeDto } from './dto/update-user-scope.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { SelfScoped } from '../../common/decorators/self-scoped.decorator';
 import { TenantId } from '../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../../database/entities/user.entity';
@@ -82,6 +84,7 @@ export class UserController {
   }
 
   @Get('me')
+  @SelfScoped()
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({
     status: 200,
@@ -96,7 +99,19 @@ export class UserController {
     return UserResponseDto.fromEntity(user);
   }
 
+  /**
+   * `Z26` (`docs/brd-v2/04_KARAR_KAYDI.md`): `SELF` sözleşmesinin ALAN
+   * parçası artık TİP SİSTEMİNDE — `UpdateSelfDto` yalnız
+   * `fullName/firstName/lastName/phoneNumber/department/jobTitle` taşır,
+   * `role`/`status`/`scope`/`tenantId`/`permissions`/`mustChangePassword`/
+   * `email` bu tipte YOKTUR. `ValidationPipe`'ın `forbidNonWhitelisted`'ı
+   * bunların DIŞINDA gönderilen her alanı `400` ile reddeder — eski
+   * `if (updateUserDto.role) delete updateUserDto.role` imperative
+   * daraltması bu yüzden KALDIRILDI (ölü kalırsa "demek ki gerekliydi"
+   * diye geri getirilir, `Z26` ⛔ GENİŞLEMENİN ŞEKLİ).
+   */
   @Patch('me')
+  @SelfScoped()
   @ApiOperation({ summary: 'Update current user profile' })
   @ApiResponse({
     status: 200,
@@ -105,17 +120,13 @@ export class UserController {
   })
   async updateProfile(
     @Request() req: any,
-    @Body() updateUserDto: UpdateUserDto,
+    @Body() updateSelfDto: UpdateSelfDto,
     @CurrentUser() user: { id: string; role: UserRole },
   ) {
-    // Prevent role escalation - users cannot change their own role
-    if (updateUserDto.role) {
-      delete updateUserDto.role;
-    }
     const updated = await this.userService.update(
       req.user.tenantId,
       req.user.sub,
-      updateUserDto,
+      updateSelfDto,
       user.id,
       user.role,
     );
@@ -123,6 +134,7 @@ export class UserController {
   }
 
   @Patch('me/password')
+  @SelfScoped()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Change current user password' })
   @ApiResponse({ status: 204, description: 'Password changed successfully' })

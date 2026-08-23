@@ -1,6 +1,7 @@
 import { Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { Roles } from '../../../../src/common/decorators/roles.decorator';
 import { Public } from '../../../../src/common/decorators/public.decorator';
+import { SelfScoped } from '../../../../src/common/decorators/self-scoped.decorator';
 import { UserRole } from '../../../../src/database/entities/user.entity';
 import { FixtureDomainGuard } from './fixture-domain-guard';
 
@@ -10,6 +11,13 @@ export class FixturePlainController {
   @Get('gap')
   gap() {
     return 'gap';
+  }
+
+  // Kanal 5 (@SelfScoped) -> SELF olmalı, FILTRESIZ DEĞİL (Z26/Z28).
+  @Get('self')
+  @SelfScoped()
+  self() {
+    return 'self';
   }
 
   // Kanal 3 (@Public) -> PUBLIC olmalı.

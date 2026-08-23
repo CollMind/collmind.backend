@@ -11,6 +11,7 @@ import { ApprovalService } from './approval.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { SelfScoped } from '../../../common/decorators/self-scoped.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
@@ -55,14 +56,13 @@ export class ApprovalController {
     return this.approvalService.findPendingForUser(userId, tenantId);
   }
 
+  // `Z26` (SELF kovası, 2026-08-23) ile GÖÇ: yüklem `requestedById =
+  // requesterId` (`SELF_OLCUM_RAPORU.md §1`) — kayıt "benim" olduğu için
+  // görünür, rol yüzünden değil. Eski `@Roles` tüm beş rolü sayıyordu
+  // (union, `Z18 §4` ihlali). `GET /approvals/pending` (Z27) BU SINIFA
+  // GİRMEZ — "onaycı" yüklemi, "SELF" değil; dokunulmadı.
   @Get('my-requests')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @SelfScoped()
   @ApiOperation({ summary: 'Get approval requests created by current user' })
   findMyRequests(
     @TenantId() tenantId: string,

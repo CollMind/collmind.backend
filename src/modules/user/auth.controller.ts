@@ -18,9 +18,8 @@ import { UserService } from './user.service';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
-import { UserRole } from '../../database/entities/user.entity';
+import { SelfScoped } from '../../common/decorators/self-scoped.decorator';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -77,22 +76,20 @@ export class AuthController {
     return this.userService.refreshToken(refreshToken);
   }
 
-  // T-267 (B1 §1g, ölçüldü 2026-08-21: koşum yapıldı, izolasyon tutuyor) —
-  // self-action: her kimliklenmiş kullanıcı KENDİ oturumunu (req.user.sub,
-  // JWT'den) sonlandırır. `/users/me` (§1d) gibi rol kısıtı GEREKMEZDİ, ama
-  // bu turun talimatı yalnız §1d'yi @Roles'suz bırakıyor — bu yüzden TÜM
-  // roller açıkça sayıldı (union DEĞİL: bir rolü çıkarmak o rolün
-  // kullanıcılarının çıkış yapamaması demektir — Z18 testi). RolesGuard
-  // route-seviyesine EKLENDİ, yoksa @Roles İNERT kalır (roles.guard.ts).
+  // T-267 → `Z26` (SELF kovası, 2026-08-23) ile GÖÇTÜ: self-action — her
+  // kimliklenmiş kullanıcı KENDİ oturumunu (req.user.sub, JWT'den)
+  // sonlandırır. Eskiden TÜM rollerin açıkça sayılmasıyla taklit edilen
+  // "rolsüz" davranış (`SELF_OLCUM_RAPORU.md §1`: "self-action: … rol
+  // kısıtı GEREKMEZDİ") artık `@SelfScoped()` ile DOĞRU temsil ediliyor —
+  // `Z18 §4`'ün yasakladığı "union böyle dedi" gerekçesi bu ucun `@Roles`
+  // listesi için de geçerliydi. `JwtAuthGuard` (kimlik doğrulama) KALIR;
+  // `RolesGuard` `@Roles` metadata'sı OKUMADIĞINDA `canActivate` TRUE
+  // döner (roles.guard.ts:16-18) — zincirde kalması ZARARSIZ ve `route-
+  // scope` guard'ının "@Roles var ama RolesGuard yok" kurulum-hatası
+  // kontrolüyle de TUTARLI.
   @Post('logout')
+  @SelfScoped()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
   @ApiBearerAuth()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'User logout' })

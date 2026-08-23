@@ -7,7 +7,7 @@
 # yönlendirerek çağırır — mantığın hiçbir parçasını YENİDEN UYGULAMAZ (ADR
 # 0007 E16: bir kontrolü sınayan test, o kontrolün kopyasını çalıştırmaz).
 #
-# --- DÖRT (+BİR) KANAL, HER BİRİ AYRI POZİTİF KONTROL (T-250 dersi) --------
+# --- DÖRT (+İKİ) KANAL, HER BİRİ AYRI POZİTİF KONTROL (T-250 dersi) --------
 #
 #   1. rota dekoratörü   @Get/@Post/@Patch/@Put/@Delete  — "SPINE" kanalı:
 #      bu kanal ölürse flush_pending() hiçbir şey basmaz (route-scope.awk'ın
@@ -22,6 +22,10 @@
 #      ⚠️ 4a/4b AYRI test edilir — settlement.controller.ts (rota) ile
 #      reversal.controller.ts (controller) arasındaki GERÇEK asimetrinin
 #      aynısı (T-252 görev talimatı, "gerçek bir tuzak").
+#   5. @SelfScoped()        — route-scope.awk (`Z26`/`Z28` — `SELF_OLCUM_
+#      RAPORU.md §4`'ün ölçtüğü sessizliği kapatır: bu kanal ölürse
+#      `@SelfScoped()` taşıyan bir rota SESSİZCE FILTRESIZ'e düşer, hiçbir
+#      şey kırmızıya dönmez — case 5 bunu kasten kırıp doğrular).
 #
 # Her mutasyon SIRAYLA uygulanır, ÖNCEKİNİN geri alındığı shasum ile
 # doğrulanmadan bir sonrakine geçilmez (app-runtime-grants'ın deseni).
@@ -108,6 +112,16 @@ assert_bucket "case 1a: FILTRESIZ" "^  FILTRESIZ " "fixture-plain.controller.ts|
 assert_bucket "case 1b: PUBLIC"    "^  PUBLIC "          "fixture-plain.controller.ts|GET|fixture-plain/pub"
 assert_bucket "case 1c: ALAN_GUARD (rota-seviyesi UseGuards)" "^  ALAN_GUARD " "fixture-plain.controller.ts|POST|fixture-plain/route-guard"
 assert_bucket "case 1d: ALAN_GUARD (controller-seviyesi UseGuards)" "^  ALAN_GUARD " "fixture-domain.controller.ts|GET|fixture-domain/inherited"
+assert_bucket "case 1h: SELF (Z26/Z28)" "^  SELF " "fixture-plain.controller.ts|GET|fixture-plain/self"
+
+# case 1i: 'self' FILTRESIZ kovasına YANLIŞLIKLA DÜŞMEMELİ (SELF_OLCUM_
+# RAPORU.md §4'ün ölçtüğü sessizliğin tam tersi — negatif kontrol).
+if printf '%s\n' "$OUT1" | awk '/^  FILTRESIZ /{f=1;next} f && /^  [A-Z(]/{f=0} f' | grep -q 'fixture-plain/self$'; then
+  echo "!! self-test FAIL [case 1i]: 'self' YANLIŞLIKLA FILTRESIZ kovasına düştü" >&2
+  FAIL=1
+else
+  echo "-- [case 1i] @SelfScoped() rotası FILTRESIZ kovasına DÜŞMEDİ (beklenen)"
+fi
 
 # roled / roled-multiline: ROLES kovası LİSTELENMİYOR (yalnız sayı basılıyor
 # — bkz. route-scope.sh), o yüzden dolaylı doğrulanır: FILTRESIZ/PUBLIC/
@@ -130,8 +144,8 @@ else
 fi
 
 TOTAL_N="$(printf '%s\n' "$OUT1" | sed -n 's/.*TOPLAM rota: \([0-9]*\).*/\1/p')"
-if [ "$TOTAL_N" != "6" ]; then
-  echo "!! self-test FAIL [case 1g]: TOPLAM rota 6 bekleniyordu (gap,pub,roled,roled-multiline,route-guard,inherited), '$TOTAL_N' bulundu" >&2
+if [ "$TOTAL_N" != "7" ]; then
+  echo "!! self-test FAIL [case 1g]: TOPLAM rota 7 bekleniyordu (gap,self,pub,roled,roled-multiline,route-guard,inherited), '$TOTAL_N' bulundu" >&2
   FAIL=1
 fi
 
@@ -293,6 +307,38 @@ fi
 restore_awk || { echo "!! self-test SETUP HATASI [case 4b geri alma]: shasum uyuşmuyor" >&2; FAIL=1; }
 echo "-- [case 4b] geri alındı:"
 grep -n 'if (name == "UseGuards") collect_identifiers(text, cg)' "$AWK_ROUTE"
+
+# --- case 5: kanal @SelfScoped — bağımsızlık kontrolü (Z26/Z28) -------------
+# `SELF_OLCUM_RAPORU.md §4`'ün ölçtüğü sessizliğin AYNI MEKANİZMAYLA
+# yeniden üretimi: bu kanal kırılırsa 'self' rotası SESSİZCE FILTRESIZ'e
+# düşmeli — poz. kontrol budur (v1 ölçümünün doğrulanmış hâli).
+python3 - "$AWK_ROUTE" << 'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+marker = '} else if (name == "SelfScoped") {'
+assert s.count(marker) == 1, f"case 5 marker count={s.count(marker)}"
+open(p, "w").write(s.replace(marker, '} else if (name == "SelfScopedXX") {', 1))
+PY
+echo "-- [case 5 mutasyon] değiştirilen satır:"
+grep -n 'name == "SelfScopedXX"' "$AWK_ROUTE"
+OUT5="$(run)"
+SELF_IN_FILTRESIZ="$(printf '%s\n' "$OUT5" | awk '/FILTRESIZ \(ratchet/{f=1;next} f && /^  [A-Z(]/{f=0} f' | grep -c 'fixture-plain/self$')"
+if [ "$SELF_IN_FILTRESIZ" != "1" ]; then
+  echo "!! self-test FAIL [case 5a]: @SelfScoped mutasyonu sonrası 'self' FILTRESIZ kovasına DÜŞMEDİ — kanal hedefe düşmedi" >&2
+  printf '%s\n' "$OUT5" >&2
+  FAIL=1
+fi
+for key in "fixture-plain.controller.ts|GET|fixture-plain/pub" "fixture-plain.controller.ts|POST|fixture-plain/route-guard" "fixture-domain.controller.ts|GET|fixture-domain/inherited"; do
+  if ! printf '%s\n' "$OUT5" | grep -qF "$key"; then
+    echo "!! self-test FAIL [case 5 YAN ETKİ]: @SelfScoped mutasyonu '$key' görünürlüğünü de bozdu" >&2
+    FAIL=1
+  fi
+done
+[ "$SELF_IN_FILTRESIZ" = "1" ] && echo "-- [case 5] @SelfScoped mutasyonu YALNIZ 'self' rotasını kırdı (FILTRESIZ'e düşürdü), diğer kanallar bağımsız kaldı"
+restore_awk || { echo "!! self-test SETUP HATASI [case 5 geri alma]: shasum uyuşmuyor" >&2; FAIL=1; }
+echo "-- [case 5] geri alındı, satır:"
+grep -n '} else if (name == "SelfScoped")' "$AWK_ROUTE"
 
 # =============================================================================
 # CASE E — BOŞ KAYNAK → SETUP HATASI (exit 2), sessizce yeşil DEĞİL (T-250)

@@ -5,10 +5,18 @@
 # arası durum SIZDIRMAZ, her invocation temiz BEGIN state'iyle başlar).
 #
 # NE ÇIKARIR (her satır bir ROTA):
-#   <dosya> <satır> <YÖNTEM> <yol> <hasRoles:0|1> <hasPublic:0|1> <guardsCSV|->
+#   <dosya> <satır> <YÖNTEM> <yol> <hasRoles:0|1> <hasPublic:0|1> <guardsCSV|-> <hasSelfScoped:0|1>
 #
 # guardsCSV = CONTROLLER-seviyesi @UseGuards ∪ ROTA-seviyesi @UseGuards'taki
 # guard adlarının virgülle ayrılmış, sıralı birleşimi ("-" boşsa).
+#
+# hasSelfScoped (8. sütun, `Z26`/`Z28` — `docs/brd-v2/04_KARAR_KAYDI.md`):
+# `@SelfScoped()` dekoratörü — YALNIZ rota seviyesinde tanınır (`@Roles`/
+# `@Public` ile AYNI kapsam modeli, ölçüldü: bugün repoda class-level
+# `@SelfScoped()` YOK). `SELF_OLCUM_RAPORU.md §4`'ün ölçtüğü sessizlik
+# ("`v1` çıplak `@SelfScoped()` → FILTRESIZ'de KALDI, EXIT=0") bu sütunun
+# EKLENME gerekçesidir — dekoratör + bu ayrıştırıcı AYNI TURDA inmezse yeni
+# bir `SELF` ucu hiç kırmızıya dönmeden FILTRESIZ'e düşer.
 #
 # --- KAPSAM MODELİ (ölçüldü, T-252 hazırlığı, 34 controller dosyasının
 #     TAMAMI TARANDI) -----------------------------------------------------
@@ -59,6 +67,7 @@ function reset_pending() {
   p_http_line = 0
   p_has_roles = 0
   p_has_public = 0
+  p_has_self_scoped = 0
   delete rg
 }
 
@@ -131,6 +140,8 @@ function finalize_decorator(name, text, is_class, line,   arg) {
     p_has_roles = 1
   } else if (name == "Public") {
     p_has_public = 1
+  } else if (name == "SelfScoped") {
+    p_has_self_scoped = 1
   } else if (name == "UseGuards") {
     collect_identifiers(text, rg)
   }
@@ -169,9 +180,9 @@ function csv_from_sets(a, b,   list, n, k, i, j, tmp, out) {
 function flush_pending(   guards) {
   if (p_has_http) {
     guards = csv_from_sets(cg, rg)
-    printf "%s\t%d\t%s\t%s\t%d\t%d\t%s\n", \
+    printf "%s\t%d\t%s\t%s\t%d\t%d\t%s\t%d\n", \
       FILENAME, p_http_line, p_http_method, join_path(ctrl_base, p_http_path), \
-      p_has_roles, p_has_public, guards
+      p_has_roles, p_has_public, guards, p_has_self_scoped
   }
   reset_pending()
 }
