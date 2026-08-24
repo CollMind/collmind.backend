@@ -146,7 +146,7 @@ import { UserRole } from '../../database/entities/user.entity';
  *
  * ```
  * ÇÖZÜLDÜ (4) — ROLE_CAPABILITIES'e bu turda YAZILDI
- *   MODES_WRITE    {ADMIN,FINANCE,PLANNER}                     dal 3   ⚠️ Z30 H1 İLE GERİ AÇILDI, aşağı bkz.
+ *   MODES_WRITE    {ADMIN,FINANCE,PLANNER}                     dal 3   ⛔ BAYAT (Z35, 2026-08-24): hücre BÖLÜNDÜ → MODES_ACTUALS_WRITE / MODES_PLAN_WRITE
  *   SHARED_WRITE   {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER}    dal 3
  *   TENANT_READ    {ADMIN}                                     dal 1+2 (tek küme + 2 filtresiz hariç)
  *   USER_WRITE     {ADMIN}                                     dal 1+2 (tek küme + 5 filtresiz hariç)
@@ -173,6 +173,10 @@ import { UserRole } from '../../database/entities/user.entity';
  * değişikliklerin hiçbiri bugün hiçbir guard'ı etkilemiyor.
  *
  * **H1 · FIXPOINT — MODES_WRITE ⛔ DUR (bu turda ÇÖZÜLMEDİ, raporlandı)**
+ *
+ * > ✅ **KAPANDI (`Z35`, 2026-08-24 · koda indi: `B3b-1 ADIM 0`).** Aşağıdaki
+ * > `DUR` metni `F12` gereği **silinmedi**; hüküm için bu dosyadaki
+ * > `MODES_ACTUALS_WRITE` / `MODES_PLAN_WRITE` tanımlarına bakılır.
  *
  * `Faz A`'nın union kararı iki genişlemeyi KAYITLI KARARLARA çarpıyordu:
  *   - `FINANCE → Plan CRUD` (`DELETE /plans/:id` dahil) — `K-2.6.4`
@@ -201,6 +205,8 @@ import { UserRole } from '../../database/entities/user.entity';
  * uyuyor: *"Fixpoint bir hücrede üçüncü bir meşru küme üretiyorsa → DUR ve
  * raporla."* **Bu turda `CAPABILITIES.MODES_WRITE` / `ROLE_CAPABILITIES`
  * DEĞİŞTİRİLMEDİ** — ürün sahibine gider.
+ * > ⛔ **BAYAT (`Z35`, 2026-08-24):** ürün sahibi kararını verdi, bölünme
+ * > `B3b-1 ADIM 0`'da koda indi. `MODES_WRITE` artık bir hücre DEĞİL.
  *
  * ⚠️ **Davranışsal etki bu turda SIFIR** — `@RequireCapability` hiçbir
  * route'a uygulanmadı (Faz B, ayrı tur), yani `ÇÖZÜLDÜ` dörtlünün
@@ -543,18 +549,28 @@ export const CAPABILITIES = {
   // Union çöküşe düşüyor, ürün sahibi kararı bekliyor.
   // Bkz. yukarıdaki "9/24 hücre — ADIM 3 Faz A" bölümü, "DUR" alt-başlığı.
   MODES_READ: 'modes:read',
-  // ⛔ Z30 H1 → Z35: FIXPOINT natif kümeler üretti; Z35 bölünmeyi KARARA
-  // bağladı ({A,F} gerçekleşme-yazımı · {A,P} plan/anlaşma-yazımı) ve T-277
-  // POST /agreement-transactions'ı {A,F}'ye düzeltti.
-  // ⛔ BÖLÜNME HARİTAYA HENÜZ İNMEDİ — ROLE_CAPABILITIES'teki union
-  // {ADMIN,FINANCE,PLANNER} duruyor. B3b-1'in ADIM 0'ı budur; inmeden göç
-  // başlarsa T-277'nin daraltması bir mekanik tur tarafından SESSİZCE geri
-  // alınır. Ayrıntı: docs/process/B3B_RATCHET_TABANI.md §3.
-  // ⚠️ ÜYE SAYISI BURAYA YAZILMAZ (2026-08-24). Z30'un elle yazdığı
-  // enumerasyon hücrenin tamamını kapsamıyordu (18 sayıldı, 22 vardı) ve bu
-  // fark bir kapsam kararına girmişti. Üyelik için:
-  //   python3 scripts/analysis/route-cell-map.py | awk -F'\t' '$5=="MODES_WRITE"'
-  MODES_WRITE: 'modes:write',
+  // ✅ Z35 BÖLÜNMESİ KODA İNDİ (2026-08-24, B3b-1 ADIM 0).
+  // MODES_WRITE ikiye ayrıldı; tek hücre iki farklı işi taşıyordu ve union'ı
+  // T-277'nin daraltmasını geri açıyordu.
+  //
+  // ÜYELİK DAVRANIŞTAN TANIMLANIR, @Roles'tan DEĞİL — aksi hâlde harita,
+  // yönettiği şeyden türetilmiş olurdu (dairesel evren; bu oturumda bir
+  // totoloji olarak ölçüldü, bkz. route-cell-map.py MUTABAKAT yorumu).
+  // Ayırt edici ALT-MODÜL = işin cinsi:
+  //   gerçekleşme/alım girişi  agreement-transaction · on-invoice · sales-actuals
+  //   plan/anlaşma tanımı      agreement · plan
+  // Z35'in ölçülebilir teyidi TEK YÖNLÜDÜR ve ÜÇTE İKİSİNİ kapsar:
+  //   defter YAZAN (ledgerService çağıran) modes/ servisleri: agreement-transaction ·
+  //   on-invoice — İKİSİ DE gerçekleşme tarafında. plan/anlaşma tarafında SIFIR.
+  //   (reversal da çağırıyor ama rotaları ALAN_GUARD kovasında, bu hücrede değil.)
+  // ⚠️ sales-actuals'ın defter çağrısı da SIFIR — üyeliği "defter etkisi"ne değil
+  //   "fiili veri alımı" yargısına dayanıyor. Yani ayırt edici bir DİSJONKSİYON
+  //   (defter-etkili VEYA fiili veri alımı), tek grep'lik bir test DEĞİL.
+  //
+  // ÜYE SAYISI BURAYA YAZILMAZ. Üyelik için:
+  //   python3 scripts/analysis/route-cell-map.py
+  MODES_ACTUALS_WRITE: 'modes:actuals-write',
+  MODES_PLAN_WRITE: 'modes:plan-write',
   // ⛔ BLOKE — onay-AKIŞI durum geçişleri (K-2.5.12'ye devredildi).
   // Z30 H2: gönderim/geri-çekme route'ları AYRILDI → MODES_SUBMIT (aşağı bkz.).
   // ✅ 2026-08-24 (ürün sahibi kararı): POST /plans/:id/review ve
@@ -639,11 +655,10 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.MASTER_DATA_WRITE,
     CAPABILITIES.MASTER_DATA_MANAGE,
-    // ↓ ADIM 3 Faz A (2026-08-17, UNION): ADMIN her iki genişleyen hücrede
-    // de zaten mevcuttu — bkz. CAPABILITIES yorumu. ⚠️ Z30 H1: bu union
-    // BLOKE'A DÜŞTÜ (ürün sahibi kararı bekliyor), ama ADMIN her iki NATİF
-    // kümede de zaten vardı — ADMIN için sonuç değişmez.
-    CAPABILITIES.MODES_WRITE,
+    // ↓ Z35 bölünmesi (2026-08-24): ADMIN her iki natif kümede de zaten
+    // vardı ({A,F} ve {A,P}) — bölünme ADMIN için sonuç DEĞİŞTİRMEZ.
+    CAPABILITIES.MODES_ACTUALS_WRITE,
+    CAPABILITIES.MODES_PLAN_WRITE,
     // ↓ Z30 H2 (2026-08-24) — dal 1, mekanik.
     CAPABILITIES.MODES_SUBMIT,
     CAPABILITIES.NOTIFICATION_WRITE,
@@ -662,14 +677,13 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.CUSTOMER_WRITE,
     CAPABILITIES.CUSTOMER_MANAGE,
     CAPABILITIES.MASTER_DATA_READ,
-    // ↓ ADIM 3 Faz A (2026-08-17, UNION) — bkz. CAPABILITIES yorumu:
-    // MODES_WRITE union'ı PLANNER'a agreement-transaction/on-invoice/
-    // sales-actuals upload-validate-process uçlarını (5 route, önceden
-    // {ADMIN,FINANCE}) açıyor. ⚠️ Z30 H1: bu GENİŞLEME K-2.6.14'ün
-    // YÜRÜRLÜKTEKİ fazına ÇARPIYOR ("bugün yalnız finans + yönetici") —
-    // BLOKE, ürün sahibi kararı bekliyor. PLANNER'ın burada kalması bir
-    // onay değil, `H1`'in "bu turda DEĞİŞTİRİLMEDİ" kaydı.
-    CAPABILITIES.MODES_WRITE,
+    // ↓ Z35 bölünmesi (2026-08-24): PLANNER yalnız PLAN/ANLAŞMA tarafında.
+    // ⛔ GERÇEKLEŞME yazımı (agreement-transaction · on-invoice ·
+    // sales-actuals) PLANNER'dan DÜŞTÜ — 2026-08-17 union'ı onu oraya
+    // açmıştı ve bu K-2.6.14'ün YÜRÜRLÜKTEKİ fazına çarpıyordu
+    // ("bugün yalnız finans + yönetici"). T-277 aynı daraltmayı @Roles
+    // tarafında iki repoda indirmişti; bu satır haritayı ona eşitler.
+    CAPABILITIES.MODES_PLAN_WRITE,
     // ↓ Z30 H2 (2026-08-24) — dal 1, mekanik. K-2.6.4 (L2_03:406):
     // "PLANLAMACI — …, GÖNDERİM — günlük kullanıcı".
     CAPABILITIES.MODES_SUBMIT,
@@ -689,14 +703,11 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
   [UserRole.FINANCE]: [
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
-    // ↓ ADIM 3 Faz A (2026-08-17, UNION) — bkz. CAPABILITIES yorumu:
-    // MODES_WRITE union'ı FINANCE'e Plan CRUD (create/update/delete/addFu/
-    // removeFu/updateSkuVolume/calculateKpis/recalculate — 12 route,
-    // önceden {ADMIN,PLANNER}) açıyor. ⚠️ Z30 H1: bu GENİŞLEME K-2.6.4'ün
-    // FİNANS listesine ÇARPIYOR (plan YAZIMI yok) — BLOKE, ürün sahibi
-    // kararı bekliyor. FINANCE'ın burada kalması bir onay değil, `H1`'in
-    // "bu turda DEĞİŞTİRİLMEDİ" kaydı.
-    CAPABILITIES.MODES_WRITE,
+    // ↓ Z35 bölünmesi (2026-08-24): FINANCE yalnız GERÇEKLEŞME tarafında.
+    // ⛔ Plan CRUD (DELETE /plans/:id dahil) FINANCE'ten DÜŞTÜ —
+    // 2026-08-17 union'ı onu oraya açmıştı ve bu K-2.6.4'ün FİNANS
+    // listesine çarpıyordu (plan YAZIMI yok).
+    CAPABILITIES.MODES_ACTUALS_WRITE,
     CAPABILITIES.NOTIFICATION_WRITE,
     CAPABILITIES.SHARED_WRITE,
   ],

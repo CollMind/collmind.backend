@@ -47,6 +47,32 @@ APPROVE = {
  'plans/:id/review', 'plans/:id/escalate-to-finance',
 }
 
+# --- Z35: MODES_WRITE bölünmesi — ÜYELİK ALT-MODÜLDEN (davranış) ---
+# ⛔ @Roles'tan TÜRETİLMEZ: hücre, yönettiği şeyden türetilirse harita bir
+# TOTOLOJİ olur (dairesel evren). Ayırt edici işin cinsi:
+#   gerçekleşme/alım girişi -> defter-etkili ya da fiili veri alımı
+#   plan/anlaşma tanımı     -> planlama artefaktı, defter etkisi YOK
+# Teyit (Z35): modes/ içinde ledgerService çağıranlar agreement-transaction ve
+# on-invoice — ikisi de ACTUALS tarafında; PLAN tarafında SIFIR defter çağrısı.
+ACTUALS_SUBMODULES = ('agreement-transaction', 'on-invoice', 'sales-actuals')
+PLAN_SUBMODULES    = ('agreement', 'plan')
+
+def modes_write_cell(f):
+    """Eşleşme TAM SEGMENT EŞİTLİĞİDİR ('part in TUPLE'), ön-ek/substring DEĞİL.
+
+    Koruyan şey budur, döngü SIRASI değil: 'agreement-transaction' dizini
+    PLAN_SUBMODULES'ün hiçbir üyesine EŞİT olmadığı için ön-ek çakışması
+    yapısal olarak imkânsız (ölçüldü: iki döngü takas edildi, çıktı BİREBİR aynı).
+    ⚠️ startswith/substring eşleşmesine geçilirse bu garanti KAYBOLUR ve sıra
+    aniden yük taşımaya başlar — o gün bu docstring de değişmeli.
+    """
+    seg = f.replace('src/modules/modes/','').split('/')
+    for part in seg:
+        if part in ACTUALS_SUBMODULES: return 'MODES_ACTUALS_WRITE'
+    for part in seg:
+        if part in PLAN_SUBMODULES:    return 'MODES_PLAN_WRITE'
+    return None
+
 cache={}
 def src(f):
     if f not in cache: cache[f]=io.open(f,encoding='utf-8').read()
@@ -111,10 +137,25 @@ def cell_for(f, meth, path):
     if fam=='MODES' and SUBMIT_RE.search('/'+path):  return 'MODES_SUBMIT','Z35'
     verb = 'READ' if meth=='GET' else 'WRITE'
     if fam=='USER' and verb=='READ':                 return 'USER_MANAGE','Z20'
+    if fam=='MODES' and verb=='WRITE':
+        c = modes_write_cell(f)
+        if c: return c,'Z35'
+        # ⛔ SENTINEL '?' TAŞIMAK ZORUNDA. Önceki hâli 'MODES_WRITE_COZULEMEDI'ydi ve
+        # yorumu "G1 kapısına düşer" diyordu — ÖLÇÜLDÜ (2026-08-24, code-reviewer B1):
+        # G1'in üç koşulunun ÜÇÜ DE False (dize boş değil, içinde '?' yok, kaynak
+        # boş değil) => kapı ATEŞLEMİYORDU, yani FAIL-OPEN. Alt-modül listeleri ELLE
+        # yazılı ve tam-segment eşleşiyor; bir dizin yeniden adlandırılırsa (ör.
+        # sales-actuals -> sales-actuals-import) rotalar hayalet hücreye düşer,
+        # G5 onları saymaz ve tur YEŞİL kalır. Bu dal bugün 0 rota koşuyor.
+        return 'MODES_WRITE_?','?'
     return f'{fam}_{verb}','MEKANIK'
 
 def reconcile(rows):
-    """MUTABAKAT — ve bu bir KAPIDIR (durdurmuyorsa dogrulama degildir).
+    """MUTABAKAT — exit 2 ile durduran bir kapi.
+
+    ⚠️ KAPSAM: bu dosya scripts/analysis/ altinda ve `run-all.sh`/`npm run guards`
+    KAPSAMAZ (olculdu 2026-08-24). Yani operatorun ELLE kosturdugu bir kapidir;
+    `npm run guards` yesilken bu mutabakat HIC KOSMAMIS olabilir.
 
     ELLE YAZILMIS SAYI YOK: kanonik kaynak UYE LISTESIDIR. Bir sayiyi burada
     sabitlemek, bir sonraki rota eklendiginde yalan soylerdi -- "liste, sayi
@@ -183,6 +224,27 @@ def reconcile(rows):
     unresolved=[r for r in rows if r[3]=='?']
     print(f'G3 cozulemeyen @Roles {len(unresolved)}', file=out)
     for r in unresolved: err.append(f'G3 @Roles cozulemedi: {r[0]} {r[1]} {r[2]}')
+
+    # G5 — Z35 bölünmesinin BAĞIMSIZ teyidi.
+    # Üyelik ALT-MODÜLDEN geldi; burada @Roles ile ÇAKIŞTIRILIYOR. İki ayrı
+    # yol aynı yere çıkmalı — çıkmıyorsa bu bir BULGUDUR, sessizce geçilmez.
+    # (Bu bir tanım DEĞİL bir kontroldür: üyelik @Roles'tan türetilseydi
+    #  kontrol totoloji olurdu.)
+    # ⚠️ EXPECT IKINCI BIR DOGRULUK KAYNAGIDIR. Kanonik kaynak
+    # src/common/authorization/capabilities.ts'teki ROLE_CAPABILITIES; bu script
+    # o dosyayi OKUMUYOR. Ikisi ayrisirsa BU KONTROL ONU GORMEZ — Faz B'de
+    # @RequireCapability canli kod olunca capraz kontrol gerekir.
+    EXPECT={'MODES_ACTUALS_WRITE':{'ADMIN','FINANCE'},
+            'MODES_PLAN_WRITE':   {'ADMIN','PLANNER'}}
+    mism=[]
+    for r in rows:
+        if r[4] in EXPECT:
+            got=set(r[3].split(',')) if r[3]!='?' else set()
+            if got!=EXPECT[r[4]]: mism.append((r[4],r[1],r[2],r[3]))
+    n_split=sum(1 for r in rows if r[4] in EXPECT)
+    print(f'G5 Z35 bolunmesi   uye={n_split}  @Roles uyusmazligi={len(mism)}', file=out)
+    for c,m,pth,rl in mism:
+        err.append(f'G5 UYUSMAZLIK: {m} {pth} hucre={c} @Roles={rl}')
 
     # W1 — uyari, kapi degil
     noadmin=[r for r in rows if 'ADMIN' not in r[3].split(',')]
