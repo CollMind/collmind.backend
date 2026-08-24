@@ -212,6 +212,20 @@ import { UserRole } from '../../database/entities/user.entity';
  *
  * #### ÇÖZÜLDÜ — hücre hücre, route × eklenen rol
  *
+ * > ⛔ **BU BÖLÜM BİR KAYITTIR — SAYILARI O GÜNÜNDÜR, BUGÜNÜN DEĞİL.**
+ * > Aşağıdaki `(N route)` başlıkları `Z30 H1` turunda elle yazıldı. Ölçüldü
+ * > (2026-08-24): **dokuz başlığın yedisi bugün bayat** (ör. `MODES_WRITE` 18↔20 ·
+ * > `MODES_READ` 37↔34 · `SHARED_READ` 36↔20 · `MODES_APPROVE` 13↔6), ve ikisi
+ * > artık **var olmayan** hücrelere atıf veriyor (`USER_READ` `Z20` ile silindi ·
+ * > `SHARED_APPROVE` bugün hiçbir rota taşımıyor).
+ * >
+ * > Kayıt `F12` gereği **düzeltilmez** — o günün kararını o günün sayılarıyla
+ * > taşır. **Bugünün üyeliği için tek kanonik kaynak üreticidir:**
+ * > `python3 scripts/analysis/route-cell-map.py`  (hücre sütunu + MUTABAKAT).
+ * >
+ * > 📌 **Ve ders bu bölümün kendisi:** elle yazılmış her üye-sayısı, bir sonraki
+ * > rota eklendiğinde yalan söyler. Yeni yorumlara sayı YAZILMAZ — üye listesine
+ * > ya da üreticiye atıf verilir.
  * **`MODES_WRITE`** (18 route, filtresiz YOK):
  * ```
  * {ADMIN,FINANCE,PLANNER}  n=1   POST /agreement-transactions                    (create)               — değişiklik yok, zaten union
@@ -529,16 +543,28 @@ export const CAPABILITIES = {
   // Union çöküşe düşüyor, ürün sahibi kararı bekliyor.
   // Bkz. yukarıdaki "9/24 hücre — ADIM 3 Faz A" bölümü, "DUR" alt-başlığı.
   MODES_READ: 'modes:read',
-  // ⛔ Z30 H1 (2026-08-24): FIXPOINT üç NATİF küme üretti (n=1 {A,F,P} ·
-  // n=5 {A,F} · n=12 {A,P}) — "üçüncü meşru küme" DUR'u, ürün sahibi
-  // kararı bekliyor. ROLE_CAPABILITIES'teki mevcut union {ADMIN,FINANCE,
-  // PLANNER} BU TURDA DEĞİŞTİRİLMEDİ (bkz. yukarıdaki "Z30 (2026-08-24)"
-  // bölümü, "H1" alt-başlığı) — DAVRANIŞSAL etkisi sıfır (0 tüketici).
+  // ⛔ Z30 H1 → Z35: FIXPOINT natif kümeler üretti; Z35 bölünmeyi KARARA
+  // bağladı ({A,F} gerçekleşme-yazımı · {A,P} plan/anlaşma-yazımı) ve T-277
+  // POST /agreement-transactions'ı {A,F}'ye düzeltti.
+  // ⛔ BÖLÜNME HARİTAYA HENÜZ İNMEDİ — ROLE_CAPABILITIES'teki union
+  // {ADMIN,FINANCE,PLANNER} duruyor. B3b-1'in ADIM 0'ı budur; inmeden göç
+  // başlarsa T-277'nin daraltması bir mekanik tur tarafından SESSİZCE geri
+  // alınır. Ayrıntı: docs/process/B3B_RATCHET_TABANI.md §3.
+  // ⚠️ ÜYE SAYISI BURAYA YAZILMAZ (2026-08-24). Z30'un elle yazdığı
+  // enumerasyon hücrenin tamamını kapsamıyordu (18 sayıldı, 22 vardı) ve bu
+  // fark bir kapsam kararına girmişti. Üyelik için:
+  //   python3 scripts/analysis/route-cell-map.py | awk -F'\t' '$5=="MODES_WRITE"'
   MODES_WRITE: 'modes:write',
-  // ⛔ BLOKE — geriye kalan onay-kararı route'ları (K-2.5.12'ye devredildi).
-  // Z30 H2 (2026-08-24): gönderim/geri-çekme 5 route'u AYRILDI →
-  // MODES_SUBMIT (aşağı bkz.). Bkz. yukarıdaki "Z30 (2026-08-24)" bölümü,
-  // "H2" alt-başlığı.
+  // ⛔ BLOKE — onay-AKIŞI durum geçişleri (K-2.5.12'ye devredildi).
+  // Z30 H2: gönderim/geri-çekme route'ları AYRILDI → MODES_SUBMIT (aşağı bkz.).
+  // ✅ 2026-08-24 (ürün sahibi kararı): POST /plans/:id/review ve
+  // POST /plans/:id/escalate-to-finance BU HÜCREYE taşındı — daha önce mekanik
+  // POST→WRITE kuralıyla MODES_WRITE görünüyorlardı. Sınıf yol deseninden değil
+  // DAVRANIŞTAN tanımlanır: ikisi de plan İÇERİĞİ değil onay DURUMU yazar
+  // (updateStatusCas → status/escalated*/pendingFinanceReview; plan-içerik
+  // kolonu 0). Z30 H2 zaten ikisini onay ailesinde saymıştı (yukarı bkz.).
+  // Muhasebe teyidi: MODES_APPROVE + MODES_SUBMIT = 11 = B3a'nın kaydı.
+  // Üyelik: scripts/analysis/route-cell-map.py'nin APPROVE üye listesi.
   MODES_APPROVE: 'modes:approve',
   // ✅ Z30 H2 (2026-08-24) — {ADMIN,PLANNER}, dal 1 (tek küme, mekanik).
   // K-2.6.4 (L2_03:406): "PLANLAMACI — …, GÖNDERİM — günlük kullanıcı".

@@ -30,8 +30,22 @@ SUMMARY = {
 }
 # --- Z35: MODES_SUBMIT — gönderim/iptal/taslak ---
 SUBMIT_RE = re.compile(r'/(submit|cancel)(-[a-z-]+)?(/|$)|/return-to-draft(/|$)')
-# --- MODES_APPROVE: onay KARARI ---
-APPROVE_RE = re.compile(r'/(approve|reject|approval-decision)(/|$)')
+# --- MODES_APPROVE: ONAY-AKISI DURUM GECISI (UYE LISTESI, desen DEGIL) ---
+# Sinif yol deseninden degil DAVRANISTAN tanimlanir. Olculdu 2026-08-24: alti
+# uyenin hepsi onay DURUMU yazar (updateStatusCas -> status/approved*/rejected*/
+# escalated*/pendingFinanceReview); plan-ICERIK kolonu SIFIR.
+#   POZ.KONTROL  plan.service.updateSkuVolume: baseVolume/plannedVolume YAZAR,
+#                status'u yalniz OKUR (DRAFT guard) -> ters yonlu, ayirt edici.
+# Eski hali bir yol deseniydi (approve|reject|approval-decision) ve
+# plans/:id/review + plans/:id/escalate-to-finance'i KACIRIYORDU: mekanik
+# POST->WRITE kuralina dusuyorlardi. Ikisi de capabilities.ts:432'de (Z30 H2)
+# ZATEN onay ailesinde sayiliydi -- mekanik kural, kayitla celistiginde kaybeder.
+# 'approval-decision' dusuruldu: SIFIR rota esliyordu (olu desen, olculdu).
+APPROVE = {
+ 'agreements/:id/approve', 'agreements/:id/reject',
+ 'plans/:id/approve', 'plans/:id/reject',
+ 'plans/:id/review', 'plans/:id/escalate-to-finance',
+}
 
 cache={}
 def src(f):
@@ -93,24 +107,108 @@ def cell_for(f, meth, path):
     d = re.sub(r'^src/modules/','',f).split('/')[0]
     fam = FAM.get(d,'?')
     if path in SUMMARY:            return 'SUMMARY_READ','Z31/Z32'
-    if fam=='MODES' and APPROVE_RE.search('/'+path): return 'MODES_APPROVE','YARGI'
+    if path in APPROVE:            return 'MODES_APPROVE','YARGI'
     if fam=='MODES' and SUBMIT_RE.search('/'+path):  return 'MODES_SUBMIT','Z35'
     verb = 'READ' if meth=='GET' else 'WRITE'
     if fam=='USER' and verb=='READ':                 return 'USER_MANAGE','Z20'
     return f'{fam}_{verb}','MEKANIK'
 
+def reconcile(rows):
+    """MUTABAKAT — ve bu bir KAPIDIR (durdurmuyorsa dogrulama degildir).
+
+    ELLE YAZILMIS SAYI YOK: kanonik kaynak UYE LISTESIDIR. Bir sayiyi burada
+    sabitlemek, bir sonraki rota eklendiginde yalan soylerdi -- "liste, sayi
+    degil" kuralinin script tarafi.
+
+    G1 ic mutabakat      kategori toplamlari == satir sayisi
+                         (EK 3 §1'in 190+12+5+2+4=213 != 211 tutarsizligini
+                          yakalayan sey elle toplamaydi; artik tur kendi yakalar)
+    G2 enumerasyon       bildirilen her uye TAM BIR rotaya dusmeli
+                         (olu uye = bayat liste · cift uye = kopya)
+    G3 ayristirma        cozulemeyen @Roles ('?') olmamali
+    W1 tuhaflik          ADMIN tasimayan rota -- UYARI, kapi DEGIL (Z29: bir
+                         kapi, olcumun BASARISINI hata sayamaz; boyle bir rota
+                         bir gun mesru olabilir)
+    """
+    from collections import Counter
+    err=[]; out=sys.stderr
+    cells=Counter(r[4] for r in rows); srcs=Counter(r[5] for r in rows)
+    n=len(rows)
+
+    print('=== MUTABAKAT ===', file=out)
+    print('-- hucre --', file=out)
+    for k,v in sorted(cells.items(), key=lambda x:-x[1]): print(f'   {k:<22}{v}', file=out)
+    print('-- kaynak --', file=out)
+    for k,v in sorted(srcs.items(), key=lambda x:-x[1]): print(f'   {k:<22}{v}', file=out)
+
+    # G1 — anahtar tekilligi + bos alan.
+    # DIKKAT: "kategori toplami == satir sayisi" kontrolu BILEREK YOK. Counter
+    # satirlarin kendisinden turetilir, yani o esitlik TANIM GEREGI saglanir ve
+    # kontrol hicbir girdide kirmiziya donemez (olculdu 2026-08-24, mutasyon B:
+    # sahte satir eklendi -> 212=212=212, kapi ates ETMEDI). Bir totoloji, yesil
+    # oldugu icin CALISTIGI SANILAN kontroldur -- olmayan kapidan kotudur.
+    # Yerine KIRMIZIYA DONEBILEN iki kontrol:
+    keys=Counter((r[0],r[1],r[2]) for r in rows)
+    dupk=sorted(k for k,v in keys.items() if v>1)
+    print(f'G1 anahtar tekilligi cift={len(dupk)}', file=out)
+    for k in dupk: err.append(f'G1 CIFT ANAHTAR: {k[0]} {k[1]} {k[2]}')
+    blank=[r for r in rows if not r[4] or not r[5] or '?' in r[4]]
+    print(f'G1 bos/gecersiz hucre {len(blank)}', file=out)
+    for r in blank: err.append(f'G1 BOS/GECERSIZ hucre: {r[0]} {r[1]} {r[2]} -> {r[4]!r}')
+
+    # G4 — CAPRAZ-ARAC mutabakati: kanonik ayristiricinin ROLES kovasi ile
+    # satir sayisi ayni olmali. Bagimsiz bir yoldan gelir, yani KIRILABILIR.
+    try:
+        rs=subprocess.run(['bash','scripts/guards/route-scope.sh','--list'],
+                          capture_output=True,text=True)
+        m=re.search(r'ROLES:\s*(\d+)', rs.stdout)
+        if not m: err.append('G4 route-scope.sh ROLES satiri OKUNAMADI (capraz kontrol YAPILAMADI)')
+        else:
+            roles=int(m.group(1))
+            print(f'G4 capraz-arac  route-scope ROLES={roles}  satir={n}', file=out)
+            if roles!=n: err.append(f'G4 CAPRAZ FARK: route-scope ROLES={roles} != satir {n}')
+    except Exception as e:
+        err.append(f'G4 capraz kontrol KOSMADI: {e}')
+
+    # G2 — bildirilen uye listeleri gercege dusuyor mu
+    paths=Counter(r[2] for r in rows)
+    for name,decl in (('SUMMARY',SUMMARY),('APPROVE',APPROVE)):
+        dead=sorted(m for m in decl if paths.get(m,0)==0)
+        dup =sorted(m for m in decl if paths.get(m,0)>1)
+        print(f'G2 {name:<8} bildirilen={len(decl)} olu={len(dead)} cift={len(dup)}', file=out)
+        for m in dead: err.append(f'G2 {name} OLU UYE (hicbir rotaya dusmuyor): {m}')
+        for m in dup:  err.append(f'G2 {name} CIFT UYE: {m}')
+
+    # G3
+    unresolved=[r for r in rows if r[3]=='?']
+    print(f'G3 cozulemeyen @Roles {len(unresolved)}', file=out)
+    for r in unresolved: err.append(f'G3 @Roles cozulemedi: {r[0]} {r[1]} {r[2]}')
+
+    # W1 — uyari, kapi degil
+    noadmin=[r for r in rows if 'ADMIN' not in r[3].split(',')]
+    print(f'W1 (uyari) ADMIN tasimayan rota {len(noadmin)}', file=out)
+    for r in noadmin: print(f'   ? {r[1]} {r[2]} [{r[3]}]', file=out)
+
+    if err:
+        print('\n-- MUTABAKAT BASARISIZ --', file=out)
+        for e in err: print(f'   {e}', file=out)
+        return 2
+    print('-- MUTABAKAT TAMAM --', file=out)
+    return 0
+
 def main():
     awk='scripts/guards/route-scope.awk'
     files=sorted(glob.glob('src/**/*.controller.ts',recursive=True))
     out=subprocess.run(['awk','-f',awk]+files,capture_output=True,text=True).stdout
-    n=0
+    rows=[]
     for line in out.splitlines():
         c=line.split('\t')
         if len(c)<8 or c[4]!='1': continue
         f,ln,meth,path = c[0],int(c[1]),c[2],c[3]
         cell,srcn = cell_for(f,meth,path)
-        print('\t'.join([f,meth,path,roles_for(f,ln),cell,srcn]))
-        n+=1
-    print(f'# TOPLAM {n}', file=sys.stderr)
+        rows.append([f,meth,path,roles_for(f,ln),cell,srcn])
+    for r in rows: print('\t'.join(r))
+    print(f'# TOPLAM {len(rows)}', file=sys.stderr)
+    return reconcile(rows)
 
-if __name__=='__main__': main()
+if __name__=='__main__': sys.exit(main())
