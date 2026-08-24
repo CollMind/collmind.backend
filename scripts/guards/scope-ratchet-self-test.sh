@@ -69,16 +69,20 @@ EOF
 write_src 0
 
 cat > "$REPO/guards/a1.txt" << 'EOF'
+# scope-ratchet: A1 — fixture
 src/foo.controller.ts|GET|foo/bar	# başlangıç debt
 src/permanent-dummy.controller.ts|GET|permanent/dummy	# kalıcı dummy — envanterde YOK, dosya boşalmasın diye
 EOF
 cat > "$REPO/guards/a2.txt" << 'EOF'
+# scope-ratchet: A2 — fixture
 src/permanent-dummy.controller.ts|POST|permanent/dummy2	# kalıcı dummy
 EOF
 cat > "$REPO/guards/b.txt" << 'EOF'
+# scope-ratchet: B — fixture
 src/permanent-dummy.controller.ts|PATCH|permanent/dummy3	# kalıcı dummy
 EOF
 cat > "$REPO/guards/c.txt" << 'EOF'
+# scope-ratchet: C — fixture
 src/foo.controller.ts|GET|foo/baz	# gerekçeli
 EOF
 
@@ -203,7 +207,7 @@ cp "$TMP/c.orig" "$REPO/guards/c.txt"
 # =============================================================================
 cp "$REPO/guards/a1.txt" "$TMP/a1.orig2"
 cp "$REPO/guards/b.txt" "$TMP/b.orig"
-echo "src/permanent-dummy.controller.ts|GET|permanent/dummy	# kalıcı dummy" > "$REPO/guards/a1.txt"
+printf '%s\n%s\n' "# scope-ratchet: A1 — fixture" "src/permanent-dummy.controller.ts|GET|permanent/dummy	# kalıcı dummy" > "$REPO/guards/a1.txt"
 { cat "$REPO/guards/b.txt"; echo "src/foo.controller.ts|GET|foo/bar	# İYİLEŞTİ"; } > "$TMP/b.new"
 cp "$TMP/b.new" "$REPO/guards/b.txt"
 
@@ -268,16 +272,20 @@ export class FooController {
 }
 EOF
 cat > "$REPO2/guards/a1.txt" << 'EOF'
+# scope-ratchet: A1 — fixture
 src/foo.controller.ts|GET|foo/bar	# debt
 src/foo.controller.ts|GET|foo/baz	# debt — bu route birazdan koddan silinecek
 EOF
 cat > "$REPO2/guards/a2.txt" << 'EOF'
+# scope-ratchet: A2 — fixture
 src/permanent-dummy.controller.ts|POST|permanent/dummy2	# kalıcı dummy
 EOF
 cat > "$REPO2/guards/b.txt" << 'EOF'
+# scope-ratchet: B — fixture
 src/permanent-dummy.controller.ts|PATCH|permanent/dummy3	# kalıcı dummy
 EOF
 cat > "$REPO2/guards/c.txt" << 'EOF'
+# scope-ratchet: C — fixture
 src/permanent-dummy.controller.ts|DELETE|permanent/dummy4	# kalıcı dummy
 EOF
 ( cd "$REPO2" && git init -q && git config user.email t@e.com && git config user.name t && git add -A && git commit -qm "initial" )
@@ -296,7 +304,7 @@ export class FooController {
   }
 }
 EOF
-echo "src/foo.controller.ts|GET|foo/bar	# debt" > "$REPO2/guards/a1.txt"
+printf '%s\n%s\n' "# scope-ratchet: A1 — fixture" "src/foo.controller.ts|GET|foo/bar	# debt" > "$REPO2/guards/a1.txt"
 
 OUT6="$(SCOPE_RATCHET_SRC_DIR="$REPO2/src" SCOPE_RATCHET_A1="$REPO2/guards/a1.txt" SCOPE_RATCHET_A2="$REPO2/guards/a2.txt" SCOPE_RATCHET_B="$REPO2/guards/b.txt" SCOPE_RATCHET_C="$REPO2/guards/c.txt" GUARD_MODE=block bash "$GUARD" 2>&1)"
 RC6=$?
@@ -326,15 +334,98 @@ else
   echo "-- [case 7a] boş kaynak → exit 2 (SETUP HATASI)"
 fi
 
-EMPTY_LIST="$TMP/empty-a1.txt"
-echo "# hiç anahtar yok" > "$EMPTY_LIST"
-SCOPE_RATCHET_SRC_DIR="$REPO/src" SCOPE_RATCHET_A1="$EMPTY_LIST" SCOPE_RATCHET_A2="$REPO/guards/a2.txt" SCOPE_RATCHET_B="$REPO/guards/b.txt" SCOPE_RATCHET_C="$REPO/guards/c.txt" GUARD_MODE=report bash "$GUARD" > /dev/null 2>&1
+# CASE 7b — A1 listesi BAŞLIKSIZ (gerçek bozukluk: içerik var ama '#' başlığı
+# YOK) → exit 2. Bu, eskiden "boş A1 listesi" olarak sınanan kapsamı DAR
+# tanımlıyordu — sıfır anahtar TEK BAŞINA artık bir kusur DEĞİL (bkz. CASE T).
+NOHDR_LIST="$TMP/nohdr-a1.txt"
+echo "src/foo.controller.ts|GET|foo/bar	# başlıksız, bozuk" > "$NOHDR_LIST"
+OUT7B="$(SCOPE_RATCHET_SRC_DIR="$REPO/src" SCOPE_RATCHET_A1="$NOHDR_LIST" SCOPE_RATCHET_A2="$REPO/guards/a2.txt" SCOPE_RATCHET_B="$REPO/guards/b.txt" SCOPE_RATCHET_C="$REPO/guards/c.txt" GUARD_MODE=report bash "$GUARD" 2>&1)"
 RC7B=$?
 if [ "$RC7B" -ne 2 ]; then
-  echo "!! self-test FAIL [case 7b: boş A1 listesi]: exit 2 bekleniyordu, $RC7B bulundu" >&2
+  echo "!! self-test FAIL [case 7b: A1 başlıksız]: exit 2 bekleniyordu, $RC7B bulundu" >&2
+  printf '%s\n' "$OUT7B" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT7B" | grep -qF "başlık biçimi TANINMADI"; then
+  echo "!! self-test FAIL [case 7b]: hata mesajı başlık eksikliğini İSİMLENDİRMEDİ" >&2
+  printf '%s\n' "$OUT7B" >&2
   FAIL=1
 else
-  echo "-- [case 7b] boş A1 listesi → exit 2 (SETUP HATASI)"
+  echo "-- [case 7b] A1 listesi BAŞLIKSIZ (gerçek bozukluk) → exit 2 (SETUP HATASI)"
+fi
+
+# CASE 7c — A1 listesi başlıklı AMA bir veri satırı beklenen ŞEKİLDE değil
+# (tab yok / '# ' önekiyle başlamıyor) → exit 2. Başlığın kendisi YETMEZ;
+# İÇERİK BİÇİMİ de doğrulanır (route-scope.sh'in AYNI ikinci kontrolü).
+MALFORMED_LIST="$TMP/malformed-a1.txt"
+printf '%s\n%s\n' "# scope-ratchet: A1 — fixture" "bu-satir-tab-icermiyor-ve-bozuk" > "$MALFORMED_LIST"
+OUT7C="$(SCOPE_RATCHET_SRC_DIR="$REPO/src" SCOPE_RATCHET_A1="$MALFORMED_LIST" SCOPE_RATCHET_A2="$REPO/guards/a2.txt" SCOPE_RATCHET_B="$REPO/guards/b.txt" SCOPE_RATCHET_C="$REPO/guards/c.txt" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC7C=$?
+if [ "$RC7C" -ne 2 ]; then
+  echo "!! self-test FAIL [case 7c: A1 satır bozuk]: exit 2 bekleniyordu, $RC7C bulundu" >&2
+  printf '%s\n' "$OUT7C" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT7C" | grep -qF "TANINMAYAN satır"; then
+  echo "!! self-test FAIL [case 7c]: hata mesajı bozuk satırı İSİMLENDİRMEDİ" >&2
+  printf '%s\n' "$OUT7C" >&2
+  FAIL=1
+else
+  echo "-- [case 7c] A1 listesi başlıklı ama VERİ satırı bozuk → exit 2 (SETUP HATASI)"
+fi
+
+# =============================================================================
+# CASE T — RATCHET TAMAMLANDI: A1 listesi biçimi SAĞLIKLI, SIFIR anahtar
+# (başlık var, hiç veri satırı yok) → exit 0 + görünür "TAMAMLANDI" mesajı.
+# (ADIM3_FAZB_PLAN.md "AÇIK KARAR", seçenek b — B4'ün ön koşulu bu satırı
+# okuyacak, §2.7: "sıfır bir BAŞARI OLAYIDIR ve GÖRÜNÜR olmalı".)
+#
+# A1'i BOŞALTMAK gerçek envanterden bir rota DÜŞÜRMEMELİ (aksi hâlde TAMLIK
+# kontrolü — ayrı bir kanal — devreye girer); bu yüzden qux-only İZOLE bir
+# repo kurulur ve tek rota baştan B'ye sınıflandırılır, A1 GERÇEKTEN boş
+# doğar.
+# =============================================================================
+REPO4="$TMP/repo4"
+mkdir -p "$REPO4/src" "$REPO4/guards"
+cat > "$REPO4/src/qux.controller.ts" << 'EOF'
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+
+@Controller('qux')
+@UseGuards(JwtAuthGuard)
+export class QuxController {
+  @Get('only')
+  only() {
+    return 'only';
+  }
+}
+EOF
+cat > "$REPO4/guards/a1.txt" << 'EOF'
+# scope-ratchet: A1 — fixture (boş — CASE T)
+EOF
+cat > "$REPO4/guards/a2.txt" << 'EOF'
+# scope-ratchet: A2 — fixture
+src/permanent-dummy.controller.ts|GET|permanent/dummy-a2	# kalıcı dummy
+EOF
+cat > "$REPO4/guards/b.txt" << 'EOF'
+# scope-ratchet: B — fixture
+src/qux.controller.ts|GET|qux/only	# kapsam UYGULANIYOR — kod doğrulandı
+EOF
+cat > "$REPO4/guards/c.txt" << 'EOF'
+# scope-ratchet: C — fixture
+src/permanent-dummy.controller.ts|GET|permanent/dummy-c	# kalıcı dummy
+EOF
+OUTT="$(SCOPE_RATCHET_SRC_DIR="$REPO4/src" SCOPE_RATCHET_A1="$REPO4/guards/a1.txt" SCOPE_RATCHET_A2="$REPO4/guards/a2.txt" SCOPE_RATCHET_B="$REPO4/guards/b.txt" SCOPE_RATCHET_C="$REPO4/guards/c.txt" GUARD_MODE=block bash "$GUARD" 2>&1)"
+RCT=$?
+if [ "$RCT" -ne 0 ]; then
+  echo "!! self-test FAIL [case T: RATCHET TAMAMLANDI]: exit 0 bekleniyordu, $RCT bulundu" >&2
+  printf '%s\n' "$OUTT" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUTT" | grep -qF "RATCHET TAMAMLANDI"; then
+  echo "!! self-test FAIL [case T]: SIFIR anahtarlı sağlıklı A1 için 'RATCHET TAMAMLANDI'" >&2
+  echo "!! mesajı basılmadı (Şart 2: sıfır SESSİZCE geçilemez)" >&2
+  printf '%s\n' "$OUTT" >&2
+  FAIL=1
+else
+  echo "-- [case T] A1 biçimi SAĞLIKLI + SIFIR anahtar → exit 0 + görünür 'RATCHET TAMAMLANDI'"
 fi
 
 # =============================================================================
@@ -362,10 +453,10 @@ export class QuxController {
 EOF
 check_single_bucket_absorbs() { # <kova-adı> <a1-içerik> <a2-içerik> <b-içerik> <c-içerik>
   local label="$1" a1="$2" a2="$3" b="$4" c="$5"
-  printf '%s\n' "$a1" > "$REPO3/guards/a1.txt"
-  printf '%s\n' "$a2" > "$REPO3/guards/a2.txt"
-  printf '%s\n' "$b"  > "$REPO3/guards/b.txt"
-  printf '%s\n' "$c"  > "$REPO3/guards/c.txt"
+  printf '%s\n%s\n' "# scope-ratchet: A1 — fixture" "$a1" > "$REPO3/guards/a1.txt"
+  printf '%s\n%s\n' "# scope-ratchet: A2 — fixture" "$a2" > "$REPO3/guards/a2.txt"
+  printf '%s\n%s\n' "# scope-ratchet: B — fixture"  "$b"  > "$REPO3/guards/b.txt"
+  printf '%s\n%s\n' "# scope-ratchet: C — fixture"  "$c"  > "$REPO3/guards/c.txt"
   local out rc
   out="$(SCOPE_RATCHET_SRC_DIR="$REPO3/src" SCOPE_RATCHET_A1="$REPO3/guards/a1.txt" SCOPE_RATCHET_A2="$REPO3/guards/a2.txt" SCOPE_RATCHET_B="$REPO3/guards/b.txt" SCOPE_RATCHET_C="$REPO3/guards/c.txt" GUARD_MODE=report bash "$GUARD" 2>&1)"
   rc=$?
@@ -393,10 +484,10 @@ check_single_bucket_absorbs "C"  "$DUMMY_A1" "$DUMMY_A2" "$DUMMY_B" "$QUX_KEY"
 # POZ. KONTROL — qux/only HİÇBİR kovada değilken exit 2 vermeli (aksi hâlde
 # yukarıdaki dört "geçti" mesajı guard'ın HER ZAMAN yeşil döndüğü için de çıkmış olabilir).
 check_single_bucket_absorbs_neg() {
-  printf '%s\n' "$DUMMY_A1" > "$REPO3/guards/a1.txt"
-  printf '%s\n' "$DUMMY_A2" > "$REPO3/guards/a2.txt"
-  printf '%s\n' "$DUMMY_B" > "$REPO3/guards/b.txt"
-  printf '%s\n' "$DUMMY_C" > "$REPO3/guards/c.txt"
+  printf '%s\n%s\n' "# scope-ratchet: A1 — fixture" "$DUMMY_A1" > "$REPO3/guards/a1.txt"
+  printf '%s\n%s\n' "# scope-ratchet: A2 — fixture" "$DUMMY_A2" > "$REPO3/guards/a2.txt"
+  printf '%s\n%s\n' "# scope-ratchet: B — fixture"  "$DUMMY_B" > "$REPO3/guards/b.txt"
+  printf '%s\n%s\n' "# scope-ratchet: C — fixture"  "$DUMMY_C" > "$REPO3/guards/c.txt"
   local out rc
   out="$(SCOPE_RATCHET_SRC_DIR="$REPO3/src" SCOPE_RATCHET_A1="$REPO3/guards/a1.txt" SCOPE_RATCHET_A2="$REPO3/guards/a2.txt" SCOPE_RATCHET_B="$REPO3/guards/b.txt" SCOPE_RATCHET_C="$REPO3/guards/c.txt" GUARD_MODE=report bash "$GUARD" 2>&1)"
   rc=$?

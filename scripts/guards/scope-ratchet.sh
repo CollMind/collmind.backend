@@ -37,7 +37,17 @@
 # GUARD_MODE=block (varsayılan) → A1 büyümesi varsa exit 1
 # GUARD_MODE=report             → bulguları bas, exit 0
 # Kaynak boş / sınıflandırılmamış rota / çakışan sınıflandırma / bozuk liste
-# satırı → exit 2 (SETUP HATASI / ÖLÇÜM YAPILMADI), TÜM modlarda.
+# BİÇİMİ (başlıksız ya da 'anahtar<TAB># gerekçe' şeklinde olmayan bir veri
+# satırı) → exit 2 (SETUP HATASI / ÖLÇÜM YAPILMADI), TÜM modlarda.
+#
+# ⛔ SIFIR anahtar TEK BAŞINA artık bir SETUP HATASI DEĞİL (düzeltildi
+# 2026-08-24, ADIM3_FAZB_PLAN.md "AÇIK KARAR — ratchet'in TAMAMLANDI durumu",
+# seçenek b). A1'in HEDEFİ sıfıra inmektir (kapı A1'de) — eski kontrol
+# extract_keys'in ÇIKTISINI (ayrıştırılan anahtar SAYISI) sınıyordu, yani
+# kendi BAŞARISINI hata sayıyordu. Liste SAĞLIĞI artık BİÇİMLE (başlık +
+# veri satırı şekli) ölçülür, SAYIYLA değil; sıfır anahtar, biçim sağlamsa,
+# "-- RATCHET TAMAMLANDI" (A1) ya da nötr bir bilgi satırı (A2/B/C) basar,
+# SESSİZCE geçilmez.
 set -uo pipefail
 
 GUARD_NAME="scope-ratchet"
@@ -118,17 +128,70 @@ extract_keys() {
   ' "$1" | LC_ALL=C sort
 }
 
+# --- Şart 1 (route-scope.sh ile AYNI SINIF — ADIM3_FAZB_PLAN.md "AÇIK KARAR",
+# T-266/Z19b uzantısı, ürün sahibi kararı 2026-08-24): liste SAĞLIĞI anahtar
+# SAYISINDAN BAĞIMSIZ ölçülür. Eskiden bu döngü extract_keys'in ÇIKTISINI
+# (ayrıştırılmış anahtar sayısı) sınıyordu — ve A1 için ratchet'in AMACI onu
+# SIFIRA indirmekti (kapı A1'de, Z19b), yani kontrol kendi HEDEFİNİ hata
+# sayıyordu (route-scope.sh:343'ün AYNI kusuru, DÖRT kovaya uygulanmış hâli).
+#
+# Doğru soru: "beklenen BAŞLIK BİÇİMİ görüldü mü (ilk dolu satır '#' ile
+# başlıyor mu), VE her VERİ satırı beklenen ŞEKİLDE mi (<anahtar><TAB>
+# # <gerekçe>)". Bu, ayrıştırılan anahtar SAYISINDAN bağımsızdır. Kontrol
+# TEK biçimde (biçim sağlığı) DÖRT listeye de AYNI uygulanır — A1/A2/B/C
+# arasında bir ayrım YOK, çünkü hepsi AYNI dosya biçimini paylaşıyor
+# (extract_keys'in kendisi tek bir ayrıştırıcı). Yalnız SIFIR-anahtar
+# durumunun YORUMU kovaya göre farklılaşır (aşağıdaki ikinci döngü) — A1
+# tek yön aşağı borç kovasıdır (kapı A1'de), A2/B/C için ratchet YOK ve
+# boşalması ne beklenir ne "bozuk" sayılır (görev talimatı).
+for pair in "A1:$A1_FILE" "A2:$A2_FILE" "B:$B_FILE" "C:$C_FILE"; do
+  name="${pair%%:*}"; path="${pair#*:}"
+
+  if ! head -1 "$path" 2>/dev/null | grep -q '^#'; then
+    echo "!! [$GUARD_NAME] SETUP HATASI: $name listesi ($path) başlık biçimi TANINMADI." >&2
+    echo "!! İlk satır '#' ile başlamalı (dört listenin de üretim biçimi) — dosya" >&2
+    echo "!! bozulmuş (karakter çorbası / boş / yanlış dosya) olabilir. Ölçüm YAPILMADI." >&2
+    exit 2
+  fi
+
+  MALFORMED="$(awk -F'\t' '
+    /^[ \t]*#/ { next }
+    /^[ \t]*$/ { next }
+    NF < 2 || $2 !~ /^# / { print }
+  ' "$path")"
+  if [ -n "$MALFORMED" ]; then
+    {
+      echo "!! [$GUARD_NAME] SETUP HATASI: $name listesi TANINMAYAN satır(lar) içeriyor ($path):"
+      printf '%s\n' "$MALFORMED" | sed 's/^/!!   /'
+      echo "!! Her veri satırı '<anahtar><TAB># <gerekçe>' ile başlamalı (yorumlar '#'"
+      echo "!! ile başlar). Bozuk biçim ölçümü güvenilmez kılar. Ölçüm YAPILMADI."
+    } >&2
+    exit 2
+  fi
+done
+
 A1_KEYS="$TMP/a1-keys.txt";  extract_keys "$A1_FILE" > "$A1_KEYS"
 A2_KEYS="$TMP/a2-keys.txt";  extract_keys "$A2_FILE" > "$A2_KEYS"
 B_KEYS="$TMP/b-keys.txt";    extract_keys "$B_FILE"  > "$B_KEYS"
 C_KEYS="$TMP/c-keys.txt";    extract_keys "$C_FILE"  > "$C_KEYS"
 
+# --- Şart 2: SIFIR anahtar bir BAŞARI OLAYI olabilir, biçim SAĞLIKLIYSA -----
+# (yukarıdaki döngü zaten doğruladı). SESSİZCE GEÇİLMEZ. A1 için bu mesaj
+# RATCHET'İN HEDEFİNE ulaşıldığını AÇIKÇA anar (Z19b: "kapı A1'de") — A2/B/C
+# için sınıflandırılmış rota kalmaması BEKLENMEZ ama "bozuk" da DEMEK
+# DEĞİLDİR (görev talimatı), bu yüzden mesaj nötr kalır ve "TAMAMLANDI"
+# demez (o kovaların "hedefi" sıfır değildir).
 for pair in "A1:$A1_KEYS" "A2:$A2_KEYS" "B:$B_KEYS" "C:$C_KEYS"; do
   name="${pair%%:*}"; path="${pair#*:}"
   if [ ! -s "$path" ]; then
-    echo "!! [$GUARD_NAME] SETUP HATASI: $name listesi ($path karşılığı dosya) SIFIR anahtar içeriyor" >&2
-    echo "!! Bozuk biçim ya da boş liste ölçümü güvenilmez kılar. Ölçüm YAPILMADI." >&2
-    exit 2
+    if [ "$name" = "A1" ]; then
+      echo "-- [$GUARD_NAME] RATCHET TAMAMLANDI: A1 listesi biçimi SAĞLIKLI, SIFIR anahtar"
+      echo "   içeriyor — kapsam borcu kovası (A1) tamamen boşaltılmış (Z19b hedefi)."
+      echo "   Bu bir BAŞARI OLAYIDIR, SETUP HATASI DEĞİL."
+    else
+      echo "-- [$GUARD_NAME] $name listesi BOŞ (biçim SAĞLIKLI, SIFIR anahtar) — bu"
+      echo "   'bozuk' anlamına GELMEZ; $name kovasında bugün sınıflandırılmış rota yok."
+    fi
   fi
 done
 

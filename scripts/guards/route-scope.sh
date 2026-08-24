@@ -69,8 +69,17 @@
 # GUARD_MODE=block (varsayılan) → yeni FILTRESIZ rota varsa exit 1
 # GUARD_MODE=report             → bulguları bas, exit 0
 # --baseline                    → bugünkü FILTRESIZ envanterini stdout'a bas
-# Kaynak boş / rota sayısı 0 / bilinmeyen guard / bozuk baseline satırı →
+# Kaynak boş / rota sayısı 0 / bilinmeyen guard / bozuk baseline BİÇİMİ
+#   (başlıksız ya da 'F ' ile başlamayan bir veri satırı) →
 #   exit 2 (SETUP HATASI / ÖLÇÜM YAPILMADI, tüm modlarda)
+#
+# ⛔ SIFIR 'F ' satırı TEK BAŞINA artık bir SETUP HATASI DEĞİL (düzeltildi
+# 2026-08-24, ADIM3_FAZB_PLAN.md "AÇIK KARAR — ratchet'in TAMAMLANDI durumu",
+# seçenek b). FILTRESIZ'in HEDEFİ sıfıra inmektir — eski kontrol ayrıştırılan
+# 'F ' satır SAYISINI sınıyordu, yani ratchet'in kendi BAŞARISINI hata
+# sayıyordu. Baseline SAĞLIĞI artık BİÇİMLE (başlık + veri satırı şekli)
+# ölçülür, SAYIYLA değil; sıfır 'F ' satırı, biçim sağlamsa, görünür bir
+# "-- RATCHET TAMAMLANDI" basar, SESSİZCE geçilmez.
 set -uo pipefail
 
 GUARD_NAME="route-scope"
@@ -340,10 +349,50 @@ awk -F'\t' '$1=="FILTRESIZ" { print $2 }' "$CLASSIFIED" | LC_ALL=C sort -u > "$T
 BASE_KEYS="$TMP/base-keys.txt"
 awk '/^F /{ print $2 }' "$BASELINE" | LC_ALL=C sort -u > "$BASE_KEYS"
 
-if [ ! -s "$BASE_KEYS" ]; then
-  echo "!! [$GUARD_NAME] SETUP HATASI: baseline dosyası var ama SIFIR 'F ' satırı" >&2
-  echo "!! ayrıştı ($BASELINE). Bozuk biçim ölçümü güvenilmez kılar." >&2
+# --- Şart 1 (ADIM3_FAZB_PLAN.md "AÇIK KARAR — ratchet'in TAMAMLANDI durumu",
+# seçenek b, ürün sahibi kararı 2026-08-24): ayrıştırma SAĞLIĞI 'F ' satır
+# SAYISINDAN BAĞIMSIZ ölçülür. Eskiden bu kontrol "SIFIR 'F ' satırı ayrıştı
+# mı" diye soruyordu — ve ratchet'in AMACI FILTRESIZ'i (ve bu baseline'ı) tam
+# olarak SIFIRA indirmekti; yani kontrol kendi BAŞARISINI hata sayıyordu.
+# (§2.7 #9'un yeni bir biçimi — "bir kuralın doğru olduğunu kırmızıya
+# dönmemesinden çıkarma; o kuralın reddedeceği girdi ona ULAŞIYOR mu?"
+# FILTRESIZ bugüne kadar hiç 0 olmadığı için bu dal hiç koşmamıştı; SELF
+# turu — Z26/Z27/Z28 — ilk kez ulaştı ve duvara çarptı.)
+#
+# Doğru soru: "beklenen BAŞLIK BİÇİMİ görüldü mü (ilk dolu satır '#' ile
+# başlıyor mu), VE her VERİ satırı beklenen ŞEKİLDE mi ('F ' ile başlıyor
+# mu)". Bu, ayrıştırılan anahtar SAYISINDAN bağımsızdır: sıfır 'F ' satırı,
+# başlık ve satır şekli sağlamsa, RATCHET'İN HEDEFİNE ULAŞILDIĞININ (B0/B2
+# tamamlandı) göstergesidir. Başlık YOKSA (dosya tümüyle boş/gövdesiz) ya da
+# bir VERİ satırı 'F ' ile başlamıyorsa (karakter çorbası, yanlış dosya,
+# yarım yazma) bu bozukluktur — `--baseline` HER ZAMAN önce başlığı yazar,
+# yani gerçekten tamamlanmış bir baseline başlıksız OLAMAZ.
+if ! head -1 "$BASELINE" 2>/dev/null | grep -q '^#'; then
+  echo "!! [$GUARD_NAME] SETUP HATASI: baseline başlık biçimi TANINMADI ($BASELINE)." >&2
+  echo "!! İlk satır '#' ile başlamalı (route-scope.sh --baseline HER ZAMAN önce" >&2
+  echo "!! başlığı yazar) — dosya bozulmuş (karakter çorbası / boş / yanlış dosya)" >&2
+  echo "!! olabilir. Ölçüm YAPILMADI." >&2
   exit 2
+fi
+
+MALFORMED_BASE_LINES="$(grep -vE '^(#|[[:space:]]*$|F )' "$BASELINE" || true)"
+if [ -n "$MALFORMED_BASE_LINES" ]; then
+  {
+    echo "!! [$GUARD_NAME] SETUP HATASI: baseline TANINMAYAN satır(lar) içeriyor ($BASELINE):"
+    printf '%s\n' "$MALFORMED_BASE_LINES" | sed 's/^/!!   /'
+    echo "!! Her veri satırı 'F <anahtar> <satır>' ile başlamalı (yorumlar '#' ile"
+    echo "!! başlar). Bozuk biçim ölçümü güvenilmez kılar. Ölçüm YAPILMADI."
+  } >&2
+  exit 2
+fi
+
+# --- Şart 2: SIFIR 'F ' satırı bir BAŞARI OLAYI olabilir, biçim SAĞLIKLIYSA -
+# (yukarıdaki iki kontrol zaten doğruladı). SESSİZCE GEÇİLMEZ — B4'ün ön
+# koşulu (FILTRESIZ = 0) tam bu satırı okuyacak.
+if [ ! -s "$BASE_KEYS" ]; then
+  echo "-- [$GUARD_NAME] RATCHET TAMAMLANDI: baseline biçimi SAĞLIKLI, SIFIR 'F '"
+  echo "   satırı içeriyor — FILTRESIZ kovası tamamen boşaltılmış (B0/B2 hedefine"
+  echo "   ulaşıldı). Bu bir BAŞARI OLAYIDIR, SETUP HATASI DEĞİL."
 fi
 
 RAW=""

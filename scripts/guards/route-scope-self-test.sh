@@ -475,6 +475,91 @@ else
 fi
 
 # =============================================================================
+# CASE T — RATCHET TAMAMLANDI: baseline biçimi SAĞLIKLI, SIFIR 'F ' satırı
+# (ADIM3_FAZB_PLAN.md "AÇIK KARAR — ratchet'in TAMAMLANDI durumu", seçenek b,
+# ürün sahibi kararı 2026-08-24) → exit 0 + görünür 'RATCHET TAMAMLANDI'
+# mesajı (§2.7: sıfır bir BAŞARI OLAYIDIR, SESSİZCE geçilemez — B4'ün ön
+# koşulu tam bu satırı okuyacak). İzole bir SRC_DIR kullanılır: SIFIR
+# FILTRESIZ rota üretmesi GARANTİ olmalı, yoksa ratchet'in "YENİ filtresiz
+# rota" kanalı (satır ~352) bu testi kirletir.
+# =============================================================================
+T_SRC="$TMP/case-t/src"
+mkdir -p "$T_SRC"
+cat > "$T_SRC/only-public.controller.ts" << 'EOF'
+import { Controller, Get } from '@nestjs/common';
+import { Public } from '../../../../src/common/decorators/public.decorator';
+
+@Controller('only-public')
+export class OnlyPublicController {
+  @Get('ping')
+  @Public()
+  ping() {
+    return 'ping';
+  }
+}
+EOF
+T_BASELINE="$TMP/case-t/baseline-empty.txt"
+mkdir -p "$(dirname "$T_BASELINE")"
+cat > "$T_BASELINE" << 'EOF'
+# route-scope baseline — CASE T fixture (SIFIR 'F ' satırı, biçim SAĞLIKLI)
+# date:    fixture
+# commit:  fixture
+# scope:   1 rota (fixture)
+# format:  F <dosya>|<YÖNTEM>|<yol> <satır>
+EOF
+OUT_T="$(ROUTE_SCOPE_SRC_DIR="$T_SRC" ROUTE_SCOPE_BASELINE="$T_BASELINE" GUARD_MODE=block bash "$GUARD" 2>&1)"
+RC_T=$?
+if [ "$RC_T" -ne 0 ]; then
+  echo "!! self-test FAIL [case T: RATCHET TAMAMLANDI]: exit 0 bekleniyordu, $RC_T bulundu" >&2
+  printf '%s\n' "$OUT_T" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT_T" | grep -qF "RATCHET TAMAMLANDI"; then
+  echo "!! self-test FAIL [case T]: SIFIR 'F ' satırlı sağlıklı baseline için 'RATCHET" >&2
+  echo "!! TAMAMLANDI' mesajı basılmadı" >&2
+  printf '%s\n' "$OUT_T" >&2
+  FAIL=1
+else
+  echo "-- [case T] baseline biçimi SAĞLIKLI + SIFIR 'F ' satırı → exit 0 + görünür 'RATCHET TAMAMLANDI'"
+fi
+
+# CASE T2 — GERÇEKTEN bozuk baseline (başlık YOK — karakter çorbası) hâlâ
+# exit 2 vermeli. Bu bir REGRESYON adayıdır: Şart 1/2'nin "sıfır artık hata
+# değil" değişikliği "hiçbir şey artık hata değil"e GENİŞLEMEMELİ.
+T2_BASELINE="$TMP/case-t/baseline-corrupt.txt"
+printf 'karakter çorbası, başlık yok\nbaşka bir satır\n' > "$T2_BASELINE"
+OUT_T2="$(ROUTE_SCOPE_SRC_DIR="$T_SRC" ROUTE_SCOPE_BASELINE="$T2_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_T2=$?
+if [ "$RC_T2" -ne 2 ]; then
+  echo "!! self-test FAIL [case T2: bozuk baseline]: exit 2 bekleniyordu, $RC_T2 bulundu" >&2
+  printf '%s\n' "$OUT_T2" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT_T2" | grep -qF "başlık biçimi TANINMADI"; then
+  echo "!! self-test FAIL [case T2]: hata mesajı başlık eksikliğini İSİMLENDİRMEDİ" >&2
+  printf '%s\n' "$OUT_T2" >&2
+  FAIL=1
+else
+  echo "-- [case T2] GERÇEKTEN bozuk baseline (başlık yok) → exit 2 (SETUP HATASI, REGRESYON KORUNDU)"
+fi
+
+# CASE T3 — başlık VAR ama bir VERİ satırı beklenen ŞEKİLDE değil ('F ' ile
+# başlamıyor) → exit 2.
+T3_BASELINE="$TMP/case-t/baseline-malformed-line.txt"
+printf '%s\n%s\n' "# route-scope baseline — CASE T3 fixture" "XYZ bu satır F ile başlamıyor" > "$T3_BASELINE"
+OUT_T3="$(ROUTE_SCOPE_SRC_DIR="$T_SRC" ROUTE_SCOPE_BASELINE="$T3_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_T3=$?
+if [ "$RC_T3" -ne 2 ]; then
+  echo "!! self-test FAIL [case T3: baseline satırı bozuk]: exit 2 bekleniyordu, $RC_T3 bulundu" >&2
+  printf '%s\n' "$OUT_T3" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT_T3" | grep -qF "TANINMAYAN satır"; then
+  echo "!! self-test FAIL [case T3]: hata mesajı bozuk satırı İSİMLENDİRMEDİ" >&2
+  printf '%s\n' "$OUT_T3" >&2
+  FAIL=1
+else
+  echo "-- [case T3] başlık VAR ama VERİ satırı bozuk → exit 2 (SETUP HATASI)"
+fi
+
+# =============================================================================
 # CASE G — @Roles VAR AMA RolesGuard ZİNCİRDE YOK → SETUP HATASI (exit 2)
 # (T-252 YENİDEN AÇILDI, T-267'nin kör noktası)
 #
