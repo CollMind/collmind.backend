@@ -169,7 +169,10 @@ export class PlanService {
   /**
    * T-028b (CM) + T-028c (PLANNER, generalized): scope-aware read guard,
    * used by findById. AccessScopeService.resolveScope already encodes the
-   * per-role semantics (ADMIN/FM/READONLY -> UNRESTRICTED, CM -> category-
+   * per-role semantics (ADMIN/FM/READONLY -> UNRESTRICTED **only when a
+   * wildcard user_scopes row exists** — Z30 H8, 2026-08-24: the code-branch
+   * shortcut was removed, unrestrictedness now comes from data (K-2.6.4f);
+   * CM -> category-
    * only pairs, PLANNER -> full cpl+category pairs, flag-gated) — so this
    * helper can stay role-agnostic: it just resolves whatever scope the
    * actor's role produces and checks the plan against it. Out-of-scope ->
@@ -269,7 +272,10 @@ export class PlanService {
   ): Promise<Plan> {
     // T-028c: PLANNER may only create plans within their assigned CPL+
     // Category scope (BRD "Planner sadece yetkili CPL+Category"). ADMIN is
-    // always UNRESTRICTED (route also allows only ADMIN|PLANNER). Flag-
+    // UNRESTRICTED via its wildcard user_scopes row (Z30 H8 — NOT "always";
+    // the code-branch shortcut is gone, an ADMIN without that row resolves
+    // to SCOPED{pairs:[]} and is denied. Route allows only ADMIN|PLANNER).
+    // Flag-
     // gated inside AccessScopeService — no-op while SCOPE_ENFORCEMENT_ENABLED
     // is false.
     if (actor) {
@@ -401,8 +407,10 @@ export class PlanService {
   /**
    * T-028b (CM) / T-028c (PLANNER, generalized): resolves (and returns) the
    * actor's scope for list/queue filtering. For ADMIN/FINANCE_MANAGER/
-   * READONLY this is a cheap no-DB-query UNRESTRICTED result (see
-   * AccessScopeService.resolveScope), so resolving unconditionally whenever
+   * READONLY this resolves to UNRESTRICTED via their wildcard user_scopes
+   * row (Z30 H8: NO LONGER "no-DB-query" — resolveScope now reads rows for
+   * every role; a 5s cache absorbs the cost), so resolving unconditionally
+   * whenever
    * an actor is present is safe — PlanRepository#findAll treats an
    * UNRESTRICTED scope as a no-op filter. undefined actor (internal
    * callers) -> undefined scope -> no-op filter, unchanged.
@@ -2628,7 +2636,8 @@ export class PlanService {
     // dropped here, same gap INV-N-004 records for the FU level (T-177
     // S1's comment a few lines up) — `plans` had no column to persist it
     // into until this migration.
-    const planCoverageRatio = planKpiResults['GP_ROI_PCT']?.coverageRatio ?? null;
+    const planCoverageRatio =
+      planKpiResults['GP_ROI_PCT']?.coverageRatio ?? null;
 
     // T-034: deliberate CAS bypass — derived plan-level aggregate, not a
     // user edit (same rationale as updatePlanSkuUnversioned above); also

@@ -26,7 +26,8 @@ import {
 } from '../../database/entities/user.entity';
 import {
   UserScope,
-  WILDCARD_SCOPE_ROLES,
+  WILDCARD_ON_CREATE_ROLES,
+  scopeShapeOf,
   SCOPE_REQUIRED_ROLES,
   ScopeAuditActionType,
   SCOPE_AUDIT_ENTITY_TYPE,
@@ -215,10 +216,10 @@ export class UserService {
 
   /**
    * T-241 — hangi kapsam satırlarının yazılacağına karar verir. Bir yetki
-   * HESAPLAMAZ (K-2.6.10): yalnız `WILDCARD_SCOPE_ROLES` ↔ `SCOPE_REQUIRED_ROLES`
+   * HESAPLAMAZ (K-2.6.10): yalnız `WILDCARD_ON_CREATE_ROLES` ↔ `SCOPE_REQUIRED_ROLES`
    * ayrımına göre satır listesi üretir/doğrular.
    *
-   * `WILDCARD_SCOPE_ROLES` (ADMIN/FINANCE/READONLY): çağıran ne gönderirse
+   * `WILDCARD_ON_CREATE_ROLES` (ADMIN/FINANCE/READONLY): çağıran ne gönderirse
    * göndersin, tek joker satır {cplId:null, categoryId:null} yazılır — bu
    * seed'in (user-scope.seed.ts) davranışıyla birebir aynı.
    *
@@ -237,7 +238,7 @@ export class UserService {
     tenantId: string,
     dto: CreateUserDto,
   ): Promise<UserScopePairDto[]> {
-    if (WILDCARD_SCOPE_ROLES.has(dto.role)) {
+    if (WILDCARD_ON_CREATE_ROLES.has(dto.role)) {
       // ⛔ A3 (ikinci tur code-review) — `B1`'in TERS YÜZÜ.
       //
       // `B1` SCOPE_REQUIRED rollerde joker göndermeyi yasakladı. Bu dal ise
@@ -295,12 +296,12 @@ export class UserService {
       }));
     }
 
-    // §2.5 sessiz sıfır yasağı: role, WILDCARD_SCOPE_ROLES ile
+    // §2.5 sessiz sıfır yasağı: role, WILDCARD_ON_CREATE_ROLES ile
     // SCOPE_REQUIRED_ROLES'ün tümleyeni olmalıydı (user-scope.entity.ts'in
     // yorumu). İkisinde de yoksa bu bir kod tutarsızlığıdır — sessizce bir
     // tarafa düşürülmez, açık hata.
     throw new Error(
-      `UserService.create: role=${dto.role} ne WILDCARD_SCOPE_ROLES'ta ne ` +
+      `UserService.create: role=${dto.role} ne WILDCARD_ON_CREATE_ROLES'ta ne ` +
         "SCOPE_REQUIRED_ROLES'ta — user-scope.entity.ts'teki iki sabit " +
         'güncel UserRole kümesini kapsamıyor olabilir.',
     );
@@ -485,7 +486,7 @@ export class UserService {
    * `K-2.6.10` sınırı: bu metod bir kapsam YAZAR, bir yetki HESAPLAMAZ —
    * `resolveScopeRowsToWrite`'ın yorumuyla birebir aynı sınır, aynı gerekçe.
    *
-   * WILDCARD_SCOPE_ROLES (ADMIN/FINANCE/READONLY) bu uçtan YÖNETİLEMEZ:
+   * WILDCARD_ON_CREATE_ROLES (ADMIN/FINANCE/READONLY) bu uçtan YÖNETİLEMEZ:
    * bu roller HER ZAMAN tek joker satır taşır (T-241 kararı) ve bunu
    * değiştirmenin yolu rol değişimidir — o da [[T-242b]]'nin konusu ve
    * ERTELENDİ. Burada izin verilseydi iki farklı mekanizma (bu uç +
@@ -509,7 +510,7 @@ export class UserService {
   ): Promise<{ scope: ScopeAuditPair[] }> {
     const user = await this.findOne(tenantId, userId);
 
-    if (WILDCARD_SCOPE_ROLES.has(user.role)) {
+    if (WILDCARD_ON_CREATE_ROLES.has(user.role)) {
       throw new BadRequestException(
         `role=${user.role} için kapsam bu uçtan GÜNCELLENEMEZ — bu rol her ` +
           'zaman JOKER kapsam taşır (tüm CPL + tüm kategori) ve bunu ' +
@@ -520,10 +521,10 @@ export class UserService {
       );
     }
     if (!SCOPE_REQUIRED_ROLES.has(user.role)) {
-      // §2.5: role, WILDCARD_SCOPE_ROLES ile SCOPE_REQUIRED_ROLES'ün
+      // §2.5: role, WILDCARD_ON_CREATE_ROLES ile SCOPE_REQUIRED_ROLES'ün
       // tümleyeni olmalıydı — resolveScopeRowsToWrite'ın aynı savunması.
       throw new Error(
-        `UserService.updateScope: role=${user.role} ne WILDCARD_SCOPE_ROLES'ta ` +
+        `UserService.updateScope: role=${user.role} ne WILDCARD_ON_CREATE_ROLES'ta ` +
           "ne SCOPE_REQUIRED_ROLES'ta — user-scope.entity.ts'teki iki sabit " +
           'güncel UserRole kümesini kapsamıyor olabilir.',
       );
@@ -854,7 +855,8 @@ export class UserService {
     // ÇAĞRIYLA kuruluyordu: joker satırlı bir kullanıcı (ADMIN/FINANCE/
     // READONLY) SCOPE_REQUIRED bir role çevrildiğinde satır OLDUĞU GİBİ
     // kalıyor ve `hasUnrestrictedRow` onu UNRESTRICTED'a çeviriyor
-    // (access-scope.service.ts:205-210). CATEGORY_MANAGER için bayraktan
+    // (access-scope.service.ts `buildScope#hasUnrestrictedRow`).
+    // CATEGORY_MANAGER için bayraktan
     // BAĞIMSIZ, yani CANLI.
     //
     // Ürün sahibi kararı (2026-08-20): burada 409 — "önce kapsam ver".
@@ -865,6 +867,7 @@ export class UserService {
       await this.assertRoleChangeScopeConsistent(
         tenantId,
         id,
+        user.role,
         updateUserDto.role,
       );
     }
@@ -876,27 +879,88 @@ export class UserService {
   /**
    * Rol değişimi kapsam satırlarıyla tutarsız bir durum üretiyorsa 409.
    *
-   * Bugün tek yön kapatılıyor — FAIL-OPEN olan yön:
-   *   joker satırlı kullanıcı → SCOPE_REQUIRED rol   ⇒ 409
+   * (GEÇMİŞ KAYIT — Z30 H8'e kadar geçerliydi, F12 gereği silinmedi:)
+   *   "Bugün tek yön kapatılıyor — FAIL-OPEN olan yön:
+   *      joker satırlı kullanıcı → SCOPE_REQUIRED rol   ⇒ 409
+   *    Ters yön (dar kapsamlı kullanıcı → WILDCARD rol) bugün ZARARSIZ,
+   *    çünkü UNRESTRICTED_ROLES kod dalı o rolleri satırları okumadan
+   *    geçiriyor. ⚠️ Ama T-235 ADIM 3 o dalı kaldıracak — o gün bu yön de
+   *    bir kapı ister ve T-242'nin konusudur."
    *
-   * Ters yön (dar kapsamlı kullanıcı → WILDCARD rol) bugün ZARARSIZ, çünkü
-   * UNRESTRICTED_ROLES kod dalı o rolleri satırları okumadan geçiriyor
-   * (access-scope.service.ts:168-171). ⚠️ Ama [[T-235]] ADIM 3 o dalı
-   * kaldıracak — o gün bu yön de bir kapı ister ve [[T-242]]'nin konusudur.
+   * ⇒ BUGÜN İKİ YÖN DE KAPALI (aşağı bkz.).
+   *
+   * ⛔ O GÜN GELDİ — ve kapı bu turda yazıldı (Z30 H8 / B1, 2026-08-24).
+   * Yukarıdaki kayıttaki "ters yön bugün ZARARSIZ" cümlesi UNRESTRICTED_ROLES
+   * kod dalına yaslanıyordu; H8 o dalı KALDIRDI, yani ters yön SESSİZ bir
+   * regresyon üretiyordu: dar satırlı bir PLANNER → ADMIN, eskiden UNRESTRICTED
+   * alırken artık SCOPED{eski planner çiftleri} alıyor; REVOKE_ALL'lu PLANNER
+   * → ADMIN ise SCOPED{pairs:[]} = tam kilitlenme. Fail-closed, ama SESSİZ.
+   *
+   * KURAL (K-2.6.4g) — geçiş listesi DEĞİL, ŞEKİL KARŞILAŞTIRMASI:
+   *   şekil(eski) !== şekil(yeni)  → 409  (rol değişimi kapsam kaydını
+   *                                        örtük değiştiremez)
+   *   şekil aynı                   → serbest, AMA kaydın gerçekten orada
+   *                                  olduğu DOĞRULANIR (varsayılmaz)
+   *
+   * Somut: ADMIN↔FINANCE↔READONLY serbest · PLANNER→FINANCE, FINANCE→PLANNER,
+   * PLANNER↔CM reddedilir. Rol değişimi × kapsam en az DÖRT ayrı vaka sınıfı
+   * taşıyor ve tam bu yüzden [[T-242b]] diye ayrıldı — bu kapı deliği kapatır,
+   * o alt-projeyi H8'in içine GÖMMEZ.
    */
   private async assertRoleChangeScopeConsistent(
     tenantId: string,
     userId: string,
+    oldRole: UserRole,
     newRole: UserRole,
   ): Promise<void> {
-    if (!SCOPE_REQUIRED_ROLES.has(newRole)) {
-      return;
-    }
+    const oldShape = scopeShapeOf(oldRole);
+    const newShape = scopeShapeOf(newRole);
 
     const rows = await this.dataSource.getRepository(UserScope).find({
       where: { tenantId, userId, isActive: true },
     });
 
+    const activeWildcardRow = rows.find(
+      (r: UserScope) =>
+        (r.cplId ?? null) === null && (r.categoryId ?? null) === null,
+    );
+
+    // ── ŞEKİL DEĞİŞTİREN GEÇİŞ → 409 (K-2.6.4g)
+    if (oldShape !== newShape) {
+      throw new ConflictException(
+        `Rol '${oldRole}' → '${newRole}' değiştirilemez: bu geçiş KAPSAM ` +
+          `ŞEKLİNİ değiştiriyor (${oldShape} → ${newShape}) ve rol değişimi ` +
+          'kapsam kaydını ÖRTÜK olarak değiştiremez (K-2.6.4g). Yeni şeklin ' +
+          'kapsam kaydını getirecek uç bugün YOK — bu geçiş [[T-242b]] ' +
+          'inene kadar BİLİNÇLİ OLARAK KAPALIDIR (bir erteleme değil, ' +
+          'kayıtlı bir kapalı yetenek). Bugünkü yol: hedef rolde YENİ bir ' +
+          'kullanıcı yaratmak (POST /users kapsamı birlikte alır).',
+      );
+    }
+
+    // ── AYNI ŞEKİL: serbest, AMA kayıt DOĞRULANIR (varsayılmaz).
+    // "Satır zaten var" bir varsayımdır; H8'in tüm konusu satırın orada
+    // olmayabileceğidir. Doğrulamadan geçirmek, B1'in kapatmak için yazıldığı
+    // sessiz kilitlenmeyi aynı şekil içinde yeniden üretirdi.
+    if (newShape === 'WILDCARD') {
+      if (!activeWildcardRow) {
+        throw new ConflictException(
+          `Rol '${oldRole}' → '${newRole}' değiştirilemez: hedef rol JOKER ` +
+            'kapsam şekli istiyor ama kullanıcının AKTİF joker kapsam satırı ' +
+            'YOK. Sessizce geçilseydi kullanıcı yeni rolüyle HİÇBİR ŞEY ' +
+            'göremezdi (SCOPED{pairs:[]}, R-2 fail-closed) — ve bunu hiçbir ' +
+            'yerde görmezdi. Joker satırı migration 1812000000000 ya da ' +
+            'POST /users yazar; bu uçtan yazılmaz ([[T-242b]]).',
+        );
+      }
+      return;
+    }
+
+    // ── Buraya yalnız aynı-şekil SCOPE_REQUIRED geçişi düşebilir; bugünkü
+    // rol kümesinde her SCOPE_REQUIRED şekli TEK üyeli, yani bu dal ancak
+    // role===newRole ile ulaşılabilir ve çağıran onu zaten eliyor. Yeni bir
+    // rol aynı şekli paylaşırsa dal CANLI hale gelir — o yüzden §2.5 gereği
+    // sessiz geçilmiyor, aşağıdaki kontroller koşuyor.
     const wildcardRow = rows.find(
       (r: UserScope) =>
         (r.cplId ?? null) === null && (r.categoryId ?? null) === null,

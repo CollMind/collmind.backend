@@ -69,7 +69,7 @@ describe('UserService', () => {
     getRepository: (entity: typeof User | typeof UserScope) => MockEntityRepo;
   };
   let mockManager: MockManager;
-  let dataSourceMock: { transaction: jest.Mock };
+  let dataSourceMock: { transaction: jest.Mock; getRepository: jest.Mock };
 
   const mockTenantId = 'tenant-123';
   const mockUserId = 'user-123';
@@ -116,6 +116,19 @@ describe('UserService', () => {
       transaction: jest.fn((cb: (manager: MockManager) => Promise<unknown>) =>
         cb(mockManager),
       ),
+      // B1/Z30 H8 (K-2.6.4g): `assertRoleChangeScopeConsistent` reads
+      // scope rows OUTSIDE a transaction (`this.dataSource.getRepository`,
+      // not `manager.getRepository` — it runs BEFORE `update()`'s save,
+      // as a pre-condition check, not inside the write). Reuses the SAME
+      // `userScopeRepo` mock the transactional path uses — one fixture,
+      // two call sites, matching production (T-028b's "tek yazar" pattern
+      // applied to the read side).
+      getRepository: jest.fn((entity: typeof UserScope) => {
+        if (entity === UserScope) return userScopeRepo;
+        throw new Error(
+          `unexpected entity passed to dataSource.getRepository in test: ${entity.name}`,
+        );
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -695,9 +708,9 @@ describe('UserService', () => {
       expect(userEntityRepo.save).toHaveBeenCalled();
     });
 
-    // ── §2.5 sessiz sıfır yasağı: a role in neither WILDCARD_SCOPE_ROLES
+    // ── §2.5 sessiz sıfır yasağı: a role in neither WILDCARD_ON_CREATE_ROLES
     // nor SCOPE_REQUIRED_ROLES must fail loudly, not silently default. ──
-    it('throws (does not silently default) if role falls into neither WILDCARD_SCOPE_ROLES nor SCOPE_REQUIRED_ROLES', async () => {
+    it('throws (does not silently default) if role falls into neither WILDCARD_ON_CREATE_ROLES nor SCOPE_REQUIRED_ROLES', async () => {
       userRepository.findByEmail.mockResolvedValue(null);
       const dtoWithUnknownRole = {
         email: 'unknown-role@example.com',
@@ -912,25 +925,220 @@ describe('UserService', () => {
       ).rejects.toThrow(ConflictException);
     });
 
-    it('should allow admin to change other user roles', async () => {
-      const updateDto: UpdateUserDto = { role: UserRole.ADMIN };
-      const targetUser = { ...mockUser, role: UserRole.PLANNER };
+    // B1 / Z30 H8 (K-2.6.4g) — `assertRoleChangeScopeConsistent`: kapının
+    // kuralı bir geçiş LİSTESİ değil bir ŞEKİL KARŞILAŞTIRMASI.
+    //   şekil(eski) !== şekil(yeni)                → 409
+    //   şekil aynı ∧ hedef WILDCARD ∧ AKTİF joker satır YOK → 409
+    //   şekil aynı ∧ hedef WILDCARD ∧ AKTİF joker satır VAR → serbest
+    //
+    // Bu describe, önceki 'should allow admin to change other user roles'
+    // testinin YERİNE geçiyor — o test PLANNER→ADMIN'i (şekil değiştiren bir
+    // geçiş, CPL_CATEGORY_PAIRS → WILDCARD) "serbest" diye pinliyordu; B1
+    // tam olarak BUNU kapatıyor. Eski davranış artık BİLİNÇLİ OLARAK 409.
+    describe('B1 (K-2.6.4g) — rol değişimi × kapsam şekli', () => {
+      function buildWildcardRow(isActive: boolean) {
+        return {
+          id: 'scope-row-1',
+          userId: mockUserId,
+          tenantId: mockTenantId,
+          cplId: null,
+          categoryId: null,
+          isActive,
+        } as unknown as UserScope;
+      }
 
-      userRepository.findById.mockResolvedValue(targetUser as any);
-      userRepository.save.mockResolvedValue({
-        ...targetUser,
-        role: UserRole.ADMIN,
-      } as any);
+      it("PLANNER → FINANCE: ŞEKİL DEĞİŞİYOR (CPL_CATEGORY_PAIRS → WILDCARD) => 409, teşhis edilebilir gövde, DB'de HİÇBİR SATIR DEĞİŞMEDİ", async () => {
+        const updateDto: UpdateUserDto = { role: UserRole.FINANCE };
+        const targetUser = { ...mockUser, role: UserRole.PLANNER };
 
-      const result = await service.update(
-        mockTenantId,
-        mockUserId,
-        updateDto,
-        'admin-id',
-        UserRole.ADMIN,
+        userRepository.findById.mockResolvedValue(targetUser as User);
+        // Şekil karşılaştırması save'den ÖNCE koşar — find'a ne dönerse
+        // dönsün 409 beklenir; boş dizi en az varsayımlı fixture.
+        userScopeRepo.find.mockResolvedValue([]);
+
+        await expect(
+          service.update(
+            mockTenantId,
+            mockUserId,
+            updateDto,
+            'admin-id',
+            UserRole.ADMIN,
+          ),
+        ).rejects.toMatchObject({
+          status: 409,
+          message: expect.stringContaining('T-242b'),
+        });
+        await expect(
+          service.update(
+            mockTenantId,
+            mockUserId,
+            updateDto,
+            'admin-id',
+            UserRole.ADMIN,
+          ),
+        ).rejects.toThrow(/CPL_CATEGORY_PAIRS.*WILDCARD/);
+
+        // DB'de hiçbir satır değişmedi: ne User.save, ne UserScope.save
+        // çağrıldı — kapı save'den önce durdu.
+        expect(userRepository.save).not.toHaveBeenCalled();
+        expect(userScopeRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('FINANCE → ADMIN: ŞEKİL AYNI (WILDCARD → WILDCARD) ∧ AKTİF joker satır VAR => başarılı, joker satır KORUNDU (dokunulmadı)', async () => {
+        const updateDto: UpdateUserDto = { role: UserRole.ADMIN };
+        const targetUser = { ...mockUser, role: UserRole.FINANCE };
+
+        userRepository.findById.mockResolvedValue(targetUser as User);
+        userRepository.save.mockResolvedValue({
+          ...targetUser,
+          role: UserRole.ADMIN,
+        } as User);
+        userScopeRepo.find.mockResolvedValue([buildWildcardRow(true)]);
+
+        const result = await service.update(
+          mockTenantId,
+          mockUserId,
+          updateDto,
+          'admin-id',
+          UserRole.ADMIN,
+        );
+
+        expect(result.role).toBe(UserRole.ADMIN);
+        expect(userRepository.save).toHaveBeenCalled();
+        // "Korundu" = dokunulmadı: kapı yalnız DOĞRULAR, kapsam satırını
+        // yazmaz/silmez ([[T-242b]] o ucu ayrı açacak).
+        expect(userScopeRepo.save).not.toHaveBeenCalled();
+      });
+
+      // ⛔ Ürün sahibinin varsayımı: "joker↔joker serbest, çünkü satır zaten
+      // var." H8'in TÜM konusu satırın orada OLMAYABİLECEĞİ — iki girdi,
+      // iki çıktı (fixture'lar `isActive` DIŞINDA birebir aynı satırı taşır,
+      // §2.7 #6 ayrımı):
+      it.each([
+        {
+          label: 'AKTİF joker satır VAR => serbest (UNRESTRICTED)',
+          rows: [buildWildcardRow(true)],
+          expectSuccess: true,
+        },
+        {
+          label:
+            'AKTİF joker satır YOK (satır hiç yok) => 409, sessiz kilitlenmeyi engeller',
+          rows: [],
+          expectSuccess: false,
+        },
+      ])(
+        'FINANCE → ADMIN (WILDCARD → WILDCARD): $label',
+        async ({ rows, expectSuccess }) => {
+          const updateDto: UpdateUserDto = { role: UserRole.ADMIN };
+          const targetUser = { ...mockUser, role: UserRole.FINANCE };
+
+          userRepository.findById.mockResolvedValue(targetUser as User);
+          userRepository.save.mockResolvedValue({
+            ...targetUser,
+            role: UserRole.ADMIN,
+          } as User);
+          userScopeRepo.find.mockResolvedValue(rows);
+
+          const call = service.update(
+            mockTenantId,
+            mockUserId,
+            updateDto,
+            'admin-id',
+            UserRole.ADMIN,
+          );
+
+          if (expectSuccess) {
+            const result = await call;
+            expect(result.role).toBe(UserRole.ADMIN);
+          } else {
+            await expect(call).rejects.toMatchObject({ status: 409 });
+          }
+        },
       );
 
-      expect(result.role).toBe(UserRole.ADMIN);
+      // ⚠️ §2.7 (kanıt kurulumu ölçtüğün durumu değiştirmesin): yukarıdaki
+      // "satır YOK" fixture'ı statik bir dizi döndürüyor — üretimde REVOKE_ALL
+      // sonrası pasif satır repository'nin `where: {isActive:true}` filtresi
+      // sayesinde ZATEN JS'e hiç ulaşmaz; `assertRoleChangeScopeConsistent`
+      // gelen satırların `.isActive`'ini AYRICA kontrol ETMİYOR (tıpkı
+      // AccessScopeService.buildScope gibi — tek savunma satırı sorgu
+      // predicate'i). Bu yüzden "pasif satır" senaryosu yalnız predicate'in
+      // GERÇEKTEN geçildiğini kanıtlayan bir mock'la anlamlı: aynı satır,
+      // yalnız `isActive` farklı, mock gerçek repository gibi `where`'e göre
+      // SÜZÜYOR (access-scope.service.spec.ts'teki N1 deseninin aynısı).
+      it("FINANCE → ADMIN: repo çağrısına isActive:true predicate'i GEÇİYOR — REVOKE_ALL sonrası pasif joker satır UNRESTRICTED SAYILMAZ", async () => {
+        const updateDto: UpdateUserDto = { role: UserRole.ADMIN };
+        const targetUser = { ...mockUser, role: UserRole.FINANCE };
+
+        userRepository.findById.mockResolvedValue(targetUser as User);
+        userRepository.save.mockResolvedValue({
+          ...targetUser,
+          role: UserRole.ADMIN,
+        } as User);
+
+        const row = buildWildcardRow(false);
+        userScopeRepo.find.mockImplementation(
+          ({ where }: { where: { isActive?: boolean } }) =>
+            Promise.resolve(
+              where.isActive === undefined || row.isActive === where.isActive
+                ? [row]
+                : [],
+            ),
+        );
+
+        // Taraf 1: satır PASİF — predicate doğru geçiliyorsa repository bu
+        // satırı hiç döndürmemeli => 409.
+        await expect(
+          service.update(
+            mockTenantId,
+            mockUserId,
+            updateDto,
+            'admin-id',
+            UserRole.ADMIN,
+          ),
+        ).rejects.toMatchObject({ status: 409 });
+        expect(userRepository.save).not.toHaveBeenCalled();
+
+        // Taraf 2: AYNI satır, yalnız isActive=true — repository bu kez
+        // döndürür => başarılı.
+        row.isActive = true;
+        const result = await service.update(
+          mockTenantId,
+          mockUserId,
+          updateDto,
+          'admin-id',
+          UserRole.ADMIN,
+        );
+        expect(result.role).toBe(UserRole.ADMIN);
+      });
+
+      // POZ.KONTROL: kapı yalnız ROL DEĞİŞİMİNDE koşar — rol-dışı bir alan
+      // (fullName) güncellemesi `assertRoleChangeScopeConsistent`'i hiç
+      // TETİKLEMEMELİ. dataSource.getRepository(UserScope) hiç çağrılmazsa
+      // bu kanıtlanır (§2.7 #6: kapının şekli iki alternatifi ayırt etmeli
+      // — rol değişimi ÇAĞIRIR, rol-dışı alan değişimi ÇAĞIRMAZ).
+      it('POZ.KONTROL: fullName-only update rol-değişim kapısını HİÇ tetiklemez (dataSource.getRepository çağrılmaz)', async () => {
+        const nameOnlyDto: UpdateUserDto = { fullName: 'Yeni İsim' };
+        const targetUser = { ...mockUser, role: UserRole.FINANCE };
+
+        userRepository.findById.mockResolvedValue(targetUser as User);
+        userRepository.save.mockResolvedValue({
+          ...targetUser,
+          ...nameOnlyDto,
+        } as User);
+
+        const result = await service.update(
+          mockTenantId,
+          mockUserId,
+          nameOnlyDto,
+          'admin-id',
+          UserRole.ADMIN,
+        );
+
+        expect(result.fullName).toBe('Yeni İsim');
+        expect(dataSourceMock.getRepository).not.toHaveBeenCalled();
+        expect(userScopeRepo.find).not.toHaveBeenCalled();
+      });
     });
 
     it('should throw ForbiddenException when non-admin tries to change role', async () => {
@@ -1250,7 +1458,7 @@ describe('UserService', () => {
       expect(savedRow.updatedBy).toBe(admin2);
     });
 
-    it('WILDCARD_SCOPE_ROLES (ör. FINANCE) bu uçtan yönetilemez — 400, kapsam yazılmaz', async () => {
+    it('WILDCARD_ON_CREATE_ROLES (ör. FINANCE) bu uçtan yönetilemez — 400, kapsam yazılmaz', async () => {
       userRepository.findById.mockResolvedValue({
         ...mockUser,
         role: UserRole.FINANCE,

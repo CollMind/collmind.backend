@@ -296,7 +296,7 @@ describe('T-242a — PATCH /users/:id/scope: kapsam GÜNCELLEME/BOŞALTMA', () =
     });
   });
 
-  it('WILDCARD_SCOPE_ROLES (ör. FINANCE) için bu uç 400 döner — kapsam yalnız rol değişimiyle yönetilir', async () => {
+  it('WILDCARD_ON_CREATE_ROLES (ör. FINANCE) için bu uç 400 döner — kapsam yalnız rol değişimiyle yönetilir', async () => {
     const admin = await loginAs(app, 'ADMIN');
     const email = `e2e-t242a-finance-${Date.now()}@wella.com`;
     const createRes = await request(app.getHttpServer())

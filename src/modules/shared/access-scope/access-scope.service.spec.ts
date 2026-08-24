@@ -48,18 +48,6 @@ describe('AccessScopeService', () => {
   });
 
   describe('resolveScope — role semantics', () => {
-    // T-235 ADIM 2: READONLY bu listeden ÇIKARILDI — UNRESTRICTED_ROLES kod
-    // sabitinde artık yok (access-scope.service.ts). ADMIN/FINANCE bu turda
-    // dokunulmadı, kod dalıyla koşulsuz UNRESTRICTED kalır.
-    it.each([UserRole.ADMIN, UserRole.FINANCE])(
-      '%s is always UNRESTRICTED (no UserScope query)',
-      async (role) => {
-        const scope = await service.resolveScope(TENANT, USER, role);
-        expect(scope).toEqual({ kind: 'UNRESTRICTED' });
-        expect(userScopeRepo.find).not.toHaveBeenCalled();
-      },
-    );
-
     it('requires tenantId', async () => {
       await expect(
         service.resolveScope('', USER, UserRole.PLANNER),
@@ -349,16 +337,29 @@ describe('AccessScopeService', () => {
       expect(scopeOn).toEqual(scopeOff);
     });
 
-    it('flag does NOT affect code-branch UNRESTRICTED roles (ADMIN/FM) — no UserScope query either way', async () => {
-      const { svc, repo } = await buildServiceWithFlag(undefined);
-      const scope = await svc.resolveScope(TENANT, USER, UserRole.ADMIN);
-      expect(scope).toEqual({ kind: 'UNRESTRICTED' });
-      expect(repo.find).not.toHaveBeenCalled();
-    });
+    // Z30 H8: ADMIN/FM için "no UserScope query" iddiası artık YANLIŞ —
+    // UNRESTRICTED_ROLES kod sabiti (ve onun kısa devresi) kaldırıldı; bu
+    // roller de READONLY'nin T-235 ADIM 2'den beri yaptığı gibi joker
+    // satırdan (buildScope.hasUnrestrictedRow) UNRESTRICTED'a çözülür.
+    // Flag PLANNER'a özgüdür (yukarıdaki not doğru kalır); ADMIN/FM pini
+    // aşağıdaki ayrı describe'a taşındı (iki-girdi-iki-çıktı).
+    it('flag does NOT affect ADMIN/FM — repo.find is still called with the flag set either way', async () => {
+      const { svc: svcOff, repo: repoOff } =
+        await buildServiceWithFlag(undefined);
+      repoOff.find.mockResolvedValue([
+        buildScopeRow({ cplId: undefined, categoryId: undefined }),
+      ]);
+      const scopeOff = await svcOff.resolveScope(TENANT, USER, UserRole.ADMIN);
+      expect(scopeOff).toEqual({ kind: 'UNRESTRICTED' });
+      expect(repoOff.find).toHaveBeenCalled();
 
-    // T-235 ADIM 2: READONLY artık UNRESTRICTED_ROLES kod dalında değil, bu
-    // yüzden bu describe'ın flag'iyle ilgisi yok — flag PLANNER'a özgü ve
-    // READONLY her koşulda UserScope'u sorgular (ayrı describe: aşağıda).
+      const { svc: svcOn, repo: repoOn } = await buildServiceWithFlag('true');
+      repoOn.find.mockResolvedValue([
+        buildScopeRow({ cplId: undefined, categoryId: undefined }),
+      ]);
+      const scopeOn = await svcOn.resolveScope(TENANT, USER, UserRole.ADMIN);
+      expect(scopeOn).toEqual(scopeOff);
+    });
   });
 
   // T-235 ADIM 2 (docs/verification/T235_OLCUM_1_VE_3.md, ürün sahibi kararı):
@@ -385,5 +386,88 @@ describe('AccessScopeService', () => {
         false,
       );
     });
+  });
+
+  // Z30 H8 (K-2.6.4f): UNRESTRICTED_ROLES kod sabiti + kısa devre dalı
+  // KALDIRILDI. ADMIN/FINANCE artık READONLY'nin T-235 ADIM 2'den beri
+  // yaptığı gibi buildScope.hasUnrestrictedRow üzerinden çözülür — kod
+  // dalından DEĞİL, user_scopes'taki joker satırdan. İki-girdi-iki-çıktı
+  // (CLAUDE.md §2.7 #9 — sinyal sabitse sinyal değildir):
+  //   joker satır ({cplId:null, categoryId:null}) -> UNRESTRICTED, find ÇAĞRILIR
+  //   satır YOK (backfill uygulanmamış / silinmiş) -> SCOPED{pairs:[]},
+  //     fail-closed — ATOMİKLİK şartının davranışsal kanıtı: bu durum
+  //     eskiden kod dalı sayesinde İMKÂNSIZDI, artık mümkün ve erişimsiz
+  //     olmalı (K-2.6.4f, migration 1812000000000 ile aynı dalga).
+  describe('Z30 H8 — ADMIN/FINANCE kod dalından çıktı, buildScope üzerinden çözülür', () => {
+    it.each([UserRole.ADMIN, UserRole.FINANCE])(
+      '%s with a wildcard UserScope row => UNRESTRICTED (find IS called, unlike the pre-H8 code branch)',
+      async (role) => {
+        userScopeRepo.find.mockResolvedValue([
+          buildScopeRow({ cplId: undefined, categoryId: undefined }),
+        ]);
+        const scope = await service.resolveScope(TENANT, USER, role);
+        expect(scope).toEqual({ kind: 'UNRESTRICTED' });
+        expect(userScopeRepo.find).toHaveBeenCalled();
+      },
+    );
+
+    it.each([UserRole.ADMIN, UserRole.FINANCE])(
+      '%s with NO UserScope rows => SCOPED with empty pairs, fail-closed (ACCESS DENIED — atomiklik kanıtı, K-2.6.4f)',
+      async (role) => {
+        userScopeRepo.find.mockResolvedValue([]);
+        const scope = await service.resolveScope(TENANT, USER, role);
+        expect(scope).toEqual({ kind: 'SCOPED', pairs: [] });
+        expect(service.isInScope(scope, { cplId: 'x', categoryId: 'y' })).toBe(
+          false,
+        );
+      },
+    );
+
+    // code-reviewer nit (§2.7 #6): önceki hâl `find.mockResolvedValue([])`
+    // kullanıyordu — bu, `isActive:false` satırının HİÇ kurulmadığı, bir
+    // önceki testle birebir aynı fixture'dı. `toHaveBeenCalledWith` çağrı
+    // argümanını doğruluyordu ama fixture kendisi iki tarafı AYIRT ETMİYORDU.
+    // Bu test mock'u gerçek bir repository gibi `where.isActive`'e göre
+    // SÜZEN bir implementasyonla kuruyor — aynı joker satır, tek fark
+    // `isActive` bayrağı, ve iki yan FARKLI sonuç üretiyor (R2a-M6b'nin
+    // fixture ayrımı deseni).
+    it.each([UserRole.ADMIN, UserRole.FINANCE])(
+      "%s: repo çağrısına isActive:true predicate'i GEÇİYOR — o predicate olmasaydı REVOKE_ALL sonrası pasif joker satır da UNRESTRICTED sayılırdı",
+      async (role) => {
+        // Fixture'ın kendisi TEK bir joker satır — yalnız isActive değişir.
+        // Mock, gerçek repository'nin `where: { isActive }` davranışını
+        // taklit ediyor: `where.isActive` GEÇİLMEZSE (mutasyon), satır
+        // aktiflik durumundan bağımsız döner — yani mutasyon bu mock'ta da
+        // "her zaman görünür" sonucunu üretir, tıpkı üretimdeki gibi.
+        const row = buildScopeRow({
+          cplId: undefined,
+          categoryId: undefined,
+          isActive: false,
+        });
+        userScopeRepo.find.mockImplementation(
+          ({ where }: { where: { isActive?: boolean } }) =>
+            Promise.resolve(
+              where.isActive === undefined || row.isActive === where.isActive
+                ? [row]
+                : [],
+            ),
+        );
+
+        // Taraf 1: satır PASİF (REVOKE_ALL sonrası) — predicate doğru
+        // geçiliyorsa repository bu satırı hiç döndürmemeli => fail-closed.
+        const revokedScope = await service.resolveScope(TENANT, USER, role);
+        expect(revokedScope).toEqual({ kind: 'SCOPED', pairs: [] });
+        expect(
+          service.isInScope(revokedScope, { cplId: 'x', categoryId: 'y' }),
+        ).toBe(false);
+
+        // Taraf 2: AYNI satır, yalnız isActive=true — predicate hâlâ doğru
+        // geçiliyorsa repository bu kez satırı döndürür => UNRESTRICTED.
+        row.isActive = true;
+        service.clearCache();
+        const activeScope = await service.resolveScope(TENANT, USER, role);
+        expect(activeScope).toEqual({ kind: 'UNRESTRICTED' });
+      },
+    );
   });
 });

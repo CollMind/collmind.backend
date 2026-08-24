@@ -113,7 +113,7 @@ export class CreateUserDto {
    * çağrıda. `role` `SCOPE_REQUIRED_ROLES`'ta (PLANNER, CATEGORY_MANAGER)
    * ise bu alan ZORUNLU ve en az 1 çift taşımalı — yoksa ValidationPipe 400
    * döner (forbidNonWhitelisted açık olduğundan alan sessizce yok sayılamaz).
-   * `role` `WILDCARD_SCOPE_ROLES`'taysa (ADMIN, FINANCE, READONLY) bu alan
+   * `role` `WILDCARD_ON_CREATE_ROLES`'taysa (ADMIN, FINANCE, READONLY) bu alan
    * YOK SAYILIR — o roller her zaman otomatik joker kapsamla yaratılır
    * (UserService#create), çağıranın ne gönderdiği fark etmez.
    */

@@ -73,7 +73,9 @@ import { UserRole } from '../../../database/entities/user.entity';
  *       ETKİLENMEZ (CM enforcement T-028b'de zaten prod'a gitti; flag
  *       yalnızca PLANNER'ın T-028c'de YENİ eklenen enforcement'ını kapsar).
  *       READONLY için "etkilenmez" artık iki farklı yoldan gelir: kod
- *       dalından değil (T-235 ADIM 2'den beri UNRESTRICTED_ROLES'te değil),
+ *       dalından değil (T-235 ADIM 2'den beri UNRESTRICTED_ROLES'te değil;
+ *       o sabit Z30 H8 ile TÜMÜYLE kalktı — artık HİÇBİR rol kod dalından
+ *       UNRESTRICTED sayılmıyor),
  *       joker satırdan (`buildScope` `hasUnrestrictedRow`) — sonuç aynı,
  *       mekanizma farklı.
  */
@@ -92,9 +94,16 @@ export interface ScopableEntity {
   categoryId?: string | null;
 }
 
-/**
- * Roller: kod dalı olarak koşulsuz tüm tenant görür (kategori/CPL scope'una
- * tabi değil).
+/*
+ * ══════════════════════════════════════════════════════════════════════════
+ *  KAYIT — kaldırılmış `UNRESTRICTED_ROLES` sabitinin geçmişi (Z30 H8)
+ *  ⚠️ BU BLOK BİR ŞEYİ BELGELEMİYOR — aşağıdaki CACHE_TTL_MS ile İLGİSİ YOK.
+ *     Sabit kalktı, kaydı F12 gereği kaldı. JSDoc DEĞİL (`/*`), çünkü artık
+ *     hiçbir bildirime ait değil.
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * (geçmiş zaman) O sabitteki roller kod dalı olarak koşulsuz tüm tenant'ı
+ * görüyordu — kategori/CPL kapsamına tabi DEĞİLLERDİ.
  *
  * T-235 ADIM 2 (docs/verification/T235_OLCUM_1_VE_3.md, ürün sahibi kararı):
  * READONLY bu sabitten ÇIKARILDI. K-2.6.4c — "İZLEYİCİ bir izleme
@@ -105,7 +114,7 @@ export interface ScopableEntity {
  * işleri — bilinçli olarak kalır).
  *
  * ⛔ SIRA BAĞLAYICI — bu satır, T-235 ADIM 1'in seed'i (a25e820,
- * src/database/seeds/user-scope.seed.ts `WILDCARD_SCOPE_ROLES`) READONLY
+ * src/database/seeds/user-scope.seed.ts `WILDCARD_ON_CREATE_ROLES`) READONLY
  * için HER kullanıcıya joker satır ({cplId:null, categoryId:null}) yazdıktan
  * SONRA kaldırıldı. Ölçüldü (2026-08-19, main.users JOIN main.user_scopes,
  * main şemasına nitelendirilmiş): tek READONLY kullanıcısı
@@ -115,13 +124,17 @@ export interface ScopableEntity {
  * (aşağıda). Fark yalnız MEKANİZMA: erişim artık kod sabitinde gizli değil,
  * K-2.6.8a'nın istediği gibi bir DB satırında AÇIK.
  *
- * 📌 Kayıt (bu turda DEĞİL): K-2.6.8a uzun vadede ADMIN/FINANCE için de
- * "kod dalı değil, satır kanonik" diyor — bu sabit bir gün tümüyle boşalabilir.
+ * ✅ O GÜN GELDİ (Z30 H8, 2026-08-24): sabit KALDIRILDI. Yukarıdaki kayıt
+ * "bu sabit bir gün tümüyle boşalabilir" diyordu — K-2.6.8a'nın öngördüğü
+ * terfi şık (c) ile indi. ADMIN/FINANCE artık kapsamsızlığını user_scopes'taki
+ * JOKER SATIRDAN kazanıyor, tıpkı READONLY'nin T-235 ADIM 2'den beri yaptığı
+ * gibi — mekanizma DEĞİŞMEDİ (buildScope'un hasUnrestrictedRow dalı zaten
+ * çalışıyordu), yalnız KAYNAK sabitten satıra döndü.
+ *
+ * ⛔ ATOMİKLİK — bu kaldırma migration 1812000000000 ile AYNI DALGADA indi.
+ * Ayrı inseydi: rows.length===0 → SCOPED{pairs:[]} → ADMIN/FINANCE
+ * FAIL-CLOSED düşerdi. Kural: K-2.6.4f.
  */
-const UNRESTRICTED_ROLES = new Set<UserRole>([
-  UserRole.ADMIN,
-  UserRole.FINANCE,
-]);
 
 const CACHE_TTL_MS = 5000;
 
@@ -166,9 +179,9 @@ export class AccessScopeService {
       throw new Error('AccessScopeService.resolveScope: userId is required');
     }
 
-    if (UNRESTRICTED_ROLES.has(role)) {
-      return { kind: 'UNRESTRICTED' };
-    }
+    // Z30 H8: ADMIN/FINANCE kısa devresi KALDIRILDI — kapsamsızlık artık
+    // user_scopes'taki joker satırdan gelir (buildScope.hasUnrestrictedRow).
+    // Bu roller de aşağıdaki satır okumasından geçer.
 
     // T-028c: PLANNER enforcement is flag-gated (see class header). CM keeps
     // T-028b's already-shipped behavior regardless of this flag.

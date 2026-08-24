@@ -395,8 +395,10 @@ export class AgreementService {
     },
     actor?: AgreementActor,
   ): Promise<Agreement[]> {
-    // T-028c: cheap no-DB-query UNRESTRICTED for ADMIN/CM/FM/READONLY (see
-    // AccessScopeService.resolveScope), real cpl+category pair filtering for
+    // T-028c: UNRESTRICTED for ADMIN/FM/READONLY via their wildcard
+    // user_scopes row (Z30 H8 — NOT "no-DB-query" any more, and CM was NEVER
+    // UNRESTRICTED: it gets category-only normalization). Real cpl+category
+    // pair filtering for
     // PLANNER. undefined actor (internal callers) -> undefined scope ->
     // no-op filter, unchanged.
     const scope = actor

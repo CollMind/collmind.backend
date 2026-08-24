@@ -46,7 +46,10 @@
  */
 import { Brackets, DataSource, IsNull } from 'typeorm';
 import { User } from '../entities/user.entity';
-import { UserScope, WILDCARD_SCOPE_ROLES } from '../entities/user-scope.entity';
+import {
+  UserScope,
+  WILDCARD_ON_CREATE_ROLES,
+} from '../entities/user-scope.entity';
 import { Cpl } from '../entities/cpl.entity';
 import { Channel } from '../entities/channel.entity';
 import { Category } from '../entities/category.entity';
@@ -159,11 +162,11 @@ export async function seedUserScopes(
   const managerAlias = findUser('manager@wella.com');
 
   // T-235 ADIM 1 — ADMIN/FINANCE/READONLY: HER kullanıcı için joker satır
-  // (WILDCARD_SCOPE_ROLES, dosya başı yorumu). Sabit e-postalara bağlanmaz —
+  // (WILDCARD_ON_CREATE_ROLES, dosya başı yorumu). Sabit e-postalara bağlanmaz —
   // `finance@wella.com` VE `finance.manager@wella.com` gibi aynı rolün birden
   // fazla kullanıcısı olabilir; hepsi rol üzerinden yakalanır.
   const wildcardScopeUsers = users.filter((u) =>
-    WILDCARD_SCOPE_ROLES.has(u.role),
+    WILDCARD_ON_CREATE_ROLES.has(u.role),
   );
 
   // DUR koşulu (T-235.md): bu roldeki bir kullanıcının ZATEN dar (joker

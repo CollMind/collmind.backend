@@ -33,7 +33,9 @@ import {
  *   noktası; rol semantiği yalnızca orada tanımlı). PLANNER yalnızca kendi
  *   pair-scoped CPL/kategori kombinasyonlarına ait agreements görür. Scope
  *   boşsa (fail-closed) → boş summary (zero counts, empty lines).
- * Admin/Finance/Readonly: tenant-wide (UNRESTRICTED — AccessScopeService).
+ * Admin/Finance/Readonly: tenant-wide (UNRESTRICTED — AccessScopeService),
+ *   ve bu Z30 H8'den beri KOŞULLU: joker user_scopes satırına bağlı
+ *   (K-2.6.4f). Satırsız bir ADMIN fail-closed düşer.
  *
  * Her sorgu tenant-scoped. <500ms (mevcut indexler yeterli).
  */

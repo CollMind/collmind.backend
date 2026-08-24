@@ -466,13 +466,26 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
   //
   // ⚠️ Ve T-242 bunu TERS YÖNDE kaydetmişti (PLANNER → ADMIN, fail-closed ve
   // zararsız). Sayılmayan yön — joker → kapsamlı rol — fail-open'dı.
-  describe('R2 — rol değişimi kapsam tutarsızlığı üretiyorsa 409', () => {
-    it('joker satırlı FINANCE → CATEGORY_MANAGER → 409, rol DEĞİŞMEZ', async () => {
+  //
+  // ⛔ SÖZLEŞME GÜNCELLEMESİ (Z30 H8 / B1 — K-2.6.4g, 2026-08-25): R2'nin
+  // "yeşil yarı"sı `PLANNER → CATEGORY_MANAGER`'dı ("joker yok, o yüzden
+  // serbest"). `assertRoleChangeScopeConsistent`'in yeni ŞEKİL KARŞILAŞTIRMASI
+  // kuralı bunu artık REDDEDİYOR — `PLANNER`'ın şekli `CPL_CATEGORY_PAIRS`,
+  // `CATEGORY_MANAGER`'ınki `CATEGORY_ONLY` (CM'in cplId normalizasyonu
+  // nedeniyle ayrı şekil, `user-scope.entity.ts`'in `scopeShapeOf` yorumu).
+  // Yani eski yeşil yarı bugün KIRMIZI — testin AMACI (§2.7 #9: kapı "her
+  // rol değişimini reddediyor" olmamalı, iki farklı girdi iki farklı çıktı
+  // vermeli) hâlâ geçerli, yalnız HANGİ geçişin hangi yarı olduğu değişti:
+  //   ESKİ yeşil yarı  PLANNER → CATEGORY_MANAGER   → şimdi KIRMIZI (409)
+  //   YENİ yeşil yarı  şekli AYNI kalan bir geçiş    → ADMIN↔FINANCE↔READONLY
+  // Test SİLİNMEDİ — sözleşmesi değişti, iki yarı da aşağıda pinli.
+  describe('B1 (K-2.6.4g) — rol değişimi kapsam ŞEKLİ tutarsızlığı üretiyorsa 409', () => {
+    it('R2 kırmızı yarı: joker satırlı FINANCE → CATEGORY_MANAGER → 409 (WILDCARD → CATEGORY_ONLY, şekil değişiyor), rol DEĞİŞMEZ', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-r2-finance-${Date.now()}@wella.com`;
       scratchEmails.push(email);
 
-      // 1) joker satırlı bir FINANCE yarat (WILDCARD_SCOPE_ROLES → otomatik joker)
+      // 1) joker satırlı bir FINANCE yarat (WILDCARD_ON_CREATE_ROLES → otomatik joker)
       const createRes = await request(app.getHttpServer())
         .post('/users')
         .set(admin.authHeader())
@@ -505,9 +518,11 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
       expect(after[0].role).toBe('FINANCE');
     });
 
-    // YEŞİL yarı: aynı rota, tutarsızlık ÜRETMEYEN bir değişiklik geçmeli —
-    // yoksa kapı "her rol değişimini reddediyor" olurdu (§2.7 #9).
-    it('R2 yeşil yarı: kapsamlı PLANNER → CATEGORY_MANAGER geçişi ENGELLENMEZ (joker yok)', async () => {
+    // ⛔ İKİNCİ kırmızı yarı — eski R2'nin "yeşil yarı"sının YERİNE. Bu geçiş
+    // artık B1'in şekil karşılaştırmasıyla reddediliyor (CPL_CATEGORY_PAIRS →
+    // CATEGORY_ONLY) — 409 gövdesi TEŞHİS EDİLEBİLİR olmalı (T-242b): her iki
+    // şekil adı da mesajda geçer, `[[T-242b]]` atfı da.
+    it('B1 kırmızı yarı (eski R2 yeşil yarısının YERİNE): kapsamlı PLANNER → CATEGORY_MANAGER → 409 (CPL_CATEGORY_PAIRS → CATEGORY_ONLY, şekil değişiyor), rol DEĞİŞMEZ, teşhis edilebilir gövde', async () => {
       const admin = await loginAs(app, 'ADMIN');
       const email = `e2e-t241-r2-scoped-${Date.now()}@wella.com`;
       scratchEmails.push(email);
@@ -531,7 +546,66 @@ describe('T-241 — POST /users: rol + kapsam birlikte (SCOPE_ENFORCEMENT_ENABLE
         .set(admin.authHeader())
         .send({ role: 'CATEGORY_MANAGER' });
 
+      expect(patchRes.status).toBe(409);
+      expect(patchRes.body.message).toEqual(
+        expect.stringContaining('CPL_CATEGORY_PAIRS'),
+      );
+      expect(patchRes.body.message).toEqual(
+        expect.stringContaining('CATEGORY_ONLY'),
+      );
+      expect(patchRes.body.message).toEqual(expect.stringContaining('T-242b'));
+
+      // rol DEĞİŞMEMİŞ olmalı — kapsam satırı da olduğu gibi (PLANNER'ın
+      // kendi çifti) kalmalı.
+      const after = await dataSource.query(
+        `SELECT role FROM main.users WHERE id = $1`,
+        [createRes.body.id],
+      );
+      expect(after[0].role).toBe('PLANNER');
+      expect(await readScopeRows(createRes.body.id)).toEqual([
+        { cpl_id: null, category_id: CATEGORY_SAC_BOYASI },
+      ]);
+    });
+
+    // ✅ YENİ yeşil yarı — B1'in kabul ettiği tarafı: şekli AYNI kalan bir
+    // geçiş (WILDCARD → WILDCARD, ADMIN↔FINANCE↔READONLY). §2.7 #9'un
+    // istediği ayırt edicilik burada yaşıyor: aynı rota (`PATCH /users/:id`
+    // `{role}`), FARKLI şekil-eşleşmesi, FARKLI sonuç.
+    it('B1 yeşil yarı: joker satırlı FINANCE → ADMIN geçişi ENGELLENMEZ (WILDCARD → WILDCARD, şekil aynı), joker satır KORUNUR', async () => {
+      const admin = await loginAs(app, 'ADMIN');
+      const email = `e2e-t241-b1-wildcard-preserved-${Date.now()}@wella.com`;
+      scratchEmails.push(email);
+
+      const createRes = await request(app.getHttpServer())
+        .post('/users')
+        .set(admin.authHeader())
+        .send({
+          email,
+          password: 'Collmind2026!',
+          fullName: 'T-241 B1 wildcard finance→admin',
+          role: 'FINANCE',
+          status: 'ACTIVE',
+        })
+        .expect(201);
+      scratchUserIds.push(createRes.body.id);
+      const scopeBefore = await readScopeRows(createRes.body.id);
+      expect(scopeBefore).toEqual([{ cpl_id: null, category_id: null }]);
+
+      const patchRes = await request(app.getHttpServer())
+        .patch(`/users/${createRes.body.id}`)
+        .set(admin.authHeader())
+        .send({ role: 'ADMIN' });
+
       expect(patchRes.status).toBe(200);
+
+      const after = await dataSource.query(
+        `SELECT role FROM main.users WHERE id = $1`,
+        [createRes.body.id],
+      );
+      expect(after[0].role).toBe('ADMIN');
+      // Joker satır KORUNDU — kapı yalnız DOĞRULAR, kapsam satırına
+      // dokunmaz ([[T-242b]] o ucu ayrı açacak).
+      expect(await readScopeRows(createRes.body.id)).toEqual(scopeBefore);
     });
   });
 

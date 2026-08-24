@@ -20,7 +20,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *   POZ.KONTROL (user, cpl, cat) x2 → 23505 duplicate key (desen ÇALIŞIYOR,
  *   yalnız NULL içeren çiftlerde ATEŞLEMİYOR)
  *
- * `R1`/`A5` (`user-scope.entity.ts` `WILDCARD_SCOPE_ROLES` /
+ * `R1`/`A5` (`user-scope.entity.ts` `WILDCARD_ON_CREATE_ROLES` /
  * `SCOPE_REQUIRED_ROLES`) gereği her `CATEGORY_MANAGER` çifti `cplId=null`,
  * her `PLANNER` çifti `categoryId=null` taşır — yani bu kuralın kapsaması
  * gereken çiftlerin EZİCİ ÇOĞUNLUĞUNDA index bugüne kadar hiç ateşlememiş.

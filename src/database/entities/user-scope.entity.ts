@@ -17,13 +17,19 @@ import { Category } from './category.entity';
  * `user.service.ts#create` da BURADAN import eder (iki yazma yolu, tek
  * liste).
  *
- * ⚠️ `AccessScopeService.UNRESTRICTED_ROLES` (yalnız ADMIN+FINANCE) İLE
- * KARIŞTIRILMAMALI: bu sabit YAZMA tarafı (hangi rol joker SATIR alır), o
- * sabit OKUMA/karar tarafı (hangi rol kod dalıyla, satırsız bile,
- * UNRESTRICTED sayılır). READONLY burada var (satır alır) ama orada yok
- * (T-235 ADIM 2 — artık satırdan geliyor, kod dalından değil).
+ * ⛔ BU SABİT BİR YARATMA-POLİTİKASIDIR; YÜRÜRLÜKTEKİ KAPSAMSIZLIĞIN TEK
+ * KAYNAĞI `user_scopes` SATIRLARIDIR. (K-2.6.4f)
+ *
+ * Yani soru "kim joker?" DEĞİL — o sorunun cevabı artık yalnız veride.
+ * Buradaki soru: "YENİ bir X-rollü kullanıcı hangi kapsamla DOĞAR?"
+ *
+ * 📌 Eski adı `WILDCARD_SCOPE_ROLES`'tü (Z30 H8 ile değişti, 2026-08-24).
+ * Ad, sınıfından GENİŞ okunuyordu — "kim joker?" diye. `AccessScopeService`'in
+ * `UNRESTRICTED_ROLES` sabiti aynı turda KALDIRILDI, yani karışacak ikinci bir
+ * sabit de kalmadı: durum sorusu veriden, doğum sorusu buradan.
+ * (Z35'in DAR-AD dersinin ters yönü: burada ad sınıfından GENİŞTİ, daraltıldı.)
  */
-export const WILDCARD_SCOPE_ROLES: ReadonlySet<UserRole> = new Set([
+export const WILDCARD_ON_CREATE_ROLES: ReadonlySet<UserRole> = new Set([
   UserRole.ADMIN,
   UserRole.FINANCE,
   UserRole.READONLY,
@@ -32,7 +38,7 @@ export const WILDCARD_SCOPE_ROLES: ReadonlySet<UserRole> = new Set([
 /**
  * T-241 — roller: bu rollerde bir kullanıcı yaratılırken çağıran AÇIK bir
  * `scope` (≥1 çift) vermek ZORUNDADIR; boş/eksikse `POST /users` 400 döner.
- * `WILDCARD_SCOPE_ROLES`'un tümleyeni (bugünkü `UserRole` kümesinde) — bir
+ * `WILDCARD_ON_CREATE_ROLES`'un tümleyeni (bugünkü `UserRole` kümesinde) — bir
  * rol ikisinde birden olamaz, ikisinde de olmayan bir rol de olamaz (ADIM 3
  * yeni bir rol eklerse bu iki sabit BİRLİKTE güncellenmeli).
  */
@@ -40,6 +46,40 @@ export const SCOPE_REQUIRED_ROLES: ReadonlySet<UserRole> = new Set([
   UserRole.PLANNER,
   UserRole.CATEGORY_MANAGER,
 ]);
+
+/**
+ * Z30 H8 / B1 — bir rolün KAPSAM ŞEKLİ.
+ *
+ * `K-2.6.4g`: *"rol değişimi kapsam kaydını ÖRTÜK OLARAK DEĞİŞTİRMEZ —
+ * değiştirecek geçiş, kaydını AÇIKÇA getirene kadar reddedilir."*
+ *
+ * Kapının kuralı bir GEÇİŞ LİSTESİ değil, bir ŞEKİL KARŞILAŞTIRMASIDIR:
+ * kaynak ve hedef rolün şekli farklıysa 409, aynıysa serbest. Liste bakım
+ * ister ve rol eklendiğinde bayatlar; şekil karşılaştırması bayatlamaz.
+ *
+ *   WILDCARD             tek joker satır (null, null)      ADMIN·FINANCE·READONLY
+ *   CPL_CATEGORY_PAIRS   (cplId, categoryId) çiftleri       PLANNER
+ *   CATEGORY_ONLY        yalnız kategori (CM normalizasyonu) CATEGORY_MANAGER
+ *
+ * ⚠️ `CATEGORY_ONLY` neden ayrı: `AccessScopeService.buildScope` CM için
+ * `cplId`'yi `null`'a normalize ediyor — yani PLANNER ile CM'in YAZILAN
+ * satırları aynı şekilde görünse de YÜRÜRLÜKTEKİ kapsamları farklı. Bu,
+ * "yazılan ≠ yürürlükteki" vakası; PLANNER↔CM geçişi bu yüzden şekil
+ * değiştirir ve reddedilir.
+ */
+export type ScopeShape = 'WILDCARD' | 'CPL_CATEGORY_PAIRS' | 'CATEGORY_ONLY';
+
+export function scopeShapeOf(role: UserRole): ScopeShape {
+  if (WILDCARD_ON_CREATE_ROLES.has(role)) return 'WILDCARD';
+  if (role === UserRole.CATEGORY_MANAGER) return 'CATEGORY_ONLY';
+  if (role === UserRole.PLANNER) return 'CPL_CATEGORY_PAIRS';
+  // §2.5 sessiz sıfır yasağı: yeni bir rol eklendiğinde sessizce bir şekle
+  // düşürülmez — o rolün kapsam şekli bir KARARDIR, bir varsayılan değil.
+  throw new Error(
+    `scopeShapeOf: role=${role} hiçbir kapsam şekline eşlenmedi — yeni bir ` +
+      'rol eklendiyse şekli AÇIKÇA kararlaştırılmalı (K-2.6.4g).',
+  );
+}
 
 /**
  * T-244 — `docs/process/DENETIM_SOZLUGU.md` `Madde 1`'in İKİ olay türü, TEK
