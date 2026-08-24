@@ -5,7 +5,6 @@
 # commit: 9be2264
 #
 #
-src/modules/master-data/kpi/kpi.controller.ts|GET|master-data/kpis/grid/:planId	# getGridKpisForPlan → planService.findById(actor) ile GERÇEK scope (assertReadScope) — kod doğrulandı
 src/modules/modes/actuals-first/agreement/agreement.controller.ts|DELETE|agreements/:id	# delete → findById(actor) → isInScope/assertEntityInScope gerçek kontrol
 src/modules/modes/actuals-first/agreement/agreement.controller.ts|GET|agreements	# findAll(actor) → accessScope.resolveScope gerçek kontrol
 src/modules/modes/actuals-first/agreement/agreement.controller.ts|GET|agreements/:id	# findById(actor) → isInScope/assertEntityInScope gerçek kontrol
