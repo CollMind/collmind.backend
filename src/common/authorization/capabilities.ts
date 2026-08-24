@@ -185,7 +185,11 @@ import { UserRole } from '../../database/entities/user.entity';
  * NATİF `@Roles` kümesi kalıyor (yukarıdaki "ÇÖZÜLDÜ — hücre hücre" bölümü,
  * `MODES_WRITE` alt-başlığı):
  * ```
- *   {ADMIN,FINANCE,PLANNER}  n=1   POST /agreement-transactions (create)  — dal 1, NATİF, K-2.6.14'ün KONUSU DEĞİL
+ *   {ADMIN,FINANCE,PLANNER}  n=1   POST /agreement-transactions (create)  — dal 1, NATİF ⛔ BAYAT (Z35, 2026-08-24):
+ *                                  bu cümle bir BEYANDI, ölçülmemişti. `service:264→:285` `batchImport` `create`'i
+ *                                  ÇAĞIRIYOR — aynı yazma yolu, `K-2.6.14`'ün TAM KONUSU. `T-277`/`Z35` ile
+ *                                  `@Roles` `{ADMIN,FINANCE}`'e düzeltildi (`agreement-transaction.controller.ts:52`).
+ *                                  Bkz. `docs/brd-v2/04_KARAR_KAYDI.md` `Z35`.
  *   {ADMIN,FINANCE}          n=5   upload/validate/process                — dal 3, genişleme REDDEDİLDİ, ESKİ hâline döner
  *   {ADMIN,PLANNER}          n=12  Plan CRUD                              — dal 3, genişleme REDDEDİLDİ, ESKİ hâline döner
  * ```

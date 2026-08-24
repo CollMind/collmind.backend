@@ -428,7 +428,11 @@ async function step7_createOffInvoiceTransaction(): Promise<boolean> {
   logSection('CREATE OFF-INVOICE TRANSACTION');
 
   try {
-    setAuth(ctx.tokens.planner!);
+    // T-277/Z35 (K-2.6.14): POST /agreement-transactions is a realization entry
+    // (writes ledger_entries in the same call, service:238) — role narrowed to
+    // {ADMIN,FINANCE}. Steps 7/10 exist specifically to exercise this write path
+    // (ledger + idempotency), so the token moves to finance, not out of the flow.
+    setAuth(ctx.tokens.finance || ctx.tokens.admin!);
 
     const transactionData = {
       agreementId: ctx.ids.agreementId,
@@ -585,7 +589,8 @@ async function step10_testIdempotency(): Promise<boolean> {
   logSection('TEST IDEMPOTENCY');
 
   try {
-    setAuth(ctx.tokens.planner!);
+    // T-277/Z35: same write path as step7 — {ADMIN,FINANCE} only.
+    setAuth(ctx.tokens.finance || ctx.tokens.admin!);
 
     // Try to create same transaction again
     const transactionData = {
