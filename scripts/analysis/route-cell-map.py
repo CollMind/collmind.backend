@@ -129,6 +129,44 @@ def roles_for(f, ln):
     for sp in re.findall(r'\.\.\.([A-Za-z_][\w]*)',blk): got |= resolve(sp)
     return ','.join(sorted(got)) if got else '?'
 
+CAPS_TS = 'src/common/authorization/capabilities.ts'
+
+def role_caps_inverse():
+    """ROLE_CAPABILITIES'i tersine cevir: hucre -> o hucreyi ALAN roller.
+
+    KANONIK KAYNAK capabilities.ts'tir; bu fonksiyon onu OKUR, kopyalamaz.
+    Yorum ayiklamasi IKI YAZIMLA SINIRLI: satir-sonu `//` ve `*`/`/*` ile
+    BASLAYAN tam satirlar. Blok yorumu (`/* ... */`) satir ORTASINDA ya da
+    coklu satirda gorulurse AYIKLANMAZ ve hayalet rol uretebilir — bu yuzden
+    boyle bir yazim gorulurse SESSIZ AYIKLAMA YERINE ACIK HATA verilir
+    (olculdu 2026-08-25, code-reviewer S5: `/*` blokta bugun 0 kez geciyor,
+    `//` 24 kez — poz.kontrol).
+
+    `CLAUDE.md`: YORUM KIRLILIGI iki yonde birden yaniltir, ve
+    ROLE_CAPABILITIES bloklari yorum acisindan yogun.
+    """
+    txt = src(CAPS_TS)
+    m = re.search(r'export const ROLE_CAPABILITIES[^=]*=\s*\{(.*?)\n\};', txt, re.S)
+    if m is None: return {}
+    body = m.group(1)
+    if '/*' in body:
+        raise SystemExit(
+            'route-cell-map: ROLE_CAPABILITIES blokunda BLOK YORUMU (/*) var. '
+            'Ayiklayici yalnız // ve satir-basi * yazimlarini kapsiyor; sessizce '
+            'yanlis ayiklamak yerine DURULDU. Ayiklayiciyi genislet ya da blok '
+            'yorumunu // yazimina cevir.')
+    # yorum ayikla (satir sonu // ve tam satir *) — POZ.KONTROL asagida
+    clean = '\n'.join(
+        re.sub(r'//.*$', '', ln) for ln in body.splitlines()
+        if not ln.strip().startswith(('*', '/*'))
+    )
+    inv = {}
+    for rm in re.finditer(r'\[UserRole\.([A-Z_]+)\]\s*:\s*\[(.*?)\]', clean, re.S):
+        role, caps = rm.group(1), rm.group(2)
+        for cm in re.finditer(r'CAPABILITIES\.([A-Z_]+)', caps):
+            inv.setdefault(cm.group(1), set()).add(role)
+    return inv
+
 def cell_for(f, meth, path):
     d = re.sub(r'^src/modules/','',f).split('/')[0]
     fam = FAM.get(d,'?')
@@ -230,12 +268,16 @@ def reconcile(rows):
     # yol aynı yere çıkmalı — çıkmıyorsa bu bir BULGUDUR, sessizce geçilmez.
     # (Bu bir tanım DEĞİL bir kontroldür: üyelik @Roles'tan türetilseydi
     #  kontrol totoloji olurdu.)
-    # ⚠️ EXPECT IKINCI BIR DOGRULUK KAYNAGIDIR. Kanonik kaynak
-    # src/common/authorization/capabilities.ts'teki ROLE_CAPABILITIES; bu script
-    # o dosyayi OKUMUYOR. Ikisi ayrisirsa BU KONTROL ONU GORMEZ — Faz B'de
-    # @RequireCapability canli kod olunca capraz kontrol gerekir.
-    EXPECT={'MODES_ACTUALS_WRITE':{'ADMIN','FINANCE'},
-            'MODES_PLAN_WRITE':   {'ADMIN','PLANNER'}}
+    # ✅ EXPECT ARTIK ELLE YAZILMIYOR — canli haritadan (ROLE_CAPABILITIES)
+    # TURETILIYOR (B3 Dalga-M kabul sartı 1). Onceki hali ikinci bir dogruluk
+    # kaynagiydi ve harita CANLI koda dondugu an bir Ilke-4 cifti olurdu.
+    # Cift DOGMADAN oldu: tek kaynak capabilities.ts.
+    EXPECT={c: role_caps_inverse().get(c, set())
+            for c in ('MODES_ACTUALS_WRITE','MODES_PLAN_WRITE')}
+    for c, r in EXPECT.items():
+        print(f'G5 EXPECT[{c}] = {sorted(r) or "BOS"}  (kaynak: ROLE_CAPABILITIES)', file=out)
+        if not r:
+            err.append(f'G5 EXPECT BOS: {c} hicbir role verilmemis — harita okunamadi mi?')
     mism=[]
     for r in rows:
         if r[4] in EXPECT:

@@ -5,7 +5,20 @@
 # arası durum SIZDIRMAZ, her invocation temiz BEGIN state'iyle başlar).
 #
 # NE ÇIKARIR (her satır bir ROTA):
-#   <dosya> <satır> <YÖNTEM> <yol> <hasRoles:0|1> <hasPublic:0|1> <guardsCSV|-> <hasSelfScoped:0|1>
+#   <dosya> <satır> <YÖNTEM> <yol> <hasRoles:0|1> <hasPublic:0|1> <guardsCSV|-> <hasSelfScoped:0|1> <hasCapability:0|1>
+#
+# hasCapability (9. sütun, `B3 Dalga-M`): rota `@RequireCapability(...)` taşıyor mu.
+# EKLEME-ONLY: 1-8. sütunlar DEĞİŞMEDİ (ölçüldü 2026-08-25: 223/223 satırda
+# 1-8 birebir aynı, poz.kontrollü). Bu tuple'ı okuyan ÜÇ tüketici var —
+# `route-scope.sh` · `route-cell-map.py` (`len(c)<8`) · `scope-ratchet.sh` —
+# ve üçü de kırılmadı (kendi self-test'leri rc=0).
+# 9. sütunun tüketicisi: `scripts/guards/single-mechanism.sh`.
+#
+# ⚠️ SINIFLANDIRICI col9'u BİLMEZ: `route-scope.sh`'in dört kovası yalnız
+# `@Roles`/`@Public`/`SELF`/`ALAN_GUARD` tanır. Bugün etkisi YOK (col9 223/223
+# sıfır), ama İLK GÖÇEN ROTA `FILTRESIZ`/`A1`'e düşer — `Z26`/`Z28` emsalinde
+# `@SelfScoped` turunda sınıflandırıcıya da bir kova eklenmişti. `Faz B`
+# (`W1`) ön koşulu: kova eklenmeli.
 #
 # guardsCSV = CONTROLLER-seviyesi @UseGuards ∪ ROTA-seviyesi @UseGuards'taki
 # guard adlarının virgülle ayrılmış, sıralı birleşimi ("-" boşsa).
@@ -68,6 +81,7 @@ function reset_pending() {
   p_has_roles = 0
   p_has_public = 0
   p_has_self_scoped = 0
+  p_has_capability = 0
   delete rg
 }
 
@@ -128,6 +142,17 @@ function finalize_decorator(name, text, is_class, line,   arg) {
   if (is_class) {
     if (name == "UseGuards") collect_identifiers(text, cg)
     else if (name == "Controller") ctrl_base = quoted_arg(text)
+    # S1 (Dalga-M review): CLASS seviyesi @Roles / @RequireCapability de
+    # KAYDEDİLİR. Nest'in `getAllAndOverride([handler, class])`'ı ikisini de
+    # okur; yalnız rota-seviyesini saymak, "rota başına TEK mekanizma" kapısını
+    # koruduğu SINIFTAN DAR yapıyordu (class @Roles + rota @RequireCapability
+    # kapıya GÖRÜNMÜYORDU, ama guard fail-closed reddediyordu → sebebi hiçbir
+    # kapıda görünmeyen ölü rota).
+    # ⚠️ EKLEME-ONLY KALIR: bugün class-seviyesi @Roles sayısı 0 (ölçüldü
+    # 2026-08-25; poz.kontrol: class-seviyesi @UseGuards 31), yani 5. sütun
+    # bugünkü HİÇBİR satırda değişmiyor.
+    else if (name == "Roles") c_has_roles = 1
+    else if (name == "RequireCapability") c_has_capability = 1
     return
   }
   # rota seviyesi
@@ -140,6 +165,8 @@ function finalize_decorator(name, text, is_class, line,   arg) {
     p_has_roles = 1
   } else if (name == "Public") {
     p_has_public = 1
+  } else if (name == "RequireCapability") {
+    p_has_capability = 1
   } else if (name == "SelfScoped") {
     p_has_self_scoped = 1
   } else if (name == "UseGuards") {
@@ -180,9 +207,10 @@ function csv_from_sets(a, b,   list, n, k, i, j, tmp, out) {
 function flush_pending(   guards) {
   if (p_has_http) {
     guards = csv_from_sets(cg, rg)
-    printf "%s\t%d\t%s\t%s\t%d\t%d\t%s\t%d\n", \
+    printf "%s\t%d\t%s\t%s\t%d\t%d\t%s\t%d\t%d\n", \
       FILENAME, p_http_line, p_http_method, join_path(ctrl_base, p_http_path), \
-      p_has_roles, p_has_public, guards, p_has_self_scoped
+      (p_has_roles || c_has_roles), p_has_public, guards, p_has_self_scoped, \
+      (p_has_capability || c_has_capability)
   }
   reset_pending()
 }
@@ -190,6 +218,8 @@ function flush_pending(   guards) {
 BEGIN {
   seen_export = 0
   ctrl_base = ""
+  c_has_roles = 0
+  c_has_capability = 0
   in_ml = 0
   ml_depth = 0
   ml_name = ""
@@ -206,6 +236,10 @@ FNR == 1 {
   if (FNR == 1 && NR != 1) {
     seen_export = 0; ctrl_base = ""; in_ml = 0; ml_depth = 0
     ml_name = ""; ml_text = ""; ml_is_class = 0
+    # ⚠️ class-seviyesi bayraklar da SIFIRLANIR — yoksa bir dosyanın class
+    # @Roles'ü sonraki dosyanın TÜM rotalarına sızardı (S1 eklenirken
+    # yakalandı: ctrl_base ile aynı yaşam döngüsü).
+    c_has_roles = 0; c_has_capability = 0
     delete cg
     reset_pending()
   }

@@ -170,6 +170,21 @@ else
   exit 1
 fi
 
+# single-mechanism'in self-test'i AYRI BİR DOSYA DEĞİL — `--self-test`
+# bayrağıyla AYNI dosyada, ve bu daha İYİ: self-test ile gerçek kapı AYNI
+# `run_gate()`'i çağırıyor, yani §2.7 #8'in ("bir kontrolü sınayan test o
+# kontrolün KOPYASINI çalıştırmamalı") istediği şekil. Zincirleme kuralı yine
+# de geçerli: self-test VAR ama hiçbir gerçek kapı yolu onu ÇAĞIRMIYORSA
+# "doğrulama bir kapıdır, durdurmuyorsa doğrulama değildir" ihlal edilir.
+echo "=== self-test (single-mechanism) ==="
+if bash "$DIR/single-mechanism.sh" --self-test; then
+  echo "(single-mechanism fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! single-mechanism kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0
@@ -343,6 +358,25 @@ if [ "$LINT_RATCHET_RC" -ne 0 ]; then
   LINT_RATCHET_FAILED=1
 fi
 
+# ⛔ ROTA BAŞINA TEK MEKANİZMA — findings-sayıcı sözleşmesine girmez (bulgu
+# sayısı değil, bir İHLAL VAR/YOK kapısıdır), o yüzden ratchet'ler gibi ayrı
+# zincirlenir. `report` modunda da ÖLÇÜLÜR ve basılır; yalnız `block` modunda
+# çıkışı bağlar.
+SINGLE_MECH_OUT="$(bash "$DIR/single-mechanism.sh" 2>&1)"
+SINGLE_MECH_RC=$?
+printf '%s\n' "$SINGLE_MECH_OUT"
+echo
+# exit 2 = SETUP HATASI (ölçüm YAPILMADI, bulgu DEĞİL) — runner taksonomisinin
+# beşinci üreticisi. exit 3 = İHLAL. İkisini aynı kovaya yıkmak YANLIŞ TEŞHİS
+# bastırırdı (kaynak bulunamadığında "bir rota iki mekanizma taşıyor" demek).
+SINGLE_MECH_FAILED=0
+if [ "$SINGLE_MECH_RC" -eq 2 ]; then
+  echo "!! single-mechanism KURULUM HATASI / ÖLÇÜM YAPILMADI (exit 2) — koşum durduruldu" >&2
+  exit 2
+elif [ "$SINGLE_MECH_RC" -ne 0 ]; then
+  SINGLE_MECH_FAILED=1
+fi
+
 echo "=== ÖZET (GUARD_MODE=$GUARD_MODE) ==="
 printf "%b" "$SUMMARY"
 echo "  TOPLAM: $TOTAL bulgu"
@@ -357,6 +391,11 @@ if [ "$LINT_RATCHET_FAILED" -eq 1 ]; then
   echo "  lint-ratchet --ratchet: İHLAL — bir (dosya, kural) çifti baseline'ı aştı (yukarıya bak)"
 else
   echo "  lint-ratchet --ratchet: temiz"
+fi
+if [ "$SINGLE_MECH_FAILED" -eq 1 ]; then
+  echo "  single-mechanism: İHLAL — bir rota İKİ mekanizma taşıyor (yukarıya bak)"
+else
+  echo "  single-mechanism: temiz"
 fi
 
 if [ "$GUARD_MODE" = "block" ]; then
@@ -374,6 +413,10 @@ if [ "$GUARD_MODE" = "block" ]; then
   fi
   if [ "$LINT_RATCHET_FAILED" -eq 1 ]; then
     echo "  → GUARD_MODE=block ve lint-ratchet --ratchet ihlali var: exit 1"
+    exit 1
+  fi
+  if [ "$SINGLE_MECH_FAILED" -eq 1 ]; then
+    echo "  → GUARD_MODE=block ve single-mechanism ihlali var: exit 1"
     exit 1
   fi
 fi
