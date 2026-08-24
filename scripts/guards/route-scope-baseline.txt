@@ -1,13 +1,10 @@
 # route-scope baseline — ADIM 3 Faz B B0 ratchet reference (T-252)
-# date:    2026-08-22
-# commit:  583deb8
-# scope:   235 rota (src/**/*.controller.ts, 34 dosya)
+# date:    2026-08-24
+# commit:  80aa843
+# scope:   223 rota (src/**/*.controller.ts, 33 dosya)
 # format:  F <dosya>|<YÖNTEM>|<yol> <satır>
 #   anahtar <dosya>|<YÖNTEM>|<yol> — RATCHET yalnız bunu karşılaştırır.
 #   <satır> BİLGİ AMAÇLIDIR (mode-split F-satırı deseni) — dosyanın
 #   başka bir yerine eklenen/silinen bir satır anahtarı DEĞİŞTİRMEZ,
 #   yalnız bu sütunu bayatlatır. Bu dosya KENDİNİ YAZMAZ — B2'de her
 #   uç bağlandıkça AYRI, gözden geçirilebilir bir commit'te güncellenir.
-F src/modules/user/user.controller.ts|GET|users/me 84
-F src/modules/user/user.controller.ts|PATCH|users/me 99
-F src/modules/user/user.controller.ts|PATCH|users/me/password 125
