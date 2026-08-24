@@ -67,10 +67,17 @@ export class KpiController {
     return this.kpiService.findAll(tenantId, activeOnly === 'true');
   }
 
-  // T-267 (B1 §2d) — bu uç master-data DEĞİL, PLAN verisi döndürüyor
-  // ("bir planın verisi" — VERİ SINIFI bazında sınıflandırma, T-255 dersi).
-  // Gerekçe kaynağı: KARDEŞ uç — plan.controller.ts `GET /plans/:id`
-  // (aynı 5 rol, plan.controller.ts:201-208).
+  // ⚠️ Z30 H7 (2026-08-24) — ÇÜRÜMÜŞ GEREKÇE DÜZELTİLDİ. Eski yorum "bu uç
+  // master-data DEĞİL, PLAN verisi döndürüyor" diyordu; kpi.service.ts:94-95
+  // ("it never returns plan content — grid KPI defs only") ile ÇELİŞİYORDU,
+  // ve H6 ölçümü (2026-08-24) servisinkini destekledi: yanıt gövdesi
+  // findGridKpis ile BİT-BİT AYNI Kpi[] (KPI TANIMLARI, hesaplanmış değer
+  // değil). Doğru gerekçe: T-267 (B1 §1b) — findAll/findCalculableKpis ile
+  // AYNI katalog sınıfı (K-2.6.4, her rol için ayrı cümle). `:planId`
+  // yalnız planService.findById(actor) üzerinden bir 404-ORACLE KAPISI
+  // (T-028c) — veri FİLTRESİ değil. Kova (scope-ratchet) bu yüzden B'den
+  // C'ye taşındı (Z31 H4-5a): "veri sınıfı aynıysa kova aynı — KAPININ
+  // VARLIĞI kova belirlemez."
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
@@ -94,8 +101,12 @@ export class KpiController {
     });
   }
 
-  // T-267 (B1 §2d) — aynı gerekçe (yukarı bkz.): PLAN verisi, plan.controller
-  // kardeşi.
+  // T-267 (B1 §1b) — modül-READ, 5 rol, findAll/findCalculableKpis ile
+  // AYNI katalog sınıfı (K-2.6.4, her rol için ayrı cümle). ⚠️ Z30 H7
+  // (2026-08-24): önceki yorum bu ucu ":planId'li kardeşle aynı gerekçe"
+  // diye PLAN verisine bağlıyordu — kardeşin KENDİ gerekçesi çürüdü
+  // (yukarı bkz.), bu satır ETKİLENMEDİ: bu uç zaten hiç plan-gate
+  // taşımıyor (kova hep C'ydi), kaynağı tek katalog tablosu (main.kpis).
   @Roles(
     UserRole.ADMIN,
     UserRole.PLANNER,
