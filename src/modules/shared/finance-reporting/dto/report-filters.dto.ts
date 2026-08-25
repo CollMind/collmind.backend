@@ -6,6 +6,9 @@ import {
   IsEnum,
   IsOptional,
   IsUUID,
+  IsInt,
+  Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -93,6 +96,33 @@ export class ReportFilters {
   @IsString()
   @IsOptional()
   fiscalYear?: string;
+
+  /**
+   * [[T-294]] — cash-flow-projection'a özel. Önceden controller'da AYRI bir
+   * `@Query('months') months: number = 12` olarak bildiriliyordu; global
+   * `ValidationPipe`nin çıplak primitive @Query() parametrelerinde yaptığı
+   * `Number(undefined)` dönüşümü değeri `NaN`'a çeviriyor ve bu, JS default
+   * parametresinin (`= 12`) devreye girmesini ENGELLİYORDU (default yalnız
+   * argüman `undefined` ise uygulanır, `NaN` `undefined` değildir) — sonuç
+   * parametresiz çağrıda `endDate.setMonth(NaN)` → `Invalid Date` → 500.
+   * DTO alanı olarak burada bildirilmesi, `@Type(()=>Number)` dönüşümünün ve
+   * sınır kontrolünün (§2.5: geçersiz girdi = açık hata) TEK yerde,
+   * class-transformer'ın normal "eksikse initializer değeri kalır" akışıyla
+   * çalışmasını sağlar (`PaginationParams.page` ile aynı desen).
+   */
+  @ApiPropertyOptional({
+    description:
+      'Cash-flow projection ileri ay sayısı (yalnız cash-flow-projection). 1-60 arası.',
+    default: 12,
+    minimum: 1,
+    maximum: 60,
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  @IsOptional()
+  months?: number = 12;
 }
 
 export class PaginationParams {

@@ -231,12 +231,14 @@ export class FinanceReportingController {
   getCashFlowProjection(
     @TenantId() tenantId: string,
     @Query() filters: ReportFilters,
-    @Query('months') months: number = 12,
   ) {
+    // [[T-294]] `months` artık tek yerde: `ReportFilters.months`
+    // (DTO-level default + @Type(()=>Number)/@IsInt/@Min/@Max). Çıplak
+    // `@Query('months')` bildirimi kaldırıldı — bkz. dto/report-filters.dto.ts.
     return this.financeReportingService.getCashFlowProjection(
       tenantId,
       filters,
-      months,
+      filters.months ?? 12,
     );
   }
 }
