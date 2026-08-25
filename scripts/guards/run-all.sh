@@ -377,6 +377,23 @@ elif [ "$SINGLE_MECH_RC" -ne 0 ]; then
   SINGLE_MECH_FAILED=1
 fi
 
+# ⛔ ROTA→HÜCRE MUTABAKATI (T-288) — bu dosya YEDİ kapı taşıyor (G1..G7) ve
+# ihlalde exit 2 veriyordu, ama HİÇBİR KAPI YOLU onu ÇAĞIRMIYORDU:
+# "doğrulama bir KAPIDIR — durdurmuyorsa doğrulama değildir".
+# Aciliyeti bir VAKA ile ölçüldü (W3): kanonik üretici veri UYDURDU
+# (roles_for'un dosya-geneli geri düşüşü başka rotanın @Roles'unu atfediyordu)
+# ve yakalayan bir kapı değil, ÇIKTIYA BAKMAK oldu.
+# stdout TSV'dir — yutulur; ölçüm stderr'de.
+RCM_OUT="$(python3 "$DIR/../analysis/route-cell-map.py" 2>&1 >/dev/null)"
+RCM_RC=$?
+echo "=== [route-cell-map] rota→hücre mutabakatı ==="
+printf '%s\n' "$RCM_OUT" | sed -n '/=== MUTABAKAT ===/,$p'
+echo
+RCM_FAILED=0
+if [ "$RCM_RC" -ne 0 ]; then
+  RCM_FAILED=1
+fi
+
 echo "=== ÖZET (GUARD_MODE=$GUARD_MODE) ==="
 printf "%b" "$SUMMARY"
 echo "  TOPLAM: $TOTAL bulgu"
@@ -396,6 +413,11 @@ if [ "$SINGLE_MECH_FAILED" -eq 1 ]; then
   echo "  single-mechanism: İHLAL — bir rota İKİ mekanizma taşıyor (yukarıya bak)"
 else
   echo "  single-mechanism: temiz"
+fi
+if [ "$RCM_FAILED" -eq 1 ]; then
+  echo "  route-cell-map: İHLAL — mutabakat düştü (G1..G7, yukarıya bak)"
+else
+  echo "  route-cell-map: temiz"
 fi
 
 if [ "$GUARD_MODE" = "block" ]; then
@@ -417,6 +439,10 @@ if [ "$GUARD_MODE" = "block" ]; then
   fi
   if [ "$SINGLE_MECH_FAILED" -eq 1 ]; then
     echo "  → GUARD_MODE=block ve single-mechanism ihlali var: exit 1"
+    exit 1
+  fi
+  if [ "$RCM_FAILED" -eq 1 ]; then
+    echo "  → GUARD_MODE=block ve route-cell-map mutabakatı düştü: exit 1"
     exit 1
   fi
 fi

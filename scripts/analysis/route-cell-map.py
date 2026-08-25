@@ -202,6 +202,41 @@ def cell_for(f, meth, path):
         return 'MODES_WRITE_?','?'
     return f'{fam}_{verb}','MEKANIK'
 
+TSV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        '..', '..', '..',
+                        'docs', 'process', 'B3A_EK3_ROTA_HUCRE_ESLEMESI.tsv')
+
+def check_tsv_drift(rows, out):
+    """T-288 — commit'li TSV ile TAZE üretim BİREBİR mi.
+
+    Vaka: commit'li TSV `W2` boyunca BİR DALGA BAYATLADI (tenant rotalarını
+    hâlâ ROLES gösteriyordu) ve onu gören kapı YOKTU. Elle `diff` alınıyordu.
+
+    ⛔ SKIPPED bir GEÇİŞ DEĞİL: dosya bulunamazsa exit 2 (SETUP HATASI) —
+    money-float'ın dersi ("SKIPPED is not a pass") ve o ders yalnız runner
+    onu grep'lediği için güvenliydi; burada SESSİZ GEÇİŞ hiç olmuyor.
+    """
+    path = os.path.normpath(TSV_PATH)
+    if not os.path.exists(path):
+        print(f'G7 TSV DRIFT: SETUP HATASI — bulunamadi: {path}', file=out)
+        return None
+    committed = [l.rstrip('\n') for l in io.open(path, encoding='utf-8')
+                 if l.strip() and not l.startswith('#')]
+    fresh = ['\t'.join(str(x) for x in r) for r in rows]
+    # POZ.KONTROL: iki taraf da BOŞ DEĞİL — iki bos listenin esitligi rc=0 verir
+    if not committed or not fresh:
+        print(f'G7 TSV DRIFT: SETUP HATASI — bos taraf '
+              f'(commit={len(committed)} taze={len(fresh)})', file=out)
+        return None
+    same = committed == fresh
+    print(f'G7 TSV drift    commit={len(committed)} taze={len(fresh)} '
+          f'{"BIREBIR" if same else "FARKLI"}', file=out)
+    if not same:
+        cs, fs = set(committed), set(fresh)
+        for x in sorted(fs - cs)[:5]: print(f'   + taze: {x[:110]}', file=out)
+        for x in sorted(cs - fs)[:5]: print(f'   - commit: {x[:110]}', file=out)
+    return same
+
 def reconcile(rows):
     """MUTABAKAT — exit 2 ile durduran bir kapi.
 
@@ -333,6 +368,14 @@ def reconcile(rows):
     for r in unresolved:
         err.append(f'G6 BEYAN COZULEMEDI: {r[1]} {r[2]} ({r[0]}) — '
                    f'@RequireCapability argumani CAPABILITIES.X yaziminda degil')
+
+    # G7 — TSV DRIFT (T-288)
+    drift = check_tsv_drift(rows, out)
+    if drift is None:
+        err.append('G7 TSV drift OLCULEMEDI (SETUP HATASI, yukari bkz)')
+    elif not drift:
+        err.append('G7 TSV DRIFT: commit\'li TSV ile taze uretim AYRISIYOR — '
+                   'artefakt bayat. Yeniden uret ve AYNI commit setinde guncelle.')
 
     # W1 — uyari, kapi degil
     # S1 (W3 review): EVREN G3 ile AYNI daraltmayı alır — göçen rotanın
