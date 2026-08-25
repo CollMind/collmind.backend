@@ -14,11 +14,11 @@
 # ve üçü de kırılmadı (kendi self-test'leri rc=0).
 # 9. sütunun tüketicisi: `scripts/guards/single-mechanism.sh`.
 #
-# ⚠️ SINIFLANDIRICI col9'u BİLMEZ: `route-scope.sh`'in dört kovası yalnız
-# `@Roles`/`@Public`/`SELF`/`ALAN_GUARD` tanır. Bugün etkisi YOK (col9 223/223
-# sıfır), ama İLK GÖÇEN ROTA `FILTRESIZ`/`A1`'e düşer — `Z26`/`Z28` emsalinde
-# `@SelfScoped` turunda sınıflandırıcıya da bir kova eklenmişti. `Faz B`
-# (`W1`) ön koşulu: kova eklenmeli.
+# ✅ SINIFLANDIRICI col9'u BİLİYOR (W1, 2026-08-25): `route-scope.sh` bir
+# `CAPABILITY` kovası aldı ve `@RequireCapability` taşıyan rota artık
+# `FILTRESIZ`e DÜŞMÜYOR. `Z26`/`Z28` emsali karşılandı (dekoratör ve
+# sınıflandırıcı AYNI dalgada). Uyarı `F12` iziyle kapandı; kovayı yeniden
+# eklemeye gerek YOK.
 #
 # guardsCSV = CONTROLLER-seviyesi @UseGuards ∪ ROTA-seviyesi @UseGuards'taki
 # guard adlarının virgülle ayrılmış, sıralı birleşimi ("-" boşsa).

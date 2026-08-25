@@ -7,21 +7,25 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { CapabilityGuard } from '../../common/guards/capability.guard';
+import { RequireCapability } from '../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../common/authorization/capabilities';
 import { TenantId } from '../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { UserRole } from '../../database/entities/user.entity';
 import { AdminAuditService } from '../../common/services/admin-audit.service';
 
+// `B3 W1` pilot göçü (2026-08-25): `@Roles(ADMIN)` → `@RequireCapability(ADMIN_READ)`.
+// `ROLE_CAPABILITIES`'te `ADMIN_READ` yalnız `UserRole.ADMIN`'de — davranış
+// KORUNUYOR (pin: göç öncesi/sonrası ADMIN 200, diğer sekiz rol 403, birebir).
 @ApiTags('Admin - Audit Logs')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('admin')
 export class AdminAuditController {
   constructor(private readonly auditService: AdminAuditService) {}
 
   @Get('audit-log')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.ADMIN_READ)
   @ApiOperation({ summary: 'Get audit logs' })
   @ApiResponse({ status: 200, description: 'List of audit logs' })
   findAll(
@@ -35,7 +39,7 @@ export class AdminAuditController {
   }
 
   @Get('audit-log/high-risk')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.ADMIN_READ)
   @ApiOperation({ summary: 'Get high-risk audit logs' })
   @ApiResponse({ status: 200, description: 'List of high-risk audit logs' })
   getHighRisk(@TenantId() tenantId: string, @Query('limit') limit?: string) {

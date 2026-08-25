@@ -5,8 +5,9 @@
 # Sebep: iki mekanizma aynı rotada birbirini GEVŞETİR — hangisinin bağladığı
 # bir OKUMA sorusu olur, ve `İlke 4` (aynı olgunun iki temsili) doğar.
 #
-# ⛔ BUGÜN 0 İHLAL VAR VE BU BEKLENEN — Dalga-M `0` rota göçürür. Sıfır bir
-# BAŞARI OLAYI DEĞİL, sadece henüz göç başlamamış olması. Bu yüzden burada
+# ⛔ 0 İHLAL BEKLENEN DURUMDUR — ve gerekçesi W1'den (2026-08-25) beri
+# DEĞİŞTİ: artık "göç başlamadı" değil, "göç eden her rota TEK mekanizma
+# taşıyor" demek. Sıfır bir BAŞARI OLAYI DEĞİL, sağlıklı hâl. Bu yüzden burada
 # `Z29`'un "boş baseline = setup hatası" tuzağı YOK: sıfır ihlal sessizce
 # yeşildir, ve ölçülen SAYILAR her koşumda BASILIR ki kapsam görünür kalsın.
 #
@@ -40,7 +41,17 @@ run_gate() {
   total=$(printf '%s\n' "$out" | grep -c .)
   roles=$(printf '%s\n' "$out" | awk -F'\t' '$5=="1"' | grep -c . || true)
   caps=$(printf '%s\n' "$out" | awk -F'\t' '$9=="1"' | grep -c . || true)
-  both=$(printf '%s\n' "$out" | awk -F'\t' '$5=="1" && $9=="1"' || true)
+  # N-1 (W1 review): ÜÇ mekanizma çifti de sayılır, yalnız ROLES×CAPABILITY
+  # değil. @Public + @RequireCapability özellikle sinsi: JwtAuthGuard atlanır,
+  # req.user OLMAZ, capability.guard `!user -> false` verir ⇒ KALICI 403 ÖLÜ
+  # ROTA — ve route-scope onu "PUBLIC" diye sınıflar, yani hiçbir kapı görmez.
+  # SELF×CAPABILITY de aynı aile (iki farklı yüklem, hangisi bağlıyor?).
+  # Bugün üçü de 0 (ölçüldü), ama kova sırası bunları SESSİZCE çözüyordu.
+  both=$(printf '%s\n' "$out" | awk -F'\t' '
+    ($5=="1" && $9=="1") { printf "%s\t%s\t%s\t%s\t@Roles+@RequireCapability\n",$1,$2,$3,$4 }
+    ($6=="1" && $9=="1") { printf "%s\t%s\t%s\t%s\t@Public+@RequireCapability\n",$1,$2,$3,$4 }
+    ($8=="1" && $9=="1") { printf "%s\t%s\t%s\t%s\t@SelfScoped+@RequireCapability\n",$1,$2,$3,$4 }
+  ' || true)
 
   echo "=== [single-mechanism] rota başına tek mekanizma ==="
   echo "  toplam rota      : $total"
@@ -51,7 +62,7 @@ run_gate() {
 
   if [ -n "$both" ]; then
     echo "  ⛔ İHLAL — aynı rotada İKİ mekanizma:"
-    printf '%s\n' "$both" | awk -F'\t' '{printf "     %s %s  (%s:%s)\n",$3,$4,$1,$2}'
+    printf '%s\n' "$both" | awk -F'\t' '{printf "     %s %s  [%s]  (%s:%s)\n",$3,$4,$5,$1,$2}'
     echo "  Bir rota @Roles VEYA @RequireCapability taşır, ikisini birden DEĞİL."
     viol=1
   else
@@ -212,12 +223,34 @@ EOF
     echo "⛔ [case H] sızıntı ya da yanlış tespit; rc=$rc"; printf '%s\n' "$outh"; fail=1
   fi
 
+  # case I — POZ.KONTROL (N-1): @Public + @RequireCapability. JwtAuthGuard
+  # atlanır → req.user yok → guard false → KALICI 403 ölü rota; route-scope
+  # onu "PUBLIC" sanır. Kapı bunu görmeli.
+  mkdir -p "$tmp/i"
+  cat > "$tmp/i/i.controller.ts" <<'EOF'
+@Controller('i')
+@UseGuards(JwtAuthGuard, CapabilityGuard)
+export class IController {
+  @Get('dead')
+  @Public()
+  @RequireCapability(CAPABILITIES.ADMIN_READ)
+  x() {}
+}
+EOF
+  local outi
+  outi=$(SINGLE_MECH_SRC="$tmp/i" run_gate 2>&1); rc=$?
+  if [ "$rc" -eq 3 ] && printf '%s' "$outi" | grep -q '@Public+@RequireCapability'; then
+    echo "-- [case I] POZ.KONTROL: @Public + @RequireCapability → exit 3, çift ADLANDIRILDI"
+  else
+    echo "⛔ [case I] beklenen exit 3 + çift adı; gelen rc=$rc"; printf '%s\n' "$outi"; fail=1
+  fi
+
   # case D — boş kaynak → SETUP HATASI (sessiz yeşil DEĞİL)
   mkdir -p "$tmp/d"
   SINGLE_MECH_SRC="$tmp/d" run_gate >/dev/null 2>&1; rc=$?
   if [ "$rc" -eq 2 ]; then echo "-- [case D] boş kaynak → exit 2 (SETUP HATASI)"; else echo "⛔ [case D] beklenen 2, gelen $rc"; fail=1; fi
 
-  [ "$fail" -eq 0 ] && echo "-- single-mechanism self-test: 8 senaryo tutuyor" && return 0
+  [ "$fail" -eq 0 ] && echo "-- single-mechanism self-test: 9 senaryo tutuyor" && return 0
   echo "⛔ single-mechanism self-test DÜŞTÜ"; return 2
 }
 

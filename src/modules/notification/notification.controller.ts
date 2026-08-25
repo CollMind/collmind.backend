@@ -18,11 +18,12 @@ import {
 import { NotificationService } from './notification.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { CapabilityGuard } from '../../common/guards/capability.guard';
+import { RequireCapability } from '../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../common/authorization/capabilities';
 import { SelfScoped } from '../../common/decorators/self-scoped.decorator';
 import { TenantId } from '../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { UserRole } from '../../database/entities/user.entity';
 
 // T-249 — bu üç rota `@Roles` TAŞIMIYORDU → `RolesGuard` fail-open
 // ([[T-181]] sınıfı, `0074 §5`'in 72 rol-kısıtsız ucundan üçü). Karar
@@ -38,29 +39,29 @@ import { UserRole } from '../../database/entities/user.entity';
 // (`SELF_OLCUM_RAPORU.md §1`: "Bir rolü dışarıda bırakmak o rolün KENDİ
 // bildirimlerini görememesi demek olurdu, iş kuralı değil" — `Z18 §4`'ün
 // "union böyle dedi" gerekçesinin canlı vakasıydı). İki uç `@SelfScoped()`
-// aldı; `NOTIFICATION_ROLES` sabiti tek kalan tüketicisi (`markAsRead`)
-// için duruyor — o uç `Z26`'nın kapsamı DIŞINDA (bir SELF yüklemi değil,
-// `recipientId` sahiplik kontrolü AYRI bir sınıf, T-275).
+// aldı; `markAsRead` `Z26`'nın kapsamı DIŞINDA kalmıştı (bir SELF yüklemi
+// değil, `recipientId` sahiplik kontrolü AYRI bir sınıf, T-275).
 //
-// ⚠️ Bu `@Roles` yalnız "KİM çağırabilir" sorusunu daraltır — kaynak sahipliği
-// (`recipientId`) AYRI bir kontroldür. T-249 bunu bilerek erteledi ("markAsRead
-// hâlâ çağıranın recipientId'sini kontrol etmiyor"); T-249'un GRANT'i `500`
-// örtüsünü kaldırınca içteki kusur CANLI hâle geldi ve düzeltildi (T-275,
-// 2026-08-24): `markAsRead` artık `@CurrentUser('id')` alıyor ve
-// `NotificationRepository.findById` `recipientId`'yi WHERE'e katıyor —
-// kardeşleri (`findByRecipient`/`findUnreadByRecipient`/`countUnread`) ile
-// AYNI şart. Sahiplenmeyen/var olmayan kayıt ikisi de `404` (varlık sızmaz).
-const NOTIFICATION_ROLES = [
-  UserRole.ADMIN,
-  UserRole.FINANCE,
-  UserRole.CATEGORY_MANAGER,
-  UserRole.PLANNER,
-  UserRole.READONLY,
-] as const;
+// ⚠️ `@Roles`/`@RequireCapability` yalnız "KİM çağırabilir" sorusunu daraltır
+// — kaynak sahipliği (`recipientId`) AYRI bir kontroldür. T-249 bunu bilerek
+// erteledi ("markAsRead hâlâ çağıranın recipientId'sini kontrol etmiyor");
+// T-249'un GRANT'i `500` örtüsünü kaldırınca içteki kusur CANLI hâle geldi ve
+// düzeltildi (T-275, 2026-08-24): `markAsRead` artık `@CurrentUser('id')`
+// alıyor ve `NotificationRepository.findById` `recipientId`'yi WHERE'e
+// katıyor — kardeşleri (`findByRecipient`/`findUnreadByRecipient`/
+// `countUnread`) ile AYNI şart. Sahiplenmeyen/var olmayan kayıt ikisi de
+// `404` (varlık sızmaz).
+//
+// `B3 W1` pilot göçü (2026-08-25): `@Roles(...NOTIFICATION_ROLES)` →
+// `@RequireCapability(NOTIFICATION_WRITE)`. `ROLE_CAPABILITIES`'te
+// `NOTIFICATION_WRITE` beş rolün BEŞİNDE de var (ADMIN, PLANNER,
+// CATEGORY_MANAGER, FINANCE, READONLY) — eski `NOTIFICATION_ROLES` listesiyle
+// birebir aynı küme. Davranış KORUNUYOR (pin: göç öncesi/sonrası dokuz seed
+// kullanıcının hepsi `404`, hiçbiri `403`).
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('notifications')
 export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
@@ -95,7 +96,7 @@ export class NotificationController {
   // T-275: `recipientId` artık servise geçiyor — kardeşleri (`getAllNotifications`,
   // `getUnreadNotifications`) zaten `user.id`'yi kullanıyordu, bu uç KULLANMIYORDU.
   @Post(':id/read')
-  @Roles(...NOTIFICATION_ROLES)
+  @RequireCapability(CAPABILITIES.NOTIFICATION_WRITE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark notification as read' })
   @ApiResponse({ status: 200, description: 'Notification marked as read' })

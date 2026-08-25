@@ -13,7 +13,8 @@
 # düşürülür (mode-split/money-float ile AYNI ratchet deseni).
 #
 # NE ÖLÇER
-#   src/**/*.controller.ts altındaki HER rotayı DÖRT kovaya ayırır:
+#   src/**/*.controller.ts altındaki HER rotayı AŞAĞIDAKİ kovalara ayırır
+#   (sayı YAZILMAZ — kova eklendiğinde bayatlar; liste kanoniktir):
 #     PUBLIC       @Public() taşıyan rota (route-level)
 #     SELF         @SelfScoped() taşıyan rota (route-level) — `Z26`/`Z28`
 #                  (`docs/brd-v2/04_KARAR_KAYDI.md`): "kayıt benim mi"
@@ -21,13 +22,18 @@
 #                  DEĞİLDİR — PUBLIC/ALAN_GUARD gibi ayrı raporlanır, ASLA
 #                  "filtresiz" sayılmaz.
 #     ROLES        @Roles(...) taşıyan rota (route-level) — korunuyor
-#     ALAN_GUARD   @UseGuards(...) içinde JwtAuthGuard/RolesGuard DIŞINDA
+#     CAPABILITY   @RequireCapability taşıyor — B3 yetenek göçü, filtresiz
+#                  DEĞİL. ⚠️ Geçerliliği AYRI bir kurulum kontrolüne bağlı:
+#                  aşağıdaki CAP_NO_GUARD bloğu, dekoratör varken
+#                  CapabilityGuard zincirde değilse exit 2 verir (bileşimsel
+#                  fail-open). Kova o kontrol olmadan bir koruma İDDİA ETMEZ.
+#     ALAN_GUARD   @UseGuards(...) içinde INFRA_GUARDS DIŞINDA
 #                  bir guard adı taşıyan rota (controller VEYA route level) —
 #                  o guard'ın roller ZORLADIĞI VARSAYILIR (bugün ölçülmüş
 #                  iki örnek: ReversalGuard, SettlementGuard — ikisi de
 #                  guard'ın İÇİNDE sabit bir rol listesi taşıyor)
 #     FILTRESIZ    hiçbiri — ya guard seti tümüyle boş, ya da yalnızca
-#                  JwtAuthGuard/RolesGuard taşıyor (RolesGuard @Roles
+#                  INFRA_GUARDS taşıyor (RolesGuard @Roles
 #                  metadata'sı OKUNAMAZSA `canActivate` true döner —
 #                  roles.guard.ts:16-18 — yani RolesGuard'ın TEK BAŞINA
 #                  varlığı hiçbir şeyi kısıtlamaz; bu BİLGİ, kod okunarak
@@ -52,9 +58,10 @@
 #   yalnız <dosya>|<YÖNTEM>|<yol> anahtarına bakar.
 #
 # ÜÇÜNCÜ BİR KORUMA KANALI — DUR
-#   Bilinen guard adları: JwtAuthGuard, RolesGuard (altyapı — rol
+#   Bilinen guard adları: JwtAuthGuard, RolesGuard, CapabilityGuard (altyapı — rol
 #   ZORLAMAZ) · ReversalGuard, SettlementGuard (alan — rol zorlar, ölçüldü).
-#   Bu dördünün DIŞINDA bir @UseGuards argümanı görülürse guard SETUP
+#   INFRA_GUARDS ve KNOWN_DOMAIN_GUARDS listelerinin DIŞINDA bir @UseGuards
+#   argümanı görülürse guard SETUP
 #   HATASI verir (exit 2) — sessizce bir kovaya atamaz. T-252 görev
 #   talimatı: "üçüncü bir koruma kanalı bulursan DUR, kapsamı kendi başına
 #   genişletme." Bu kontrol o DUR'u MEKANİZMAYA bağlar.
@@ -166,7 +173,14 @@ fi
 # adlarını KULLANMAZ — kendi sentetik adlarını kullanır ki üretim listesiyle
 # YANLIŞLIKLA örtüşüp kanalı yanlış doğrulamasın; migration-schema.sh'in
 # GUARD_MIG_DIR deseniyle aynı aile).
-INFRA_GUARDS=" ${ROUTE_SCOPE_INFRA_GUARDS:-JwtAuthGuard RolesGuard} "
+# CapabilityGuard neden INFRA: capability.guard.ts:38-40 — yetenek metadata'sı
+# YOKSA canActivate TRUE döner, yani guard TEK BAŞINA koruma SAĞLAMAZ (kod
+# okunarak doğrulandı, varsayılmadı). DOMAIN sayılsaydı yalnız CapabilityGuard
+# taşıyan (ama @RequireCapability taşımayan) bir rota ALAN_GUARD = "korunuyor"
+# diye sınıflanırdı — oysa KORUMASIZ. INFRA fail-safe taraftır; fixture ile
+# ölçüldü (Dalga-M/W1 review D): DOMAIN altında böyle bir rota FILTRESIZ'den
+# çıkıyor, INFRA altında çıkmıyor.
+INFRA_GUARDS=" ${ROUTE_SCOPE_INFRA_GUARDS:-JwtAuthGuard RolesGuard CapabilityGuard} "
 KNOWN_DOMAIN_GUARDS=" ${ROUTE_SCOPE_DOMAIN_GUARDS:-ReversalGuard SettlementGuard} "
 
 UNKNOWN="$(awk -F'\t' '
@@ -185,7 +199,7 @@ if [ -n "$UNKNOWN" ]; then
   {
     echo "!! [$GUARD_NAME] SETUP HATASI / DUR: bilinmeyen guard adı(ları) bulundu:"
     printf '%s\n' "$UNKNOWN" | sed 's/^/!!   /'
-    echo "!! Bilinen kanallar: JwtAuthGuard, RolesGuard (altyapı) · ReversalGuard,"
+    echo "!! Bilinen kanallar: JwtAuthGuard, RolesGuard, CapabilityGuard (altyapı) · ReversalGuard,"
     echo "!! SettlementGuard (alan — rol zorluyor). Bunların DIŞINDA bir isim ÜÇÜNCÜ"
     echo "!! bir koruma kanalı olabilir — T-252: 'kapsamı kendi başına genişletme,"
     echo "!! DUR'. Bu guard onu otomatik sınıflandırmaz; ölçüm YAPILMADI."
@@ -263,6 +277,40 @@ else
     } >&2
     exit 2
   fi
+
+  # ── İKİZ KONTROL (Dalga-M/W1 review S-3): @RequireCapability için AYNISI.
+  # Bu blok olmadan CAPABILITY kovası, DOĞRULAYAMADIĞI bir korumayı iddia
+  # ediyordu: kovanın geçerliliği single-mechanism.sh KURAL 2'ye yaslanıyordu
+  # ve o bağ hiçbir yerde YAZILI DEĞİLDİ. Ölçüldü: iki controller'dan
+  # CapabilityGuard cikarilinca single-mechanism rc=3 verdi ama route-scope
+  # rc=0 ile "CAPABILITY: 3, filtresiz DEGIL" demeye DEVAM ETTI — kör.
+  # T-111 port dersi: davranisi dogru kilan baglam TASINMAZ, ya beraber
+  # tasinir ya davranis degisir. Veri zaten tuple'da (7. ve 9. sutun),
+  # ikinci bir ayristirici GEREKMEZ.
+  CAP_NO_GUARD="$(awk -F'\t' '
+    $9 == 1 {
+      has_cg = 0
+      if ($7 != "-") {
+        n = split($7, g, ",")
+        for (i = 1; i <= n; i++) if (g[i] == "CapabilityGuard") { has_cg = 1; break }
+      }
+      if (!has_cg) printf "%s|%s|%s\n", $1, $3, $4
+    }
+  ' "$CUR")"
+
+  if [ -n "$CAP_NO_GUARD" ]; then
+    {
+      echo "!! [$GUARD_NAME] SETUP HATASI: @RequireCapability taşıyan rota(lar) CapabilityGuard ZİNCİRDE DEĞİL:"
+      printf '%s\n' "$CAP_NO_GUARD" | sed 's/^/!!   /'
+      echo "!! @RequireCapability DEKORATÖRÜ YETMEZ — GUARD ZİNCİRİ de gerekir."
+      echo "!! capability.guard.ts:38-40: yetenek metadata'sı bulunamazsa canActivate"
+      echo "!! TRUE döner. Guard zincirde yoksa metadata HİÇ OKUNMAZ; ve @Roles de"
+      echo "!! kaldırıldığı için RolesGuard da true döner ⇒ rota HER kimliği"
+      echo "!! doğrulanmış kullanıcıya AÇILIR (BİLEŞİMSEL FAIL-OPEN, Dalga-M S2)."
+      echo "!! Bu bir KOVA DEĞİL, KURULUM HATASIDIR."
+    } >&2
+    exit 2
+  fi
 fi
 
 # --- sınıflandırma -----------------------------------------------------------
@@ -285,6 +333,15 @@ classify() {
       if ($6 == 1) bucket = "PUBLIC"
       else if ($8 == 1) bucket = "SELF"
       else if ($5 == 1) bucket = "ROLES"
+      # T-284 on kosulu (Dalga-M review S3): @RequireCapability tasiyan rota
+      # FILTRESIZ DEGILDIR — yetenek kapisiyla korunuyor. Kova ROLES sonrasi
+      # gelir; ikisini birden tasiyan bir rota single-mechanism.sh tarafindan
+      # ZATEN engelleniyor (exit 3), yani bu sira bir tie-break degil.
+      # Z26/Z28 emsali: @SelfScoped turunda dekoratorle AYNI TURDA
+      # siniflandiriciya SELF kovasi eklenmisti; eklenmeseydi yeni uclar hic
+      # kirmiziya donmeden FILTRESIZ kovasina duserdi. Ayni ders, yeni kovada.
+      # (APOSTROF YOK: bu blok tek-tirnakli bir awk programinin ICINDE.)
+      else if ($9 == 1) bucket = "CAPABILITY"
       else if (has_domain($7)) bucket = "ALAN_GUARD"
       else bucket = "FILTRESIZ"
       printf "%s\t%s\t%s\t%s\t%s\t%s\n", bucket, key, $1, $2, $3, $4
@@ -298,6 +355,7 @@ PUBLIC_N="$(awk -F'\t' '$1=="PUBLIC"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 SELF_N="$(awk -F'\t' '$1=="SELF"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 ROLES_N="$(awk -F'\t' '$1=="ROLES"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 ALAN_N="$(awk -F'\t' '$1=="ALAN_GUARD"' "$CLASSIFIED" | wc -l | tr -d ' ')"
+CAP_N="$(awk -F'\t' '$1=="CAPABILITY"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 FILTRESIZ_N="$(awk -F'\t' '$1=="FILTRESIZ"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 
 # --- --baseline: bugünkü FILTRESIZ envanterini bas (LİSTE, sayı DEĞİL) ------
@@ -317,7 +375,7 @@ if [ "${1:-}" = "--baseline" ]; then
 fi
 
 # --- kova özeti (HER ZAMAN basılır — GUARD_MODE'dan bağımsız) ---------------
-echo "=== [$GUARD_NAME] dört kova ==="
+echo "=== [$GUARD_NAME] kovalar ==="
 echo "  FILTRESIZ (ratchet'in konusu): $FILTRESIZ_N"
 awk -F'\t' '$1=="FILTRESIZ" { print "    " $2 }' "$CLASSIFIED" | LC_ALL=C sort | sed -n '1,5p'
 [ "$FILTRESIZ_N" -gt 5 ] && echo "    ... (+$((FILTRESIZ_N - 5)) diğer)"
@@ -327,6 +385,8 @@ echo "  SELF (kimlik-yüklemli, filtresiz DEĞİL — Z26/Z28): $SELF_N"
 awk -F'\t' '$1=="SELF" { print "    " $2 }' "$CLASSIFIED" | LC_ALL=C sort
 echo "  ALAN_GUARD (guard içinde rol zorluyor, filtresiz DEĞİL): $ALAN_N"
 awk -F'\t' '$1=="ALAN_GUARD" { print "    " $2 }' "$CLASSIFIED" | LC_ALL=C sort
+echo "  CAPABILITY (@RequireCapability — B3 göçü, filtresiz DEĞİL): $CAP_N"
+awk -F'\t' '$1=="CAPABILITY" { print "    " $2 }' "$CLASSIFIED" | LC_ALL=C sort
 echo "  (bilgi) ROLES: $ROLES_N · TOPLAM rota: $TOTAL_ROUTES"
 echo
 

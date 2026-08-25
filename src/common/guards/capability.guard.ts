@@ -16,9 +16,13 @@ import { UserRole } from '../../database/entities/user.entity';
  * `RolesGuard`'ın kaldırılması `B4`'ün işidir ve kalan-`@Roles` listesi
  * BOŞALMADAN yapılamaz — bir karar değil, bir ÖLÇÜM SONUCU.
  *
- * ⚠️ Bu tur `0` rota göçürür: guard doğar, hiçbir controller'a takılmaz.
- * Yani mevcut `223` rotanın davranışı DEĞİŞMEZ — pin'in üçüncü bacağı bunu
- * ölçer.
+ * ⚠️ `Dalga-M` (kuruluş turu) `0` rota göçürdü — guard doğdu, hiçbir
+ * controller'a takılmadı. **`W1` (2026-08-25) ilk tüketiciyi getirdi:**
+ * `admin/audit-log` · `admin/audit-log/high-risk` · `notifications/:id/read`.
+ * Güncel üyelik için:
+ *   bash scripts/guards/route-scope.sh --list   # CAPABILITY kovası
+ * (Sayı BURAYA yazılmaz — elle yazılmış her üye-sayısı bir sonraki göçte
+ * yalan söyler; ölçülmüş oran bu repoda 9/9 kusurlu.)
  */
 @Injectable()
 export class CapabilityGuard implements CanActivate {

@@ -746,6 +746,99 @@ else
   echo "-- [case G5] @Roles taşımayan rotalar (filtresiz/@Public/alan-guard'lı) → bulgu ÜRETİLMEDİ (negatif kontrol)"
 fi
 
+# ── case C1/C2 (W1, Dalga-M review S-6) — CAPABILITY kovası ───────────────
+# Z26/Z28 emsali: bir kova indiğinde self-test'e de iner. SELF kovası 16 atıf
+# almıştı; CAPABILITY sıfırla doğmuştu.
+
+# C1: @RequireCapability + CapabilityGuard → CAPABILITY kovası, FILTRESIZ DEĞİL
+C_SRC="$TMP/cap1/src"
+mkdir -p "$C_SRC"
+cat > "$C_SRC/cap.controller.ts" << 'EOF'
+@Controller('cap')
+@UseGuards(JwtAuthGuard, CapabilityGuard)
+export class CapController {
+  @Get('read')
+  @RequireCapability(CAPABILITIES.ADMIN_READ)
+  read() {
+    return 'ok';
+  }
+}
+EOF
+OUT_C1="$(ROUTE_SCOPE_SRC_DIR="$C_SRC" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_C1=$?
+if [ "$RC_C1" -ne 0 ]; then
+  echo "!! self-test FAIL [case C1]: exit 0 bekleniyordu, $RC_C1" >&2
+  printf '%s\n' "$OUT_C1" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT_C1" | grep -qE "CAPABILITY .*: 1" \
+     || ! printf '%s\n' "$OUT_C1" | grep -qE "FILTRESIZ .*: 0"; then
+  echo "!! self-test FAIL [case C1]: CAPABILITY=1 ve FILTRESIZ=0 bekleniyordu" >&2
+  printf '%s\n' "$OUT_C1" >&2
+  FAIL=1
+else
+  echo "-- [case C1] @RequireCapability + CapabilityGuard → CAPABILITY kovası (FILTRESIZ DEĞİL)"
+fi
+
+# C2: POZİTİF KONTROL — dekoratör YOK, yalnız sınıf-seviyesi CapabilityGuard.
+# Guard TEK BAŞINA koruma sağlamaz (capability.guard.ts: yetenek yoksa true),
+# o yüzden INFRA sayılır ve rota FILTRESIZ'de KALMALIDIR. Bu, INFRA-vs-DOMAIN
+# kararının KALICI kanıtı: DOMAIN olsaydı bu rota ALAN_GUARD'a kaçar ve
+# ratchet'ten "korunuyor" diye çıkardı.
+C_SRC2="$TMP/cap2/src"
+mkdir -p "$C_SRC2"
+cat > "$C_SRC2/bare.controller.ts" << 'EOF'
+@Controller('bare')
+@UseGuards(JwtAuthGuard, CapabilityGuard)
+export class BareController {
+  @Get('open')
+  open() {
+    return 'ok';
+  }
+}
+EOF
+OUT_C2="$(ROUTE_SCOPE_SRC_DIR="$C_SRC2" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_C2=$?
+if ! printf '%s\n' "$OUT_C2" | grep -qE "FILTRESIZ .*: 1"; then
+  echo "!! self-test FAIL [case C2]: dekoratörsüz rota FILTRESIZ'de KALMALIYDI (INFRA kararı)" >&2
+  printf '%s\n' "$OUT_C2" >&2
+  FAIL=1
+elif printf '%s\n' "$OUT_C2" | grep -qE "ALAN_GUARD .*: 1"; then
+  echo "!! self-test FAIL [case C2]: CapabilityGuard DOMAIN gibi davrandı — korumasız rota 'korunuyor' sayıldı" >&2
+  printf '%s\n' "$OUT_C2" >&2
+  FAIL=1
+else
+  echo "-- [case C2] POZ.KONTROL: dekoratörsüz + CapabilityGuard → FILTRESIZ (INFRA kararı kalıcı)"
+fi
+
+# C3: POZİTİF KONTROL — dekoratör VAR ama CapabilityGuard ZİNCİRDE DEĞİL
+# ⇒ bileşimsel fail-open (Dalga-M S2) ⇒ SETUP HATASI, exit 2.
+C_SRC3="$TMP/cap3/src"
+mkdir -p "$C_SRC3"
+cat > "$C_SRC3/failopen.controller.ts" << 'EOF'
+@Controller('fo')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class FoController {
+  @Get('boom')
+  @RequireCapability(CAPABILITIES.ADMIN_READ)
+  boom() {
+    return 'ok';
+  }
+}
+EOF
+OUT_C3="$(ROUTE_SCOPE_SRC_DIR="$C_SRC3" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
+RC_C3=$?
+if [ "$RC_C3" -ne 2 ]; then
+  echo "!! self-test FAIL [case C3]: exit 2 (SETUP HATASI) bekleniyordu, $RC_C3" >&2
+  printf '%s\n' "$OUT_C3" >&2
+  FAIL=1
+elif ! printf '%s\n' "$OUT_C3" | grep -qF "fo/boom"; then
+  echo "!! self-test FAIL [case C3]: hata mesajı etkilenen rotayı İSİMLENDİRMEDİ" >&2
+  printf '%s\n' "$OUT_C3" >&2
+  FAIL=1
+else
+  echo "-- [case C3] POZ.KONTROL: @RequireCapability var, CapabilityGuard YOK → exit 2 (FAIL-OPEN yakalandı)"
+fi
+
 if [ "$FAIL" -ne 0 ]; then
   {
     echo "!!"
