@@ -215,6 +215,9 @@ def reconcile(rows):
     n=len(rows)
 
     print('=== MUTABAKAT ===', file=out)
+    kind=Counter(r[6] for r in rows)
+    print(f'-- kapsam --  ROLES={kind.get("ROLES",0)}  CAP={kind.get("CAP",0)}  '
+          f'toplam={len(rows)}', file=out)
     print('-- hucre --', file=out)
     for k,v in sorted(cells.items(), key=lambda x:-x[1]): print(f'   {k:<22}{v}', file=out)
     print('-- kaynak --', file=out)
@@ -241,11 +244,20 @@ def reconcile(rows):
         rs=subprocess.run(['bash','scripts/guards/route-scope.sh','--list'],
                           capture_output=True,text=True)
         m=re.search(r'ROLES:\s*(\d+)', rs.stdout)
-        if not m: err.append('G4 route-scope.sh ROLES satiri OKUNAMADI (capraz kontrol YAPILAMADI)')
+        mc=re.search(r'CAPABILITY[^:]*:\s*(\d+)', rs.stdout)
+        if not m or not mc:
+            err.append('G4 route-scope.sh ROLES/CAPABILITY satiri OKUNAMADI '
+                       '(capraz kontrol YAPILAMADI)')
         else:
-            roles=int(m.group(1))
-            print(f'G4 capraz-arac  route-scope ROLES={roles}  satir={n}', file=out)
-            if roles!=n: err.append(f'G4 CAPRAZ FARK: route-scope ROLES={roles} != satir {n}')
+            roles=int(m.group(1)); caps=int(mc.group(1))
+            # T-285: evren artik ROLES + CAPABILITY. Gocen rota ROLES kovasindan
+            # CAPABILITY kovasina TASINIR, yani toplam SABIT kalir — ve bu
+            # toplamin sabitligi gocun kayipsizliginin capraz kanitidir.
+            print(f'G4 capraz-arac  route-scope ROLES={roles} + CAP={caps} '
+                  f'= {roles+caps}  satir={n}', file=out)
+            if roles+caps != n:
+                err.append(f'G4 CAPRAZ FARK: route-scope ROLES+CAP={roles+caps} '
+                           f'!= satir {n}')
     except Exception as e:
         err.append(f'G4 capraz kontrol KOSMADI: {e}')
 
@@ -259,8 +271,11 @@ def reconcile(rows):
         for m in dup:  err.append(f'G2 {name} CIFT UYE: {m}')
 
     # G3
-    unresolved=[r for r in rows if r[3]=='?']
-    print(f'G3 cozulemeyen @Roles {len(unresolved)}', file=out)
+    # T-285: EVREN yalnız ROLES-türü satırlar. Göçen rotanın @Roles'u YOKTUR
+    # ve olmamalıdır (rota basina TEK mekanizma) — onu "cozulemedi" saymak,
+    # BASARIYI hata saymak olurdu (Z29). Gocen rotanin karsiligi G6'dir.
+    unresolved=[r for r in rows if r[6]=='ROLES' and r[3]=='?']
+    print(f'G3 cozulemeyen @Roles {len(unresolved)}  (evren: ROLES-turu satirlar)', file=out)
     for r in unresolved: err.append(f'G3 @Roles cozulemedi: {r[0]} {r[1]} {r[2]}')
 
     # G5 — Z35 bölünmesinin BAĞIMSIZ teyidi.
@@ -288,6 +303,23 @@ def reconcile(rows):
     for c,m,pth,rl in mism:
         err.append(f'G5 UYUSMAZLIK: {m} {pth} hucre={c} @Roles={rl}')
 
+    # ── G6 (T-285) — GÖÇ DOĞRU HÜCREYE VARDI MI.
+    # Göçen rotanın BEYAN ETTİĞİ yetenek (@RequireCapability argümanı, awk 10.
+    # sütun) ile MEKANİK TÜRETİMİN verdiği hücre çakıştırılır. İki BAĞIMSIZ yol:
+    # beyan controller dosyasında, türetim alt-modül+fiil kuralında. Ayrışırsa
+    # göç yanlış hücreye varmış demektir ve bugün bunu HİÇBİR ŞEY görmüyordu.
+    migrated=[r for r in rows if r[6]=='CAP']
+    bad=[r for r in migrated if r[7] != r[4]]
+    unresolved=[r for r in migrated if r[7]=='-']
+    print(f'G6 goc mutabakati  gocen={len(migrated)}  '
+          f'beyan!=turetim={len(bad)}  cozulemeyen beyan={len(unresolved)}', file=out)
+    for r in bad:
+        err.append(f'G6 GOC YANLIS HUCREYE: {r[1]} {r[2]} '
+                   f'beyan={r[7]} turetim={r[4]} ({r[0]})')
+    for r in unresolved:
+        err.append(f'G6 BEYAN COZULEMEDI: {r[1]} {r[2]} ({r[0]}) — '
+                   f'@RequireCapability argumani CAPABILITIES.X yaziminda degil')
+
     # W1 — uyari, kapi degil
     noadmin=[r for r in rows if 'ADMIN' not in r[3].split(',')]
     print(f'W1 (uyari) ADMIN tasimayan rota {len(noadmin)}', file=out)
@@ -307,11 +339,22 @@ def main():
     rows=[]
     for line in out.splitlines():
         c=line.split('\t')
-        if len(c)<8 or c[4]!='1': continue
+        if len(c)<9: continue
+        has_roles = c[4]=='1'
+        has_cap   = c[8]=='1'
+        # T-285: GÖÇEN ROTALAR ARTIK DÜŞMÜYOR. Önceki hali yalnız `c[4]=='1'`
+        # (yani @Roles) alıyordu; W1'in üç rotası haritadan SESSİZCE düşmüştü ve
+        # hiçbir kapı bunu görmüyordu. Sonuç: göç ilerledikçe G5'in KAPSAMI
+        # eriyecekti — 211->0 yolunda son rota göçtüğünde G5 hiçbir şey ölçmez.
+        # Z29'un "kapı, ölçümün BAŞARISINI hata sayamaz" tuzağının TERS hâli:
+        # kapı, başarı ilerledikçe sessizce BOŞALIYOR.
+        if not (has_roles or has_cap): continue
         f,ln,meth,path = c[0],int(c[1]),c[2],c[3]
         cell,srcn = cell_for(f,meth,path)
-        rows.append([f,meth,path,roles_for(f,ln),cell,srcn])
-    for r in rows: print('\t'.join(r))
+        declared = c[9] if len(c)>9 else '-'
+        rows.append([f,meth,path,roles_for(f,ln),cell,srcn,
+                     'CAP' if has_cap else 'ROLES', declared])
+    for r in rows: print('\t'.join(str(x) for x in r))
     print(f'# TOPLAM {len(rows)}', file=sys.stderr)
     return reconcile(rows)
 

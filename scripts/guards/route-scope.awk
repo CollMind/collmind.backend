@@ -8,6 +8,10 @@
 #   <dosya> <satır> <YÖNTEM> <yol> <hasRoles:0|1> <hasPublic:0|1> <guardsCSV|-> <hasSelfScoped:0|1> <hasCapability:0|1>
 #
 # hasCapability (9. sütun, `B3 Dalga-M`): rota `@RequireCapability(...)` taşıyor mu.
+# capabilityName (10. sütun, `T-285`): o dekoratörün ARGÜMANI (`CAPABILITIES.X`
+# içindeki `X`), yoksa `-`. Tüketicisi `route-cell-map.py` `G5`: göçen rotanın
+# BEYAN ETTİĞİ hücre ile mekanik türetimin verdiği hücreyi ÇAKIŞTIRIR — yoksa
+# göç ilerledikçe `G5`in kapsamı sessizce ERİRDİ (`Z29`in ters tuzağı).
 # EKLEME-ONLY: 1-8. sütunlar DEĞİŞMEDİ (ölçüldü 2026-08-25: 223/223 satırda
 # 1-8 birebir aynı, poz.kontrollü). Bu tuple'ı okuyan ÜÇ tüketici var —
 # `route-scope.sh` · `route-cell-map.py` (`len(c)<8`) · `scope-ratchet.sh` —
@@ -82,6 +86,7 @@ function reset_pending() {
   p_has_public = 0
   p_has_self_scoped = 0
   p_has_capability = 0
+  p_capability_name = ""
   delete rg
 }
 
@@ -167,6 +172,11 @@ function finalize_decorator(name, text, is_class, line,   arg) {
     p_has_public = 1
   } else if (name == "RequireCapability") {
     p_has_capability = 1
+    # CAPABILITIES.X -> X ; baska bir yazim gorulurse BOS birakilir (sessiz
+    # varsayilan YOK) ve G5 onu "cozulemedi" diye RAPORLAR.
+    if (match(text, /CAPABILITIES\.[A-Z_]+/)) {
+      p_capability_name = substr(text, RSTART + 13, RLENGTH - 13)
+    }
   } else if (name == "SelfScoped") {
     p_has_self_scoped = 1
   } else if (name == "UseGuards") {
@@ -207,10 +217,11 @@ function csv_from_sets(a, b,   list, n, k, i, j, tmp, out) {
 function flush_pending(   guards) {
   if (p_has_http) {
     guards = csv_from_sets(cg, rg)
-    printf "%s\t%d\t%s\t%s\t%d\t%d\t%s\t%d\t%d\n", \
+    printf "%s\t%d\t%s\t%s\t%d\t%d\t%s\t%d\t%d\t%s\n", \
       FILENAME, p_http_line, p_http_method, join_path(ctrl_base, p_http_path), \
       (p_has_roles || c_has_roles), p_has_public, guards, p_has_self_scoped, \
-      (p_has_capability || c_has_capability)
+      (p_has_capability || c_has_capability), \
+      (p_capability_name == "" ? "-" : p_capability_name)
   }
   reset_pending()
 }
