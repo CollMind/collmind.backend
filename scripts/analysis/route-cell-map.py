@@ -240,9 +240,11 @@ def check_tsv_drift(rows, out):
 def reconcile(rows):
     """MUTABAKAT — exit 2 ile durduran bir kapi.
 
-    ⚠️ KAPSAM: bu dosya scripts/analysis/ altinda ve `run-all.sh`/`npm run guards`
-    KAPSAMAZ (olculdu 2026-08-24). Yani operatorun ELLE kosturdugu bir kapidir;
-    `npm run guards` yesilken bu mutabakat HIC KOSMAMIS olabilir.
+    KAPSAM: `run-all.sh` bu dosyayi CAGIRIR ve RC != 0'i IHLAL sayar
+    (T-288 / 0522d51). Yani `npm run guards` yesilse bu mutabakat KOSMUSTUR.
+    ⚠️ Onceki docstring "KAPSAMAZ" diyordu ve T-288'den sonra BAYATLADI --
+    duzeltildi 2026-08-25 (code-reviewer S4). Dayanak: run-all.sh icinde
+    `route-cell-map` cagrisi + `RCM_RC` kontrolu.
 
     ELLE YAZILMIS SAYI YOK: kanonik kaynak UYE LISTESIDIR. Bir sayiyi burada
     sabitlemek, bir sonraki rota eklendiginde yalan soylerdi -- "liste, sayi

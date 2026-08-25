@@ -154,7 +154,9 @@ import { UserRole } from '../../database/entities/user.entity';
  * DUR (5) — HİÇBİR role atanmadı, ürün sahibine gider
  *   MODES_READ     union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)
  *   MODES_APPROVE  dal 3 genişleme, ONAY yeteneği               → K-2.5.12   ⚠️ Z30 H2: 5 route AYRILDI → MODES_SUBMIT, aşağı bkz.
- *   SHARED_READ    union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)
+ *   SHARED_READ    union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)  ⚠️ BAYAT — B3 W4a ADIM 0 (2026-08-25)
+ *                                                                                                     bu hücreyi ÇÖZDÜ: 16 rota göçtü,
+ *                                                                                                     DÖRT İSTİSNA karar-bekler. Aşağı bkz.
  *   SHARED_APPROVE dal 3 genişleme, ONAY yeteneği               → K-2.5.12   ⚠️ Z30 H3: 0 route — SİLİNDİ, aşağı bkz.
  *   USER_READ      union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)  ⚠️ BAYAT — Z20 (2026-08-23) bu hücreyi
  *                                                                                                     USER_MANAGE/SELF'e ikiye ayırdı VE
@@ -315,7 +317,9 @@ import { UserRole } from '../../database/entities/user.entity';
  * submit'inin dışında bir approve/reject/escalate yetkisi kazanır, FINANCE
  * plan approve/reject/escalate kazanır. **ONAY yeteneği → `K-2.5.12`, DUR.**
  *
- * **`SHARED_READ`** (36 route, `20` filtresiz — `budget-allocations`,
+ * **`SHARED_READ`** (TARİHSEL ÖLÇÜM, 2026-08-17 — bugünkü hücre `20` rota:
+ * 16 göçtü + 4 istisna; kanonik kaynak `B3A_EK3_ROTA_HUCRE_ESLEMESI.tsv`)
+ * (36 route, `20` filtresiz — `budget-allocations`,
  * `budget` envelope okumaları, `lta-agreements` okumaları,
  * `spend-calculation` validate/breakdown uçlarının TAMAMI; `0072`'nin
  * "shared modülünde en yoğun filtresiz küme" tespitiyle örtüşüyor). `3`
@@ -590,10 +594,16 @@ export const CAPABILITIES = {
   NOTIFICATION_WRITE: 'notification:write',
 
   // ✅ ÇÖZÜLDÜ (ürün sahibi, 2026-08-25 · koda iniş: B3 W4a ADIM 0).
-  // SHARED_READ = 5/5, ve bu bir UNION DEĞİL bir TABAN: K-2.6.5b cümleyi
-  // KÜMEDEN ÖNCE yazmış — "her rolün okuma tabanı zaten var". Z18'in
-  // "union bir gerekçe değildir" reddi burada devreye GİRMEZ, çünkü küme
-  // mekanik bir birleşimden değil, YAZILI BİR CÜMLEDEN türüyor.
+  // SHARED_READ = 5/5. ⚠️ İDDİA ZAYIFLATILDI (code-reviewer S2, 2026-08-25):
+  // önce "küme mekanik bir birleşimden değil YAZILI BİR CÜMLEDEN türüyor"
+  // yazıyordu — ÖLÇÜM bunu çürüttü. Doğrusu:
+  //   KÜMEYİ SEÇEN     mevcut @Roles union'ı (:318'de kendi adıyla kayıtlı)
+  //   CÜMLENİN İŞİ     o kümeyi ONAYLAMAK — K-2.6.5b "her rolün okuma tabanı
+  //                    zaten var", ve Z18 gereği her eleman için AYRI cümle
+  //                    yazılabiliyor (aşağıda beş satır)
+  // Taban argümanı TEK BAŞINA rota kümesini SEÇMEZ: göç sonrası hâlâ 5/5
+  // @Roles taşıyan 54 rota var ve aynı argüman onları da kutsardı. Ters
+  // yönde de eleyemez — dört istisnayı eleyen şey 4/5 @Roles'ları.
   // ⚠️ Kararın KAPSAMI kısmi: 16 rota (5/5 taban) göçer; DÖRT İSTİSNA
   // (approvals · approvals/pending · finance-reporting/budget-variance ·
   // spend-calculation/validate-budget/:planId) GÖÇ-DIŞI ve karar-bekler —

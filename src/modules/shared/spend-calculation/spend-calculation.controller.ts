@@ -59,7 +59,8 @@ import { UserRole } from '../../../database/entities/user.entity';
 //     `ADMIN, PLANNER` — plan düzenleme FINANCE/CATEGORY_MANAGER/READONLY
 //     işi değil.
 //
-//   OKUMA — FU/plan DETAY (SPEND_READ_ROLES) — `breakdown`/
+//   OKUMA — FU/plan DETAY (artık CAPABILITIES.SHARED_READ; SPEND_READ_ROLES
+//     sabiti B3 W4a'da öldü) — `breakdown`/
 //     `validate-distribution`/`validate-inputs`/`validate-combinations`/
 //     `validate-before-submission`: hepsi TEK bir FU/plan'ın planlama-
 //     zamanı görünümü/doğrulaması, `finance-reporting`'in PLANNER
@@ -81,7 +82,8 @@ const SPEND_WRITE_ROLES = [UserRole.ADMIN, UserRole.PLANNER] as const;
 // `SPEND_READ_ROLES` `B3 W4a` göçüyle KALDIRILDI (2026-08-25) — beş rotanın
 // hepsi `@RequireCapability(CAPABILITIES.SHARED_READ)`'e taşındı, sabiti
 // kullanan hiçbir `@Roles(...)` kalmadı (`ROLE_CAPABILITIES.SHARED_READ`
-// aynı beş rolü taşıyor, kaynak `capabilities.ts:593-602`).
+// aynı beş rolü taşıyor — grep dayanağı: `ROLE_CAPABILITIES` içinde
+// `CAPABILITIES.SHARED_READ` taşıyan rol girdileri).
 const SPEND_BUDGET_CHECK_ROLES = [
   UserRole.ADMIN,
   UserRole.PLANNER,
