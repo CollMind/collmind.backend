@@ -23,8 +23,6 @@ src/database/entities/agreement.entity.ts @typescript-eslint/no-explicit-any 2
 src/database/entities/approval-request.entity.ts @typescript-eslint/no-explicit-any 1
 src/database/entities/brand.entity.ts @typescript-eslint/no-explicit-any 1
 src/database/entities/budget-alert-configuration.entity.ts @typescript-eslint/no-explicit-any 1
-src/database/entities/budget-allocation.entity.spec.ts @typescript-eslint/no-explicit-any 1
-src/database/entities/budget-allocation.entity.ts @typescript-eslint/no-explicit-any 2
 src/database/entities/budget-envelope.entity.ts @typescript-eslint/no-explicit-any 1
 src/database/entities/budget-envelope.entity.ts @typescript-eslint/no-unused-vars 1
 src/database/entities/budget-transaction.entity.ts @typescript-eslint/no-explicit-any 1
@@ -150,14 +148,10 @@ src/modules/notification/notification.service.ts @typescript-eslint/no-explicit-
 src/modules/shared/access-scope/access-scope.service.spec.ts @typescript-eslint/no-explicit-any 11
 src/modules/shared/approval/approval.service.ts @typescript-eslint/no-explicit-any 2
 src/modules/shared/approval/approval.service.ts @typescript-eslint/no-unused-vars 1
-src/modules/shared/budget/budget-allocation.controller.ts @typescript-eslint/no-unused-vars 0
-src/modules/shared/budget/budget-allocation.service.spec.ts @typescript-eslint/no-explicit-any 70
-src/modules/shared/budget/budget-allocation.service.spec.ts prettier/prettier 17
 src/modules/shared/budget/budget-reservation.service.spec.ts @typescript-eslint/no-explicit-any 12
 src/modules/shared/budget/budget-reservation.service.ts @typescript-eslint/no-explicit-any 1
 src/modules/shared/budget/budget.repository.ts @typescript-eslint/no-explicit-any 2
 src/modules/shared/budget/budget.service.spec.ts @typescript-eslint/no-explicit-any 18
-src/modules/shared/budget/dto/create-budget-allocation.dto.ts @typescript-eslint/no-unused-vars 1
 src/modules/shared/budget/dto/create-budget-envelope.dto.ts @typescript-eslint/no-explicit-any 1
 src/modules/shared/budget/dto/reserve-budget.dto.ts @typescript-eslint/no-unused-vars 1
 src/modules/shared/dashboard/dashboard.service.spec.ts @typescript-eslint/no-explicit-any 23
@@ -201,8 +195,6 @@ src/modules/user/strategies/jwt.strategy.ts @typescript-eslint/no-explicit-any 1
 src/modules/user/user.controller.ts @typescript-eslint/no-explicit-any 3
 src/modules/user/user.repository.ts @typescript-eslint/no-explicit-any 2
 src/modules/user/user.service.spec.ts @typescript-eslint/no-explicit-any 30
-test/budget-transaction-logs-idempotency.e2e-spec.ts @typescript-eslint/no-explicit-any 2
-test/budget-transaction-logs-idempotency.e2e-spec.ts prettier/prettier 4
 test/budget-variance.e2e-spec.ts @typescript-eslint/no-explicit-any 2
 test/dashboard.e2e-spec.ts @typescript-eslint/no-unused-vars 1
 test/kpi-optimistic-locking.e2e-spec.ts @typescript-eslint/no-explicit-any 1
