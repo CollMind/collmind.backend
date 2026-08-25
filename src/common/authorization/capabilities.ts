@@ -609,13 +609,59 @@ export const CAPABILITIES = {
   // spend-calculation/validate-budget/:planId) GÖÇ-DIŞI ve karar-bekler —
   // her biri için tek soru: "eksik rolün YOKLUĞU cümlelenebiliyor mu?"
   // (F12 izi — eski kayıt: "⛔ BLOKE (2026-08-17 turundan sonra da)".)
+  //
+  // ⛔ BAYAT (Z36 §5, 2026-08-26 · koda iniş: B3 W4b) — ÜÇ hesap-okuma
+  // rotası da BURAYA göçtü: `POST lta-agreements/context/rates` ·
+  // `.../calculate/base-spend` · `.../calculate/planned-spend`. Yazma
+  // yüzeyleri `0` (W4b ölçümü) — `POST` ama davranış bir hesaplama, bir
+  // mutasyon değil. Göç öncesi/sonrası @Roles kümesi zaten `5/5`
+  // (`{ADMIN,FINANCE,CATEGORY_MANAGER,PLANNER,READONLY}`) — birebir.
+  // `W4a`'nın yan-bulgusunun kaydettiği tutarsızlık (`SHARED_WRITE`
+  // yorumundaki eski "Filtresiz 4" listesi bu üçünü YAZMA sayıyordu) bu
+  // göçle KAPANIR — bkz. `docs/process/B3_KARAR_BEKLER_PAKETI.md`.
+  // ⛔ Ayrı bir `CALC_READ` hücresi AÇILMADI (Z36 §5, bilinçli) — dört
+  // `MASTER_DATA` hesap-okuma rotası (mechanics/applicable ·
+  // check-combination · mechanics/validate-formula · kpis/validate-formula)
+  // hâlâ WRITE'ta, karar-bekler; tek hücre iki ailenin eksenini
+  // düzleştirirdi.
   SHARED_READ: 'shared:read',
+  // ⚠️ BAYAT (Z36, 2026-08-26) — `SHARED_WRITE` hücre olarak KALIYOR (silinmedi,
+  // hâlâ `budget/reserve` (T-289'da kaldırılacak) + LTA dörtlüsü (kaza-dalgası,
+  // ürün sahibinde açık soru) burada yaşıyor), ama `Z36`'nın gerçek eksen ölçümü
+  // (`K-2.6.4a/b` SoD + sahiplik, "defter etkisi" DEĞİL) sekiz rotayı üç ayrı
+  // yeteneğe böldü — bkz. `SHARED_POLICY_WRITE` / `SHARED_ENVELOPE_WRITE` /
+  // `SHARED_SPEND_WRITE` (aşağı). Union burada artık göçen sekiz rotayı
+  // KAPSAMIYOR — `ROLE_CAPABILITIES`'te bu sabiti taşıyan roller yalnız kalan
+  // rotalar için geçerli.
   // ✅ ÇÖZÜLDÜ (2026-08-17, UNION) — {ADMIN,CATEGORY_MANAGER,FINANCE,
   // PLANNER}. Bkz. yukarı, "ÇÖZÜLDÜ" alt-başlığı (`approval-policies` uyarısı dahil).
   SHARED_WRITE: 'shared:write',
   // 11. taksonomi düzeltmesi (2026-08-17): `PATCH /approval-policies/:id`
   // SHARED_WRITE'tan BURAYA taşındı — konfigürasyon ucu, ADMIN kalıyor.
+  // ⛔ BAYAT (Z36, 2026-08-26): bu satır artık YANLIŞ — `PATCH
+  // /approval-policies/:id` `Z36`'da `SHARED_MANAGE` DEĞİL,
+  // `SHARED_POLICY_WRITE`'a göçtü (SINIF A, `{ADMIN}`, aşağı bkz.).
+  // `SHARED_MANAGE` sabiti KALIYOR — bugün başka atanmış rota YOK
+  // (`ROLE_CAPABILITIES`'te hiçbir role verilmedi), F12 izi bu yüzden burada.
   SHARED_MANAGE: 'shared:manage',
+
+  // ✅ Z36 BÖLÜNMESİ KODA İNDİ (2026-08-26, B3 W4b ADIM 0).
+  // `SHARED_WRITE`'ın SEKİZ rotası üçe ayrıldı — ayırt edici `Z35`'in
+  // "defter etkisi"NDEN farklı: burada defter-etkili yazma (split/reserve)
+  // grupların İÇİNDEN geçiyor. Gerçek eksen: YAZILAN NESNENİN SAHİPLİĞİ.
+  //   SINIF A  yönetişim/kural yazımı     {ADMIN}         approval-policies
+  //   SINIF B  zarf yapısı/bütçe sahipliği {ADMIN,FINANCE} budget/envelopes[,/split]
+  //   SINIF C  plan tüketimi/ızgara yazımı {ADMIN,PLANNER} spend-calculation
+  //            distribute · recalculate-on-volume-change
+  // `K-2.6.4a/b` SINIF A'nın gerekçesi: "şablonun öznesi olan rol, şablonu
+  // düzenleyemez" — FINANCE onay eşiğinin ÖZNESİDİR, yazabilseydi eşik bir
+  // kısıt olmaktan çıkardı. Bu bir YETKİNLİK değil bir KONUM kuralı (bkz.
+  // `docs/DISIPLIN.md`: "bir rolün tabi olduğu kuralı yazma yetkisi, o
+  // rolün kümesine giremez").
+  // Detay: `docs/brd-v2/04_KARAR_KAYDI.md` `Z36`.
+  SHARED_POLICY_WRITE: 'shared:policy-write',
+  SHARED_ENVELOPE_WRITE: 'shared:envelope-write',
+  SHARED_SPEND_WRITE: 'shared:spend-write',
 
   // ✅ ÇÖZÜLDÜ (2026-08-17, dal 1 — tek rol kümesi, mekanik) — {ADMIN}.
   TENANT_READ: 'tenant:read',
@@ -684,6 +730,20 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.NOTIFICATION_WRITE,
     CAPABILITIES.SHARED_WRITE,
     CAPABILITIES.SHARED_MANAGE,
+    // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — ADMIN üçünde de zaten vardı
+    // (`{A}`, `{A,F}`, `{A,P}`) — bölünme ADMIN için sonuç DEĞİŞTİRMEZ.
+    // SINIF A (`SHARED_POLICY_WRITE`): ADMIN onay-eşiği şablonunun ÖZNESİ
+    // DEĞİL (bkz. FINANCE'in yokluğu aşağıda) — yönetişim ADMIN'in tanımsal
+    // işi (`K-2.6.4a/b`).
+    CAPABILITIES.SHARED_POLICY_WRITE,
+    // SINIF B (`SHARED_ENVELOPE_WRITE`): sistem yöneticisi olarak zarf
+    // yapısını (oluşturma/split) FINANCE'le PAYLAŞIR — `K-2.2.9c` "finans
+    // zarfı büyütür" ADMIN'i dışlamaz, tersine hepsini kapsar.
+    CAPABILITIES.SHARED_ENVELOPE_WRITE,
+    // SINIF C (`SHARED_SPEND_WRITE`): plan-mekanik dağıtımını PLANNER'la
+    // PAYLAŞIR — aynı gerekçe `MODES_PLAN_WRITE`'ta: ADMIN her plan-yazma
+    // ucunda zaten var.
+    CAPABILITIES.SHARED_SPEND_WRITE,
     // ↓ TENANT_READ: dal 1 (tek rol kümesi — `GET /tenants` zaten ADMIN-only).
     CAPABILITIES.TENANT_READ,
     CAPABILITIES.TENANT_WRITE,
@@ -714,6 +774,16 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // lta-agreement yazma uçlarını açıyor (approval-policies dahil —
     // CAPABILITIES yorumundaki ⚠️ uyarıya bkz.).
     CAPABILITIES.SHARED_WRITE,
+    // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — SINIF C (`SHARED_SPEND_WRITE`)
+    // {ADMIN,PLANNER}: PLANNER, plan→FU→SKU mekanik dağıtımının ızgara-
+    // yazımını yapan taraf (`distribute`/`recalculate-on-volume-change`,
+    // `T-249`'un emsali `plan.controller.ts` yazma rotalarıyla AYNI kümede
+    // — plan düzenleme FINANCE/CATEGORY_MANAGER/READONLY işi değil).
+    // ⛔ SINIF A (`SHARED_POLICY_WRITE`) ve SINIF B (`SHARED_ENVELOPE_WRITE`)
+    // PLANNER'a VERİLMEDİ — PLANNER onay-şablonunun öznesi değil (SoD dışı
+    // sorun yok, ama yönetişim değil) ve zarf yapısı bir bütçe-sahipliği
+    // kararı (`K-2.2.9c`), PLANNER'ın işi değil.
+    CAPABILITIES.SHARED_SPEND_WRITE,
   ],
   [UserRole.CATEGORY_MANAGER]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — kategori bütçe sahibi: onay ve zarf yönetimi görünürlük ister.
@@ -723,6 +793,14 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.NOTIFICATION_WRITE,
     // ↓ ADIM 3 Faz A (2026-08-17, UNION) — bkz. CAPABILITIES yorumu.
     CAPABILITIES.SHARED_WRITE,
+    // ⛔ Z36 bölünmesi (2026-08-26, B3 W4b) — CATEGORY_MANAGER SIFIR aldı.
+    // Sekiz rotanın hiçbirinde CM `@Roles`'ta yoktu (approval-policies
+    // {ADMIN} · budget/envelopes[,/split] {ADMIN,FINANCE} · spend-calc
+    // distribute/recalculate {ADMIN,PLANNER}) — bu göç `@Roles`'u
+    // `@RequireCapability`'e TAŞIYOR, davranışı GENİŞLETMİYOR. CM'nin zarf
+    // ÜZERİNDEKİ konumu ONAY tarafında zaten karşılanmış (`Z36 §4`:
+    // `K-2.6.4`'ün "zarf yönetimi" cümlesi ONAY + İZLEME'de, MODES_APPROVE_
+    // CATEGORY + SHARED_READ görünürlüğü).
   ],
   [UserRole.FINANCE]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — eşik üstü onay/transfer/mutabakat görünürlük ister.
@@ -736,6 +814,17 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.MODES_ACTUALS_WRITE,
     CAPABILITIES.NOTIFICATION_WRITE,
     CAPABILITIES.SHARED_WRITE,
+    // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — SINIF B (`SHARED_ENVELOPE_WRITE`)
+    // {ADMIN,FINANCE}: `K-2.2.9c` "finans zarfı büyütür … kararı paranın
+    // sahibine taşır" — YAZAN FINANCE, ONAYLAYAN zarf sahibi (CM, ayrı
+    // kanaldan). Zarf oluşturma/split bugün de `@Roles(ADMIN,FINANCE)`
+    // taşıyordu (`budget.controller.ts:41,151`) — göç davranışı KORUYOR.
+    // ⛔ SINIF A (`SHARED_POLICY_WRITE`) FINANCE'e VERİLMEDİ — `Z36 §3`:
+    // FINANCE onay-eşiği politikasının ÖZNESİDİR, yazabilseydi eşik bir
+    // kısıt olmaktan çıkardı (SoD, `K-2.6.4a/b`). ⛔ SINIF C
+    // (`SHARED_SPEND_WRITE`) de VERİLMEDİ — plan-mekanik dağıtımı PLAN
+    // düzenleme işi, FINANCE'in konusu değil (`T-249` emsali).
+    CAPABILITIES.SHARED_ENVELOPE_WRITE,
   ],
   [UserRole.READONLY]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — İZLEYİCİ bir İZLEME YETENEKLERİ SETİDİR (K-2.6.4c).
@@ -749,5 +838,8 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // ⛔ BAYAT (W4a, 2026-08-25): SHARED_READ eklendi — ama bir UNION'DAN
     // DEĞİL, K-2.6.4c'nin AÇIK CÜMLESİNDEN ("İZLEYİCİ bir izleme yetenekleri
     // setidir"). Yukarıdaki cümle union'lar hakkındaydı ve o kısmı hâlâ doğru.
+    // ⛔ Z36 bölünmesi (2026-08-26, B3 W4b): READONLY üç yeni yetenekten de
+    // SIFIR aldı — sekiz rotanın hiçbirinde READONLY `@Roles`'ta değildi
+    // (İZLEYİCİ bir İZLEME setidir, yazma değil). Davranış KORUNUYOR.
   ],
 };
