@@ -49,7 +49,9 @@ import { UserRole } from '../../../database/entities/user.entity';
 // her biri ÖLÇÜLMÜŞ bir emsale bağlandı (ürün sahibinin talimatı: "ölç,
 // genelleme"):
 //
-//   YAZMA (SPEND_WRITE_ROLES) — `distribute`/`recalculate-on-volume-change`
+//   YAZMA (eski SPEND_WRITE_ROLES, `B3 W4b`'de CAPABILITIES.SHARED_SPEND_
+//     WRITE'a göçtü — sabit KALDIRILDI, `SPEND_READ_ROLES`'un W4a'daki
+//     emsaliyle aynı disiplin) — `distribute`/`recalculate-on-volume-change`
 //     ikisi de Plan→FU→SKU mekanik spend'ini MUTASYONA uğratıyor
 //     (`saveBreakdowns`: DELETE+INSERT `mechanic_spend_breakdown`,
 //     `planMechanicValueRepository.save`). Emsal `finance-reporting`
@@ -57,7 +59,7 @@ import { UserRole } from '../../../database/entities/user.entity';
 //     AYNI domain'deki `plan.controller.ts`'in yazma rotaları
 //     (`addFu`/`updateFuTactic`/`updateSkuVolume`/`recalculate`), HEPSİ
 //     `ADMIN, PLANNER` — plan düzenleme FINANCE/CATEGORY_MANAGER/READONLY
-//     işi değil.
+//     işi değil. `ROLE_CAPABILITIES.SHARED_SPEND_WRITE` aynı iki rolü taşıyor.
 //
 //   OKUMA — FU/plan DETAY (artık CAPABILITIES.SHARED_READ; SPEND_READ_ROLES
 //     sabiti B3 W4a'da öldü) — `breakdown`/
@@ -78,7 +80,6 @@ import { UserRole } from '../../../database/entities/user.entity';
 //     (`ADMIN, PLANNER, CATEGORY_MANAGER, READONLY` — FINANCE YOK,
 //     ölçüldü `plan.controller.ts:150-156`). Bu grup diğer okuma
 //     grubundan FINANCE'ı bilerek dışarıda bırakıyor.
-const SPEND_WRITE_ROLES = [UserRole.ADMIN, UserRole.PLANNER] as const;
 // `SPEND_READ_ROLES` `B3 W4a` göçüyle KALDIRILDI (2026-08-25) — beş rotanın
 // hepsi `@RequireCapability(CAPABILITIES.SHARED_READ)`'e taşındı, sabiti
 // kullanan hiçbir `@Roles(...)` kalmadı (`ROLE_CAPABILITIES.SHARED_READ`
@@ -101,8 +102,14 @@ export class SpendCalculationController {
     private readonly validationService: SpendValidationService,
   ) {}
 
+  // `B3 W4b` göçü (2026-08-26, `Z36` SINIF C): eski `@Roles(...SPEND_WRITE_
+  // ROLES)` ({ADMIN,PLANNER}) → `@RequireCapability(SHARED_SPEND_WRITE)`.
+  // `ROLE_CAPABILITIES`'te `SHARED_SPEND_WRITE` aynı iki role — davranış
+  // BİREBİR korunuyor. `SPEND_WRITE_ROLES` sabiti KALDIRILDI (artık hiçbir
+  // decorator kullanmıyor — `SPEND_READ_ROLES`'un W4a'daki emsaliyle aynı
+  // disiplin, yukarıdaki dosya-üstü yorum bkz.).
   @Post('distribute/:planFuId/:mechanicId')
-  @Roles(...SPEND_WRITE_ROLES)
+  @RequireCapability(CAPABILITIES.SHARED_SPEND_WRITE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Distribute mechanic spend from FU to SKUs' })
   @ApiResponse({
@@ -122,8 +129,9 @@ export class SpendCalculationController {
     );
   }
 
+  // `B3 W4b` göçü (2026-08-26, `Z36` SINIF C) — aynı gerekçe (yukarı bkz.).
   @Post('recalculate-on-volume-change/:skuId')
-  @Roles(...SPEND_WRITE_ROLES)
+  @RequireCapability(CAPABILITIES.SHARED_SPEND_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Recalculate distribution when SKU volume changes' })
   @ApiResponse({ status: 204, description: 'Distribution recalculated' })

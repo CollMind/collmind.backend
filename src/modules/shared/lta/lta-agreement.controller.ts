@@ -196,13 +196,12 @@ export class LTAAgreementController {
   // hesaplama, yazma DEĞİL, TÜKETİCİSİZ. Aynı gerekçe (yukarı bkz.): BEŞ
   // ROL, mechanic.controller'ın kardeş hesaplama uçlarıyla (§1c ekinde)
   // aynı sınıf.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4b` göçü (2026-08-26, `Z36` §5 hesap-okuma): `@Roles(...)` (5/5) →
+  // `@RequireCapability(SHARED_READ)`. `ROLE_CAPABILITIES`'te `SHARED_READ`
+  // aynı beş rolde — davranış BİREBİR korunuyor. `Z36 §5`: yazma yüzeyi `0`,
+  // cascade yapısal olarak imkânsız; `POST` olması bir mutasyon işareti
+  // DEĞİL. Bu üç rota `SHARED_READ`'in dört-istisna kümesinde DEĞİL.
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Post('context/rates')
   @ApiOperation({ summary: 'Get LTA rates for plan context' })
   @ApiResponse({
@@ -221,13 +220,9 @@ export class LTAAgreementController {
   // hesaplama, yazma DEĞİL, TÜKETİCİSİZ. Aynı gerekçe (yukarı bkz.): BEŞ
   // ROL, mechanic.controller'ın kardeş hesaplama uçlarıyla (§1c ekinde)
   // aynı sınıf.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4b` göçü (2026-08-26, `Z36` §5 hesap-okuma) — aynı gerekçe
+  // (yukarı, `context/rates` bkz.).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Post('calculate/base-spend')
   @ApiOperation({ summary: 'Calculate base LTA spend for plan SKU' })
   @ApiResponse({
@@ -252,13 +247,9 @@ export class LTAAgreementController {
   // hesaplama, yazma DEĞİL, TÜKETİCİSİZ. Aynı gerekçe (yukarı bkz.): BEŞ
   // ROL, mechanic.controller'ın kardeş hesaplama uçlarıyla (§1c ekinde)
   // aynı sınıf.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4b` göçü (2026-08-26, `Z36` §5 hesap-okuma) — aynı gerekçe
+  // (yukarı, `context/rates` bkz.).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Post('calculate/planned-spend')
   @ApiOperation({ summary: 'Calculate planned LTA spend for plan SKU' })
   @ApiResponse({

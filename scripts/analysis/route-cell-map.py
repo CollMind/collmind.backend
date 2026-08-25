@@ -47,6 +47,32 @@ APPROVE = {
  'plans/:id/review', 'plans/:id/escalate-to-finance',
 }
 
+# --- Z36 (B3 W4b): SHARED_WRITE bölünmesi — ÜYELİK YOL+FİİL'DEN (davranış),
+# genel fam+verb kuralından DEĞİL. Ayırt edici mekanik bir birleşim değil:
+# YAZILAN NESNENİN SAHİPLİĞİ (`04_KARAR_KAYDI.md` Z36 §2). Genel
+# `f'{fam}_{verb}'` kuralı bunu YAKALAYAMAZ — hepsi `shared/` altında POST,
+# hepsi mekanik olarak SHARED_WRITE'a düşerdi. `(meth,path)` TAM eşleşmesi
+# kullanılır (path-only eşleşme `POST /budget/envelopes` ile `GET
+# /budget/envelopes`'ı AYIRAMAZDI — aynı yol, farklı fiil, farklı hücre).
+SHARED_POLICY_WRITE_ROUTES = {
+ ('PATCH', 'approval-policies/:id'),
+}
+SHARED_ENVELOPE_WRITE_ROUTES = {
+ ('POST', 'budget/envelopes'), ('POST', 'budget/envelopes/:id/split'),
+}
+SHARED_SPEND_WRITE_ROUTES = {
+ ('POST', 'spend-calculation/distribute/:planFuId/:mechanicId'),
+ ('POST', 'spend-calculation/recalculate-on-volume-change/:skuId'),
+}
+# --- Z36 §5: hesap-okuma üçlüsü — POST ama yazma yüzeyi ÖLÇÜLDÜ 0
+# (cascade yapısal olarak imkânsız), SHARED_READ'e gider. `POST` olması
+# tek başına bir mutasyon işareti DEĞİL — genel verb kuralının aksine.
+SHARED_CALC_READ_ROUTES = {
+ ('POST', 'lta-agreements/context/rates'),
+ ('POST', 'lta-agreements/calculate/base-spend'),
+ ('POST', 'lta-agreements/calculate/planned-spend'),
+}
+
 # --- Z35: MODES_WRITE bölünmesi — ÜYELİK ALT-MODÜLDEN (davranış) ---
 # ⛔ @Roles'tan TÜRETİLMEZ: hücre, yönettiği şeyden türetilirse harita bir
 # TOTOLOJİ olur (dairesel evren). Ayırt edici işin cinsi:
@@ -184,6 +210,11 @@ def role_caps_inverse():
 def cell_for(f, meth, path):
     d = re.sub(r'^src/modules/','',f).split('/')[0]
     fam = FAM.get(d,'?')
+    key = (meth, path)
+    if key in SHARED_POLICY_WRITE_ROUTES:   return 'SHARED_POLICY_WRITE','Z36'
+    if key in SHARED_ENVELOPE_WRITE_ROUTES: return 'SHARED_ENVELOPE_WRITE','Z36'
+    if key in SHARED_SPEND_WRITE_ROUTES:    return 'SHARED_SPEND_WRITE','Z36'
+    if key in SHARED_CALC_READ_ROUTES:      return 'SHARED_READ','Z36'
     if path in SUMMARY:            return 'SUMMARY_READ','Z31/Z32'
     if path in APPROVE:            return 'MODES_APPROVE','YARGI'
     if fam=='MODES' and SUBMIT_RE.search('/'+path):  return 'MODES_SUBMIT','Z35'

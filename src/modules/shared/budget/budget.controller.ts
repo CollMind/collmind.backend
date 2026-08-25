@@ -37,8 +37,13 @@ import { UserRole } from '../../../database/entities/user.entity';
 export class BudgetController {
   constructor(private readonly budgetService: BudgetService) {}
 
+  // `B3 W4b` göçü (2026-08-26, `Z36` SINIF B): `@Roles(ADMIN,FINANCE)` →
+  // `@RequireCapability(SHARED_ENVELOPE_WRITE)`. `ROLE_CAPABILITIES`'te
+  // `SHARED_ENVELOPE_WRITE` aynı iki role — davranış BİREBİR korunuyor.
+  // Gerekçe: `K-2.2.9c` "finans zarfı büyütür … kararı paranın sahibine
+  // taşır" — YAZAN FINANCE, ONAYLAYAN zarf sahibi (CM, ayrı kanal/onay).
   @Post('envelopes')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.SHARED_ENVELOPE_WRITE)
   @ApiOperation({ summary: 'Create a new budget envelope' })
   @ApiResponse({
     status: 201,
@@ -147,8 +152,11 @@ export class BudgetController {
     return { envelopeId: id, reservedAmount: amount };
   }
 
+  // `B3 W4b` göçü (2026-08-26, `Z36` SINIF B): `@Roles(ADMIN,FINANCE)` →
+  // `@RequireCapability(SHARED_ENVELOPE_WRITE)`. Aynı gerekçe (yukarı,
+  // `createEnvelope` bkz.) — split de zarf-YAPISI kararı.
   @Post('envelopes/:id/split')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.SHARED_ENVELOPE_WRITE)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary:
