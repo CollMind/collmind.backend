@@ -15,14 +15,17 @@ import { PendingTasksResponseDto } from './dto/pending-tasks.dto';
 import { CplStatusResponseDto } from './dto/cpl-status.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 
 @ApiTags('Dashboard')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('dashboard')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
@@ -77,14 +80,12 @@ export class DashboardController {
    *
    * Planner: scoped to their CPL assignments. All other roles: tenant-wide.
    */
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
   @Get('pending-tasks')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @ApiOperation({
     summary: 'Get actionable pending tasks for the current user',
   })
@@ -114,14 +115,12 @@ export class DashboardController {
    *
    * Planner: only CPLs in their UserScope. Others: all tenant CPLs.
    */
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
   @Get('cpl-status')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @ApiOperation({ summary: 'Get per-CPL action status summary' })
   @ApiResponse({
     status: 200,

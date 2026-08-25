@@ -10,7 +10,10 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ApprovalService } from './approval.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { SelfScoped } from '../../../common/decorators/self-scoped.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
@@ -19,7 +22,7 @@ import { UserRole } from '../../../database/entities/user.entity';
 @ApiTags('Approvals')
 @ApiBearerAuth()
 @Controller('approvals')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class ApprovalController {
   constructor(private readonly approvalService: ApprovalService) {}
 
@@ -71,14 +74,12 @@ export class ApprovalController {
     return this.approvalService.findMyRequests(userId, tenantId);
   }
 
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
   @Get(':id')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @ApiOperation({ summary: 'Get approval request by ID' })
   findOne(
     @Param('id', ParseUUIDPipe) id: string,

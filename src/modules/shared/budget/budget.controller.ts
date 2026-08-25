@@ -22,14 +22,17 @@ import { ReserveBudgetDto } from './dto/reserve-budget.dto';
 import { SplitBudgetEnvelopeDto } from './dto/split-budget-envelope.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 
 @ApiTags('Budget')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('budget')
 export class BudgetController {
   constructor(private readonly budgetService: BudgetService) {}
@@ -62,13 +65,13 @@ export class BudgetController {
   // (ölçüldü). Bir CATEGORY_MANAGER başka kategorinin zarfını görebilir.
   // Bu B2'nin kapsamı DIŞINDA — [[T-253]]/[[T-254]], KAPSAM RATCHET'ine
   // (Z19b, [[T-266]]) girer, scope-a1-baseline.txt'e BURADA DOKUNULMADI.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
+  // ⚠️ KAPSAM SÜTUNU hâlâ ❌ (yukarıdaki `T-267` notu) — bu göç yalnız ROL
+  // katmanını taşıyor, kapsam işi ayrı (`[[T-266]]`).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Get('envelopes')
   @ApiOperation({ summary: 'Get all budget envelopes' })
   @ApiResponse({ status: 200, description: 'List of budget envelopes' })
@@ -78,13 +81,13 @@ export class BudgetController {
 
   // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
   // şekilde bu turun dışında.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
+  // ⚠️ KAPSAM SÜTUNU hâlâ ❌ (yukarıdaki `T-267` notu) — bu göç yalnız ROL
+  // katmanını taşıyor, kapsam işi ayrı (`[[T-266]]`).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Get('envelopes/:id')
   @ApiOperation({ summary: 'Get budget envelope by ID' })
   @ApiResponse({ status: 200, description: 'Budget envelope details' })
@@ -124,13 +127,13 @@ export class BudgetController {
 
   // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
   // şekilde bu turun dışında.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
+  // ⚠️ KAPSAM SÜTUNU hâlâ ❌ (yukarıdaki `T-267` notu) — bu göç yalnız ROL
+  // katmanını taşıyor, kapsam işi ayrı (`[[T-266]]`).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Get('envelopes/:id/reserved')
   @ApiOperation({
     summary: 'Get reserved amount for an envelope (computed from transactions)',
@@ -180,13 +183,13 @@ export class BudgetController {
 
   // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
   // şekilde bu turun dışında.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
+  // ⚠️ KAPSAM SÜTUNU hâlâ ❌ (yukarıdaki `T-267` notu) — bu göç yalnız ROL
+  // katmanını taşıyor, kapsam işi ayrı (`[[T-266]]`).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Get('envelopes/:id/transactions')
   @ApiOperation({ summary: 'Get all transactions for an envelope' })
   @ApiResponse({ status: 200, description: 'List of transactions' })
@@ -199,13 +202,13 @@ export class BudgetController {
 
   // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
   // şekilde bu turun dışında.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
+  // ⚠️ KAPSAM SÜTUNU hâlâ ❌ (yukarıdaki `T-267` notu) — bu göç yalnız ROL
+  // katmanını taşıyor, kapsam işi ayrı (`[[T-266]]`).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Get('status')
   @ApiOperation({ summary: 'Get budget status for channel and category' })
   @ApiResponse({

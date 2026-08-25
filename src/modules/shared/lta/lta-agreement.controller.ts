@@ -26,14 +26,17 @@ import { LTAContext } from './dto/lta-context.dto';
 import { LTASpendBreakdown } from './dto/lta-context.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 import { LTAAgreement } from '../../../database/entities/lta-agreement.entity';
 
 @ApiTags('LTA Agreements')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('lta-agreements')
 export class LTAAgreementController {
   constructor(
@@ -64,13 +67,11 @@ export class LTAAgreementController {
   // aynı şekilli okuma/hesaplama ucu (§1c) 5 rol taşıyor; LTA aynı
   // "planlama girdisi hesaplama" sınıfı (`0072`'nin işaretlediği
   // "hesaplama uçları").
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Get()
   @ApiOperation({ summary: 'Get all LTA agreements' })
   @ApiResponse({
@@ -87,13 +88,11 @@ export class LTAAgreementController {
   }
 
   // T-267 — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Get(':id')
   @ApiOperation({ summary: 'Get LTA agreement by ID' })
   @ApiResponse({
@@ -168,13 +167,11 @@ export class LTAAgreementController {
   //   KATEGORİ MÜDÜRÜ: kategori bazlı anlaşma onayı/izlemesi
   //   FİNANS: mutabakat — anlaşma bazlı harcamayı eşleştirmesi gerekiyor
   //   İZLEYİCİ: salt görüntüleme — K-2.6.4c izleme yetenekleri seti
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  // `B3 W4a` göçü (2026-08-25): {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,
+  // READONLY} (5/5) `ROLE_CAPABILITIES`'te `SHARED_READ`'in verdiği kümeyle
+  // birebir aynı — davranış KORUNUYOR (pin: `test/shared-read-w4a-boundary.
+  // e2e-spec.ts`, göç öncesi/sonrası birebir: BEŞ ROL de geçiyor).
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @Get('cpl/:cplId/active')
   @ApiOperation({ summary: 'Get active LTA agreement for CPL' })
   @ApiResponse({

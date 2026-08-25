@@ -30,7 +30,10 @@ import {
 } from './dto/validation-result.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 
@@ -75,13 +78,10 @@ import { UserRole } from '../../../database/entities/user.entity';
 //     ölçüldü `plan.controller.ts:150-156`). Bu grup diğer okuma
 //     grubundan FINANCE'ı bilerek dışarıda bırakıyor.
 const SPEND_WRITE_ROLES = [UserRole.ADMIN, UserRole.PLANNER] as const;
-const SPEND_READ_ROLES = [
-  UserRole.ADMIN,
-  UserRole.FINANCE,
-  UserRole.CATEGORY_MANAGER,
-  UserRole.PLANNER,
-  UserRole.READONLY,
-] as const;
+// `SPEND_READ_ROLES` `B3 W4a` göçüyle KALDIRILDI (2026-08-25) — beş rotanın
+// hepsi `@RequireCapability(CAPABILITIES.SHARED_READ)`'e taşındı, sabiti
+// kullanan hiçbir `@Roles(...)` kalmadı (`ROLE_CAPABILITIES.SHARED_READ`
+// aynı beş rolü taşıyor, kaynak `capabilities.ts:593-602`).
 const SPEND_BUDGET_CHECK_ROLES = [
   UserRole.ADMIN,
   UserRole.PLANNER,
@@ -91,7 +91,7 @@ const SPEND_BUDGET_CHECK_ROLES = [
 
 @ApiTags('Spend Calculation')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('spend-calculation')
 export class SpendCalculationController {
   constructor(
@@ -138,7 +138,13 @@ export class SpendCalculationController {
   }
 
   @Get('breakdown/:planFuId')
-  @Roles(...SPEND_READ_ROLES)
+  // `B3 W4a` göçü (2026-08-25): `SPEND_READ_ROLES` = {ADMIN,CATEGORY_MANAGER,
+  // FINANCE,PLANNER,READONLY} (5/5), `ROLE_CAPABILITIES`'te `SHARED_READ`'in
+  // verdiği kümeyle birebir aynı — davranış KORUNUYOR (pin:
+  // `test/shared-read-w4a-boundary.e2e-spec.ts`, göç öncesi/sonrası birebir:
+  // BEŞ ROL de geçiyor). `SPEND_BUDGET_CHECK_ROLES` (validate-budget, 4/5,
+  // FINANCE eksik) BİLİNÇLİ OLARAK GÖÇMEDİ — istisna, dört-istisna listesinde.
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @ApiOperation({ summary: 'Get distribution breakdown for a FU' })
   @ApiResponse({
     status: 200,
@@ -156,7 +162,13 @@ export class SpendCalculationController {
   }
 
   @Get('validate-distribution/:planFuId')
-  @Roles(...SPEND_READ_ROLES)
+  // `B3 W4a` göçü (2026-08-25): `SPEND_READ_ROLES` = {ADMIN,CATEGORY_MANAGER,
+  // FINANCE,PLANNER,READONLY} (5/5), `ROLE_CAPABILITIES`'te `SHARED_READ`'in
+  // verdiği kümeyle birebir aynı — davranış KORUNUYOR (pin:
+  // `test/shared-read-w4a-boundary.e2e-spec.ts`, göç öncesi/sonrası birebir:
+  // BEŞ ROL de geçiyor). `SPEND_BUDGET_CHECK_ROLES` (validate-budget, 4/5,
+  // FINANCE eksik) BİLİNÇLİ OLARAK GÖÇMEDİ — istisna, dört-istisna listesinde.
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @ApiOperation({ summary: 'Validate distribution for a FU' })
   @ApiResponse({
     status: 200,
@@ -171,7 +183,13 @@ export class SpendCalculationController {
   }
 
   @Get('validate-inputs/:planFuId')
-  @Roles(...SPEND_READ_ROLES)
+  // `B3 W4a` göçü (2026-08-25): `SPEND_READ_ROLES` = {ADMIN,CATEGORY_MANAGER,
+  // FINANCE,PLANNER,READONLY} (5/5), `ROLE_CAPABILITIES`'te `SHARED_READ`'in
+  // verdiği kümeyle birebir aynı — davranış KORUNUYOR (pin:
+  // `test/shared-read-w4a-boundary.e2e-spec.ts`, göç öncesi/sonrası birebir:
+  // BEŞ ROL de geçiyor). `SPEND_BUDGET_CHECK_ROLES` (validate-budget, 4/5,
+  // FINANCE eksik) BİLİNÇLİ OLARAK GÖÇMEDİ — istisna, dört-istisna listesinde.
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @ApiOperation({ summary: 'Validate inputs for a FU' })
   @ApiResponse({
     status: 200,
@@ -186,7 +204,13 @@ export class SpendCalculationController {
   }
 
   @Get('validate-combinations/:planFuId')
-  @Roles(...SPEND_READ_ROLES)
+  // `B3 W4a` göçü (2026-08-25): `SPEND_READ_ROLES` = {ADMIN,CATEGORY_MANAGER,
+  // FINANCE,PLANNER,READONLY} (5/5), `ROLE_CAPABILITIES`'te `SHARED_READ`'in
+  // verdiği kümeyle birebir aynı — davranış KORUNUYOR (pin:
+  // `test/shared-read-w4a-boundary.e2e-spec.ts`, göç öncesi/sonrası birebir:
+  // BEŞ ROL de geçiyor). `SPEND_BUDGET_CHECK_ROLES` (validate-budget, 4/5,
+  // FINANCE eksik) BİLİNÇLİ OLARAK GÖÇMEDİ — istisna, dört-istisna listesinde.
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @ApiOperation({ summary: 'Validate mechanic combinations for a FU' })
   @ApiResponse({
     status: 200,
@@ -216,7 +240,13 @@ export class SpendCalculationController {
   }
 
   @Get('validate-before-submission/:planId')
-  @Roles(...SPEND_READ_ROLES)
+  // `B3 W4a` göçü (2026-08-25): `SPEND_READ_ROLES` = {ADMIN,CATEGORY_MANAGER,
+  // FINANCE,PLANNER,READONLY} (5/5), `ROLE_CAPABILITIES`'te `SHARED_READ`'in
+  // verdiği kümeyle birebir aynı — davranış KORUNUYOR (pin:
+  // `test/shared-read-w4a-boundary.e2e-spec.ts`, göç öncesi/sonrası birebir:
+  // BEŞ ROL de geçiyor). `SPEND_BUDGET_CHECK_ROLES` (validate-budget, 4/5,
+  // FINANCE eksik) BİLİNÇLİ OLARAK GÖÇMEDİ — istisna, dört-istisna listesinde.
+  @RequireCapability(CAPABILITIES.SHARED_READ)
   @ApiOperation({
     summary: 'Validate plan before submission (all validations)',
   })
