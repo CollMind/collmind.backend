@@ -28,8 +28,13 @@ import { UserRole } from '../../../database/entities/user.entity';
  * `B3 W4b` göçü (2026-08-26, `Z36` SINIF A): `@Roles(ADMIN)` →
  * `@RequireCapability(SHARED_POLICY_WRITE)`. `ROLE_CAPABILITIES`'te
  * `SHARED_POLICY_WRITE` yalnız `UserRole.ADMIN`'de — davranış BİREBİR
- * korunuyor. Gerekçe: `K-2.6.4a/b` SoD — FINANCE onay-eşiği politikasının
- * ÖZNESİDİR, yazma yetkisi FINANCE'in kümesine giremez.
+ * korunuyor. Gerekçe: `K-2.6.4` rol kataloğu,
+ * `YÖNETİCİ | Tanımlar, kural yönetimi` (`L2_03:405`) — POZİTİF ve birebir.
+ * Davranışsal dayanak KESİN: bu uç göç öncesi de `@Roles(ADMIN)` taşıyordu.
+ * ⚠️ ÖNCEKİ GEREKÇE `K-2.6.4a/b`'ye var olmayan bir cümle atfediyordu
+ * (code-reviewer B1, 2026-08-26); SoD'un ROL katmanındaki formülasyonu
+ * `K-2.6.5c` ("görev ayrılığı KİŞİ bazlı işler") ile gerilimde ve
+ * ürün sahibi kararına kadar ASKIDA — bkz. `docs/DISIPLIN.md`.
  */
 @ApiTags('Approval Policies')
 @ApiBearerAuth()

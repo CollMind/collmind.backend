@@ -453,11 +453,12 @@ describe('T-249 — app_runtime canlı rota GRANT kapsaması', () => {
      * değil (CLAUDE.md §2.7 #9) — kapsam DIŞI bir rolle çağrılıp 403,
      * kapsam İÇİ bir rolle çağrılıp 200 alındığı AYRICA gösterilir.
      *
-     * `SPEND_WRITE_ROLES = [ADMIN, PLANNER]` — READONLY DIŞARIDA
+     * `SHARED_SPEND_WRITE` = {ADMIN, PLANNER} — READONLY DIŞARIDA
+     * (sabit `SPEND_WRITE_ROLES` B3 W4b`de OLDU; yetenege gocuruldu)
      *   (finance-reporting'de bu ayrım yok, emsal plan.controller.ts'in
      *   yazma rotaları — bkz. controller dosyasının başlığı).
      */
-    it('RBAC — POST /spend-calculation/distribute: READONLY → 403 (SPEND_WRITE_ROLES dışında)', async () => {
+    it('RBAC — POST /spend-calculation/distribute: READONLY → 403 (SHARED_SPEND_WRITE dışında)', async () => {
       const readonly = await loginAs(app, 'READONLY');
 
       const res = await request(app.getHttpServer())
@@ -496,7 +497,7 @@ describe('T-249 — app_runtime canlı rota GRANT kapsaması', () => {
      * number `0`), erken-dönüş (DELETE) yoluna giriyor — bu bug'a hiç
      * çarpmıyor.
      */
-    it('RBAC POZİTİF KONTROL — aynı rota (FARKLI mekanik, VIS_LS) PLANNER ile 200 (SPEND_WRITE_ROLES içinde — 403 rol filtresinden, başka bir şeyden değil)', async () => {
+    it('RBAC POZİTİF KONTROL — aynı rota (FARKLI mekanik, VIS_LS) PLANNER ile 200 (SHARED_SPEND_WRITE içinde — 403 rol filtresinden, başka bir şeyden değil)', async () => {
       const planner = await loginAs(app, 'PLANNER');
 
       const res = await request(app.getHttpServer())

@@ -246,6 +246,14 @@ def check_tsv_drift(rows, out):
     ⛔ SKIPPED bir GEÇİŞ DEĞİL: dosya bulunamazsa exit 2 (SETUP HATASI) —
     money-float'ın dersi ("SKIPPED is not a pass") ve o ders yalnız runner
     onu grep'lediği için güvenliydi; burada SESSİZ GEÇİŞ hiç olmuyor.
+    
+    ⚠️ KAYNAK DISKTIR, `git show HEAD:` DEGIL (olculdu 2026-08-26,
+    code-reviewer S6). Degisken adi `committed` ve cikti `commit=` diyor,
+    ama okunan sey CALISMA AGACIDIR. Sonuc: "yeniden uretildi ama
+    COMMIT'LENMEDI" ile "yeniden uretildi ve commit'lendi" AYNI ciktiyi
+    verir -- yani T-288'in yakalamak icin yazildigi senaryonun bir yarisi
+    bu kapinin disinda. Pratik telafi: TSV, uretici ve kod AYNI COMMIT
+    SETINDE iner. Kalici cozum ayri bir tasktir.
     """
     path = os.path.normpath(TSV_PATH)
     if not os.path.exists(path):
@@ -351,6 +359,36 @@ def reconcile(rows):
         print(f'G2 {name:<8} bildirilen={len(decl)} olu={len(dead)} cift={len(dup)}', file=out)
         for m in dead: err.append(f'G2 {name} OLU UYE (hicbir rotaya dusmuyor): {m}')
         for m in dup:  err.append(f'G2 {name} CIFT UYE: {m}')
+
+    # G2b -- Z36 override tablolari da ELLE YAZILMIS UYE LISTELERIDIR.
+    #
+    # ⛔ NEDEN AYRI BIR DONGU: bu tablolarin anahtari (METOD, yol) CIFTIDIR,
+    # SUMMARY/APPROVE'un duz yol listesi degil. `paths` sayaci ile olculemezler
+    # -- `POST budget/envelopes` ile `GET budget/envelopes` ayni yolu paylasir.
+    #
+    # ⛔ VE BU KAPININ GORMEDIGI YON: BAYAT uyeyi gorur, EKSIK uyeyi GORMEZ.
+    # Bir sinifa ait olup listeye YAZILMAMIS rota, genel mekanik kurala duser
+    # (SHARED_WRITE turetilir); GOCMUSSE G6 yakalar, GOCMEMISSE hicbir sey
+    # yakalamaz. Yani G2b bir DRIFT dedektorudur, bir TAMLIK kanidi degil.
+    #
+    # ⚠️ VE G6'NIN STATUSU BU SATIRLARDA ZAYIFLADI: Z35'te turetim alt-modul+
+    # fiil kuralindan MEKANIK geliyordu, yani G6 iki BAGIMSIZ yolu cakistiriyordu.
+    # Z36'da turetim ELLE YAZILMIS bir enumerasyon -- G6 artik "insanin iki yere
+    # yazdigi ayni mi" olcuyor. Drift dedektoru olarak degerli, CAPRAZ KANIT degil.
+    #
+    # Bu bosluk W4b'de ACILDI ve ayni turda kapandi: dort yeni tablo eklendi,
+    # G2 onlari KAPSAMIYORDU. `DISIPLIN` -- "elle yazilmis uye-sayisi" ailesi ve
+    # "bir duzeltme, duzelttigi SINIFIN yeni bir vakasini uretebilir".
+    keys=Counter((r[1],r[2]) for r in rows)
+    for name,decl in (('Z36-POLICY', SHARED_POLICY_WRITE_ROUTES),
+                      ('Z36-ENVELOPE',SHARED_ENVELOPE_WRITE_ROUTES),
+                      ('Z36-SPEND',   SHARED_SPEND_WRITE_ROUTES),
+                      ('Z36-CALCREAD',SHARED_CALC_READ_ROUTES)):
+        dead=sorted(m for m in decl if keys.get(m,0)==0)
+        dup =sorted(m for m in decl if keys.get(m,0)>1)
+        print(f'G2b {name:<13} bildirilen={len(decl)} olu={len(dead)} cift={len(dup)}', file=out)
+        for m in dead: err.append(f'G2b {name} OLU UYE (hicbir rotaya dusmuyor): {m[0]} {m[1]}')
+        for m in dup:  err.append(f'G2b {name} CIFT UYE: {m[0]} {m[1]}')
 
     # G3
     # T-285: EVREN yalnız ROLES-türü satırlar. Göçen rotanın @Roles'u YOKTUR

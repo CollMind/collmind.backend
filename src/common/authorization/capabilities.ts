@@ -631,8 +631,19 @@ export const CAPABILITIES = {
   // (`K-2.6.4a/b` SoD + sahiplik, "defter etkisi" DEĞİL) sekiz rotayı üç ayrı
   // yeteneğe böldü — bkz. `SHARED_POLICY_WRITE` / `SHARED_ENVELOPE_WRITE` /
   // `SHARED_SPEND_WRITE` (aşağı). Union burada artık göçen sekiz rotayı
-  // KAPSAMIYOR — `ROLE_CAPABILITIES`'te bu sabiti taşıyan roller yalnız kalan
-  // rotalar için geçerli.
+  //
+  // ⛔ VE BİR KİLİT — ÖLÇÜLDÜ 2026-08-26 (code-reviewer B2):
+  //   @RequireCapability(SHARED_WRITE) taşıyan rota   SIFIR
+  //     (poz.kontrol: aynı grep SHARED_READ icin 23 satir donuyor)
+  //   bu sabiti tasiyan roller   {ADMIN, PLANNER, CATEGORY_MANAGER, FINANCE}
+  //   kalan bes rotanin @Roles union'i   {ADMIN, PLANNER}
+  // Yani union, koruduğu HİÇBİR rotanın kümesinden GENİŞ. Bu sabite yeni bir
+  // rota bağlanırsa (kaza-dalgasında `budget/reserve` ya da LTA dörtlüsü)
+  // {ADMIN[,PLANNER]} → DÖRT ROL **sessiz genişleme** olur, ve bugün bunu
+  // gören guard YOK — `G6`'nın evreni yalnız GÖÇMÜŞ rotalar.
+  // ⇒ BU SABİTE YENİ ROTA BAĞLANMADAN ÖNCE UNION DARALTILIR.
+  //   (Önceki cümle "roller yalnız kalan rotalar için geçerli" diyordu ve bu
+  //    genişlemeyi ONAYLAR gibi okunuyordu — ölçümle yanlış.)
   // ✅ ÇÖZÜLDÜ (2026-08-17, UNION) — {ADMIN,CATEGORY_MANAGER,FINANCE,
   // PLANNER}. Bkz. yukarı, "ÇÖZÜLDÜ" alt-başlığı (`approval-policies` uyarısı dahil).
   SHARED_WRITE: 'shared:write',
@@ -732,9 +743,16 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.SHARED_MANAGE,
     // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — ADMIN üçünde de zaten vardı
     // (`{A}`, `{A,F}`, `{A,P}`) — bölünme ADMIN için sonuç DEĞİŞTİRMEZ.
-    // SINIF A (`SHARED_POLICY_WRITE`): ADMIN onay-eşiği şablonunun ÖZNESİ
-    // DEĞİL (bkz. FINANCE'in yokluğu aşağıda) — yönetişim ADMIN'in tanımsal
-    // işi (`K-2.6.4a/b`).
+    // SINIF A (`SHARED_POLICY_WRITE`): dayanak `K-2.6.4` rol kataloğunun
+    // `YÖNETİCİ | Tanımlar, kural yönetimi` satırı (`L2_03:405`) — POZİTİF
+    // ve birebir.
+    // ⚠️ ÖNCEKİ GEREKÇE ÖLÇÜMLE YANLIŞTI (code-reviewer S3, 2026-08-26):
+    // "ADMIN onay-eşiği şablonunun ÖZNESİ DEĞİL" yaziyordu. ADMIN, onay
+    // rotalarinin BESINDE @Roles'ta (plans/:id/{approve,reject,
+    // escalate-to-finance} · agreements/:id/{approve,reject}) — yani ADMIN
+    // ONAY VEREN TARAFTIR = sablonun oznesidir, ve ayni anda sablonu yazar.
+    // Bu gerilim KABUL EDILIYOR ve ADMIN'e SoD uygulanip uygulanmayacagi
+    // URUN SAHIBININ karari (askida — bkz. DISIPLIN.md SoD maddesi).
     CAPABILITIES.SHARED_POLICY_WRITE,
     // SINIF B (`SHARED_ENVELOPE_WRITE`): sistem yöneticisi olarak zarf
     // yapısını (oluşturma/split) FINANCE'le PAYLAŞIR — `K-2.2.9c` "finans
@@ -798,9 +816,14 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // {ADMIN} · budget/envelopes[,/split] {ADMIN,FINANCE} · spend-calc
     // distribute/recalculate {ADMIN,PLANNER}) — bu göç `@Roles`'u
     // `@RequireCapability`'e TAŞIYOR, davranışı GENİŞLETMİYOR. CM'nin zarf
-    // ÜZERİNDEKİ konumu ONAY tarafında zaten karşılanmış (`Z36 §4`:
-    // `K-2.6.4`'ün "zarf yönetimi" cümlesi ONAY + İZLEME'de, MODES_APPROVE_
-    // CATEGORY + SHARED_READ görünürlüğü).
+    // ÜZERİNDEKİ konumu ONAY tarafında zaten karşılanmış (`Z36 §4`).
+    // ⚠️ ATIF DÜZELTİLDİ (code-reviewer S1, 2026-08-26): önce
+    // `MODES_APPROVE_CATEGORY` yeteneğine atıf veriyordu — o sabit KODDA
+    // YOK (repo genelinde yalniz UC DOKUMAN satirinda geciyor). CM'nin onayi
+    // bugun YETENEK uzerinden degil `@Roles` uzerinden yasiyor, ve OLCULDU:
+    //   plans/:id/{approve,reject,escalate-to-finance}  ADMIN,CATEGORY_MANAGER
+    //   agreements/:id/{approve,reject}                 ADMIN,CATEGORY_MANAGER,FINANCE
+    // Dislamanin OZU dogru; dayanagi artik VAR OLAN bir yuzey.
   ],
   [UserRole.FINANCE]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — eşik üstü onay/transfer/mutabakat görünürlük ister.
@@ -815,13 +838,34 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.NOTIFICATION_WRITE,
     CAPABILITIES.SHARED_WRITE,
     // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — SINIF B (`SHARED_ENVELOPE_WRITE`)
-    // {ADMIN,FINANCE}: `K-2.2.9c` "finans zarfı büyütür … kararı paranın
-    // sahibine taşır" — YAZAN FINANCE, ONAYLAYAN zarf sahibi (CM, ayrı
-    // kanaldan). Zarf oluşturma/split bugün de `@Roles(ADMIN,FINANCE)`
-    // taşıyordu (`budget.controller.ts:41,151`) — göç davranışı KORUYOR.
-    // ⛔ SINIF A (`SHARED_POLICY_WRITE`) FINANCE'e VERİLMEDİ — `Z36 §3`:
-    // FINANCE onay-eşiği politikasının ÖZNESİDİR, yazabilseydi eşik bir
-    // kısıt olmaktan çıkardı (SoD, `K-2.6.4a/b`). ⛔ SINIF C
+    // {ADMIN,FINANCE}. ⚠️ GEREKÇE DÜZELTİLDİ (code-reviewer S2, 2026-08-26)
+    // — önce `K-2.2.9c`'ye ("finans zarfı büyütür") yaslanıyordu; ölçüm
+    // zincirin İKİ HALKADA koptuğunu gösterdi:
+    //   (1) K-2.2.9c ASIMIN cozumunu, yani zarfin BUYUTULMESINI tarif eder.
+    //       Bu iki rota zarf BUYUTMUYOR: createEnvelope = olusturma;
+    //       splitEnvelope = yeniden etiketleme ve kodun kendi kontrolu
+    //       (`budget.service.ts`, splitEnvelope govdesi) toplamin
+    //       DEGISMEDIGINI EPSILON ile ZORLUYOR.
+    //   (2) "ONAYLAYAN CM, ayri kanal" diye bir kanal YOK — bu iki govdede
+    //       onay adimi bulunmuyor.
+    // ⇒ DOGRU IFADE: bugunku {A,F} `K-2.2.9c`'nin TUREVI DEGIL, `@Roles`'un
+    //   KORUNMUS halidir (createEnvelope/splitEnvelope zaten
+    //   `@Roles(ADMIN,FINANCE)` tasiyordu — goc davranisi KORUYOR).
+    //   `K-2.6.4`'un "zarf yonetimi"ni KATEGORI MUDURU satirina yazmasiyla
+    //   olan gerilim `Z36 §4`'un CIFT KOSULUYLA acik tutuluyor.
+    // ⛔ SINIF A (`SHARED_POLICY_WRITE`) FINANCE'e VERİLMEDİ.
+    // Davranışsal dayanak KESİN: `PATCH /approval-policies/:id` bugün de
+    // `@Roles(ADMIN)` taşıyordu — göç davranışı KORUYOR, genişletmiyor.
+    // ⚠️ GEREKÇE ATFI DÜZELTİLDİ (code-reviewer B1, 2026-08-26): önce
+    // `K-2.6.4a/b`'ye "sablonun oznesi olan rol, sablonu duzenleyemez" diye
+    // ALINTI veriyordu. O CUMLE O KURALDA YOK (olculdu: `duzenleyemez`
+    // L2_03'te SIFIR eslesme; poz.kontrol: `onay` 109 kez eslesiyor).
+    // K-2.6.4a = "rol ... adres defteridir", K-2.6.4b = "onaycı jenerik
+    // degildir, butcenin sahibidir".
+    // ⛔ VE TERS YONDE BIR L2 KURALI VAR: `K-2.6.5c` (`L2_03:538`) —
+    // "gorev ayrilig(i) ROL bazli degil, KISI bazli isler." SoD'un ROL
+    // katmaninda formule edilmesi URUN SAHIBININ acik karari olmadan
+    // BAGLAYICI sayilmaz (askida — bkz. `DISIPLIN.md`). ⛔ SINIF C
     // (`SHARED_SPEND_WRITE`) de VERİLMEDİ — plan-mekanik dağıtımı PLAN
     // düzenleme işi, FINANCE'in konusu değil (`T-249` emsali).
     CAPABILITIES.SHARED_ENVELOPE_WRITE,
