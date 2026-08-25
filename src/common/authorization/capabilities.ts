@@ -589,8 +589,16 @@ export const CAPABILITIES = {
 
   NOTIFICATION_WRITE: 'notification:write',
 
-  // ⛔ BLOKE (2026-08-17 turundan sonra da) — SHARED_READ.
-  // Bkz. yukarıdaki "DUR" alt-başlığı.
+  // ✅ ÇÖZÜLDÜ (ürün sahibi, 2026-08-25 · koda iniş: B3 W4a ADIM 0).
+  // SHARED_READ = 5/5, ve bu bir UNION DEĞİL bir TABAN: K-2.6.5b cümleyi
+  // KÜMEDEN ÖNCE yazmış — "her rolün okuma tabanı zaten var". Z18'in
+  // "union bir gerekçe değildir" reddi burada devreye GİRMEZ, çünkü küme
+  // mekanik bir birleşimden değil, YAZILI BİR CÜMLEDEN türüyor.
+  // ⚠️ Kararın KAPSAMI kısmi: 16 rota (5/5 taban) göçer; DÖRT İSTİSNA
+  // (approvals · approvals/pending · finance-reporting/budget-variance ·
+  // spend-calculation/validate-budget/:planId) GÖÇ-DIŞI ve karar-bekler —
+  // her biri için tek soru: "eksik rolün YOKLUĞU cümlelenebiliyor mu?"
+  // (F12 izi — eski kayıt: "⛔ BLOKE (2026-08-17 turundan sonra da)".)
   SHARED_READ: 'shared:read',
   // ✅ ÇÖZÜLDÜ (2026-08-17, UNION) — {ADMIN,CATEGORY_MANAGER,FINANCE,
   // PLANNER}. Bkz. yukarı, "ÇÖZÜLDÜ" alt-başlığı (`approval-policies` uyarısı dahil).
@@ -648,6 +656,8 @@ export type Capability = (typeof CAPABILITIES)[keyof typeof CAPABILITIES];
  */
 export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
   [UserRole.ADMIN]: [
+    // ↓ SHARED_READ (W4a, 2026-08-25) — tanımlar ve kural yönetimi — okuma tabanı dahil.
+    CAPABILITIES.SHARED_READ,
     CAPABILITIES.ADMIN_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.CUSTOMER_WRITE,
@@ -673,6 +683,8 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.USER_MANAGE,
   ],
   [UserRole.PLANNER]: [
+    // ↓ SHARED_READ (W4a, 2026-08-25) — plan/taktik/hacim girişi için bütçe-anlaşma görünürlüğü şart.
+    CAPABILITIES.SHARED_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.CUSTOMER_WRITE,
     CAPABILITIES.CUSTOMER_MANAGE,
@@ -694,6 +706,8 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.SHARED_WRITE,
   ],
   [UserRole.CATEGORY_MANAGER]: [
+    // ↓ SHARED_READ (W4a, 2026-08-25) — kategori bütçe sahibi: onay ve zarf yönetimi görünürlük ister.
+    CAPABILITIES.SHARED_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
@@ -701,6 +715,8 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.SHARED_WRITE,
   ],
   [UserRole.FINANCE]: [
+    // ↓ SHARED_READ (W4a, 2026-08-25) — eşik üstü onay/transfer/mutabakat görünürlük ister.
+    CAPABILITIES.SHARED_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
     // ↓ Z35 bölünmesi (2026-08-24): FINANCE yalnız GERÇEKLEŞME tarafında.
@@ -712,11 +728,16 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.SHARED_WRITE,
   ],
   [UserRole.READONLY]: [
+    // ↓ SHARED_READ (W4a, 2026-08-25) — İZLEYİCİ bir İZLEME YETENEKLERİ SETİDİR (K-2.6.4c).
+    CAPABILITIES.SHARED_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
     // ↓ ADIM 3 Faz A (2026-08-17): READONLY hiçbir ÇÖZÜLDÜ hücrenin union'ında
     // yok (MODES_WRITE/SHARED_WRITE/TENANT_READ/USER_WRITE'ın hiçbiri
     // READONLY içermiyor) — bilinçli, ekleme yok.
+    // ⛔ BAYAT (W4a, 2026-08-25): SHARED_READ eklendi — ama bir UNION'DAN
+    // DEĞİL, K-2.6.4c'nin AÇIK CÜMLESİNDEN ("İZLEYİCİ bir izleme yetenekleri
+    // setidir"). Yukarıdaki cümle union'lar hakkındaydı ve o kısmı hâlâ doğru.
   ],
 };
