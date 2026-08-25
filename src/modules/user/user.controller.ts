@@ -28,21 +28,36 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../common/guards/capability.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../common/authorization/capabilities';
 import { SelfScoped } from '../../common/decorators/self-scoped.decorator';
 import { TenantId } from '../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../../database/entities/user.entity';
 
+// `B3 W3` göçü (2026-08-25): sekiz rota `@Roles(ADMIN)` →
+// `@RequireCapability(USER_WRITE|USER_MANAGE)`. `ROLE_CAPABILITIES`'te
+// ikisi de yalnız `UserRole.ADMIN`'de (`capabilities.ts` `USER_WRITE` satırı (`:672-673`), **dal 1+2** (tek küme + beş filtresiz hariç — `capabilities.ts:152` başlık kaydı; satır-içi yorum yalnız `dal 1` diyor) —
+// tek rol kümesi, mekanik) — davranış KORUNUYOR (pin:
+// `test/user-capability-boundary.e2e-spec.ts`, göç öncesi/sonrası birebir:
+// ADMIN geçer, ADMIN dışı HER rol 403).
+//
+// ⛔ `GET /users` (`@Roles(ADMIN, FINANCE)`) BİLİNÇLİ OLARAK GÖÇMEDİ —
+// `USER_MANAGE`/`USER_WRITE` `ROLE_CAPABILITIES`'te yalnız `{ADMIN}`,
+// göçürmek FINANCE'ı DÜŞÜRÜRDÜ (`Z20` daraltması, bu dalganın işi DEĞİL —
+// ürün sahibi: "daraltma istisna dalgasının işi"). `@SelfScoped()` uçlar
+// (`me` ailesi) de bu göçün kapsamı dışında.
 @ApiTags('Users')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
   @Post()
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.USER_WRITE)
   @ApiOperation({ summary: 'Create a new user' })
   @ApiResponse({
     status: 201,
@@ -173,7 +188,9 @@ export class UserController {
    * `passwordResetToken` · `emailVerificationToken`) artık HİÇBİR role
    * dönmez.
    *
-   * `(1)`/`(2)` (sahiplik/rol) — KARAR: `@Roles(UserRole.ADMIN)`.
+   * `(1)`/`(2)` (sahiplik/rol) — KARAR: `@Roles(UserRole.ADMIN)` (`B3 W3`'ten
+   * beri `@RequireCapability(USER_MANAGE)` — AYNI KAPI, farklı mekanizma;
+   * küme birebir `{ADMIN}`, `capabilities.ts:673`).
    * Gerekçe: `GET /users/me` `READ_OWN`'ın örneği (yüklemi zaten doğru,
    * `req.user.sub`); `GET /users/:id` bir YÖNETİM UCU (T-241/T-242a'nın
    * kullanıcı yönetimi akışının parçası) — `Z18` taksonomisinin ayrımı.
@@ -187,7 +204,7 @@ export class UserController {
    * tarafından ayrı commit'te yapılır.
    */
   @Get(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.USER_MANAGE)
   @ApiOperation({ summary: 'Get user by ID' })
   @ApiResponse({
     status: 200,
@@ -204,7 +221,7 @@ export class UserController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.USER_WRITE)
   @ApiOperation({ summary: 'Update user (EA-001: Admin restrictions apply)' })
   @ApiResponse({
     status: 200,
@@ -234,7 +251,7 @@ export class UserController {
    * no-op'un kapatılması). RBAC `POST /users` ile TUTARLI: yalnız ADMIN.
    */
   @Patch(':id/scope')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.USER_WRITE)
   @ApiOperation({
     summary:
       'Update user scope (TAM DEĞİŞTİRME — hedef durumu alır, ekle/çıkar değil)',
@@ -259,7 +276,7 @@ export class UserController {
   }
 
   @Patch(':id/password')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.USER_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Change user password' })
   @ApiResponse({ status: 204, description: 'Password changed successfully' })
@@ -272,7 +289,7 @@ export class UserController {
   }
 
   @Post(':id/activate')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.USER_WRITE)
   @ApiOperation({ summary: 'Activate user' })
   @ApiResponse({ status: 200, description: 'User activated' })
   async activate(
@@ -284,7 +301,7 @@ export class UserController {
   }
 
   @Post(':id/deactivate')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.USER_WRITE)
   @ApiOperation({ summary: 'Deactivate user' })
   @ApiResponse({ status: 200, description: 'User deactivated' })
   async deactivate(
@@ -296,7 +313,7 @@ export class UserController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.USER_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete user' })
   @ApiResponse({ status: 204, description: 'User deleted successfully' })

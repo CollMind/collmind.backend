@@ -119,11 +119,25 @@ def roles_for(f, ln):
     if not blk:
         for k in range(ln-2,-1,-1):
             s=L[k].strip()
+            # N3 (W3 review): YORUM FİLTRESİ — ileri tarama `code(s)` uyguluyordu,
+            # geri tarama UYGULAMIYORDU. Bugün etkisiz (9 yorum satırının 9'u da
+            # // ya da * ile başlıyor) AMA bu dalga controller'lara `@Roles(`
+            # İÇEREN YORUM EKLİYOR, ve yorum kirliliği bu repoda ÖLÇÜLMÜŞ,
+            # iki yönde birden yanıltan bir sınıf.
+            if not code(s): continue
             if s.startswith('@Roles('): blk=grab(L,k); break
             if s.endswith('}') and not s.startswith('@'): break
-    if not blk:
-        for l in L[:ln]:
-            if l.strip().startswith('@Roles('): blk=l.strip(); break
+    # ⛔ DOSYA-GENELİ GERİ DÜŞÜŞ KALDIRILDI (W3, 2026-08-25).
+    # Eski hali dosyanın BAŞINDAN ilk @Roles'u alıp bu rotaya ATFEDİYORDU.
+    # Göçen bir rotanın @Roles'u YOKTUR; ama aynı dosyada göçMEMİŞ bir kardeş
+    # varsa onun kümesi göçenlere UYDURULUYORDU. W1/W2'de görünmedi çünkü o
+    # controller'larda @Roles hiç kalmamıştı; W3 KARMA (GET /users bilinçli
+    # olarak göçmedi) ve kusur ORADA ortaya çıktı — her kısmi dalgada tekrarlar.
+    # Kanonik bir üreticinin veri UYDURMASI. ⚠️ DÜZELTME (W3 review): sayı
+    # SEKİZ değil YEDİ — POST /users dosyadaki ilk @Roles'tan ÖNCE geldiği için
+    # '?' üretiyordu, uydurma değil. Ve geçmiş zaman da yanlıştı: hiçbir
+    # COMMIT'Lİ TSV sürümü uydurma değer taşımadı (dört sürüm tarandı) —
+    # düzeltilmeseydi ÜRETECEKTİ.
     if not blk: return '?'
     got=set(re.findall(r'UserRole\.([A-Z_]+)',blk))
     for sp in re.findall(r'\.\.\.([A-Za-z_][\w]*)',blk): got |= resolve(sp)
@@ -321,8 +335,14 @@ def reconcile(rows):
                    f'@RequireCapability argumani CAPABILITIES.X yaziminda degil')
 
     # W1 — uyari, kapi degil
-    noadmin=[r for r in rows if 'ADMIN' not in r[3].split(',')]
-    print(f'W1 (uyari) ADMIN tasimayan rota {len(noadmin)}', file=out)
+    # S1 (W3 review): EVREN G3 ile AYNI daraltmayı alır — göçen rotanın
+    # @Roles'u '-' olduğu için hepsi "ADMIN taşımıyor" görünüyordu (bugün 19,
+    # W8 sonunda 211 olacaktı). "Sinyal SABİTSE, sinyal DEĞİLDİR."
+    # Bu dedektörün kayıtlı bir yakalama sicili var (fixpoint kusurunu O buldu,
+    # EK 3 §1) ve pozitif kontrolü "beklenen 0" diyor — evren daraltılmazsa
+    # o beklenti kalıcı olarak yalan söylerdi.
+    noadmin=[r for r in rows if r[6]=='ROLES' and 'ADMIN' not in r[3].split(',')]
+    print(f'W1 (uyari) ADMIN tasimayan rota {len(noadmin)}  (evren: ROLES-turu)', file=out)
     for r in noadmin: print(f'   ? {r[1]} {r[2]} [{r[3]}]', file=out)
 
     if err:
@@ -336,7 +356,7 @@ def main():
     awk='scripts/guards/route-scope.awk'
     files=sorted(glob.glob('src/**/*.controller.ts',recursive=True))
     out=subprocess.run(['awk','-f',awk]+files,capture_output=True,text=True).stdout
-    rows=[]
+    rows=[]; err_two_mech=[]
     for line in out.splitlines():
         c=line.split('\t')
         if len(c)<9: continue
@@ -352,9 +372,29 @@ def main():
         f,ln,meth,path = c[0],int(c[1]),c[2],c[3]
         cell,srcn = cell_for(f,meth,path)
         declared = c[9] if len(c)>9 else '-'
-        rows.append([f,meth,path,roles_for(f,ln),cell,srcn,
+        roles = roles_for(f,ln)
+        # Göçen rotada @Roles YOKTUR — bu bir ÇÖZÜLEMEME değil, bir YOKLUK.
+        # '?' = "@Roles VAR ama ayrıştırılamadı" (KUSUR, G3'ün konusu)
+        # '-' = "@Roles YOK" (BEKLENEN, göç sonrası)
+        # ⛔ S2 (W3 review): koşul `has_roles`'a bağlanır, roles_for'un SONUCUNA
+        # değil. Elde ayırt edici (awk c[4]) VARKEN onu kullanmamak, "@Roles
+        # taşıyan ama ayrıştırılamayan bir göçmüş rota"yı SESSİZCE '-' (yok)
+        # diye raporlardı — bu commit'in kapattığı "üretici veri uyduruyor"
+        # sınıfının KALAN YARISI.
+        if has_cap and not has_roles and roles == '?': roles = '-'
+        if has_cap and has_roles:
+            # §2.5: iki mekanizma aynı rotada — sessizce sınıflandırılmaz.
+            # single-mechanism.sh bunu exit 3 ile durduruyor; buraya ulaşması
+            # o kapının atlandığı anlamına gelir.
+            err_two_mech.append(f'{meth} {path} ({f})')
+        rows.append([f,meth,path,roles,cell,srcn,
                      'CAP' if has_cap else 'ROLES', declared])
     for r in rows: print('\t'.join(str(x) for x in r))
+    if err_two_mech:
+        print('⛔ İKİ MEKANİZMA aynı rotada (single-mechanism atlandı mı?):',
+              file=sys.stderr)
+        for x in err_two_mech: print('   ', x, file=sys.stderr)
+        return 2
     print(f'# TOPLAM {len(rows)}', file=sys.stderr)
     return reconcile(rows)
 
