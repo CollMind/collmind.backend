@@ -23,18 +23,25 @@ import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { TenantResponseDto } from './dto/tenant-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '../../database/entities/user.entity';
+import { CapabilityGuard } from '../../common/guards/capability.guard';
+import { RequireCapability } from '../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../common/authorization/capabilities';
 
+// `B3 W2` göçü (2026-08-25): sekiz rota `@Roles(ADMIN)` →
+// `@RequireCapability(TENANT_READ|TENANT_WRITE)`. `ROLE_CAPABILITIES`'te
+// ikisi de yalnız `UserRole.ADMIN`'de (`capabilities.ts:667-669`, dal 1 —
+// tek rol kümesi, mekanik) — davranış KORUNUYOR (pin:
+// `test/tenant-capability-boundary.e2e-spec.ts`, göç öncesi/sonrası
+// birebir: ADMIN geçer, ADMIN dışı HER rol 403).
 @ApiTags('Tenants')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('tenants')
 export class TenantController {
   constructor(private readonly tenantService: TenantService) {}
 
   @Post()
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.TENANT_WRITE)
   @ApiOperation({ summary: 'Create a new tenant' })
   @ApiResponse({
     status: 201,
@@ -47,7 +54,7 @@ export class TenantController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.TENANT_READ)
   @ApiOperation({ summary: 'Get all tenants' })
   @ApiResponse({
     status: 200,
@@ -61,9 +68,11 @@ export class TenantController {
   // [[T-258]] ⛔ P0 (2026-08-21): @Roles YOK'tu → her rol (READONLY dahil)
   // erişiyordu, ve servis 9 kullanıcının HAM kaydını (passwordHash dahil)
   // `relations: ['users']` ile yüklüyordu. İkisi birlikte düzeltildi:
-  // @Roles(ADMIN) burada, relations kaldırma tenant.service.ts#findOne'da.
+  // @Roles(ADMIN) burada (B3 W2'den beri @RequireCapability(TENANT_READ) —
+  // AYNI KAPI, farklı mekanizma; küme birebir {ADMIN}), relations kaldırma
+  // tenant.service.ts#findOne'da.
   @Get(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.TENANT_READ)
   @ApiOperation({ summary: 'Get tenant by ID' })
   @ApiResponse({
     status: 200,
@@ -76,7 +85,7 @@ export class TenantController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.TENANT_WRITE)
   @ApiOperation({ summary: 'Update tenant' })
   @ApiResponse({
     status: 200,
@@ -91,7 +100,7 @@ export class TenantController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.TENANT_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete tenant' })
   @ApiResponse({ status: 204, description: 'Tenant deleted successfully' })
@@ -100,7 +109,7 @@ export class TenantController {
   }
 
   @Post(':id/activate')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.TENANT_WRITE)
   @ApiOperation({ summary: 'Activate tenant' })
   @ApiResponse({ status: 200, description: 'Tenant activated' })
   activate(@Param('id', ParseUUIDPipe) id: string) {
@@ -108,7 +117,7 @@ export class TenantController {
   }
 
   @Post(':id/suspend')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.TENANT_WRITE)
   @ApiOperation({ summary: 'Suspend tenant' })
   @ApiResponse({ status: 200, description: 'Tenant suspended' })
   suspend(@Param('id', ParseUUIDPipe) id: string) {
@@ -116,8 +125,9 @@ export class TenantController {
   }
 
   // T-267 (B1 §1e) — KARDEŞ uç: tenant.controller'ın yedi kardeşinin
-  // yedisi de @Roles(ADMIN); tek istisna buydu.
-  @Roles(UserRole.ADMIN)
+  // yedisi de @Roles(ADMIN); tek istisna buydu. `B3 W2` göçüyle bu fark
+  // ortadan kalktı — sekizi de artık @RequireCapability taşıyor.
+  @RequireCapability(CAPABILITIES.TENANT_READ)
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get tenant statistics' })
   @ApiResponse({ status: 200, description: 'Tenant statistics' })
