@@ -751,8 +751,14 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // rotalarinin BESINDE @Roles'ta (plans/:id/{approve,reject,
     // escalate-to-finance} · agreements/:id/{approve,reject}) — yani ADMIN
     // ONAY VEREN TARAFTIR = sablonun oznesidir, ve ayni anda sablonu yazar.
-    // Bu gerilim KABUL EDILIYOR ve ADMIN'e SoD uygulanip uygulanmayacagi
-    // URUN SAHIBININ karari (askida — bkz. DISIPLIN.md SoD maddesi).
+    // ✅ COZULDU (urun sahibi, 2026-08-26): bu bir IHLAL DEGIL — KATMAN
+    // KARISIKLIGIYDI. SoD bu sistemde KISI+ISLEM katmaninda yasar
+    // (`K-2.6.5c`); rol katmaninda ADMIN'in iki kumede olusu yonetisim
+    // cumlesiyle mesru, cunku kisi-bazli SoD ROL UYELIGIYLE IHLAL EDILMEZ.
+    // ⛔ Gercek soru KISI katmanindadir ve bugun KAYITSIZ: "bir kisi sablonu
+    // degistirip sonra o sablon altinda onay verebilir mi?" — L2'nin uc SoD
+    // kurali gonder/onayla eksenini kapsiyor, DEGISTIR/ONAYLA eksenini
+    // KAPSAMIYOR. Faz 2 onay-motoru girdi listesine kayitli (`Z36 §3`).
     CAPABILITIES.SHARED_POLICY_WRITE,
     // SINIF B (`SHARED_ENVELOPE_WRITE`): sistem yöneticisi olarak zarf
     // yapısını (oluşturma/split) FINANCE'le PAYLAŞIR — `K-2.2.9c` "finans
@@ -862,10 +868,13 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // L2_03'te SIFIR eslesme; poz.kontrol: `onay` 109 kez eslesiyor).
     // K-2.6.4a = "rol ... adres defteridir", K-2.6.4b = "onaycı jenerik
     // degildir, butcenin sahibidir".
-    // ⛔ VE TERS YONDE BIR L2 KURALI VAR: `K-2.6.5c` (`L2_03:538`) —
-    // "gorev ayrilig(i) ROL bazli degil, KISI bazli isler." SoD'un ROL
-    // katmaninda formule edilmesi URUN SAHIBININ acik karari olmadan
-    // BAGLAYICI sayilmaz (askida — bkz. `DISIPLIN.md`). ⛔ SINIF C
+    // ✅ VE HUKUM GELDI (urun sahibi, 2026-08-26): SoD ROL KATMANINA
+    // TASINMAZ — `K-2.6.5c` dogru ve dokunulmaz. FINANCE'in disarida kalisi
+    // bir SoD sonucu DEGIL, bir YONETISIM sonucudur: `K-2.6.4` rol katalogu
+    // kural yonetimini YONETICI satirina yaziyor, ve kume O CUMLEDEN turer.
+    // ⚠️ SoD argumani HIC GEREKMIYORDU — kural, kendisi olmadan da dogru olan
+    // bir sonucu gerekcelendirmek icin yazilmisti (`DISIPLIN`: "hicbir seyi
+    // elemeyen bir vaka, kural gerekcesi olamaz"). ⛔ SINIF C
     // (`SHARED_SPEND_WRITE`) de VERİLMEDİ — plan-mekanik dağıtımı PLAN
     // düzenleme işi, FINANCE'in konusu değil (`T-249` emsali).
     CAPABILITIES.SHARED_ENVELOPE_WRITE,

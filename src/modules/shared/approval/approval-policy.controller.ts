@@ -33,8 +33,9 @@ import { UserRole } from '../../../database/entities/user.entity';
  * Davranışsal dayanak KESİN: bu uç göç öncesi de `@Roles(ADMIN)` taşıyordu.
  * ⚠️ ÖNCEKİ GEREKÇE `K-2.6.4a/b`'ye var olmayan bir cümle atfediyordu
  * (code-reviewer B1, 2026-08-26); SoD'un ROL katmanındaki formülasyonu
- * `K-2.6.5c` ("görev ayrılığı KİŞİ bazlı işler") ile gerilimde ve
- * ürün sahibi kararına kadar ASKIDA — bkz. `docs/DISIPLIN.md`.
+ * `K-2.6.5c` ile gerilimdeydi. HÜKÜM (ürün sahibi, 2026-08-26): SoD ROL
+ * katmanına TAŞINMAZ; kural-yazma yetkisi bir YÖNETİŞİM sorusudur. Bu ucun
+ * gerekçesi SoD'a muhtaç değil — yukarıdaki katalog cümlesi yeter.
  */
 @ApiTags('Approval Policies')
 @ApiBearerAuth()
