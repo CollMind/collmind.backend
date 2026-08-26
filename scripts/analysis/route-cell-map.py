@@ -469,6 +469,68 @@ def reconcile(rows):
         err.append('G7 TSV DRIFT: commit\'li TSV ile taze uretim AYRISIYOR — '
                    'artefakt bayat. Yeniden uret ve AYNI commit setinde guncelle.')
 
+    # ==================================================================
+    # G8 — HARITA <-> URETICI BIREBIRLIGI  (Z39 / dalga-sonu H3'un KAPISI)
+    # ==================================================================
+    # ⛔ NEDEN VAR: Z39 "bir kural, TETIKLEYICISI OLMADAN bir TEMENNIDIR" dedi
+    # ve kurali YINE BIR METIN olarak birakti. code-reviewer mutasyonla olctu:
+    # CUSTOMER_MANAGE sifir rotayla GERI EKLENDIGINDE butun kapilar YESIL kaldi.
+    # Yani H3'un bir dalga boyunca uygulanmamasinin sebebi tam olarak buydu.
+    #
+    # IKI YON:
+    #   (a) CAPABILITIES'te olup URETILEMEYEN hucre  -> sifir-rota adayi
+    #   (b) URETILEN ama CAPABILITIES'te OLMAYAN hucre -> hayalet hedef
+    #       (:383'un kendi yorumu bunu isaret ediyordu: listeye yazilmamis bir
+    #        `shared` yazma rotasi SHARED_WRITE turetir, ve o sabit artik YOK)
+    #
+    # ⚠️ BEKLEME LISTESI ACIK VE GEREKCELI: dalgasi gelmemis hucre KUSUR DEGIL.
+    # Dalga kapanisinda o satir DUSER (dalga-sonu H3). Liste burada durur ki
+    # "hangi turun isi" sorusu cevapsiz kalmasin.
+    KAYITLI_ISTISNA = {
+        # Z20: yazili kural + uretici dali (:234) + ROTASI var — H3-uyumlu TAM bicim
+        'USER_MANAGE',
+    }
+    BEKLEYEN = {
+        # W6 (modes, 25 rota) — kapanisinda dusecek ya da rota alacak
+        'MODES_READ', 'MODES_ACTUALS_WRITE', 'MODES_PLAN_WRITE',
+        'MODES_APPROVE', 'MODES_SUBMIT', 'SUMMARY_READ',
+        # W7-W8 (master-data 45+19)
+        'MASTER_DATA_READ', 'MASTER_DATA_WRITE', 'MASTER_DATA_MANAGE',
+    }
+    bildirilen = set(re.findall(r'^  ([A-Z_]+): \'[a-z\-]+:[a-z\-]+\',',
+                                src(CAPS_TS), re.M))
+    uretilen = {r[4] for r in rows if r[4] and r[4] not in ('-', 'beyan')}
+    # ⛔ HAYALET TARAFININ KAYITLI ISTISNASI — ve SARTI: KARARINI ADIYLA SOYLER
+    # Bir hucre DUSTUYSE ama ona ait rotalar HENUZ GOCMEDIYSE, uretici mekanik
+    # kuralla o olu adi turetmeye devam eder. Bu bir KUSUR DEGIL, bir ACIK
+    # KARARIN goruntusudur — ama SESSIZ kalmamali.
+    # ⚠️ Her giris bir KARAR KAYDI adlandirmak ZORUNDA: kayitsiz bir hayalet
+    # hala IHLALDIR (yoksa bu liste "sustur" dugmesi olur).
+    KARAR_BEKLEYEN_HEDEF = {
+        # Z39 §4: SHARED_WRITE dustu; LTA dortlusu T-293 cozulmeden ZATEN
+        # gocmeyecekti. "Dogru hucre, KARARLA ve CUMLESIYLE o gun dogar."
+        'SHARED_WRITE': 'Z39 §4 / T-293',
+    }
+    olu = sorted(bildirilen - uretilen - KAYITLI_ISTISNA - BEKLEYEN)
+    hayalet = sorted(uretilen - bildirilen - set(KARAR_BEKLEYEN_HEDEF))
+    for c, kayit in sorted(KARAR_BEKLEYEN_HEDEF.items()):
+        if c in uretilen:
+            print(f'G8 karar-bekleyen hedef: {c} (kayit: {kayit}) — uretici '
+                  f'turetiyor, hucre DUSMUS, rotalari HENUZ gocmedi', file=out)
+    print(f'G8 harita<->uretici  bildirilen={len(bildirilen)} '
+          f'uretilen={len(uretilen)} bekleyen={len(BEKLEYEN)} '
+          f'olu={len(olu)} hayalet={len(hayalet)}', file=out)
+    for c in olu:
+        err.append(f'G8 SIFIR-ROTA HUCRE: {c} — CAPABILITIES\'te var, hicbir rota '
+                   f'turetmiyor. Z39/dalga-sonu H3: "arkasinda rota olmayan bir '
+                   f'hucre haritada DURMAZ". Ya dusur, ya BEKLEYEN listesine '
+                   f'GEREKCESIYLE ekle, ya KAYITLI_ISTISNA yap (yazili kural + '
+                   f'uretici dali + rota).')
+    for c in hayalet:
+        err.append(f'G8 HAYALET HEDEF: {c} — uretici bu hucreyi turetiyor ama '
+                   f'CAPABILITIES\'te YOK. Bir rota var olmayan bir hucreye '
+                   f'atanmis olabilir.')
+
     # W1 — uyari, kapi degil
     # S1 (W3 review): EVREN G3 ile AYNI daraltmayı alır — göçen rotanın
     # @Roles'u '-' olduğu için hepsi "ADMIN taşımıyor" görünüyordu (bugün 19,

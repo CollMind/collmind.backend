@@ -76,6 +76,12 @@ import { UserRole } from '../../database/entities/user.entity';
  *
  * İlk 10 düzeltme **hiçbiri yeni hücre açmadı** — hepsi zaten dolu olan bir
  * (modül, sınıf) hücresine taşındı, yani `24` dolu hücre sayısı DEĞİŞMEDİ.
+ * ⚠️ **BAYAT ADLAR — `F12` işareti (2026-08-26, `Z39`):** bu bölüm **2026-08-17
+ * taksonomi turunun TARİHSEL anlatısıdır.** `CUSTOMER_MANAGE` · `TENANT_MANAGE` ·
+ * `SHARED_MANAGE` · `SHARED_WRITE` **DÜŞTÜ** (sıfır rota, `H3` emsali) — aşağıdaki
+ * metinlerde **canlı sabit gibi geçerler**. Dosyada bu adları arayan biri **önce
+ * buraya çarpar**; kod tarafında karşılıkları **yoktur**.
+ *
  * 11. düzeltme de aynı: `SHARED_WRITE` → `SHARED_MANAGE`, ikisi de zaten dolu.
  *
  * ⚠️ **Ve 11. düzeltme `SHARED_WRITE`'ın UNION'INI DEĞİŞTİRMEDİ** — ölçüldü:
@@ -699,6 +705,10 @@ export const CAPABILITIES = {
   // rota YOK notu doğruydu, `H3` genel kuralı burada tetikleyicisiyle
   // uygulandı). `PATCH /approval-policies/:id` zaten `SHARED_POLICY_WRITE`'a
   // göçmüştü (SINIF A, `{ADMIN}`) — bu sabit onun için de gerekmiyordu.
+  // ⚠️ GERİ-DÖNÜŞ KAPISI (code-reviewer S4, `H3` deseni — dörtte üçünde vardı,
+  // burada eksikti): ileride bir `shared` YÖNETİM rotası doğarsa hücre
+  // **KARARLA GERİ GELİR** — ve `Z20` biçiminde: yazılı kural + üretici dalı
+  // + ROTASI. Kendiliğinden, sıfır rotayla geri EKLENEMEZ (`G8` kapısı).
 
   // ✅ Z36 BÖLÜNMESİ KODA İNDİ (2026-08-26, B3 W4b ADIM 0).
   // `SHARED_WRITE`'ın SEKİZ rotası üçe ayrıldı — ayırt edici `Z35`'in
