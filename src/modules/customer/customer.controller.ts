@@ -32,19 +32,26 @@ import { CustomerFilterDto } from './dto/customer-filter.dto';
 import { CustomerResponseDto } from './dto/customer-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { CapabilityGuard } from '../../common/guards/capability.guard';
+import { RequireCapability } from '../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../common/authorization/capabilities';
 import { TenantId } from '../../common/decorators/tenant.decorator';
-import { UserRole } from '../../database/entities/user.entity';
 
+// `B3 W5` göçü (2026-08-26, `Z39`) — 17 rota `@Roles` → `@RequireCapability`.
+// `ROLE_CAPABILITIES`'te `CUSTOMER_READ` = 5/5 (ADMIN,PLANNER,
+// CATEGORY_MANAGER,FINANCE,READONLY), `CUSTOMER_WRITE` = {ADMIN,PLANNER} —
+// göç öncesi/sonrası @Roles kümesiyle BİREBİR, davranış KORUNUYOR.
+// `CUSTOMER_MANAGE` bu göçe DAHİL DEĞİL — üretici (`route-cell-map.py:234`)
+// onu TÜRETEMİYOR ve `Z39`'da haritadan SİLİNDİ (`H3` emsali, sıfır-rota).
 @ApiTags('Customers')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('customers')
 export class CustomerController {
   constructor(private readonly customerService: CustomerService) {}
 
   @Post()
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.CUSTOMER_WRITE)
   @ApiOperation({ summary: 'Create a new customer' })
   @ApiResponse({
     status: 201,
@@ -59,7 +66,7 @@ export class CustomerController {
   }
 
   @Post('bulk')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.CUSTOMER_WRITE)
   @ApiOperation({ summary: 'Create multiple customers' })
   @ApiResponse({
     status: 201,
@@ -84,13 +91,9 @@ export class CustomerController {
   //   FİNANS: mutabakat · içe aktarma sırasında müşteri kaydını eşleştirmesi
   //     gerekiyor (1a ile aynı gerekçe)
   //   İZLEYİCİ: salt görüntüleme — K-2.6.4c izleme yetenekleri seti
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // ↓ B3 W5 (Z39, 2026-08-26): @Roles(ADMIN,PLANNER,CATEGORY_MANAGER,FINANCE,
+  // READONLY) → CUSTOMER_READ (ROLE_CAPABILITIES'te aynı 5/5 küme) — birebir.
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get()
   @ApiOperation({ summary: 'Get all customers' })
   @ApiResponse({
@@ -102,14 +105,8 @@ export class CustomerController {
     return this.customerService.findAll(tenantId, filters);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get('search')
   @ApiOperation({ summary: 'Search customers' })
   @ApiResponse({
@@ -123,14 +120,8 @@ export class CustomerController {
     } as CustomerFilterDto);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get('channel/:channel')
   @ApiOperation({ summary: 'Get customers by channel' })
   @ApiResponse({
@@ -145,14 +136,8 @@ export class CustomerController {
     return this.customerService.findByChannel(tenantId, channel);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get('channel-id/:channelId')
   @ApiOperation({ summary: 'Get customers by channel ID' })
   @ApiResponse({
@@ -167,14 +152,8 @@ export class CustomerController {
     return this.customerService.findByChannelId(tenantId, channelId);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get('city/:city')
   @ApiOperation({ summary: 'Get customers by city' })
   @ApiResponse({
@@ -186,14 +165,8 @@ export class CustomerController {
     return this.customerService.findByCity(tenantId, city);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get('vip')
   @ApiOperation({ summary: 'Get VIP customers' })
   @ApiResponse({
@@ -205,14 +178,8 @@ export class CustomerController {
     return this.customerService.findVipCustomers(tenantId);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get(':id')
   @ApiOperation({ summary: 'Get customer by ID' })
   @ApiResponse({
@@ -228,14 +195,8 @@ export class CustomerController {
     return this.customerService.findOne(tenantId, id);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get('code/:code')
   @ApiOperation({ summary: 'Get customer by code' })
   @ApiResponse({
@@ -248,7 +209,7 @@ export class CustomerController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.CUSTOMER_WRITE)
   @ApiOperation({ summary: 'Update customer' })
   @ApiResponse({
     status: 200,
@@ -264,7 +225,7 @@ export class CustomerController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.CUSTOMER_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete customer' })
   @ApiResponse({ status: 204, description: 'Customer deleted successfully' })
@@ -273,7 +234,7 @@ export class CustomerController {
   }
 
   @Post(':id/activate')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.CUSTOMER_WRITE)
   @ApiOperation({ summary: 'Activate customer' })
   @ApiResponse({ status: 200, description: 'Customer activated' })
   activate(
@@ -284,7 +245,7 @@ export class CustomerController {
   }
 
   @Post(':id/deactivate')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.CUSTOMER_WRITE)
   @ApiOperation({ summary: 'Deactivate customer' })
   @ApiResponse({ status: 200, description: 'Customer deactivated' })
   deactivate(
@@ -294,14 +255,8 @@ export class CustomerController {
     return this.customerService.deactivate(tenantId, id);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get customer statistics' })
   @ApiResponse({ status: 200, description: 'Customer statistics' })
@@ -312,14 +267,8 @@ export class CustomerController {
     return this.customerService.getStats(tenantId, id);
   }
 
-  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // T-267 (B1 §S1) — aynı gerekçe (yukarı bkz.) · B3 W5 (Z39) — CUSTOMER_READ
+  @RequireCapability(CAPABILITIES.CUSTOMER_READ)
   @Get('cpl/list')
   @ApiOperation({
     summary: 'Get CPL list with statistics (customer count, active agreements)',
@@ -334,7 +283,7 @@ export class CustomerController {
   }
 
   @Post('import')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.CUSTOMER_WRITE)
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({ summary: 'Import customers from Excel or CSV file' })
   @ApiConsumes('multipart/form-data')
