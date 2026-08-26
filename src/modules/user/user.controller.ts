@@ -46,9 +46,15 @@ import { UserRole } from '../../database/entities/user.entity';
 //
 // ⛔ `GET /users` (`@Roles(ADMIN, FINANCE)`) BİLİNÇLİ OLARAK GÖÇMEDİ —
 // `USER_MANAGE`/`USER_WRITE` `ROLE_CAPABILITIES`'te yalnız `{ADMIN}`,
-// göçürmek FINANCE'ı DÜŞÜRÜRDÜ (`Z20` daraltması, bu dalganın işi DEĞİL —
-// ürün sahibi: "daraltma istisna dalgasının işi"). `@SelfScoped()` uçlar
-// (`me` ailesi) de bu göçün kapsamı dışında.
+// göçürmek FINANCE'ı DÜŞÜRÜRDÜ. `@SelfScoped()` uçlar (`me` ailesi) de bu
+// göçün kapsamı dışında.
+//
+// `B3` kaza-dalgası `K1` (2026-08-26): `Z20` daraltması BURADA UYGULANDI —
+// `GET /users` `@Roles(ADMIN, FINANCE)` → `@Roles(ADMIN)`, FINANCE DÜŞTÜ.
+// Kayıt: `docs/brd-v2/04_KARAR_KAYDI.md` `Z20`/`H7` — `GET /users/:id`
+// (`T-255`) zaten `ADMIN`'e daraltılmıştı; `GET /users` onun liste hâli,
+// aynı veri sınıfı aynı rol. Pin: `test/z20-users-list-role-boundary.
+// e2e-spec.ts`.
 @ApiTags('Users')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
@@ -86,7 +92,7 @@ export class UserController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({
     status: 200,

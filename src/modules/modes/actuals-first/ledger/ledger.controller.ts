@@ -63,8 +63,17 @@ export class LedgerController {
     return { agreementId, consumed };
   }
 
+  // `B3` kaza-dalgası `K2` (2026-08-26) — normalizasyon, kayıtsız fark.
+  // Kardeş rotalar (`ledger` · `ledger/:id` · `ledger/agreement/:id(/consumed)`)
+  // hepsi `{ADMIN,FINANCE,PLANNER}`; bu iki `envelope/*` rotası `{ADMIN,FINANCE}`
+  // kalmıştı. `ledger.repository.ts`: `findByEnvelopeId` ile `findAll`'un
+  // `budgetEnvelopeId` filtresi AYNI yüklem — yani PLANNER bu veriye
+  // `GET /ledger?budgetEnvelopeId=X` üzerinden zaten erişebiliyordu; kısıt
+  // fiilen bir BYPASS'tı. Kayıt taraması: `git log -S 'envelope/:envelopeId'`
+  // → tek sonuç dosyanın doğuş commit'i, gerekçeli bir istisna kaydı yok.
+  // Pin: `test/ledger-envelope-role-boundary.e2e-spec.ts`.
   @Get('envelope/:envelopeId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get ledger entries by budget envelope ID' })
   findByEnvelope(
     @Param('envelopeId', ParseUUIDPipe) envelopeId: string,
@@ -73,8 +82,11 @@ export class LedgerController {
     return this.ledgerService.findByEnvelopeId(envelopeId, tenantId);
   }
 
+  // `B3` kaza-dalgası `K2` — yukarıdaki `envelope/:envelopeId` notuyla aynı
+  // gerekçe; kardeş `agreement/:agreementId/consumed` zaten `{ADMIN,FINANCE,
+  // PLANNER}`.
   @Get('envelope/:envelopeId/consumed')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
   @ApiOperation({ summary: 'Get total consumed amount for budget envelope' })
   async getConsumedByEnvelope(
     @Param('envelopeId', ParseUUIDPipe) envelopeId: string,
