@@ -1,4 +1,9 @@
 # scope-ratchet: A1 — kapsam GEREKLİ, UYGULANMIYOR, Alan A (ratchet'in KAPISI, tek yön aşağı)
+# ⚠️ 2026-08-26 (K6c/d): `budget/reserve` satırı DÜŞTÜ — ve bu bir KAPSAM
+#   İYİLEŞMESİ DEĞİL: rota SİLİNDİ (T-289 / Z38 §1). A1 sayısındaki azalma
+#   accessScope atfı kazanıldığı için değil, ÖLÇÜLEN ŞEY ORTADAN KALKTIĞI
+#   için oldu. DISIPLIN: "bir TOPLAMIN azalması, bir SINIFIN girmediğinin
+#   kanıtı değildir" — burada azalma bir SİLME kaydıdır, bir kazanım değil.
 # T-266 (Z19b) — kapsam ratchet'i. Format: <dosya>|<YÖNTEM>|<yol><TAB># <gerekçe>
 # anahtar route-scope.awk'ın ürettiğiyle AYNI (<dosya>|<YÖNTEM>|<yol>).
 # date:   2026-08-22
@@ -6,7 +11,7 @@
 #
 # TABAN: scripts/guards/money-float-domain-a.txt (ADR 0007) ∩ (0 accessScope atıf)
 # EKLEME (gerekçeli): finance-reporting (T-254 kanıtlı fail-open) · sales-actuals (C sınıfının kendisi) · reversal (Alan A çekirdeği)
-# ÖNCELİK: shared/budget YAZMA uçları (reserve/commit/split/adjust) — modülde kapsam atfı 0 VE bütçe YAZIYOR (T-253'ten ağır: orada okuma, burada yazma)
+# ÖNCELİK: shared/budget YAZMA uçları (commit/split/adjust — ⚰️ reserve SİLİNDİ, T-289/K6c-d) — modülde kapsam atfı 0 VE bütçe YAZIYOR (T-253'ten ağır: orada okuma, burada yazma)
 #
 src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions	# Alan A (money-float-domain-a.txt) — 0 accessScope atıf
 src/modules/modes/actuals-first/agreement-transaction/agreement-transaction.controller.ts|GET|agreement-transactions/:id	# Alan A — 0 accessScope atıf

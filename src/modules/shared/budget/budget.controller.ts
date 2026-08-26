@@ -60,8 +60,20 @@ export class BudgetController {
   //     görmeden yapamaz
   //   KATEGORİ MÜDÜRÜ: "kategori bütçe sahibi" — kendi zarfını görmek
   //     TANIMSAL
-  //   PLANLAMACI: POST /budget/reserve'de ZATEN VAR (kardeş uç, satır 69)
-  //     — yazabildiği bir zarfı okuyamaması TUTARSIZ olurdu
+  //   PLANLAMACI: ⚠️ GEREKÇE DEĞİŞTİ (2026-08-26, `K6c/d`) — eski dayanak
+  //     `POST /budget/reserve`'ün VARLIĞIYDI ("yazabildiği bir zarfı
+  //     okuyamaması TUTARSIZ olurdu"); o uç SİLİNDİ (`T-289`).
+  //     Yürürlükteki dayanak: `PLANNER` plan-mekanik dağıtımını YAZIYOR
+  //     (`SHARED_SPEND_WRITE`) ve zarf durumu o yazmanın GİRDİSİDİR.
+  //     ⚠️ ÖLÇÜM ADRESİ (code-reviewer S13 — dolaylı, yazılmazsa bir sonraki
+  //     tur bunu "durağan yüzey" olarak devralır): zarf okuması
+  //     `BudgetService#checkPlanBudgetAvailability` üzerinden
+  //     `spend-validation.service.ts`'te yaşıyor. `PLANNER`'ın
+  //     `SHARED_SPEND_WRITE` rotaları (`distribute`/`recalculate`)
+  //     `spend-distribution.service.ts`'te ve zarfı DOĞRUDAN okumuyor —
+  //     bağ plan-bütçe doğrulaması üzerinden kuruluyor.
+  //     ⇒ DISIPLIN: "bir istisna kalktığında ona yaslanan kararlar
+  //       YENİDEN OKUNUR" — bu maddenin ilk uygulanışı.
   //   İZLEYİCİ: "salt görüntüleme" — bütçe durumu izlemenin ÇEKİRDEĞİ
   // ⚠️ KAPSAM SÜTUNU ❌ — resolveScope/AccessScope bu serviste 0 atıf
   // (ölçüldü). Bir CATEGORY_MANAGER başka kategorinin zarfını görebilir.

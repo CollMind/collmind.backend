@@ -86,12 +86,31 @@ describe('Budget Reserve — kaldırılan uç + kanonik-yol invaryantı (T-289, 
     ).toBeUndefined();
   });
 
+  // ⛔ BAŞLIK DÜZELTİLDİ (code-reviewer, 2026-08-26) — ve düzeltmenin sebebi
+  // MUTASYONLA ölçüldü: uç + servis + DTO TAMAMEN GERİ YÜKLENDİĞİNDE
+  // `BR-01/02/03` kırmızıya döndü ama **BR-04 YEŞİL KALDI**.
+  //
+  // Sebep koddan okunur: bu test yalnız DB'yi sorguluyor, KALDIRILAN YOLU
+  // HİÇ ÇAĞIRMIYOR. Ve mevcut dört satırın dördü de değişiklikten ÖNCE
+  // doğmuş — yani iddia SİLMEDEN ÖNCE DE DOĞRUYDU.
+  //
+  // ⇒ Eski başlık ("...sınıfı artık YAPISAL OLARAK imkânsız") bir şey
+  //   KANITLAMIYORDU ve altı ay sonra "invaryant pinli" diye okunurdu.
+  //   `DISIPLIN` — pin kör-nokta ailesi #1 (kaynak-yanlış): test, üretimin
+  //   okuduğu yerden BAŞKA bir yeri ölçüyor.
+  //
+  // 📌 `K6(d)` (tek-yol pini) bugün `BR-01/02/03` tarafından KARŞILANIYOR —
+  //   BR-04 tarafından DEĞİL. BR-04 bir BÜTÜNLÜK GÖZLEMİDİR.
+  //
+  // ⚠️ Gerçek bir ilişki-pini suite'in KENDİ fixture'ını kurmasını ister
+  //   (yeni bir agreement yarat + onayla → kanonik motor koşsun → doğan
+  //   satırın bağı ölçülsün). O zaman pin motoru GERÇEKTEN çalıştırır ve
+  //   paylaşılan DB'ye de yaslanmaz. Kayıt: [[T-300]].
   it(
-    'BR-04 (İLİŞKİ-pini, DEĞER değil): tenant içindeki HER AGREEMENT-kaynaklı ' +
-      "RESERVE satırının source_id'si GERÇEK bir agreements satırına karşılık " +
-      'gelir — fabrikasyon (var olmayan) agreementId ile POSTED satır sınıfı ' +
-      'artık YAPISAL OLARAK imkânsız (tek yazma yolu reserveForAgreement, ve o ' +
-      'yol agreement.service.ts içinde ONAYLANMIŞ bir agreement satırından çağrılır)',
+    'BR-04 (BÜTÜNLÜK GÖZLEMİ — kaldırmayı BR-01/02/03 pinler): tenant ' +
+      "içindeki her AGREEMENT-kaynaklı RESERVE satırının source_id'si gerçek " +
+      'bir agreements satırına karşılık geliyor (seed + kanonik yolun bıraktığı ' +
+      'durum). ⚠️ Bu test kaldırılan yolu ÇAĞIRMAZ — mutasyonda yeşil kalır',
     async () => {
       const rows: { source_id: string }[] = await dataSource.query(
         `SELECT bt.source_id

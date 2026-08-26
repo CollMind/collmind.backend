@@ -262,7 +262,7 @@ import { UserRole } from '../../database/entities/user.entity';
  *                                 POST /budget-allocations/adjust                (adjustUtilization)     +CATEGORY_MANAGER,+PLANNER
  *                                 POST /budget/envelopes[/:id/split]             (createEnvelope/
  *                                                                                  splitEnvelope)         +CATEGORY_MANAGER,+PLANNER
- * {ADMIN,PLANNER}           n=1  POST /budget/reserve                           (reserveBudget)         +CATEGORY_MANAGER,+FINANCE
+ * {ADMIN,PLANNER}           n=1  POST /budget/reserve  ⚰️ SİLİNDİ (K6c/d)        (reserveBudget)         +CATEGORY_MANAGER,+FINANCE
  * {ADMIN}                   n=2  POST/PATCH /lta-agreements[/:id]               (create/update)         +CATEGORY_MANAGER,+FINANCE,+PLANNER
  * ```
  * Union: `{ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER}` (READONLY dışarıda —
@@ -626,8 +626,11 @@ export const CAPABILITIES = {
   // düzleştirirdi.
   SHARED_READ: 'shared:read',
   // ⚠️ BAYAT (Z36, 2026-08-26) — `SHARED_WRITE` hücre olarak KALIYOR (silinmedi,
-  // hâlâ `budget/reserve` (T-289'da kaldırılacak) + LTA dörtlüsü (kaza-dalgası,
-  // ürün sahibinde açık soru) burada yaşıyor), ama `Z36`'nın gerçek eksen ölçümü
+  // hâlâ LTA dörtlüsü (kaza-dalgası, `T-293`'e bağlı) burada yaşıyor),
+  // ama `Z36`'nın gerçek eksen ölçümü sekiz rotayı üç ayrı yeteneğe böldü —
+  // bkz. `SHARED_POLICY_WRITE` / `SHARED_ENVELOPE_WRITE` / `SHARED_SPEND_WRITE`.
+  // ⚠️ ATIF GÜNCELLENDİ (2026-08-26, `K6c/d`): `budget/reserve` bu listeden
+  //   ÇIKARILDI — uç SİLİNDİ (`T-289` / `Z38 §1`). Kalan rota sayısı 5 → 4., ama `Z36`'nın gerçek eksen ölçümü
   // (`K-2.6.4a/b` SoD + sahiplik, "defter etkisi" DEĞİL) sekiz rotayı üç ayrı
   // yeteneğe böldü — bkz. `SHARED_POLICY_WRITE` / `SHARED_ENVELOPE_WRITE` /
   // `SHARED_SPEND_WRITE` (aşağı). Union burada artık göçen sekiz rotayı
@@ -636,10 +639,16 @@ export const CAPABILITIES = {
   //   @RequireCapability(SHARED_WRITE) taşıyan rota   SIFIR
   //     (poz.kontrol: aynı grep SHARED_READ icin 23 satir donuyor)
   //   bu sabiti tasiyan roller   {ADMIN, PLANNER, CATEGORY_MANAGER, FINANCE}
-  //   kalan bes rotanin @Roles union'i   {ADMIN, PLANNER}
+  //   kalan DORT rotanin @Roles union'i  {ADMIN}
+  //     ⚠️ DEGER DUZELTILDI (2026-08-26, code-reviewer): once
+  //     "bes rota / {ADMIN, PLANNER}" yaziyordu. `budget/reserve`
+  //     o union'daki PLANNER'in TEK KAYNAGIYDI; uc silinince union
+  //     {ADMIN}'e dustu. Ilk duzeltme SAYIYI (5→4) duzeltti ama
+  //     DEGERI birakti — bayat-yorum sinifinin ayni turda tekrari.
   // Yani union, koruduğu HİÇBİR rotanın kümesinden GENİŞ. Bu sabite yeni bir
-  // rota bağlanırsa (kaza-dalgasında `budget/reserve` ya da LTA dörtlüsü)
-  // {ADMIN[,PLANNER]} → DÖRT ROL **sessiz genişleme** olur, ve bugün bunu
+  // rota bağlanırsa (kaza-dalgasında LTA dörtlüsü — `budget/reserve` artık
+  //   YOK, `K6c/d`'de SİLİNDİ, `T-289`)
+  // {ADMIN} → DÖRT ROL **sessiz genişleme** olur (fark artık DAHA BÜYÜK), ve bugün bunu
   // gören guard YOK — `G6`'nın evreni yalnız GÖÇMÜŞ rotalar.
   // ⇒ BU SABİTE YENİ ROTA BAĞLANMADAN ÖNCE UNION DARALTILIR.
   //   (Önceki cümle "roller yalnız kalan rotalar için geçerli" diyordu ve bu
@@ -794,9 +803,16 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // "PLANLAMACI — …, GÖNDERİM — günlük kullanıcı".
     CAPABILITIES.MODES_SUBMIT,
     CAPABILITIES.NOTIFICATION_WRITE,
-    // ↓ SHARED_WRITE union'ı PLANNER'a budget-allocation/budget/
-    // lta-agreement yazma uçlarını açıyor (approval-policies dahil —
-    // CAPABILITIES yorumundaki ⚠️ uyarıya bkz.).
+    // ⚠️ BAYAT — `F12` izi (2026-08-26, code-reviewer S7). Aşağıdaki gerekçe
+    // `budget`/`budget-allocation` yazma uçlarını sayıyordu. `Z36` sekiz rotayı
+    // üç ayrı yeteneğe böldü ve `K6c/d` `budget/reserve`'ü SİLDİ ⇒ `PLANNER`'ın
+    // `SHARED_WRITE` altında bugün SIFIR rotası var (kalan dört LTA ucu `{ADMIN}`,
+    // union `{ADMIN}`). Yürürlükteki `PLANNER` yazma yeteneği: `SHARED_SPEND_WRITE`
+    // (aşağı). ⛔ Bu satır bir GEÇİŞ KALINTISIDIR — `SHARED_WRITE` union'ı
+    // daraltılmadan bu sabite yeni rota bağlanmaz (yukarıdaki KİLİT).
+    //
+    // ~~↓ SHARED_WRITE union'ı PLANNER'a budget-allocation/budget/
+    // lta-agreement yazma uçlarını açıyor (approval-policies dahil).~~
     CAPABILITIES.SHARED_WRITE,
     // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — SINIF C (`SHARED_SPEND_WRITE`)
     // {ADMIN,PLANNER}: PLANNER, plan→FU→SKU mekanik dağıtımının ızgara-
