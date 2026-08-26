@@ -4,14 +4,37 @@ import {
   IsString,
   IsEnum,
   IsArray,
-  IsObject,
   IsOptional,
 } from 'class-validator';
+import { ReportFilters } from './report-filters.dto';
+import { ComparisonType as SharedComparisonType } from './report-filters.dto';
 
 export enum ComparisonType {
   BUDGET_VS_ACTUAL = 'budget_vs_actual',
   FORECAST_VS_ACTUAL = 'forecast_vs_actual',
   PREVIOUS_PERIOD = 'previous_period',
+}
+
+/**
+ * [[T-296]] — `variance-analysis`'e özel. Önceden controller
+ * `comparisonType`'ı `@Query('comparisonType')` olarak, `ReportFilters`'tan
+ * AYRI bildiriyordu. `whitelist:true, forbidNonWhitelisted:true` altında
+ * `?comparisonType=...` gönderen her istek `400 "property comparisonType
+ * should not exist"` alıyordu. Not: bu dosyanın kendi `ComparisonType`'ı
+ * (response tipi için) `report-filters.dto.ts`'teki `ComparisonType`'tan
+ * AYRI bir enum — controller ikincisini kullanıyor (bkz.
+ * `finance-reporting.controller.ts` import'u); bu DTO da ONU referans alır,
+ * ikisini karıştırmamak için `SharedComparisonType` diye içe aktarıldı.
+ */
+export class VarianceAnalysisQueryDto extends ReportFilters {
+  @ApiPropertyOptional({
+    description: 'Comparison type',
+    enum: SharedComparisonType,
+    default: SharedComparisonType.BUDGET_VS_ACTUAL,
+  })
+  @IsEnum(SharedComparisonType)
+  @IsOptional()
+  comparisonType?: SharedComparisonType = SharedComparisonType.BUDGET_VS_ACTUAL;
 }
 
 export class VarianceItem {

@@ -5,7 +5,29 @@ import {
   IsArray,
   IsObject,
   IsOptional,
+  IsEnum,
 } from 'class-validator';
+import { ReportFilters, ReportGranularity } from './report-filters.dto';
+
+/**
+ * [[T-296]] — `spend-trend`'e özel. Önceden controller `granularity`'yi
+ * `@Query('granularity') granularity: ReportGranularity = ReportGranularity.MONTHLY`
+ * olarak, `ReportFilters`'tan (whitelist DTO) AYRI bildiriyordu. Global
+ * `ValidationPipe`'ın `whitelist:true, forbidNonWhitelisted:true` ayarı
+ * altında bu, `?granularity=...` gönderen her isteği `400 "property
+ * granularity should not exist"` ile reddediyordu — desen `BudgetVarianceQueryDto`
+ * ile aynı (uç-özel alan, DTO'ya taşınır).
+ */
+export class SpendTrendQueryDto extends ReportFilters {
+  @ApiPropertyOptional({
+    description: 'Trend granularity',
+    enum: ReportGranularity,
+    default: ReportGranularity.MONTHLY,
+  })
+  @IsEnum(ReportGranularity)
+  @IsOptional()
+  granularity?: ReportGranularity = ReportGranularity.MONTHLY;
+}
 
 export class TrendDataPoint {
   @ApiProperty({ description: 'Date (YYYY-MM-DD)' })

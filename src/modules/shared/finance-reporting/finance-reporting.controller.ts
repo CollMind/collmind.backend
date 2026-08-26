@@ -13,13 +13,19 @@ import {
   ComparisonType,
 } from './dto/report-filters.dto';
 import { BudgetUtilizationReport } from './dto/budget-utilization.dto';
-import { TrendReport } from './dto/trend-report.dto';
+import { TrendReport, SpendTrendQueryDto } from './dto/trend-report.dto';
 import { CompositionReport } from './dto/composition-report.dto';
 import { PaginatedPlanReport } from './dto/plan-performance.dto';
 import { RiskReport } from './dto/risk-report.dto';
 import { MechanicReport } from './dto/mechanic-effectiveness.dto';
-import { VarianceReport } from './dto/variance-report.dto';
-import { CashFlowReport } from './dto/cash-flow-report.dto';
+import {
+  VarianceReport,
+  VarianceAnalysisQueryDto,
+} from './dto/variance-report.dto';
+import {
+  CashFlowReport,
+  CashFlowProjectionQueryDto,
+} from './dto/cash-flow-report.dto';
 import {
   BudgetVarianceReport,
   BudgetVarianceQueryDto,
@@ -75,14 +81,17 @@ export class FinanceReportingController {
   })
   getSpendTrend(
     @TenantId() tenantId: string,
-    @Query() filters: ReportFilters,
-    @Query('granularity')
-    granularity: ReportGranularity = ReportGranularity.MONTHLY,
+    @Query() query: SpendTrendQueryDto,
   ) {
+    // [[T-296]] `granularity` artık tek yerde: `SpendTrendQueryDto.granularity`
+    // (DTO-level default + `@IsEnum`). Çıplak `@Query('granularity')`
+    // bildirimi kaldırıldı — bkz. dto/trend-report.dto.ts. `plainToInstance`
+    // initializer'ı çalıştırdığı için `query.granularity` hiçbir zaman
+    // `undefined` değil (`PaginationParams.page` ile aynı desen).
     return this.financeReportingService.getSpendTrend(
       tenantId,
-      filters,
-      granularity,
+      query,
+      query.granularity as ReportGranularity,
     );
   }
 
@@ -180,14 +189,16 @@ export class FinanceReportingController {
   })
   getVarianceAnalysis(
     @TenantId() tenantId: string,
-    @Query() filters: ReportFilters,
-    @Query('comparisonType')
-    comparisonType: ComparisonType = ComparisonType.BUDGET_VS_ACTUAL,
+    @Query() query: VarianceAnalysisQueryDto,
   ) {
+    // [[T-296]] `comparisonType` artık tek yerde:
+    // `VarianceAnalysisQueryDto.comparisonType`. Çıplak
+    // `@Query('comparisonType')` bildirimi kaldırıldı — bkz.
+    // dto/variance-report.dto.ts.
     return this.financeReportingService.getVarianceAnalysis(
       tenantId,
-      filters,
-      comparisonType,
+      query,
+      query.comparisonType as ComparisonType,
     );
   }
 
@@ -230,11 +241,14 @@ export class FinanceReportingController {
   })
   getCashFlowProjection(
     @TenantId() tenantId: string,
-    @Query() filters: ReportFilters,
+    @Query() filters: CashFlowProjectionQueryDto,
   ) {
-    // [[T-294]] `months` artık tek yerde: `ReportFilters.months`
-    // (DTO-level default + @Type(()=>Number)/@IsInt/@Min/@Max). Çıplak
-    // `@Query('months')` bildirimi kaldırıldı — bkz. dto/report-filters.dto.ts.
+    // [[T-294]]/[[T-296]] `months` artık tek yerde:
+    // `CashFlowProjectionQueryDto.months` (DTO-level default +
+    // @Type(()=>Number)/@IsInt/@Min/@Max). Çıplak `@Query('months')`
+    // bildirimi kaldırıldı — bkz. dto/cash-flow-report.dto.ts. `months`
+    // ayrıca `ReportFilters`'tan (paylaşılan, sekiz uçta kullanılan DTO)
+    // buraya taşındı — bkz. T-296 S2.
     return this.financeReportingService.getCashFlowProjection(
       tenantId,
       filters,
