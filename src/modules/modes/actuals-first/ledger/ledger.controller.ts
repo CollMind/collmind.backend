@@ -69,7 +69,9 @@ export class LedgerController {
   // kalmıştı. `ledger.repository.ts`: `findByEnvelopeId` ile `findAll`'un
   // `budgetEnvelopeId` filtresi AYNI yüklem — yani PLANNER bu veriye
   // `GET /ledger?budgetEnvelopeId=X` üzerinden zaten erişebiliyordu; kısıt
-  // fiilen bir BYPASS'tı. Kayıt taraması: `git log -S 'envelope/:envelopeId'`
+  // fiilen bir BYPASS'tı. Kayıt taraması: `git log -L <aralık>:<dosya>   (⚠️ `-S 'envelope/:envelopeId'` YETMEZ: rota
+  //   DİZGESİNİN doğuşunu/ölümünü tarar, yalnız `@Roles` satırını değiştiren bir
+  //   commit'i GÖRMEZ — code-reviewer S4)`
   // → tek sonuç dosyanın doğuş commit'i, gerekçeli bir istisna kaydı yok.
   // Pin: `test/ledger-envelope-role-boundary.e2e-spec.ts`.
   @Get('envelope/:envelopeId')

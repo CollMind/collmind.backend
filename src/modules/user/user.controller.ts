@@ -39,15 +39,21 @@ import { UserRole } from '../../database/entities/user.entity';
 
 // `B3 W3` göçü (2026-08-25): sekiz rota `@Roles(ADMIN)` →
 // `@RequireCapability(USER_WRITE|USER_MANAGE)`. `ROLE_CAPABILITIES`'te
-// ikisi de yalnız `UserRole.ADMIN`'de (`capabilities.ts` `USER_WRITE` satırı (`:672-673`), **dal 1+2** (tek küme + beş filtresiz hariç — `capabilities.ts:152` başlık kaydı; satır-içi yorum yalnız `dal 1` diyor) —
+// ikisi de yalnız `UserRole.ADMIN`'de (`capabilities.ts`'in `USER_WRITE`/`USER_MANAGE` bildirimleri, **dal 1+2** (tek küme + beş filtresiz hariç — `capabilities.ts:152` başlık kaydı; satır-içi yorum yalnız `dal 1` diyor) —
 // tek rol kümesi, mekanik) — davranış KORUNUYOR (pin:
 // `test/user-capability-boundary.e2e-spec.ts`, göç öncesi/sonrası birebir:
 // ADMIN geçer, ADMIN dışı HER rol 403).
 //
-// ⛔ `GET /users` (`@Roles(ADMIN, FINANCE)`) BİLİNÇLİ OLARAK GÖÇMEDİ —
+// ⚠️ BAYAT — `F12` izi (2026-08-26, code-reviewer S2). Aşağıdaki gerekçe
+// `B3 W3` anına aitti ve o anda DOĞRUYDU; `K1` (`Z20`) `FINANCE`'ı ZATEN
+// DÜŞÜRDÜ, yani "göçürmek FINANCE'ı düşürürdü" cümlesi artık BOŞTA.
+// ⇒ Göçün önü AÇILDI ve artık DAVRANIŞ-KORUYUCU: `USER_MANAGE = {ADMIN}`,
+//   rota `{ADMIN}`. Kayıt: [[T-297]].
+//
+// ~~⛔ `GET /users` (`@Roles(ADMIN, FINANCE)`) BİLİNÇLİ OLARAK GÖÇMEDİ —
 // `USER_MANAGE`/`USER_WRITE` `ROLE_CAPABILITIES`'te yalnız `{ADMIN}`,
-// göçürmek FINANCE'ı DÜŞÜRÜRDÜ. `@SelfScoped()` uçlar (`me` ailesi) de bu
-// göçün kapsamı dışında.
+// göçürmek FINANCE'ı DÜŞÜRÜRDÜ.~~ `@SelfScoped()` uçlar (`me` ailesi) bu
+// göçün kapsamı dışında (BU HÂLÂ GEÇERLİ — rol değil kimlik gerektirir).
 //
 // `B3` kaza-dalgası `K1` (2026-08-26): `Z20` daraltması BURADA UYGULANDI —
 // `GET /users` `@Roles(ADMIN, FINANCE)` → `@Roles(ADMIN)`, FINANCE DÜŞTÜ.

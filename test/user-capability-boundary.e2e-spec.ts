@@ -11,10 +11,16 @@
  * CapabilityGuard'dan geldiği ancak `403` ALMAYAN bir kardeş (ADMIN → guard
  * geçiyor) yanında yazılıysa ayırt edilir.
  *
- * ⛔ `GET /users` (`@Roles(ADMIN, FINANCE)`) BU DOSYANIN KAPSAMI DIŞINDA —
+ * ⚠️ BAYAT — `F12` izi (2026-08-26): aşağıdaki not `GET /users`'ı
+ * `@Roles(ADMIN, FINANCE)` diye tarif ediyordu. `Z20` daraltması `B3` kaza-dalgası
+ * `K1`'de İNDİ; rota artık `@Roles(ADMIN)`. Eski kayıt SİLİNMEDİ çünkü bu dosyanın
+ * kapsam sınırı hâlâ geçerli — değişen şey rotanın KÜMESİ, kapsamın kendisi değil.
+ * Güncel sınır pini: `test/z20-users-list-role-boundary.e2e-spec.ts`.
+ *
+ * ~~⛔ `GET /users` (`@Roles(ADMIN, FINANCE)`) BU DOSYANIN KAPSAMI DIŞINDA —
  * göçMEDİ (`user.controller.ts`'teki `B3 W3` yorumuna bkz.: göçürmek
  * `ROLE_CAPABILITIES`'in `USER_WRITE`/`USER_MANAGE`'i yalnız `{ADMIN}` taşıdığı
- * için FINANCE'ı düşürürdü — `Z20` daraltması, bu dalganın işi değil).
+ * için FINANCE'ı düşürürdü — `Z20` daraltması, bu dalganın işi değil).~~
  * `@SelfScoped()` uçlar (`me` ailesi) de kapsam dışı — rol değil kimlik gerektirir.
  *
  * ⚠️ Yan etkili rotalar (`POST /users`, `PATCH /users/:id`,
