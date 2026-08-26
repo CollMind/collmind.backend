@@ -36,7 +36,10 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 import { Mechanic } from '../../../database/entities/mechanic.entity';
 
-// `B3 W8` göçü (2026-08-26) — dokuz rotanın yedisi `@Roles` → `@RequireCapability`.
+// `B3 W8` göçü (2026-08-26) — DOKUZ rotanın SEKİZİ `@Roles` → `@RequireCapability`.
+// ⚠️ SAYI DÜZELTİLDİ (code-reviewer S1): önce "dokuz rotanın yedisi" yazıyordu.
+// Ölçüldü: HTTP dekoratörü 9 · @RequireCapability 8 · @Roles 1 (validate-formula).
+// ⇒ 9 + 8 = 17 göçen · 1 + 1 = 2 karar-bekler · 10 + 9 = 19 rota. Kapanış TUTUYOR.
 //   POST/PATCH/DELETE/:id/clone       `@Roles(ADMIN)`                                        → `MASTER_DATA_WRITE` ({ADMIN})
 //   GET (liste·:id)                   `@Roles(ADMIN,PLANNER,CATEGORY_MANAGER,FINANCE,READONLY)` → `MASTER_DATA_READ` (5/5)
 // `ROLE_CAPABILITIES`'te ikisi de göç öncesi @Roles kümesiyle BİREBİR —

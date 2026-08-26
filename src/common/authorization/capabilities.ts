@@ -690,11 +690,15 @@ export const CAPABILITIES = {
   // `W4a`'nın yan-bulgusunun kaydettiği tutarsızlık (`SHARED_WRITE`
   // yorumundaki eski "Filtresiz 4" listesi bu üçünü YAZMA sayıyordu) bu
   // göçle KAPANIR — bkz. `docs/process/B3_KARAR_BEKLER_PAKETI.md`.
-  // ⛔ Ayrı bir `CALC_READ` hücresi AÇILMADI (Z36 §5, bilinçli) — dört
-  // `MASTER_DATA` hesap-okuma rotası (mechanics/applicable ·
-  // check-combination · mechanics/validate-formula · kpis/validate-formula)
-  // hâlâ WRITE'ta, karar-bekler; tek hücre iki ailenin eksenini
-  // düzleştirirdi.
+  // ⛔ Ayrı bir `CALC_READ` hücresi AÇILMADI (Z36 §5, bilinçli) — tek hücre
+  // iki ailenin eksenini düzleştirirdi.
+  // ⚠️ BAYAT CÜMLE DÜZELTİLDİ (code-reviewer S2, 2026-08-26): önce dört
+  // MASTER_DATA rotasının "hâlâ WRITE'ta, karar-bekler" olduğunu söylüyordu.
+  // `Z36 §5` REVİZYONU dörtlüyü İKİYE ayırdı ve `W8` ilk yarısını GÖÇÜRDÜ:
+  //   mechanics/applicable · check-combination  → MASTER_DATA_READ (küme BİREBİR)
+  //   mechanics/validate-formula · kpis/…       → ⛔ KARAR-BEKLER (kalan İKİ)
+  // ⇒ Kanonik dosyada YÜRÜRLÜKTEKİ hükümle ÇELİŞEN bir cümleydi — `DISIPLIN`:
+  //   "bir istisna kalktığında ona yaslanan kararlar YENİDEN OKUNUR" (4. vaka).
   SHARED_READ: 'shared:read',
   // ⛔ `SHARED_WRITE` DÜŞTÜ (`Z39`, 2026-08-26 · `B3 W5` kapanışı, `H3`
   // emsali) — sıfır-rota kanıtı: `@RequireCapability(CAPABILITIES.

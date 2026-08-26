@@ -32,7 +32,10 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 import { Kpi } from '../../../database/entities/kpi.entity';
 
-// `B3 W8` göçü (2026-08-26) — dokuz rotanın sekizi `@Roles` → `@RequireCapability`.
+// `B3 W8` göçü (2026-08-26) — ON rotanın DOKUZU `@Roles` → `@RequireCapability`.
+// ⚠️ SAYI DÜZELTİLDİ (code-reviewer S1): önce "dokuz rotanın sekizi" yazıyordu.
+// Ölçüldü: HTTP dekoratörü 10 · @RequireCapability 9 · @Roles 1 (validate-formula).
+// İki dosyanın eski sayıları 8+7=15 veriyordu; commit/pin/TSV'nin dediği 17 DEĞİL.
 //   POST/PATCH/DELETE/seed-defaults  `@Roles(ADMIN)`                                        → `MASTER_DATA_WRITE` ({ADMIN})
 //   GET (liste·grid/:planId·grid·calculable·:id)  `@Roles(ADMIN,PLANNER,CATEGORY_MANAGER,FINANCE,READONLY)` → `MASTER_DATA_READ` (5/5)
 // `ROLE_CAPABILITIES`'te ikisi de göç öncesi @Roles kümesiyle BİREBİR —

@@ -10,7 +10,11 @@
  *   GET (liste + :id)  `@Roles(ADMIN,PLANNER,CATEGORY_MANAGER,FINANCE,READONLY)` → `MASTER_DATA_READ` (5/5)
  *
  * `ROLE_CAPABILITIES`'te ikisi de göç öncesi @Roles kümesiyle BİREBİR —
- * davranış KORUNUYOR. `MASTER_DATA_MANAGE` bu göçe DAHİL DEĞİL (`W8`'in işi).
+ * davranış KORUNUYOR. `MASTER_DATA_MANAGE` bu göçe DAHİL DEĞİLDİ.
+ * ⚠️ GÜNCELLENDİ (code-reviewer S3, 2026-08-26): "`W8`'in işi" yazıyordu;
+ * `W8` KAPANDI ve hücre `H3` ile DÜŞTÜ (sıfır rota). Artık bir İŞ değil, bir
+ * KAPANMIŞ KARAR — geri gelmesi `Z20` biçimi ister (yazılı kural + üretici
+ * dalı + rota), ve `G8` kendiliğinden eklenmesini ENGELLER.
  *
  * `docs/process/B3B1_DALGA_PLANI_ONERI.md` `W5`–`W8` YÜRÜYÜŞ NOTU — pin
  * hücreyi ölçer, rotayı değil: 45 rota için 45 ayrı test YAZILMADI. Bir
