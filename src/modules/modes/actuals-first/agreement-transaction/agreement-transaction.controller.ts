@@ -29,16 +29,27 @@ import { AgreementService } from '../agreement/agreement.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../../common/guards/capability.guard';
 import { Roles } from '../../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../../database/entities/user.entity';
 import { randomUUID } from 'crypto';
 
+// `B3 W6` göçü (2026-08-26, `Z35`) — GERÇEKLEŞME yazımı (`MODES_ACTUALS_WRITE`,
+// {ADMIN,FINANCE}: create/batchImport/upload/validateAndImport) `@Roles` →
+// `@RequireCapability` göçürüldü. `ROLE_CAPABILITIES`'te hücre göç öncesi
+// `@Roles(ADMIN,FINANCE)` kümesiyle BİREBİR — davranış KORUNUYOR. `T-277`/
+// `Z35` daraltmasının pini (`test/agreement-transaction-role-boundary.e2e-spec.ts`)
+// DOKUNULMADI. `MODES_READ` (bu dosyadaki GET rotaları, `GET batch/:batchId`
+// dahil — {ADMIN,FINANCE} rol kümesi taşısa bile fiil READ'dir) bu göçe
+// DAHİL DEĞİL (karar-bekler, `B3B1_DALGA_PLANI_ONERI.md §6`).
 @ApiTags('Agreement Transactions (Off-Invoice)')
 @ApiBearerAuth()
 @Controller('agreement-transactions')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class AgreementTransactionController {
   constructor(
     private readonly txService: AgreementTransactionService,
@@ -50,7 +61,7 @@ export class AgreementTransactionController {
 
   @Post()
   // @Roles: docs/brd-v2/04_KARAR_KAYDI.md Z35 · K-2.6.14 (docs/brd-v2/03_IS_KURALLARI/L2_03).
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @ApiOperation({ summary: 'Create single off-invoice transaction' })
   create(
     @Body() dto: CreateAgreementTransactionDto,
@@ -61,7 +72,7 @@ export class AgreementTransactionController {
   }
 
   @Post('batch')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @ApiOperation({ summary: 'Batch import off-invoice transactions' })
   batchImport(
     @Body() dto: BatchImportDto,
@@ -287,7 +298,7 @@ export class AgreementTransactionController {
   }
 
   @Post('upload')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -378,7 +389,7 @@ export class AgreementTransactionController {
   }
 
   @Post('validate-and-import')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @ApiOperation({ summary: 'Validate and import validated rows' })
   async validateAndImport(
     @Body() body: { rows: CreateAgreementTransactionDto[]; batchId?: string },

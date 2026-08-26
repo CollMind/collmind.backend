@@ -23,7 +23,10 @@ import { UploadSalesActualsQueryDto } from './dto';
 import { SalesActualSourceType } from '../../../../database/entities/sales-actual-batch.entity';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../../common/guards/capability.guard';
 import { Roles } from '../../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../../database/entities/user.entity';
@@ -37,15 +40,21 @@ const READ_ROLES = [
   UserRole.READONLY,
 ];
 
+// `B3 W6` göçü (2026-08-26, `Z35`) — GERÇEKLEŞME yazımı (`MODES_ACTUALS_WRITE`,
+// {ADMIN,FINANCE}: upload) `@Roles` → `@RequireCapability` göçürüldü.
+// `ROLE_CAPABILITIES`'te hücre göç öncesi `WRITE_ROLES` (`@Roles(ADMIN,
+// FINANCE)`) kümesiyle BİREBİR — davranış KORUNUYOR. `MODES_READ`
+// (batches/summary GET rotaları, `READ_ROLES`) bu göçe DAHİL DEĞİL
+// (karar-bekler, `B3B1_DALGA_PLANI_ONERI.md §6`).
 @ApiTags('Sales Actuals')
 @ApiBearerAuth()
 @Controller('actuals-first/sales-actuals')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class SalesActualsController {
   constructor(private readonly service: SalesActualsService) {}
 
   @Post('upload')
-  @Roles(...WRITE_ROLES)
+  @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({

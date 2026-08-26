@@ -38,17 +38,26 @@ import {
 } from './dto';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../../common/guards/capability.guard';
 import { RecalcMetricsInterceptor } from '../../../../common/interceptors/recalc-metrics.interceptor';
 import { Roles } from '../../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../../database/entities/user.entity';
 import { PlanStatus } from '../../../../database/entities/plan.entity';
 
+// `B3 W6` göçü (2026-08-26, `Z35`) — PLAN/ANLAŞMA yazma (`MODES_PLAN_WRITE`,
+// {ADMIN,PLANNER}) ve gönderim (`MODES_SUBMIT`, {ADMIN,PLANNER}) rotaları
+// `@Roles` → `@RequireCapability` göçürüldü. `ROLE_CAPABILITIES`'te iki
+// hücre de göç öncesi `@Roles(ADMIN,PLANNER)` kümesiyle BİREBİR — davranış
+// KORUNUYOR. `MODES_READ`/`MODES_APPROVE` bu göçe DAHİL DEĞİL (karar-bekler,
+// `B3B1_DALGA_PLANI_ONERI.md §6`) — o rotalar `@Roles` taşımaya devam eder.
 @ApiTags('Plans')
 @ApiBearerAuth()
 @Controller('plans')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class PlanController {
   constructor(
     private readonly planService: PlanService,
@@ -56,7 +65,7 @@ export class PlanController {
   ) {}
 
   @Post()
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create new plan' })
   @ApiResponse({ status: 201, description: 'Plan created successfully' })
@@ -221,7 +230,7 @@ export class PlanController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @ApiOperation({ summary: 'Update plan (DRAFT only)' })
   @ApiResponse({ status: 200, description: 'Plan updated successfully' })
   @ApiResponse({ status: 400, description: 'Only DRAFT plans can be edited' })
@@ -238,7 +247,7 @@ export class PlanController {
   }
 
   @Post(':id/fus')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @UseInterceptors(RecalcMetricsInterceptor)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Add FU to plan' })
@@ -256,7 +265,7 @@ export class PlanController {
   }
 
   @Patch(':id/fus/:fuId/tactics')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @UseInterceptors(RecalcMetricsInterceptor)
   @ApiOperation({ summary: 'Update FU tactic values' })
   @ApiResponse({ status: 200, description: 'FU tactics updated successfully' })
@@ -274,7 +283,7 @@ export class PlanController {
   }
 
   @Delete(':id/fus/:fuId')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @UseInterceptors(RecalcMetricsInterceptor)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove FU from plan' })
@@ -306,7 +315,7 @@ export class PlanController {
   }
 
   @Patch(':id/fus/:fuId/skus/:skuId/volume')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @UseInterceptors(RecalcMetricsInterceptor)
   @ApiOperation({ summary: 'Update SKU volume' })
   @ApiResponse({ status: 200, description: 'SKU volume updated successfully' })
@@ -329,7 +338,7 @@ export class PlanController {
   }
 
   @Post(':id/submit')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_SUBMIT)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Submit plan for approval (legacy)' })
   @ApiResponse({ status: 200, description: 'Plan submitted successfully' })
@@ -353,7 +362,7 @@ export class PlanController {
   }
 
   @Post(':id/submit-for-approval')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_SUBMIT)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Submit plan for approval with pre-submission checks',
@@ -515,7 +524,7 @@ export class PlanController {
   // Ownership (PLANNER may only return their own plan) is enforced in
   // PlanService#returnToDraft.
   @Post(':id/return-to-draft')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_SUBMIT)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Return a REJECTED plan to DRAFT for revision' })
   @ApiResponse({ status: 200, description: 'Plan returned to draft' })
@@ -535,7 +544,7 @@ export class PlanController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete plan (DRAFT only)' })
   @ApiResponse({ status: 204, description: 'Plan deleted successfully' })
@@ -557,7 +566,7 @@ export class PlanController {
   }
 
   @Post(':id/calculate-kpis')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @UseInterceptors(RecalcMetricsInterceptor)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Calculate KPIs for a plan using KPI engine' })
@@ -574,7 +583,7 @@ export class PlanController {
   }
 
   @Post(':id/recalculate')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @UseInterceptors(RecalcMetricsInterceptor)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger full recalculation for a plan' })

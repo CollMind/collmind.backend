@@ -434,12 +434,20 @@ def reconcile(rows):
         print(f'G5 EXPECT[{c}] = {sorted(r) or "BOS"}  (kaynak: ROLE_CAPABILITIES)', file=out)
         if not r:
             err.append(f'G5 EXPECT BOS: {c} hicbir role verilmemis — harita okunamadi mi?')
+    # ⛔ W6 (2026-08-26) — KAPSAM DARALTILDI: yalnız ROLES-turu (henuz gocmemis)
+    # satirlar. Gocen (CAP) bir rotada @Roles SILINIR (r[3]='-'), yani bu
+    # kontrol EXPECT kumesiyle asla eslesmez ve GOCUN KENDISINI "uyusmazlik"
+    # diye raporlar — göçün BAŞARISINI hata sayardı (Z29). CAP-turu satirlarin
+    # capraz-kontrolu zaten G6'nin isi (beyan @RequireCapability argumani ↔
+    # mekanik turetim); G5 ve G6 AYNI SEYI IKI KEZ olcmuyor, G5 gocmemis
+    # kalani, G6 gocmusu kapsiyor. Tum uyeler goctugunde G5'in evreni
+    # DOGAL OLARAK SIFIRLANIR — bu bir kor-nokta degil, is teslimi.
     mism=[]
     for r in rows:
-        if r[4] in EXPECT:
+        if r[4] in EXPECT and r[6]=='ROLES':
             got=set(r[3].split(',')) if r[3]!='?' else set()
             if got!=EXPECT[r[4]]: mism.append((r[4],r[1],r[2],r[3]))
-    n_split=sum(1 for r in rows if r[4] in EXPECT)
+    n_split=sum(1 for r in rows if r[4] in EXPECT and r[6]=='ROLES')
     print(f'G5 Z35 bolunmesi   uye={n_split}  @Roles uyusmazligi={len(mism)}', file=out)
     for c,m,pth,rl in mism:
         err.append(f'G5 UYUSMAZLIK: {m} {pth} hucre={c} @Roles={rl}')
@@ -490,12 +498,22 @@ def reconcile(rows):
         # Z20: yazili kural + uretici dali (:234) + ROTASI var — H3-uyumlu TAM bicim
         'USER_MANAGE',
     }
+    # ⛔ LISTE OLCULEREK DARALTILDI (2026-08-26). Ilk yazimda DOKUZ uye vardi;
+    # SEKIZI TASIYICI DEGILDI — o hucreler ZATEN URETILIYOR (rotalari `@Roles`'ta
+    # duruyor ama hucre kolonu doluyor), yani `olu` kontrolune HIC dusmuyorlardi.
+    #
+    # ⚠️ VE BU, AYNI TURDA YAZILAN KURALIN IHLALIYDI: "istisna listeleri de birer
+    # KAPIDIR ve kapinin kendisi kadar disiplin ister". Tasiyici olmayan bir giris
+    # BUGUN hicbir seyi susturmaz — YARIN susturur, ve kimse fark etmez.
+    #
+    # ⇒ KURAL: bir istisna listesine giris eklemeden once OLC — "bu giris
+    #   kaldirilirsa kapi BUGUN kirmiziya doner mi?" Cevap hayirsa giris
+    #   GEREKSIZDIR ve yazilmaz.
     BEKLEYEN = {
-        # W6 (modes, 25 rota) — kapanisinda dusecek ya da rota alacak
-        'MODES_READ', 'MODES_ACTUALS_WRITE', 'MODES_PLAN_WRITE',
-        'MODES_APPROVE', 'MODES_SUBMIT', 'SUMMARY_READ',
-        # W7-W8 (master-data 45+19)
-        'MASTER_DATA_READ', 'MASTER_DATA_WRITE', 'MASTER_DATA_MANAGE',
+        # W7-W8 (master-data) — TEK TASIYICI uye: bildirilen ama HIC uretilmiyor
+        # (hicbir rota bu hucreyi turetmiyor), yani W7/W8 kapanisina kadar
+        # `olu` kontrolune duser. Kapanisinda ya rota alir ya DUSER.
+        'MASTER_DATA_MANAGE',
     }
     bildirilen = set(re.findall(r'^  ([A-Z_]+): \'[a-z\-]+:[a-z\-]+\',',
                                 src(CAPS_TS), re.M))

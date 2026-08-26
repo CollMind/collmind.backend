@@ -23,15 +23,24 @@ import { Response } from 'express';
 import { OnInvoiceService } from './on-invoice.service';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../../common/guards/capability.guard';
 import { Roles } from '../../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../../database/entities/user.entity';
 
+// `B3 W6` göçü (2026-08-26, `Z35`) — GERÇEKLEŞME yazımı (`MODES_ACTUALS_WRITE`,
+// {ADMIN,FINANCE}: upload/validateBatch/processBatch) `@Roles` →
+// `@RequireCapability` göçürüldü. `ROLE_CAPABILITIES`'te hücre göç öncesi
+// `@Roles(ADMIN,FINANCE)` kümesiyle BİREBİR — davranış KORUNUYOR.
+// `MODES_READ` (count/entries/template GET rotaları) bu göçe DAHİL DEĞİL
+// (karar-bekler, `B3B1_DALGA_PLANI_ONERI.md §6`).
 @ApiTags('On-Invoice')
 @ApiBearerAuth()
 @Controller('on-invoice')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class OnInvoiceController {
   constructor(private readonly onInvoiceService: OnInvoiceService) {}
 
@@ -39,7 +48,7 @@ export class OnInvoiceController {
    * Adım 1: Dosya Yükleme
    */
   @Post('upload')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -150,7 +159,7 @@ export class OnInvoiceController {
    * Adım 2: Validasyon (Eğer upload'da yapılmadıysa)
    */
   @Post(':batchId/validate')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @ApiOperation({ summary: 'Adım 2: Batch validasyonu yap' })
   async validateBatch(
     @Param('batchId', ParseUUIDPipe) batchId: string,
@@ -163,7 +172,7 @@ export class OnInvoiceController {
    * Adım 3: Batch İşleme
    */
   @Post(':batchId/process')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @ApiOperation({ summary: 'Adım 3: Batch işle ve ledger entry oluştur' })
   async processBatch(
     @Param('batchId', ParseUUIDPipe) batchId: string,

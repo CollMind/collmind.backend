@@ -26,21 +26,31 @@ import {
 } from './dto';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../../common/guards/capability.guard';
 import { Roles } from '../../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../../database/entities/user.entity';
 import { AgreementStatus } from '../../../../database/entities/agreement.entity';
 
+// `B3 W6` göçü (2026-08-26, `Z35`) — PLAN/ANLAŞMA yazma (`MODES_PLAN_WRITE`,
+// {ADMIN,PLANNER}: create/update/delete) ve gönderim/iptal
+// (`MODES_SUBMIT`, {ADMIN,PLANNER}: submit/cancel) rotaları `@Roles` →
+// `@RequireCapability` göçürüldü. `ROLE_CAPABILITIES`'te iki hücre de göç
+// öncesi `@Roles(ADMIN,PLANNER)` kümesiyle BİREBİR — davranış KORUNUYOR.
+// `MODES_READ`/`MODES_APPROVE` (approve/reject dahil) bu göçe DAHİL DEĞİL
+// (karar-bekler, `B3B1_DALGA_PLANI_ONERI.md §6`).
 @ApiTags('Agreements')
 @ApiBearerAuth()
 @Controller('agreements')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class AgreementController {
   constructor(private readonly agreementService: AgreementService) {}
 
   @Post()
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create new agreement' })
   @ApiResponse({ status: 201, description: 'Agreement created successfully' })
@@ -147,7 +157,7 @@ export class AgreementController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @ApiOperation({ summary: 'Update agreement (DRAFT only)' })
   @ApiResponse({ status: 200, description: 'Agreement updated successfully' })
   @ApiResponse({
@@ -171,7 +181,7 @@ export class AgreementController {
   }
 
   @Post(':id/submit')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_SUBMIT)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Submit agreement for approval' })
   @ApiResponse({ status: 200, description: 'Agreement submitted successfully' })
@@ -241,7 +251,7 @@ export class AgreementController {
   }
 
   @Post(':id/cancel')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_SUBMIT)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel agreement (releases reserved budget)' })
   @ApiResponse({ status: 200, description: 'Agreement cancelled successfully' })
@@ -266,7 +276,7 @@ export class AgreementController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_PLAN_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete agreement (DRAFT only)' })
   @ApiResponse({ status: 204, description: 'Agreement deleted successfully' })
