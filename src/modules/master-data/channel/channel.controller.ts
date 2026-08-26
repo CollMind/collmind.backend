@@ -32,8 +32,12 @@ import { Request } from '@nestjs/common';
 import { Channel } from '../../../database/entities/channel.entity';
 
 // `B3 W7` göçü (2026-08-26) — 5 rota `@Roles` → `@RequireCapability`.
-// `ROLE_CAPABILITIES`'te `MASTER_DATA_READ` = 5/5 (ADMIN,PLANNER,
-// CATEGORY_MANAGER,FINANCE,READONLY), `MASTER_DATA_WRITE` = {ADMIN} —
+// ⚠️ KÜME BURAYA YAZILMIYOR (code-reviewer Nit 1): dokuz controller'ın bu
+// bloğu BYTE-BİREBİR aynı, ve elle yazılmış bir küme dokuz yerde AYNI ANDA
+// bayatlar (`DISIPLIN`: "elle yazılmış üye-sayısı — ölçülmüş oran DOKUZDA
+// DOKUZ"). Niteliksel ayırt edici: `MASTER_DATA_READ`, göç öncesi `@Roles`
+// kümesiyle BİREBİR. Kanonik kaynak `ROLE_CAPABILITIES`; atama kapısı `G6`
+// (45 rotanın HEPSİNDE ölçülüyor).
 // göç öncesi/sonrası @Roles kümesiyle BİREBİR, davranış KORUNUYOR.
 // `MASTER_DATA_MANAGE` bu göçe DAHİL DEĞİL — `W8`'in kapanışında ele alınır.
 @ApiTags('Master Data - Channels')

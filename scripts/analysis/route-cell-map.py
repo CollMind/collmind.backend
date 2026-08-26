@@ -573,9 +573,12 @@ def reconcile(rows):
     #   kaldirilirsa kapi BUGUN kirmiziya doner mi?" Cevap hayirsa giris
     #   GEREKSIZDIR ve yazilmaz.
     BEKLEYEN = {
-        # W7-W8 (master-data) — TEK TASIYICI uye: bildirilen ama HIC uretilmiyor
+        # ⚠️ W7 KAPANDI (2026-08-26) — bu giris artik YALNIZ W8'IN ISI.
+        # "Hangi turun isi" disiplini: aksi halde W8'de "W7 zaten kapatti
+        # sanmistim" okumasi mumkun olurdu (code-reviewer Nit 2).
+        # W8 (master-data kpi+mechanic) — TEK TASIYICI uye: bildirilen ama HIC uretilmiyor
         # (hicbir rota bu hucreyi turetmiyor), yani W7/W8 kapanisina kadar
-        # `olu` kontrolune duser. Kapanisinda ya rota alir ya DUSER.
+        # `olu` kontrolune duser. W8 KAPANISINDA ya rota alir ya DUSER.
         'MASTER_DATA_MANAGE',
     }
     bildirilen = set(re.findall(r'^  ([A-Z_]+): \'[a-z\-]+:[a-z\-]+\',',
@@ -667,6 +670,15 @@ def main():
             err_two_mech.append(f'{meth} {path} ({f})')
         rows.append([f,meth,path,roles,cell,srcn,
                      'CAP' if has_cap else 'ROLES', declared])
+    # ⛔ SUTUN BASLIGI URETICIDEN BASILIR (code-reviewer S1, 2026-08-26).
+    # Onceden dort `#` satirinin DORDU DE ELLE ekleniyordu ve bu turda ucu
+    # hatirlanip DORDUNCUSU (sutun basligi) UNUTULDU — sekiz sutunlu, BASLIKSIZ
+    # bir TSV kaldi.
+    # ⚠️ VE G7 BUNU YAPISAL OLARAK GOREMEZ: drift kontrolu `#` satirlarini
+    # FILTRELIYOR (:281), yani kayip her yeniden uretimde SESSIZCE TEKRARLAR.
+    # ⇒ Basligi ureticiye tasimak "elle-hatirlama" sinifini kapatir:
+    #   artefakt artik KENDINI TARIF EDIYOR, ve G7'nin filtresi korunuyor.
+    print('#dosya\tYÖNTEM\tyol\t@Roles\thücre\tkaynak\tkapsam\tbeyan')
     for r in rows: print('\t'.join(str(x) for x in r))
     if err_two_mech:
         print('⛔ İKİ MEKANİZMA aynı rotada (single-mechanism atlandı mı?):',

@@ -28,6 +28,15 @@
  * Yan etkili yazma rotaları `customer-capability-boundary` numarasıyla
  * yazıldı: izinli rol (ADMIN) için de gövde/hedef KASTEN geçersiz — guard
  * geçsin, ValidationPipe/servis reddetsin, DB'ye HİÇBİR SATIR YAZILMASIN.
+ *
+ * ⛔ ÖRNEKLEME NEDEN YETERLİ — ve NEYE KOŞULLU (code-reviewer Nit 3, ÖLÇÜLDÜ):
+ *   pin  →  yetenek ÜYELİĞİNİ tutar (global; bu yüzden örnekleme yeter)
+ *   G6   →  rota→hücre ATAMASINI tutar (45 rotanın HEPSİNDE)
+ *
+ * Ölçüldü: örneklenmemiş bir controller'da hücre kaydırması yapıldığında
+ * (`cpl` READ→WRITE) pin YEŞİL kaldı, `G6` rotayı ADIYLA yakaladı.
+ * ⇒ Örnekleme yeterlidir AMA `G6`'nın tüm-rota kapsamına KOŞULLU.
+ * `G6` daralırsa altı controller SESSİZCE korumasız kalır.
  */
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
