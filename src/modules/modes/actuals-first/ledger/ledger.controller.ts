@@ -10,19 +10,25 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { LedgerService } from './ledger.service';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
-import { Roles } from '../../../../common/decorators/roles.decorator';
+import { CapabilityGuard } from '../../../../common/guards/capability.guard';
+import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
-import { UserRole } from '../../../../database/entities/user.entity';
 
+// `Z42 §4` (`B3b-1 W9`, 2026-08-26) — defter-okuma kümesi ({A,F,P}) YENİ
+// hücre `MODES_LEDGER_READ`'e göçürüldü. `@Roles` → `@RequireCapability`;
+// `ROLE_CAPABILITIES`'te hücre göç öncesi `{ADMIN,FINANCE,PLANNER}` kümesiyle
+// BİREBİR — davranış KORUNUYOR (pin: `test/ledger-envelope-role-boundary.
+// e2e-spec.ts`, `B3` kaza-dalgası `K2` normalizasyonundan sonraki hâl).
 @ApiTags('Ledger')
 @ApiBearerAuth()
 @Controller('ledger')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class LedgerController {
   constructor(private readonly ledgerService: LedgerService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get all ledger entries' })
   findAll(
     @TenantId() tenantId: string,
@@ -40,7 +46,7 @@ export class LedgerController {
   }
 
   @Get('agreement/:agreementId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get ledger entries by agreement ID' })
   findByAgreement(
     @Param('agreementId', ParseUUIDPipe) agreementId: string,
@@ -50,7 +56,7 @@ export class LedgerController {
   }
 
   @Get('agreement/:agreementId/consumed')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get total consumed amount for agreement' })
   async getConsumedByAgreement(
     @Param('agreementId', ParseUUIDPipe) agreementId: string,
@@ -75,7 +81,7 @@ export class LedgerController {
   // → tek sonuç dosyanın doğuş commit'i, gerekçeli bir istisna kaydı yok.
   // Pin: `test/ledger-envelope-role-boundary.e2e-spec.ts`.
   @Get('envelope/:envelopeId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get ledger entries by budget envelope ID' })
   findByEnvelope(
     @Param('envelopeId', ParseUUIDPipe) envelopeId: string,
@@ -88,7 +94,7 @@ export class LedgerController {
   // gerekçe; kardeş `agreement/:agreementId/consumed` zaten `{ADMIN,FINANCE,
   // PLANNER}`.
   @Get('envelope/:envelopeId/consumed')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get total consumed amount for budget envelope' })
   async getConsumedByEnvelope(
     @Param('envelopeId', ParseUUIDPipe) envelopeId: string,
@@ -102,7 +108,7 @@ export class LedgerController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get ledger entry by ID' })
   findOne(
     @Param('id', ParseUUIDPipe) id: string,

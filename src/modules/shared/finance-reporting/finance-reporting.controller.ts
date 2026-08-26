@@ -32,14 +32,23 @@ import {
 } from './dto/budget-variance-report.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 
+// `Z42 §4/§6` (`B3b-1 W9`, 2026-08-26) — dört rota (`budget-utilization`·
+// `spend-trend`·`spend-composition`·`mechanic-effectiveness`) `SUMMARY_READ`
+// hücresine göçürüldü ({A,CM,F,RO}, birebir). Kardeş rotalar (`plan-
+// performance`·`budget-at-risk`·`variance-analysis`·`cash-flow-projection`)
+// aynı hücrede ama `Z42 BLOK 1`'in dört-rotalık alt-kümesinin DIŞINDA,
+// karar-bekler; `budget-variance` AYRI hücrede (`SHARED_READ`), göç-dışı.
 @ApiTags('Finance Reporting')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('finance-reporting')
 export class FinanceReportingController {
   constructor(
@@ -47,12 +56,7 @@ export class FinanceReportingController {
   ) {}
 
   @Get('budget-utilization')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.SUMMARY_READ)
   @ApiOperation({ summary: 'Get budget utilization report' })
   @ApiResponse({
     status: 200,
@@ -67,12 +71,7 @@ export class FinanceReportingController {
   }
 
   @Get('spend-trend')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.SUMMARY_READ)
   @ApiOperation({ summary: 'Get spend trend report' })
   @ApiResponse({
     status: 200,
@@ -96,12 +95,7 @@ export class FinanceReportingController {
   }
 
   @Get('spend-composition')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.SUMMARY_READ)
   @ApiOperation({ summary: 'Get spend composition report' })
   @ApiResponse({
     status: 200,
@@ -157,12 +151,7 @@ export class FinanceReportingController {
   }
 
   @Get('mechanic-effectiveness')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.SUMMARY_READ)
   @ApiOperation({ summary: 'Get mechanic effectiveness report' })
   @ApiResponse({
     status: 200,

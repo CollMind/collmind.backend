@@ -40,8 +40,12 @@ import { AgreementStatus } from '../../../../database/entities/agreement.entity'
 // (`MODES_SUBMIT`, {ADMIN,PLANNER}: submit/cancel) rotaları `@Roles` →
 // `@RequireCapability` göçürüldü. `ROLE_CAPABILITIES`'te iki hücre de göç
 // öncesi `@Roles(ADMIN,PLANNER)` kümesiyle BİREBİR — davranış KORUNUYOR.
-// `MODES_READ`/`MODES_APPROVE` (approve/reject dahil) bu göçe DAHİL DEĞİL
-// (karar-bekler, `B3B1_DALGA_PLANI_ONERI.md §6`).
+// `Z42 §4/§5` (`B3b-1 W9`, 2026-08-26) — `GET /` (`findAll`)/`:id`/
+// `tactics/available` `MODES_READ`'e (taban {A,CM,F,P,RO}, 5/5, birebir),
+// `pending-approvals` YENİ hücre `APPROVAL_QUEUE_READ`'e ({A,CM,F,RO},
+// birebir) göçürüldü.
+// `MODES_APPROVE` (approve/reject dahil) bu göçe DAHİL DEĞİL (karar-bekler,
+// `B3B1_DALGA_PLANI_ONERI.md §6`).
 @ApiTags('Agreements')
 @ApiBearerAuth()
 @Controller('agreements')
@@ -67,13 +71,7 @@ export class AgreementController {
   }
 
   @Get()
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Get all agreements' })
   @ApiResponse({ status: 200, description: 'List of agreements' })
   findAll(
@@ -92,12 +90,7 @@ export class AgreementController {
 
   // Spesifik route'lar parametrik route'lardan (:id) önce tanımlanmalı
   @Get('pending-approvals')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.APPROVAL_QUEUE_READ)
   @ApiOperation({ summary: 'Get pending approval agreements' })
   @ApiResponse({
     status: 200,
@@ -108,13 +101,7 @@ export class AgreementController {
   }
 
   @Get('tactics/available')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Get available tactics for channel and category' })
   @ApiResponse({
     status: 200,
@@ -135,13 +122,7 @@ export class AgreementController {
 
   // Parametrik route en sonda olmalı
   @Get(':id')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Get agreement by ID' })
   @ApiResponse({ status: 200, description: 'Agreement details' })
   @ApiResponse({ status: 404, description: 'Agreement not found' })

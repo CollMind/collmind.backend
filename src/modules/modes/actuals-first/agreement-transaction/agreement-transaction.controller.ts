@@ -43,9 +43,14 @@ import { randomUUID } from 'crypto';
 // `@RequireCapability` göçürüldü. `ROLE_CAPABILITIES`'te hücre göç öncesi
 // `@Roles(ADMIN,FINANCE)` kümesiyle BİREBİR — davranış KORUNUYOR. `T-277`/
 // `Z35` daraltmasının pini (`test/agreement-transaction-role-boundary.e2e-spec.ts`)
-// DOKUNULMADI. `MODES_READ` (bu dosyadaki GET rotaları, `GET batch/:batchId`
-// dahil — {ADMIN,FINANCE} rol kümesi taşısa bile fiil READ'dir) bu göçe
-// DAHİL DEĞİL (karar-bekler, `B3B1_DALGA_PLANI_ONERI.md §6`).
+// DOKUNULMADI.
+// `Z42 §4` (`B3b-1 W9`, 2026-08-26) — defter-okuma kümesi ({A,F,P}) YENİ
+// hücre `MODES_LEDGER_READ`'e göçürüldü (`agreement/:agreementId`·`/total`·
+// `budget-impact/:agreementId`·`count`·`GET /`·`:id`, birebir); içe-aktarma-
+// okuma kümesi ({A,F}) YENİ hücre `MODES_IMPORT_READ`'e göçürüldü
+// (`batch/:batchId`·`template/excel`·`template/csv`, birebir). `stats/
+// summary` bu göçe DAHİL DEĞİL — `SUMMARY_READ` hücresinde, karar-bekler
+// (`B3B1_DALGA_PLANI_ONERI.md §6`).
 @ApiTags('Agreement Transactions (Off-Invoice)')
 @ApiBearerAuth()
 @Controller('agreement-transactions')
@@ -83,7 +88,7 @@ export class AgreementTransactionController {
   }
 
   @Get('agreement/:agreementId')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get transactions by agreement ID' })
   findByAgreement(
     @Param('agreementId', ParseUUIDPipe) agreementId: string,
@@ -93,7 +98,7 @@ export class AgreementTransactionController {
   }
 
   @Get('agreement/:agreementId/total')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get total transaction amount for agreement' })
   async getTotalByAgreement(
     @Param('agreementId', ParseUUIDPipe) agreementId: string,
@@ -107,7 +112,7 @@ export class AgreementTransactionController {
   }
 
   @Get('batch/:batchId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_IMPORT_READ)
   @ApiOperation({ summary: 'Get transactions by batch ID' })
   findByBatch(
     @Param('batchId', ParseUUIDPipe) batchId: string,
@@ -117,7 +122,7 @@ export class AgreementTransactionController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get all agreement transactions with filters' })
   findAll(
     @TenantId() tenantId: string,
@@ -142,7 +147,7 @@ export class AgreementTransactionController {
   }
 
   @Get('budget-impact/:agreementId')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({
     summary: 'Get budget impact for agreement and fiscal period',
   })
@@ -210,7 +215,7 @@ export class AgreementTransactionController {
   }
 
   @Get('count')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get total count of off-invoice transactions' })
   async getCount(@TenantId() tenantId: string) {
     const count = await this.txService.getCount(tenantId);
@@ -288,7 +293,7 @@ export class AgreementTransactionController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get transaction by ID' })
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
@@ -410,7 +415,7 @@ export class AgreementTransactionController {
   }
 
   @Get('template/excel')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_IMPORT_READ)
   @ApiOperation({ summary: 'Download Excel template' })
   async downloadExcelTemplate(@Res() res: Response) {
     const buffer = this.fileParserService.generateExcelTemplate();
@@ -426,7 +431,7 @@ export class AgreementTransactionController {
   }
 
   @Get('template/csv')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_IMPORT_READ)
   @ApiOperation({ summary: 'Download CSV template' })
   async downloadCSVTemplate(@Res() res: Response) {
     const csv = this.fileParserService.generateCSVTemplate();

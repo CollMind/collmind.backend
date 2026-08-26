@@ -161,10 +161,12 @@ import { UserRole } from '../../database/entities/user.entity';
  *   MODES_READ     union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)
  *   MODES_APPROVE  dal 3 genişleme, ONAY yeteneği               → K-2.5.12   ⚠️ Z30 H2: 5 route AYRILDI → MODES_SUBMIT, aşağı bkz.
  *   SHARED_READ    union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)  ⚠️ BAYAT — B3 W4a ADIM 0 (2026-08-25)
- *                                                                                                     bu hücreyi ÇÖZDÜ: 16 rota göçtü, ~~DÖRT İSTİSNA~~ ⚠️ bugün İKİ istisna (K4: approvals çifti GÖÇTÜ →
- *                                                     APPROVAL_QUEUE_READ; kalan: budget-variance DEVREDİLDİ ·
- *                                                     validate-budget DUR'da),
- *                                                                                                     DÖRT İSTİSNA karar-bekler. Aşağı bkz.
+ *                  bu hücreyi ÇÖZDÜ. ⚠️ REVİZE (2026-08-26, `Z42 ADIM 0` · SAPMA-4): bu blok
+ *                  ~~hem "İKİ istisna" hem "DÖRT İSTİSNA karar-bekler"~~ diyordu — İKİ ZIT CÜMLE,
+ *                  aynı blokta. YÜRÜRLÜKTEKİ SAYIM (TSV'den ölçüldü): 16 göç + `Z36 §5` ile GELEN 3
+ *                  (`lta-agreements` context/calculate üçlüsü, SHARED_WRITE'tan) + `Z37 §3` ile
+ *                  ÇIKAN 2 (`approvals` çifti → APPROVAL_QUEUE_READ) ⇒ hücre 21 rota, İKİ istisna
+ *                  karar-bekler: budget-variance (`Z42 BLOK 1` #3) · validate-budget (`Z42 BLOK 3`).
  *   SHARED_APPROVE dal 3 genişleme, ONAY yeteneği               → K-2.5.12   ⚠️ Z30 H3: 0 route — SİLİNDİ, aşağı bkz.
  *   USER_READ      union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)  ⚠️ BAYAT — Z20 (2026-08-23) bu hücreyi
  *                                                                                                     USER_MANAGE/SELF'e ikiye ayırdı VE
@@ -325,8 +327,16 @@ import { UserRole } from '../../database/entities/user.entity';
  * submit'inin dışında bir approve/reject/escalate yetkisi kazanır, FINANCE
  * plan approve/reject/escalate kazanır. **ONAY yeteneği → `K-2.5.12`, DUR.**
  *
- * **`SHARED_READ`** (TARİHSEL ÖLÇÜM, 2026-08-17 — bugünkü hücre `20` rota:
- * 16 göçtü + 4 istisna; kanonik kaynak `B3A_EK3_ROTA_HUCRE_ESLEMESI.tsv`)
+ * **`SHARED_READ`** (TARİHSEL ÖLÇÜM, 2026-08-17 — ⚠️ REVİZE 2026-08-26,
+ * `Z42 ADIM 0` · SAPMA-4: ~~bugünkü hücre `20` rota: 16 göçtü + 4 istisna~~
+ * — ve REVİZYONUN KENDİSİ de bir sayı yazmıştı (`21` rota / `2` istisna),
+ * ki o sayı YAZILDIĞI COMMIT SETİNDE bayatladı: aynı setin uygulama dalgası
+ * (`W9`) `validate-budget`'ı `BUDGET_CHECK_READ`'e göçürdü. ⇒ SAYI DÜŞÜRÜLDÜ
+ * (`W9` review BLOCKER 2). Bir düzeltme, düzelttiği sınıfın yeni bir vakasını
+ * üretebilir — `docs/DISIPLIN.md`.
+ * ⛔ BU SATIRA SAYI YAZMA — kanonik kaynak `B3A_EK3_ROTA_HUCRE_ESLEMESI.tsv`
+ * ve onu üreten `route-cell-map.py`; elle yazılan üye-sayısı bu repoda
+ * DOKUZDA DOKUZ bayatladı, bkz. `docs/DISIPLIN.md`)
  * (36 route, `20` filtresiz — `budget-allocations`,
  * `budget` envelope okumaları, `lta-agreements` okumaları,
  * `spend-calculation` validate/breakdown uçlarının TAMAMI; `0072`'nin
@@ -521,7 +531,12 @@ import { UserRole } from '../../database/entities/user.entity';
  * actuals-first/settlements/summary                    agreements + ledger_entries         (2 modül)
  * dashboard/summary                                     agreements + approval_requests +
  *                                                        budget_envelopes/v_budget_summary   (3 modül)
- * finance-reporting/budget-variance                     budget_envelopes + v_budget_summary  (2-3 modül)
+ * ~~finance-reporting/budget-variance~~  ⚠️ ÇIKARILDI (2026-08-26, `Z42 ADIM 0` · SAPMA-3):
+ *   bu satır listeyi 13'e çıkarıyordu; KANONİK ÜRETİCİ
+ *   (`scripts/analysis/route-cell-map.py` `SUMMARY` kümesi) 12 sayıyor ve
+ *   budget-variance'ı BİLİNÇLİ olarak dışarıda tutuyor — TSV bugün onu
+ *   `SHARED_READ` gösteriyor. İki yüzey ÇELİŞİYORDU; üretici kanoniktir.
+ *   Rotanın HÜCRESİ ayrı bir açık kalemdir (`Z42 BLOK 1`, `#3`).
  * finance-reporting/budget-utilization                  Z32 "10 rota GİRER" — scope-a1'den
  * finance-reporting/spend-trend                         (kapsam GEREKLİ ama UYGULANMIYOR;
  * finance-reporting/budget-at-risk                       A1 ratchet'te İZLENİYOR — SUMMARY_READ
@@ -562,6 +577,12 @@ export const CAPABILITIES = {
 
   MASTER_DATA_READ: 'master-data:read',
   MASTER_DATA_WRITE: 'master-data:write',
+  // ✅ ÇÖZÜLDÜ (`Z42 §5`, `B3b-1 W9`, 2026-08-26) — `kpis/validate-formula` ·
+  // `mechanics/validate-formula` çifti BURAYA göçürüldü, {ADMIN} birebir.
+  // Formül doğrulama = kural-yönetiminin ARACI (`K-2.6.4` "tanımlar"
+  // cümlesi), yönetişim-okuma — `MASTER_DATA_READ` (5/5) seçeneği
+  // REDDEDİLDİ: çağıransız yüzeye genişleme, `İlke-1`'in tam tersi.
+  MASTER_DATA_GOVERNANCE_READ: 'master-data:governance-read',
   // ⛔ `MASTER_DATA_MANAGE` DÜŞTÜ (`Z39` `dalga-sonu H3`, 2026-08-26 · `B3 W8`
   // kapanışı) — sıfır-rota kanıtı: `@RequireCapability(CAPABILITIES.
   // MASTER_DATA_MANAGE)` deseni `*.controller.ts` genelinde SIFIR eşleşme
@@ -571,10 +592,29 @@ export const CAPABILITIES = {
   // (tek taşıyıcı üye); `W8` kapanışında `G8` ile ölçüldü ve DÜŞTÜ. İleride
   // bir `MANAGE` rotası doğarsa hücre KARARLA geri gelir.
 
-  // ⛔ BLOKE (2026-08-17 turundan sonra da) — MODES_READ.
-  // Union çöküşe düşüyor, ürün sahibi kararı bekliyor.
-  // Bkz. yukarıdaki "9/24 hücre — ADIM 3 Faz A" bölümü, "DUR" alt-başlığı.
+  // ⚠️ KISMİ ÇÖZÜLDÜ (`Z42 §4`, `B3b-1 W9`, 2026-08-26) — union hâlâ çöküşe
+  // düşüyor (bkz. yukarıdaki "9/24 hücre — ADIM 3 Faz A" bölümü, "DUR"
+  // alt-başlığı) ve ürün sahibi kararı BEKLEMEYE DEVAM EDİYOR, AMA `Z42`
+  // hücreyi "yedi küme → dört ev + evrim satırları"na ayırdı: bu ADIN
+  // ALTINDA yalnız TABAN küme (`5/5`, {ADMIN,CATEGORY_MANAGER,FINANCE,
+  // PLANNER,READONLY}) yaşıyor — birebir, `T-020` kayıtlı. Diğer üç
+  // NATİF küme YENİ hücrelere göçürüldü (`MODES_LEDGER_READ`/
+  // `MODES_IMPORT_READ`/`MODES_ONINVOICE_READ`, aşağı bkz.); `{A,CM,RO}`
+  // (`plans/pending-approvals`, `+F` istisna-adayı) hâlâ `@Roles`'ta,
+  // karar-bekler.
   MODES_READ: 'modes:read',
+  // ✅ ÇÖZÜLDÜ (`Z42 §4`, `B3b-1 W9`, 2026-08-26) — `MODES_READ`'in
+  // `{A,F,P}` natif kümesi (defter-okuma: `agreement-transactions`/`ledger`
+  // aileleri, `K2` gerekçeli) BURAYA göçürüldü, birebir.
+  MODES_LEDGER_READ: 'modes:ledger-read',
+  // ✅ ÇÖZÜLDÜ (`Z42 §4`, `B3b-1 W9`, 2026-08-26) — `MODES_READ`'in `{A,F}`
+  // natif kümesi (içe-aktarma-okuma: batch/template indirmeleri, `Z38`)
+  // BURAYA göçürüldü, birebir.
+  MODES_IMPORT_READ: 'modes:import-read',
+  // ✅ ÇÖZÜLDÜ (`Z42 §4`, `B3b-1 W9`, 2026-08-26) — `MODES_READ`'in
+  // `{A,F,P,RO}` natif kümesi (on-invoice `count`/`entries`/
+  // `batch/:batchId`) BURAYA göçürüldü, kendi hücresi, birebir.
+  MODES_ONINVOICE_READ: 'modes:oninvoice-read',
   // ✅ Z35 BÖLÜNMESİ KODA İNDİ (2026-08-24, B3b-1 ADIM 0).
   // MODES_WRITE ikiye ayrıldı; tek hücre iki farklı işi taşıyordu ve union'ı
   // T-277'nin daraltmasını geri açıyordu.
@@ -729,12 +769,19 @@ export const CAPABILITIES = {
   //   SINIF B  zarf yapısı/bütçe sahipliği {ADMIN,FINANCE} budget/envelopes[,/split]
   //   SINIF C  plan tüketimi/ızgara yazımı {ADMIN,PLANNER} spend-calculation
   //            distribute · recalculate-on-volume-change
-  // `K-2.6.4a/b` SINIF A'nın gerekçesi: "şablonun öznesi olan rol, şablonu
-  // düzenleyemez" — FINANCE onay eşiğinin ÖZNESİDİR, yazabilseydi eşik bir
-  // kısıt olmaktan çıkardı. Bu bir YETKİNLİK değil bir KONUM kuralı (bkz.
-  // `docs/DISIPLIN.md`: "bir rolün tabi olduğu kuralı yazma yetkisi, o
-  // rolün kümesine giremez").
-  // Detay: `docs/brd-v2/04_KARAR_KAYDI.md` `Z36`.
+  // ⚠️ REVİZE EDİLDİ (2026-08-26, `Z42 ADIM 0` · SAPMA-1) — bu satırlarda
+  // `K-2.6.4a/b`'ye atfen "şablonun öznesi olan rol, şablonu düzenleyemez"
+  // diye BAĞLAYICI bir cümle alıntılanıyordu. ~~O CÜMLE YOKTUR~~: `düzenleyemez`
+  // `docs/brd-v2/03_IS_KURALLARI/` içinde SIFIR eşleşme (poz. kontrol: aynı
+  // taramada `onay` = 109 ⇒ araç kör değil). Uydurulmuş alıntı `Z36 §3` ile
+  // İPTAL edildi; vaka `docs/DISIPLIN.md`'de kayıtlı. `Z36 §3`'ün YÜRÜRLÜKTEKİ
+  // hükmü: "SoD rol katmanına TAŞINMAZ" — `K-2.6.5c` SoD'yi KİŞİ tabanlı kurar.
+  //
+  // SINIF A'nın bugün geçerli gerekçesi (`Z36 §3`, ölçülmüş): approval-policies
+  // ONAY EŞİĞİNİ TANIMLAR; eşiği tanımlamak bir yönetişim işidir ve `ROLE_
+  // CAPABILITIES`'te yalnız ADMIN'e verilmiştir. Bu bir KONUM iddiası DEĞİL,
+  // bir ATAMA gerçeğidir — ve doğrulaması aşağıdaki haritadadır, bir alıntıda
+  // değil. Detay: `docs/brd-v2/04_KARAR_KAYDI.md` `Z36` · `Z42`.
   SHARED_POLICY_WRITE: 'shared:policy-write',
   SHARED_ENVELOPE_WRITE: 'shared:envelope-write',
   SHARED_SPEND_WRITE: 'shared:spend-write',
@@ -752,13 +799,25 @@ export const CAPABILITIES = {
   USER_WRITE: 'user:write',
   USER_MANAGE: 'user:manage',
 
-  // ⛔ BLOKE — çapraz-modül portföy özeti (Z32 tanımı: nesne-bağsız ∧
-  // çok-işlem-modüllü). Z30 H4/Z31/Z32 (2026-08-24): 13 route ölçüldü
-  // (223 route evreninin TAMAMI tarandı, yalnız kapsamlı `B` kovası
-  // değil). Bkz. yukarıdaki "Z30 (2026-08-24)" bölümü, "H4" alt-başlığı.
-  // HİÇBİR role atanmadı — diğer DUR hücreleriyle aynı disiplin, Faz B'ye
-  // bırakılır.
+  // ⚠️ KISMİ ÇÖZÜLDÜ (`Z42 §3/§6`, `B3b-1 W9`, 2026-08-26) — çapraz-modül
+  // portföy özeti (Z32 tanımı: nesne-bağsız ∧ çok-işlem-modüllü). Z30 H4/
+  // Z31/Z32 (2026-08-24): 13 route ölçüldü (223 route evreninin TAMAMI
+  // tarandı, yalnız kapsamlı `B` kovası değil — bkz. "Z30" bölümü, "H4").
+  // `Z42` dört `finance-reporting` rotasını (`budget-utilization`·
+  // `spend-trend`·`spend-composition`·`mechanic-effectiveness`) `{ADMIN,
+  // CATEGORY_MANAGER,FINANCE,READONLY}`'e ATADI — kalan sekiz rota
+  // (`sales-actuals/summary`·`settlements/summary`·`agreement-transactions/
+  // stats/summary`·`dashboard/summary`·`budget-at-risk`·`plan-performance`·
+  // `cash-flow-projection`·`variance-analysis`) hâlâ BLOKE, Faz B'ye
+  // bırakılır (`#9` çift-olumsuz — PLANNER portföy-özet yüzeyinden ÇIKAR).
   SUMMARY_READ: 'summary:read',
+
+  // ✅ ÇÖZÜLDÜ (`Z42 §5`, `B3b-1 W9`, 2026-08-26) — TEK İŞLEV-AİLESİ hücresi:
+  // `plans/:id/budget-check` (`modes/planning-first/plan`) + `spend-
+  // calculation/validate-budget/:planId` (`shared/spend-calculation`)
+  // birebir. `{ADMIN,CATEGORY_MANAGER,PLANNER,READONLY}` — `−F` cümlesi
+  // `T-249` kayıtlı: eşik-üstü onaycının kontrol yüzeyi ayrıdır.
+  BUDGET_CHECK_READ: 'budget-check:read',
 } as const;
 
 export type Capability = (typeof CAPABILITIES)[keyof typeof CAPABILITIES];
@@ -795,7 +854,10 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // ↓ SHARED_READ (W4a, 2026-08-25) — tanımlar ve kural yönetimi — okuma tabanı dahil.
     CAPABILITIES.SHARED_READ,
     // ↓ APPROVAL_QUEUE_READ (Z37 §3, B3 K4 Parça 1, 2026-08-26) — sistem
-    // yöneticisi her yüzeye görünür; K-2.6.4 YÖNETİCİ tabanı.
+    // yöneticisi her yüzeye görünür; K-2.6.4 YÖNETİCİ tabanı. `Z42 §4`
+    // (`B3b-1 W9`, 2026-08-26) `agreements/pending-approvals`/`plans/
+    // approval-queue` çiftini AYNI hücreye ekledi — ADMIN'in üyeliği
+    // DEĞİŞMEDİ (zaten vardı).
     CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.ADMIN_READ,
     CAPABILITIES.CUSTOMER_READ,
@@ -804,8 +866,18 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // CAPABILITIES yorumu.
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.MASTER_DATA_WRITE,
+    // ↓ MASTER_DATA_GOVERNANCE_READ (Z42 §5, B3b-1 W9, 2026-08-26) — dal 1,
+    // mekanik (validate-formula çifti {ADMIN} birebir).
+    CAPABILITIES.MASTER_DATA_GOVERNANCE_READ,
     // ↓ MASTER_DATA_MANAGE DÜŞTÜ (Z39 dalga-sonu H3, B3 W8 kapanışı) —
     // sıfır-rota, bkz. CAPABILITIES yorumu.
+    // ↓ Z42 §4 (B3b-1 W9, 2026-08-26) — MODES_READ tabanı (5/5, birebir) +
+    // üç YENİ evrim hücresi. ADMIN her dördünde de zaten vardı ({A,CM,F,P,
+    // RO}/{A,F,P}/{A,F}/{A,F,P,RO}) — bölünme ADMIN için sonuç DEĞİŞTİRMEZ.
+    CAPABILITIES.MODES_READ,
+    CAPABILITIES.MODES_LEDGER_READ,
+    CAPABILITIES.MODES_IMPORT_READ,
+    CAPABILITIES.MODES_ONINVOICE_READ,
     // ↓ Z35 bölünmesi (2026-08-24): ADMIN her iki natif kümede de zaten
     // vardı ({A,F} ve {A,P}) — bölünme ADMIN için sonuç DEĞİŞTİRMEZ.
     CAPABILITIES.MODES_ACTUALS_WRITE,
@@ -852,6 +924,13 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // ↓ USER_WRITE: dal 1 (tek rol kümesi — 4 ADMIN-only route zaten ADMIN'de).
     CAPABILITIES.USER_WRITE,
     CAPABILITIES.USER_MANAGE,
+    // ↓ SUMMARY_READ (Z42 §3/§6, B3b-1 W9, 2026-08-26) — kısmi çözüldü, dört
+    // finance-reporting rotası {ADMIN,CATEGORY_MANAGER,FINANCE,READONLY}.
+    CAPABILITIES.SUMMARY_READ,
+    // ↓ BUDGET_CHECK_READ (Z42 §5, B3b-1 W9, 2026-08-26) — TEK İŞLEV-AİLESİ
+    // hücresi {ADMIN,CATEGORY_MANAGER,PLANNER,READONLY}, FINANCE bilinçli
+    // dışarıda (T-249: eşik-üstü onaycının kontrol yüzeyi ayrıdır).
+    CAPABILITIES.BUDGET_CHECK_READ,
   ],
   [UserRole.PLANNER]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — plan/taktik/hacim girişi için bütçe-anlaşma görünürlüğü şart.
@@ -876,6 +955,15 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // ↓ CUSTOMER_MANAGE DÜŞTÜ (Z39, B3 W5 kapanışı) — sıfır-rota, bkz.
     // CAPABILITIES yorumu.
     CAPABILITIES.MASTER_DATA_READ,
+    // ↓ Z42 §4 (B3b-1 W9, 2026-08-26) — MODES_READ tabanı (5/5, PLANNER
+    // dahil, birebir). MODES_LEDGER_READ ({A,F,P}) defter-okuma —
+    // PLANNER kendi anlaşmasının/planının defter etkisini görmeli.
+    // MODES_ONINVOICE_READ ({A,F,P,RO}) aynı gerekçe. MODES_IMPORT_READ
+    // ({A,F}) PLANNER'da YOK — içe-aktarma-okuma finans+yönetici işi
+    // (Z38, aşağıdaki GERÇEKLEŞME notuyla AYNI eksen).
+    CAPABILITIES.MODES_READ,
+    CAPABILITIES.MODES_LEDGER_READ,
+    CAPABILITIES.MODES_ONINVOICE_READ,
     // ↓ Z35 bölünmesi (2026-08-24): PLANNER yalnız PLAN/ANLAŞMA tarafında.
     // ⛔ GERÇEKLEŞME yazımı (agreement-transaction · on-invoice ·
     // sales-actuals) PLANNER'dan DÜŞTÜ — 2026-08-17 union'ı onu oraya
@@ -900,6 +988,10 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // sorun yok, ama yönetişim değil) ve zarf yapısı bir bütçe-sahipliği
     // kararı (`K-2.2.9c`), PLANNER'ın işi değil.
     CAPABILITIES.SHARED_SPEND_WRITE,
+    // ↓ BUDGET_CHECK_READ (Z42 §5, B3b-1 W9, 2026-08-26) — kendi planının
+    // bütçe kontrolünü görmeli (`H4-1` emsali: "planı okuyabilen, bütçe
+    // kontrolünü de okuyabilir").
+    CAPABILITIES.BUDGET_CHECK_READ,
   ],
   [UserRole.CATEGORY_MANAGER]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — kategori bütçe sahibi: onay ve zarf yönetimi görünürlük ister.
@@ -911,6 +1003,15 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
+    // ↓ Z42 §4/§5/§6 (B3b-1 W9, 2026-08-26) — MODES_READ tabanı (5/5, CM
+    // dahil, birebir). MODES_LEDGER_READ/MODES_IMPORT_READ/
+    // MODES_ONINVOICE_READ'in HİÇBİRİNDE CM YOK ({A,F,P}/{A,F}/{A,F,P,RO}
+    // — üçü de defter/içe-aktarma/on-invoice OPERASYON okuması, CM'nin
+    // kategori-sahibi rolü bunu gerektirmiyor). SUMMARY_READ ve
+    // BUDGET_CHECK_READ'de CM VAR (aşağı bkz.).
+    CAPABILITIES.MODES_READ,
+    CAPABILITIES.SUMMARY_READ,
+    CAPABILITIES.BUDGET_CHECK_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
     // ↓ SHARED_WRITE DÜŞTÜ (Z39, B3 W5 kapanışı) — sıfır-rota, bkz.
     // CAPABILITIES yorumu. CATEGORY_MANAGER'ın Z36 üçlüsünden aldığı YOK
@@ -940,6 +1041,17 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
+    // ↓ Z42 §4/§6 (B3b-1 W9, 2026-08-26) — MODES_READ tabanı (5/5, FINANCE
+    // dahil, birebir) + üç evrim hücresinin ÜÇÜNDE de FINANCE VAR
+    // ({A,F,P}/{A,F}/{A,F,P,RO}) — defter/içe-aktarma/on-invoice OKUMA,
+    // eşik-üstü onaycının/mutabakatın doğal okuma tabanı. SUMMARY_READ'de
+    // de VAR (aşağı). BUDGET_CHECK_READ'de YOK — `T-249` kayıtlı: eşik-üstü
+    // onaycının kontrol yüzeyi ayrıdır.
+    CAPABILITIES.MODES_READ,
+    CAPABILITIES.MODES_LEDGER_READ,
+    CAPABILITIES.MODES_IMPORT_READ,
+    CAPABILITIES.MODES_ONINVOICE_READ,
+    CAPABILITIES.SUMMARY_READ,
     // ↓ Z35 bölünmesi (2026-08-24): FINANCE yalnız GERÇEKLEŞME tarafında.
     // ⛔ Plan CRUD (DELETE /plans/:id dahil) FINANCE'ten DÜŞTÜ —
     // 2026-08-17 union'ı onu oraya açmıştı ve bu K-2.6.4'ün FİNANS
@@ -995,6 +1107,16 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
+    // ↓ Z42 §4/§5/§6 (B3b-1 W9, 2026-08-26) — MODES_READ tabanı (5/5, RO
+    // dahil, birebir). MODES_ONINVOICE_READ'de RO VAR ({A,F,P,RO});
+    // MODES_LEDGER_READ/MODES_IMPORT_READ'İN HİÇBİRİNDE YOK ({A,F,P}/
+    // {A,F} — İZLEYİCİ bir İZLEME setidir, ama defter/içe-aktarma OKUMA
+    // rotalarının bu ikisinde RO hiçbir zaman @Roles'ta değildi). SUMMARY_
+    // READ ve BUDGET_CHECK_READ'de RO VAR (K-2.6.4c "izleme yetenekleri").
+    CAPABILITIES.MODES_READ,
+    CAPABILITIES.MODES_ONINVOICE_READ,
+    CAPABILITIES.SUMMARY_READ,
+    CAPABILITIES.BUDGET_CHECK_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
     // ↓ ADIM 3 Faz A (2026-08-17): READONLY hiçbir ÇÖZÜLDÜ hücrenin union'ında
     // yok (MODES_WRITE/SHARED_WRITE/TENANT_READ/USER_WRITE'ın hiçbiri

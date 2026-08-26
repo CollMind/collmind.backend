@@ -43,9 +43,13 @@ const READ_ROLES = [
 // `B3 W6` göçü (2026-08-26, `Z35`) — GERÇEKLEŞME yazımı (`MODES_ACTUALS_WRITE`,
 // {ADMIN,FINANCE}: upload) `@Roles` → `@RequireCapability` göçürüldü.
 // `ROLE_CAPABILITIES`'te hücre göç öncesi `WRITE_ROLES` (`@Roles(ADMIN,
-// FINANCE)`) kümesiyle BİREBİR — davranış KORUNUYOR. `MODES_READ`
-// (batches/summary GET rotaları, `READ_ROLES`) bu göçe DAHİL DEĞİL
-// (karar-bekler, `B3B1_DALGA_PLANI_ONERI.md §6`).
+// FINANCE)`) kümesiyle BİREBİR — davranış KORUNUYOR.
+// `Z42 §4` (`B3b-1 W9`, 2026-08-26) — `batches`/`batches/:batchId`/
+// `batches/:batchId/rows` `MODES_READ`'e göçürüldü (taban {A,CM,F,P,RO},
+// 5/5 = `READ_ROLES`, birebir). `summary` bu göçe DAHİL DEĞİL —
+// `SUMMARY_READ` hücresinde, ama `Z42 BLOK 1`'in dört-rotalık `finance-
+// reporting` alt-kümesinin DIŞINDA, karar-bekler (`B3B1_DALGA_PLANI_
+// ONERI.md §6`).
 @ApiTags('Sales Actuals')
 @ApiBearerAuth()
 @Controller('actuals-first/sales-actuals')
@@ -90,7 +94,7 @@ export class SalesActualsController {
   }
 
   @Get('batches')
-  @Roles(...READ_ROLES)
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Batch listesi (varsayılan: yalnızca ACTIVE)' })
   async getBatches(
     @TenantId() tenantId: string,
@@ -101,7 +105,7 @@ export class SalesActualsController {
   }
 
   @Get('batches/:batchId/rows')
-  @Roles(...READ_ROLES)
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Batch satırlarını getir' })
   async getBatchRows(
     @Param('batchId', ParseUUIDPipe) batchId: string,
@@ -111,7 +115,7 @@ export class SalesActualsController {
   }
 
   @Get('batches/:batchId')
-  @Roles(...READ_ROLES)
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Batch detayını getir' })
   async getBatch(
     @Param('batchId', ParseUUIDPipe) batchId: string,

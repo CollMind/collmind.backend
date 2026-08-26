@@ -54,8 +54,53 @@ APPROVE = {
 # `capabilities.ts`'in ROLE_CAPABILITIES'inde `{ADMIN,CATEGORY_MANAGER,
 # FINANCE,READONLY}` (PLANNER bilinçli dışarıda — pin:
 # test/approval-queue-read-boundary.e2e-spec.ts).
+# ⛔ Z42 §4 (B3b-1 W9, 2026-08-26) — MODES_READ'in {A,CM,F,RO} natif kümesi
+# (`agreements/pending-approvals` · `plans/approval-queue`) BURAYA eklendi —
+# AYNI hücre, farklı modül (agreement/plan), birebir.
 APPROVAL_QUEUE_READ_ROUTES = {
  ('GET', 'approvals'), ('GET', 'approvals/pending'),
+ ('GET', 'agreements/pending-approvals'), ('GET', 'plans/approval-queue'),
+}
+
+# --- Z42 §4 (B3b-1 W9, 2026-08-26): MODES_READ'in yedi natif kümesinden
+# ÜÇÜ YENİ hücrelere göçürüldü — genel fam+verb kuralı (MODES_READ) bunu
+# YAKALAMAZ, hepsi `modes/` altında GET, mekanik olarak MODES_READ'e düşerdi.
+# (meth,path) TAM eşleşmesi kullanılır (Z36 desenin AYNISI).
+MODES_LEDGER_READ_ROUTES = {
+ ('GET', 'agreement-transactions'), ('GET', 'agreement-transactions/:id'),
+ ('GET', 'agreement-transactions/agreement/:agreementId'),
+ ('GET', 'agreement-transactions/agreement/:agreementId/total'),
+ ('GET', 'agreement-transactions/budget-impact/:agreementId'),
+ ('GET', 'agreement-transactions/count'),
+ ('GET', 'ledger'), ('GET', 'ledger/:id'),
+ ('GET', 'ledger/agreement/:agreementId'),
+ ('GET', 'ledger/agreement/:agreementId/consumed'),
+ ('GET', 'ledger/envelope/:envelopeId'),
+ ('GET', 'ledger/envelope/:envelopeId/consumed'),
+}
+MODES_IMPORT_READ_ROUTES = {
+ ('GET', 'agreement-transactions/batch/:batchId'),
+ ('GET', 'agreement-transactions/template/csv'),
+ ('GET', 'agreement-transactions/template/excel'),
+ ('GET', 'on-invoice/template/csv'), ('GET', 'on-invoice/template/excel'),
+}
+MODES_ONINVOICE_READ_ROUTES = {
+ ('GET', 'on-invoice/batch/:batchId'), ('GET', 'on-invoice/count'),
+ ('GET', 'on-invoice/entries'),
+}
+# --- Z42 §5 (B3b-1 W9, 2026-08-26): TEK İŞLEV-AİLESİ hücresi — iki farklı
+# modül (`modes/planning-first/plan` · `shared/spend-calculation`), aynı iş
+# (plan bütçe kontrolü). Genel fam+verb kuralı ikisini de AYRI hücrelere
+# (MODES_READ / SHARED_READ) düşürürdü.
+BUDGET_CHECK_READ_ROUTES = {
+ ('GET', 'plans/:id/budget-check'),
+ ('GET', 'spend-calculation/validate-budget/:planId'),
+}
+# --- Z42 §5 (B3b-1 W9, 2026-08-26): formül-doğrulama çifti — yönetişim-okuma,
+# mekanik POST→WRITE kuralına düşmeye devam ederdi (yazma yüzeyi ÖLÇÜLDÜ 0).
+MASTER_DATA_GOVERNANCE_READ_ROUTES = {
+ ('POST', 'master-data/kpis/validate-formula'),
+ ('POST', 'master-data/mechanics/validate-formula'),
 }
 
 # --- Z36 (B3 W4b): SHARED_WRITE bölünmesi — ÜYELİK YOL+FİİL'DEN (davranış),
@@ -238,6 +283,18 @@ def cell_for(f, meth, path):
     if key in SHARED_CALC_READ_ROUTES:      return 'SHARED_READ','Z36'
     if key in MASTER_DATA_CALC_READ_ROUTES: return 'MASTER_DATA_READ','Z36'
     if key in APPROVAL_QUEUE_READ_ROUTES:   return 'APPROVAL_QUEUE_READ','Z37'
+    # ⛔ Z42 §4/§5 (B3b-1 W9) — bu DÖRT dal fam+verb'DEN ve MODES_READ'in
+    # genel türetiminden ÖNCE gelmek ZORUNDA (Z36/Z37 dallarıyla AYNI gerekçe):
+    # hepsi GET, hepsi ilgili aile dizininin ALTINDA — genel kural olmasaydı
+    # MODES_LEDGER_READ/MODES_IMPORT_READ/MODES_ONINVOICE_READ rotaları
+    # MODES_READ'e, BUDGET_CHECK_READ'in ikisi MODES_READ/SHARED_READ'e,
+    # MASTER_DATA_GOVERNANCE_READ'in ikisi mekanik POST→WRITE ile
+    # MASTER_DATA_WRITE'a düşerdi.
+    if key in MODES_LEDGER_READ_ROUTES:        return 'MODES_LEDGER_READ','Z42'
+    if key in MODES_IMPORT_READ_ROUTES:        return 'MODES_IMPORT_READ','Z42'
+    if key in MODES_ONINVOICE_READ_ROUTES:     return 'MODES_ONINVOICE_READ','Z42'
+    if key in BUDGET_CHECK_READ_ROUTES:        return 'BUDGET_CHECK_READ','Z42'
+    if key in MASTER_DATA_GOVERNANCE_READ_ROUTES: return 'MASTER_DATA_GOVERNANCE_READ','Z42'
     if path in SUMMARY:            return 'SUMMARY_READ','Z31/Z32'
     if path in APPROVE:            return 'MODES_APPROVE','YARGI'
     # ⛔ BU DAL fam+verb'DEN ONCE GELMEK ZORUNDA (code-reviewer S2, OLCULDU):
@@ -422,7 +479,15 @@ def reconcile(rows):
                       # ⚠️ Bu, G2b'nin KENDI YORUMUNUN anlattigi sinifin BESINCI
                       # vakasi: "bir duzeltme, duzelttigi SINIFIN yeni bir vakasini
                       # uretebilir" — ve bu kez ureten sey G2b'nin EKSIK KAPSAMIYDI.
-                      ('Z37-APPROVALQUEUE', APPROVAL_QUEUE_READ_ROUTES)):
+                      ('Z37-APPROVALQUEUE', APPROVAL_QUEUE_READ_ROUTES),
+                      # ⛔ Z42 §4/§5 (B3b-1 W9, 2026-08-26) — AYNI sınıf, beş
+                      # yeni tablo. Kayıtsız bırakılsaydı G2b'nin kendi
+                      # yorumunun anlattığı BEŞİNCİ vakanın ALTINCISI olurdu.
+                      ('Z42-LEDGER',  MODES_LEDGER_READ_ROUTES),
+                      ('Z42-IMPORT',  MODES_IMPORT_READ_ROUTES),
+                      ('Z42-ONINVOICE', MODES_ONINVOICE_READ_ROUTES),
+                      ('Z42-BUDGETCHECK', BUDGET_CHECK_READ_ROUTES),
+                      ('Z42-MDGOVREAD', MASTER_DATA_GOVERNANCE_READ_ROUTES)):
         dead=sorted(m for m in decl if keys.get(m,0)==0)
         dup =sorted(m for m in decl if keys.get(m,0)>1)
         print(f'G2b {name:<13} bildirilen={len(decl)} olu={len(dead)} cift={len(dup)}', file=out)
@@ -507,23 +572,88 @@ def reconcile(rows):
     #   turer; onu KARAR KAYDININ hukmuyle cakistir. Boylece
     #   "DORDUNCU SORU" saglanir: kontrolun girdisi, kontrol ettigi seyden
     #   TUREMIYOR — ve evren asla bosalmaz (kaynak kod, rota degil).
-    Z35_HUKUM = {
-        # docs/brd-v2/04_KARAR_KAYDI.md `Z35` — MODES_WRITE'in IKIYE bolunmesi.
-        # Ayirt edici: DEFTER ETKISI (gerceklesme/alim ↔ plan/anlasma tanimi).
+    # ⛔ GENISLETILDI (2026-08-26, `Z42` W9 review BLOCKER 1) — VE SEBEP
+    # KAPININ KENDI DERSININ TEKRARIYDI:
+    #
+    #   G5 W6'da OLDU cunku EVRENI (@Roles rotalari) BOSALDI.
+    #   G5b onun yerine kuruldu — ve EVRENI IKI HUCREDE DONDU.
+    #   W9 BES YENI hucre acti; ucu de bu tabloya girmedi ⇒ kapi onlari
+    #   GORMUYORDU. Mutasyonla kanitlandi: ROLE_CAPABILITIES[READONLY] +=
+    #   MODES_LEDGER_READ  →  `npm run guards` exit 0, `npm test` exit 0,
+    #   guard ciktisi FARK YOK. Ayni genisleme MODES_ACTUALS_WRITE'a
+    #   uygulandiginda kapi ANINDA kirmizi verdi (poz. kontrol).
+    #
+    # ⇒ "Bes satir ekle" bugunu kapatirdi, SINIFI degil: bir sonraki dalga
+    #   ayni deligi yeniden acardi. Bu yuzden IKI sey birden yapildi:
+    #     1. tablo GOCMUS ROTA TASIYAN HER HUCREYE genisletildi
+    #     2. G5c: tabloda OLMAYAN bir hucre gocmus rota tasiyorsa IHLAL
+    #   Boylece evren BIR DAHA donamaz — yeni hucre acan tur, hukmunu de
+    #   yazmak ZORUNDA. (`docs/DISIPLIN.md`: "bir kapi aginin KENDI
+    #   SAGLIGINI olcmesi" · "elle yazilmis uye-sayisi dokuzda dokuz".)
+    #
+    # ⚠️ Bu tablo bir BASELINE'dir: olculdugu anda dondurulmustur ve KENDINI
+    #   ASLA YENIDEN URETMEZ. Bir kume degisikligi burayi da degistirmeyi
+    #   gerektirir — ve o degisiklik bir KARAR KAYDI ister, sessiz duzenleme
+    #   DEGIL. Kaynak hukumler: `Z35` (MODES_*_WRITE bolunmesi) · `Z36 §5`
+    #   (SHARED_* uclusu) · `Z37 §3` (APPROVAL_QUEUE_READ) · `Z42 §4-§5`
+    #   (W9'un bes yeni hucresi) · digerleri W1-W8'in birebir gocu.
+    KARAR_HUKMU = {
+        'ADMIN_READ': {'ADMIN'},
+        'APPROVAL_QUEUE_READ': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'READONLY'},
+        'BUDGET_CHECK_READ': {'ADMIN', 'CATEGORY_MANAGER', 'PLANNER', 'READONLY'},
+        'CUSTOMER_READ': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'PLANNER', 'READONLY'},
+        'CUSTOMER_WRITE': {'ADMIN', 'PLANNER'},
+        'MASTER_DATA_GOVERNANCE_READ': {'ADMIN'},
+        'MASTER_DATA_READ': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'PLANNER', 'READONLY'},
+        'MASTER_DATA_WRITE': {'ADMIN'},
         'MODES_ACTUALS_WRITE': {'ADMIN', 'FINANCE'},
+        'MODES_IMPORT_READ': {'ADMIN', 'FINANCE'},
+        'MODES_LEDGER_READ': {'ADMIN', 'FINANCE', 'PLANNER'},
+        'MODES_ONINVOICE_READ': {'ADMIN', 'FINANCE', 'PLANNER', 'READONLY'},
         'MODES_PLAN_WRITE': {'ADMIN', 'PLANNER'},
+        'MODES_READ': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'PLANNER', 'READONLY'},
+        'MODES_SUBMIT': {'ADMIN', 'PLANNER'},
+        'NOTIFICATION_WRITE': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'PLANNER', 'READONLY'},
+        'SHARED_ENVELOPE_WRITE': {'ADMIN', 'FINANCE'},
+        'SHARED_POLICY_WRITE': {'ADMIN'},
+        'SHARED_READ': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'PLANNER', 'READONLY'},
+        'SHARED_SPEND_WRITE': {'ADMIN', 'PLANNER'},
+        'SUMMARY_READ': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'READONLY'},
+        'TENANT_READ': {'ADMIN'},
+        'TENANT_WRITE': {'ADMIN'},
+        'USER_MANAGE': {'ADMIN'},
+        'USER_WRITE': {'ADMIN'},
     }
-    for c, hukum in sorted(Z35_HUKUM.items()):
-        canli = set(EXPECT.get(c, set()))
+    gocen_hucre = {r[4] for r in rows if r[6] == 'CAP'}
+    # ⚠️ EVREN: `EXPECT` DEGIL. `EXPECT` yalniz IKI Z35 hucresini tasir
+    # (`:514`); onu kullanmak 23 hucreyi "BOS" gosterirdi — kapinin girdisi
+    # ARANANDAN DAR olurdu (`DISIPLIN`: "kapsam maskelemesi — desen calisir,
+    # EVREN eksiktir"). Canli harita DOGRUDAN okunur.
+    HARITA = role_caps_inverse()
+    for c, hukum in sorted(KARAR_HUKMU.items()):
+        canli = set(HARITA.get(c, set()))
         if canli != hukum:
             err.append(
-                f'G5b Z35 HUKMU IHLAL: {c} — karar kaydi {sorted(hukum)}, '
-                f'ROLE_CAPABILITIES {sorted(canli) or "BOS"}. Z35 bu bolunmeyi '
-                f'DEFTER ETKISI ekseninde karara bagladi; kume degisikligi bir '
-                f'KARAR ISTER (yeni bir Z-kaydi), sessiz duzenleme DEGIL.')
-    print(f'G5b Z35 hukmu    kontrol={len(Z35_HUKUM)} ihlal='
-          f'{sum(1 for c,h in Z35_HUKUM.items() if set(EXPECT.get(c,set()))!=h)}',
-          file=out)
+                f'G5b KARAR HUKMU IHLAL: {c} — dondurulmus hukum '
+                f'{sorted(hukum)}, ROLE_CAPABILITIES {sorted(canli) or "BOS"}. '
+                f'Bir hucrenin ROL KUMESI bir KARARDIR; degisiklik bir Z-kaydi '
+                f'ISTER, sessiz duzenleme DEGIL.')
+    ihlal = sum(1 for c, h in KARAR_HUKMU.items()
+                if set(HARITA.get(c, set())) != h)
+    print(f'G5b karar hukmu  kontrol={len(KARAR_HUKMU)} ihlal={ihlal}', file=out)
+
+    # ── G5c — EVREN DONMASIN. Gocmus rota tasiyan HER hucre tabloda olmali.
+    # Bu, G5b'nin W9'da dusmesine sebep olan mekanizmayi kalici kapatir:
+    # kapinin evreni artik ELLE degil, GOCEN ROTALARDAN turer.
+    hukumsuz = sorted(gocen_hucre - set(KARAR_HUKMU))
+    if hukumsuz:
+        err.append(
+            f'G5c HUKUMSUZ HUCRE: {hukumsuz} — gocmus rota tasiyor ama '
+            f'KARAR_HUKMU tablosunda YOK. G5b bu hucrelerin rol kumesini '
+            f'GORMUYOR (W9 BLOCKER 1). Yeni hucre acan tur, hukmunu de yazar.')
+    print(f'G5c hukumsuz hucre  gocen={len(gocen_hucre)} '
+          f'hukumlu={len(KARAR_HUKMU)} hukumsuz={len(hukumsuz)}', file=out)
+
     for c,m,pth,rl in mism:
         err.append(f'G5 UYUSMAZLIK: {m} {pth} hucre={c} @Roles={rl}')
 

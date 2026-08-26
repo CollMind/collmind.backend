@@ -29,7 +29,6 @@ import { UserResponseDto } from './dto/user-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../common/guards/capability.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../common/authorization/capabilities';
 import { SelfScoped } from '../../common/decorators/self-scoped.decorator';
@@ -98,7 +97,10 @@ export class UserController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN)
+  // `Z42 §4` (`B3b-1 W9`, 2026-08-26) — YENİ hücre `USER_MANAGE` GENİŞLEMESİ
+  // DEĞİL: bu rota AYRI bir `Z42` kalemi (`#9`, `T-297`) — `GET /users/:id`
+  // ile aynı `USER_MANAGE` hücresine, `{ADMIN}` birebir.
+  @RequireCapability(CAPABILITIES.USER_MANAGE)
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({
     status: 200,

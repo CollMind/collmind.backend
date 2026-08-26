@@ -52,8 +52,16 @@ import { PlanStatus } from '../../../../database/entities/plan.entity';
 // {ADMIN,PLANNER}) ve gönderim (`MODES_SUBMIT`, {ADMIN,PLANNER}) rotaları
 // `@Roles` → `@RequireCapability` göçürüldü. `ROLE_CAPABILITIES`'te iki
 // hücre de göç öncesi `@Roles(ADMIN,PLANNER)` kümesiyle BİREBİR — davranış
-// KORUNUYOR. `MODES_READ`/`MODES_APPROVE` bu göçe DAHİL DEĞİL (karar-bekler,
-// `B3B1_DALGA_PLANI_ONERI.md §6`) — o rotalar `@Roles` taşımaya devam eder.
+// KORUNUYOR.
+// `Z42 §4/§5` (`B3b-1 W9`, 2026-08-26) — `plans` GET/`:id`/`:id/analysis`/
+// `:id/approval-history` `MODES_READ`'e (taban {A,CM,F,P,RO}, 5/5, birebir),
+// `approval-queue` `APPROVAL_QUEUE_READ`'e ({A,CM,F,RO}, birebir),
+// `:id/budget-check` YENİ hücre `BUDGET_CHECK_READ`'e ({A,CM,P,RO}, birebir)
+// göçürüldü. `pending-approvals` bu dalgaya GİRMEDİ — kümesi {A,CM,RO} ve
+// hedef hücrenin ({A,CM,F,RO}) BİREBİRİ değil (`+F` bir GENİŞLEME, `Z42 §4`
+// ölçüm şartı çözülene kadar karar-bekler, `@Roles` taşımaya devam eder).
+// `MODES_APPROVE` bu göçe DAHİL DEĞİL (karar-bekler, `B3B1_DALGA_PLANI_
+// ONERI.md §6`) — o rotalar `@Roles` taşımaya devam eder.
 @ApiTags('Plans')
 @ApiBearerAuth()
 @Controller('plans')
@@ -82,13 +90,7 @@ export class PlanController {
   }
 
   @Get()
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Get all plans' })
   @ApiResponse({ status: 200, description: 'List of plans' })
   findAll(
@@ -134,12 +136,7 @@ export class PlanController {
   // eklenene kadar hiçbir e2e testi bu path'i egzersiz etmediği için bug
   // gizli kalmıştı.
   @Get('approval-queue')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.APPROVAL_QUEUE_READ)
   @ApiOperation({ summary: 'Get approval queue for current user' })
   @ApiResponse({ status: 200, description: 'List of pending plans' })
   getApprovalQueue(
@@ -157,12 +154,7 @@ export class PlanController {
 
   // Spesifik route'lar parametrik route'dan ÖNCE tanımlanmalı
   @Get(':id/budget-check')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.BUDGET_CHECK_READ)
   @ApiOperation({ summary: 'Check budget availability for plan approval' })
   @ApiResponse({
     status: 200,
@@ -186,13 +178,7 @@ export class PlanController {
   }
 
   @Get(':id/analysis')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Get plan analysis data' })
   @ApiResponse({ status: 200, description: 'Plan analysis data' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
@@ -208,13 +194,7 @@ export class PlanController {
   }
 
   @Get(':id')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Get plan by ID' })
   @ApiResponse({ status: 200, description: 'Plan details' })
   @ApiResponse({ status: 404, description: 'Plan not found' })
@@ -446,13 +426,7 @@ export class PlanController {
   }
 
   @Get(':id/approval-history')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Get plan approval history' })
   @ApiResponse({ status: 200, description: 'Approval history entries' })
   getApprovalHistory(

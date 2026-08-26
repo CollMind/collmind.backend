@@ -31,11 +31,9 @@ import {
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../common/guards/capability.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
-import { UserRole } from '../../../database/entities/user.entity';
 
 // T-249 (devam turu) — bu 8 rotanın HİÇBİRİNDE `@Roles` yoktu →
 // `RolesGuard` fail-open. Bu dosya `mechanic_spend_breakdown`/
@@ -85,12 +83,10 @@ import { UserRole } from '../../../database/entities/user.entity';
 // kullanan hiçbir `@Roles(...)` kalmadı (`ROLE_CAPABILITIES.SHARED_READ`
 // aynı beş rolü taşıyor — grep dayanağı: `ROLE_CAPABILITIES` içinde
 // `CAPABILITIES.SHARED_READ` taşıyan rol girdileri).
-const SPEND_BUDGET_CHECK_ROLES = [
-  UserRole.ADMIN,
-  UserRole.PLANNER,
-  UserRole.CATEGORY_MANAGER,
-  UserRole.READONLY,
-] as const;
+// `SPEND_BUDGET_CHECK_ROLES` sabiti `Z42 §5` göçüyle KALDIRILDI (2026-08-26)
+// — tek kullanıcısı (`validate-budget/:planId`) `@RequireCapability(
+// CAPABILITIES.BUDGET_CHECK_READ)`'e taşındı, sabiti kullanan hiçbir
+// `@Roles(...)` kalmadı.
 
 @ApiTags('Spend Calculation')
 @ApiBearerAuth()
@@ -235,7 +231,11 @@ export class SpendCalculationController {
   }
 
   @Get('validate-budget/:planId')
-  @Roles(...SPEND_BUDGET_CHECK_ROLES)
+  // `Z42 §5` (`B3b-1 W9`, 2026-08-26) — `#5`+`#10` TEK İŞLEV-AİLESİ hücresi:
+  // bu rota `plan.controller.ts`'in `GET /plans/:id/budget-check` rotasıyla
+  // AYNI hücreye (`BUDGET_CHECK_READ`) göçürüldü. `SPEND_BUDGET_CHECK_ROLES`
+  // ({ADMIN,PLANNER,CATEGORY_MANAGER,READONLY}) hedef kümeyle BİREBİR.
+  @RequireCapability(CAPABILITIES.BUDGET_CHECK_READ)
   @ApiOperation({ summary: 'Validate budget impact for a plan' })
   @ApiResponse({
     status: 200,

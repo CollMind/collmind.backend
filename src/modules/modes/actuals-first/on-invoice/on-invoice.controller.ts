@@ -24,19 +24,21 @@ import { OnInvoiceService } from './on-invoice.service';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../../common/guards/capability.guard';
-import { Roles } from '../../../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
-import { UserRole } from '../../../../database/entities/user.entity';
 
 // `B3 W6` göçü (2026-08-26, `Z35`) — GERÇEKLEŞME yazımı (`MODES_ACTUALS_WRITE`,
 // {ADMIN,FINANCE}: upload/validateBatch/processBatch) `@Roles` →
 // `@RequireCapability` göçürüldü. `ROLE_CAPABILITIES`'te hücre göç öncesi
 // `@Roles(ADMIN,FINANCE)` kümesiyle BİREBİR — davranış KORUNUYOR.
-// `MODES_READ` (count/entries/template GET rotaları) bu göçe DAHİL DEĞİL
-// (karar-bekler, `B3B1_DALGA_PLANI_ONERI.md §6`).
+// `Z42 §4` (`B3b-1 W9`, 2026-08-26) — `count`/`entries`/`batch/:batchId`
+// YENİ hücre `MODES_ONINVOICE_READ`'e göçürüldü ({A,F,P,RO}, birebir);
+// `template/csv`/`template/excel` YENİ hücre `MODES_IMPORT_READ`'e
+// göçürüldü ({A,F}, birebir). Dosyada `@Roles` kalmadı — `RolesGuard`
+// kardeş controller'larla aynı `@UseGuards` deseni için KORUNDU (no-op,
+// dekoratörsüz).
 @ApiTags('On-Invoice')
 @ApiBearerAuth()
 @Controller('on-invoice')
@@ -81,7 +83,7 @@ export class OnInvoiceController {
    * Get total count of On-Invoice entries
    */
   @Get('count')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
+  @RequireCapability(CAPABILITIES.MODES_ONINVOICE_READ)
   @ApiOperation({ summary: 'Toplam On-Invoice entry sayısını getir' })
   async getCount(@TenantId() tenantId: string) {
     const count = await this.onInvoiceService.getCount(tenantId);
@@ -93,7 +95,7 @@ export class OnInvoiceController {
    * NOT: Bu endpoint GET /on-invoice/:batchId'den ÖNCE olmalı (route sırası önemli)
    */
   @Get('entries')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
+  @RequireCapability(CAPABILITIES.MODES_ONINVOICE_READ)
   @ApiOperation({ summary: "Tüm On-Invoice entry'lerini listele" })
   async getEntries(
     @TenantId() tenantId: string,
@@ -123,7 +125,7 @@ export class OnInvoiceController {
    * NOT: Bu endpoint GET /on-invoice/:batchId'den ÖNCE olmalı (route sırası önemli)
    */
   @Get('template/excel')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_IMPORT_READ)
   @ApiOperation({ summary: 'Excel template indir' })
   async downloadExcelTemplate(@Res() res: Response) {
     const buffer = this.onInvoiceService.generateExcelTemplate();
@@ -143,7 +145,7 @@ export class OnInvoiceController {
    * NOT: Bu endpoint GET /on-invoice/:batchId'den ÖNCE olmalı (route sırası önemli)
    */
   @Get('template/csv')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_IMPORT_READ)
   @ApiOperation({ summary: 'CSV template indir' })
   async downloadCSVTemplate(@Res() res: Response) {
     const csv = this.onInvoiceService.generateCSVTemplate();
@@ -186,7 +188,7 @@ export class OnInvoiceController {
    * Batch Bilgisi
    */
   @Get('batch/:batchId')
-  @Roles(UserRole.ADMIN, UserRole.FINANCE, UserRole.PLANNER, UserRole.READONLY)
+  @RequireCapability(CAPABILITIES.MODES_ONINVOICE_READ)
   @ApiOperation({ summary: 'Batch bilgilerini getir' })
   async getBatch(
     @Param('batchId', ParseUUIDPipe) batchId: string,

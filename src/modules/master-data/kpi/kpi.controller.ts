@@ -24,7 +24,6 @@ import { UpdateKpiDto } from './dto/update-kpi.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../common/guards/capability.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
@@ -32,18 +31,15 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 import { Kpi } from '../../../database/entities/kpi.entity';
 
-// `B3 W8` göçü (2026-08-26) — ON rotanın DOKUZU `@Roles` → `@RequireCapability`.
-// ⚠️ SAYI DÜZELTİLDİ (code-reviewer S1): önce "dokuz rotanın sekizi" yazıyordu.
-// Ölçüldü: HTTP dekoratörü 10 · @RequireCapability 9 · @Roles 1 (validate-formula).
-// İki dosyanın eski sayıları 8+7=15 veriyordu; commit/pin/TSV'nin dediği 17 DEĞİL.
+// `B3 W8` göçü (2026-08-26) — dokuz rota `@Roles` → `@RequireCapability`.
 //   POST/PATCH/DELETE/seed-defaults  `@Roles(ADMIN)`                                        → `MASTER_DATA_WRITE` ({ADMIN})
 //   GET (liste·grid/:planId·grid·calculable·:id)  `@Roles(ADMIN,PLANNER,CATEGORY_MANAGER,FINANCE,READONLY)` → `MASTER_DATA_READ` (5/5)
 // `ROLE_CAPABILITIES`'te ikisi de göç öncesi @Roles kümesiyle BİREBİR —
 // davranış KORUNUYOR. Kanonik kaynak `ROLE_CAPABILITIES`; atama kapısı `G6`.
-// ⛔ `POST validate-formula` GÖÇE DAHİL DEĞİL — `Z36 §5` karar-bekler
-// (`K-2.6.6` fail-closed'ı bir üyelik gerekçesi değil; "kural-yönetiminin
-// okuma aynası" ihtimali ürün sahibi kararı bekliyor). `@Roles(ADMIN)`
-// AYNEN kalır.
+// `Z42 §5` (`B3b-1 W9`, 2026-08-26) — `POST validate-formula` YENİ hücre
+// `MASTER_DATA_GOVERNANCE_READ`'e göçürüldü ({ADMIN}, birebir). Dosyada
+// `@Roles` kalmadı — `RolesGuard` kardeş controller'larla aynı `@UseGuards`
+// deseni için KORUNDU (no-op, dekoratörsüz).
 @ApiTags('Master Data - KPIs')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
@@ -164,15 +160,13 @@ export class KpiController {
     return this.kpiService.remove(tenantId, id);
   }
 
-  // ⛔ `Z36 §5` KARAR-BEKLER — `MASTER_DATA_WRITE`'a mekanik göçe AÇILMADI.
-  // Yazma yüzeyi ölçüldü 0 (kalıcı yazma yok, salt doğrulama), ama
-  // `K-2.6.6` ("kural yoksa reddet") fail-closed bir İLKEDİR, bir VERİ-SINIFI
-  // kuralı DEĞİL — bir üyelik gerekçesi olarak KULLANILAMAZ (`Z36 §6`).
-  // Açık ihtimal: "kural-yönetiminin okuma aynası" ise evi `SINIF A`
-  // (`SHARED_POLICY_WRITE`) komşuluğudur, katalog-READ değil. Ürün sahibi
-  // kararı bekliyor. `@Roles(ADMIN)` AYNEN kalır.
+  // ✅ ÇÖZÜLDÜ (`Z42 §5`, `B3b-1 W9`, 2026-08-26) — YENİ hücre
+  // `MASTER_DATA_GOVERNANCE_READ`'e göçürüldü, {ADMIN} birebir. Formül
+  // doğrulama = kural-yönetiminin ARACI (`K-2.6.4` "tanımlar" cümlesi),
+  // yönetişim-okuma. `MASTER_DATA_READ` (5/5) seçeneği REDDEDİLDİ —
+  // çağıransız yüzeye genişleme, `İlke-1`'in tam tersi.
   @Post('validate-formula')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_GOVERNANCE_READ)
   @ApiOperation({ summary: 'Validate a KPI formula' })
   @ApiResponse({ status: 200, description: 'Validation result' })
   validateFormula(@Body() body: { formula: string; formulaType: string }) {

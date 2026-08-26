@@ -28,18 +28,13 @@ import { CombinationCheckResult } from './dto/combination-check-result.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../common/guards/capability.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
-import { UserRole } from '../../../database/entities/user.entity';
 import { Mechanic } from '../../../database/entities/mechanic.entity';
 
-// `B3 W8` göçü (2026-08-26) — DOKUZ rotanın SEKİZİ `@Roles` → `@RequireCapability`.
-// ⚠️ SAYI DÜZELTİLDİ (code-reviewer S1): önce "dokuz rotanın yedisi" yazıyordu.
-// Ölçüldü: HTTP dekoratörü 9 · @RequireCapability 8 · @Roles 1 (validate-formula).
-// ⇒ 9 + 8 = 17 göçen · 1 + 1 = 2 karar-bekler · 10 + 9 = 19 rota. Kapanış TUTUYOR.
+// `B3 W8` göçü (2026-08-26) — dokuz rota `@Roles` → `@RequireCapability`.
 //   POST/PATCH/DELETE/:id/clone       `@Roles(ADMIN)`                                        → `MASTER_DATA_WRITE` ({ADMIN})
 //   GET (liste·:id)                   `@Roles(ADMIN,PLANNER,CATEGORY_MANAGER,FINANCE,READONLY)` → `MASTER_DATA_READ` (5/5)
 // `ROLE_CAPABILITIES`'te ikisi de göç öncesi @Roles kümesiyle BİREBİR —
@@ -53,8 +48,10 @@ import { Mechanic } from '../../../database/entities/mechanic.entity';
 // OVERRIDE'dır: `route-cell-map.py`'de `MASTER_DATA_CALC_READ_ROUTES` tablosuna
 // KAYITLI (G2b kapsamında).
 //
-// ⛔ `POST validate-formula` GÖÇE DAHİL DEĞİL — `Z36 §5` karar-bekler (aynı
-// gerekçe: `K-2.6.6` bir üyelik gerekçesi değil). `@Roles(ADMIN)` AYNEN kalır.
+// `Z42 §5` (`B3b-1 W9`, 2026-08-26) — `POST validate-formula` YENİ hücre
+// `MASTER_DATA_GOVERNANCE_READ`'e göçürüldü ({ADMIN}, birebir). Dosyada
+// `@Roles` kalmadı — `RolesGuard` kardeş controller'larla aynı `@UseGuards`
+// deseni için KORUNDU (no-op, dekoratörsüz).
 @ApiTags('Master Data - Mechanics')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
@@ -167,10 +164,11 @@ export class MechanicController {
     );
   }
 
-  // ⛔ `Z36 §5` KARAR-BEKLER — bkz. dosya başı yorumu. `@Roles(ADMIN)` AYNEN
-  // kalır.
+  // ✅ ÇÖZÜLDÜ (`Z42 §5`, `B3b-1 W9`, 2026-08-26) — YENİ hücre
+  // `MASTER_DATA_GOVERNANCE_READ`'e göçürüldü, {ADMIN} birebir. Bkz. dosya
+  // başı yorumu.
   @Post('validate-formula')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_GOVERNANCE_READ)
   @ApiOperation({ summary: 'Validate calculation formula' })
   @ApiResponse({
     status: 200,
