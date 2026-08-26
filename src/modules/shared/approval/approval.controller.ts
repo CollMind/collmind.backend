@@ -28,7 +28,7 @@ export class ApprovalController {
   // `@Roles(ADMIN,CATEGORY_MANAGER,FINANCE,READONLY)` →
   // `@RequireCapability(APPROVAL_QUEUE_READ)`. `ROLE_CAPABILITIES`'te aynı
   // dört rol — davranış BİREBİR korunuyor (pin:
-  // `test/shared-read-exceptions-boundary.e2e-spec.ts`).
+  // `test/approval-queue-read-boundary.e2e-spec.ts`).
   @Get()
   @RequireCapability(CAPABILITIES.APPROVAL_QUEUE_READ)
   @ApiOperation({ summary: 'Get all approval requests' })

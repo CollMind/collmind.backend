@@ -53,7 +53,7 @@ APPROVE = {
 # değil, ONAY KUYRUĞU GÖRÜNÜRLÜĞÜ (K-2.6.4'ün onaycı yüzeyi). Üyelik
 # `capabilities.ts`'in ROLE_CAPABILITIES'inde `{ADMIN,CATEGORY_MANAGER,
 # FINANCE,READONLY}` (PLANNER bilinçli dışarıda — pin:
-# test/shared-read-exceptions-boundary.e2e-spec.ts).
+# test/approval-queue-read-boundary.e2e-spec.ts).
 APPROVAL_QUEUE_READ_ROUTES = {
  ('GET', 'approvals'), ('GET', 'approvals/pending'),
 }
@@ -395,7 +395,16 @@ def reconcile(rows):
     for name,decl in (('Z36-POLICY', SHARED_POLICY_WRITE_ROUTES),
                       ('Z36-ENVELOPE',SHARED_ENVELOPE_WRITE_ROUTES),
                       ('Z36-SPEND',   SHARED_SPEND_WRITE_ROUTES),
-                      ('Z36-CALCREAD',SHARED_CALC_READ_ROUTES)):
+                      ('Z36-CALCREAD',SHARED_CALC_READ_ROUTES),
+                      # ⛔ BESINCI UYE (K4, 2026-08-26): K4 yeni bir elle yazilmis
+                      # tablo ekledi ve bu donguye KAYDETMEDI — yani bayat-satir
+                      # kapisi olmadan duruyordu. code-reviewer cift yonlu mutasyonla
+                      # olctu: yeni tabloya olu uye -> exit 0 (KAPI YOK);
+                      # poz.kontrol Z36-CALCREAD'e olu uye -> exit 2 (kapi var).
+                      # ⚠️ Bu, G2b'nin KENDI YORUMUNUN anlattigi sinifin BESINCI
+                      # vakasi: "bir duzeltme, duzelttigi SINIFIN yeni bir vakasini
+                      # uretebilir" — ve bu kez ureten sey G2b'nin EKSIK KAPSAMIYDI.
+                      ('Z37-APPROVALQUEUE', APPROVAL_QUEUE_READ_ROUTES)):
         dead=sorted(m for m in decl if keys.get(m,0)==0)
         dup =sorted(m for m in decl if keys.get(m,0)>1)
         print(f'G2b {name:<13} bildirilen={len(decl)} olu={len(dead)} cift={len(dup)}', file=out)

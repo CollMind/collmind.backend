@@ -155,7 +155,9 @@ import { UserRole } from '../../database/entities/user.entity';
  *   MODES_READ     union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)
  *   MODES_APPROVE  dal 3 genişleme, ONAY yeteneği               → K-2.5.12   ⚠️ Z30 H2: 5 route AYRILDI → MODES_SUBMIT, aşağı bkz.
  *   SHARED_READ    union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)  ⚠️ BAYAT — B3 W4a ADIM 0 (2026-08-25)
- *                                                                                                     bu hücreyi ÇÖZDÜ: 16 rota göçtü,
+ *                                                                                                     bu hücreyi ÇÖZDÜ: 16 rota göçtü, ~~DÖRT İSTİSNA~~ ⚠️ bugün İKİ istisna (K4: approvals çifti GÖÇTÜ →
+ *                                                     APPROVAL_QUEUE_READ; kalan: budget-variance DEVREDİLDİ ·
+ *                                                     validate-budget DUR'da),
  *                                                                                                     DÖRT İSTİSNA karar-bekler. Aşağı bkz.
  *   SHARED_APPROVE dal 3 genişleme, ONAY yeteneği               → K-2.5.12   ⚠️ Z30 H3: 0 route — SİLİNDİ, aşağı bkz.
  *   USER_READ      union = {ADMIN,CATEGORY_MANAGER,FINANCE,PLANNER,READONLY} → ÇÖKÜŞ (tüm roller)  ⚠️ BAYAT — Z20 (2026-08-23) bu hücreyi
@@ -600,7 +602,7 @@ export const CAPABILITIES = {
   // KUYRUĞU görünürlüğü, `SHARED_READ`'in "tanım + kural yönetimi" tabanı
   // değil). Küme `{ADMIN,CATEGORY_MANAGER,FINANCE,READONLY}` göç öncesi
   // @Roles ile BİREBİR — davranış KORUNUYOR (pin:
-  // `test/shared-read-exceptions-boundary.e2e-spec.ts`, PLANNER 403 alır,
+  // `test/approval-queue-read-boundary.e2e-spec.ts`, PLANNER 403 alır,
   // diğer dördü 403 ALMAZ).
   //
   // `Z18` şartı — HER ROL için AYRI cümle (union'dan değil, üyelik
@@ -844,8 +846,17 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // bilinçli, davranış-koruyucu. K-2.6.4 (L2_03:406) "PLANLAMACI — …,
     // GÖNDERİM — günlük kullanıcı" der; PLANNER MODES_SUBMIT'te gönderim
     // yapar ama hiçbir onay-kararı rotasında (MODES_APPROVE/SHARED_APPROVE)
-    // @Roles'ta yok. Onay kuyruğu bir ONAYCI yüzeyidir — PLANNER gönderen
-    // taraf, onaycı değil. Pin: test/shared-read-exceptions-boundary.e2e-spec.ts.
+    // @Roles'ta yok.
+    // ⚠️ AYIRT EDİCİ DÜZELTİLDİ (code-reviewer S1, 2026-08-26): "onaycı
+    // yüzeyi" cümlesi KARDEŞ ROTA tarafından çürütülüyor — AYNI controller'da
+    // GET /approvals/:id SHARED_READ = 5/5, yani PLANNER HER ONAY KAYDINI id
+    // ile OKUYABİLİYOR (canlı pin: shared-read-w4a-boundary, pinAllFive).
+    // ⇒ Gerçek ayırt edici "onaycı yüzeyi" DEĞİL, ENUMERASYON:
+    //     LİSTELEME (kuyruğu taramak) ↔ TEKİL OKUMA (bilinen kaydı açmak)
+    //   PLANNER kendi gönderdiği kaydı açabilir; TENANT'IN KUYRUĞUNU tarayamaz.
+    // ⛔ Eski cümle bırakılsaydı bir sonraki tur ya :id'yi "tutarsız" diye
+    //   4/5'e daraltır, ya kuyruğu açardı — İKİSİ DE YANLIŞ ZEMİN.
+    // Pin: test/approval-queue-read-boundary.e2e-spec.ts.
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.CUSTOMER_WRITE,
     CAPABILITIES.CUSTOMER_MANAGE,
@@ -915,7 +926,9 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.SHARED_READ,
     // ↓ APPROVAL_QUEUE_READ (Z37 §3, B3 K4 Parça 1, 2026-08-26) —
     // agreements/:id/{approve,reject} rotalarında @Roles'ta zaten var;
-    // eşik-üstü onaycı kendi bekleyen işlerini görebilmeli.
+    // eşik-üstü onaycı KUYRUĞU GÖRMEDEN onaylayamaz.
+    // ⛔ "kendi bekleyen işlerini" ifadesi ÇÜRÜDÜ — kuyruk bugün
+    // TENANT-GENELİ (T-276, P0 açık). Yukarıdaki uzun nota bkz.
     CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,

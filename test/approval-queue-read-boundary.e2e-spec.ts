@@ -1,5 +1,5 @@
 /**
- * shared-read-exceptions-boundary.e2e-spec.ts
+ * approval-queue-read-boundary.e2e-spec.ts
  *
  * `SHARED_READ` hücresinin **DÖRT İSTİSNASI** — orijinal envanter (2026-08-25).
  *
@@ -45,7 +45,7 @@ import { INestApplication } from '@nestjs/common';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache, LoginResult } from './helpers/auth';
 
-describe('SHARED_READ istisnaları — onay kuyruğu PLANNER’a KAPALI', () => {
+describe('SÖZLEŞME: onay KUYRUĞUNU tarama yetkisi PLANNER’da YOK (tekil okuma AYRI — SHARED_READ 5/5)', () => {
   let app: INestApplication;
   let admin: LoginResult;
   let planner: LoginResult;
