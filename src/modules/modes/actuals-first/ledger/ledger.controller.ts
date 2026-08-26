@@ -20,6 +20,10 @@ import { TenantId } from '../../../../common/decorators/tenant.decorator';
 // `ROLE_CAPABILITIES`'te hücre göç öncesi `{ADMIN,FINANCE,PLANNER}` kümesiyle
 // BİREBİR — davranış KORUNUYOR (pin: `test/ledger-envelope-role-boundary.
 // e2e-spec.ts`, `B3` kaza-dalgası `K2` normalizasyonundan sonraki hâl).
+// ⛔ `Z43 §2` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — hücre `+READONLY`
+// aldı: `{A,F,P}` → `{A,F,P,RO}`. BU DOSYADAKİ DAVRANIŞ GENİŞLİYOR: RO artık
+// bu controller'ın tüm `GET`'lerini okuyabilir (yazma yolu yok, controller
+// zaten yalnız `Get`). Gerekçe/pin: `capabilities.ts` `READONLY` bloğu.
 @ApiTags('Ledger')
 @ApiBearerAuth()
 @Controller('ledger')

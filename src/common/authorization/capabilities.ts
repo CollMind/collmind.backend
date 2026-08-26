@@ -1109,11 +1109,20 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.MASTER_DATA_READ,
     // ↓ Z42 §4/§5/§6 (B3b-1 W9, 2026-08-26) — MODES_READ tabanı (5/5, RO
     // dahil, birebir). MODES_ONINVOICE_READ'de RO VAR ({A,F,P,RO});
-    // MODES_LEDGER_READ/MODES_IMPORT_READ'İN HİÇBİRİNDE YOK ({A,F,P}/
-    // {A,F} — İZLEYİCİ bir İZLEME setidir, ama defter/içe-aktarma OKUMA
-    // rotalarının bu ikisinde RO hiçbir zaman @Roles'ta değildi). SUMMARY_
-    // READ ve BUDGET_CHECK_READ'de RO VAR (K-2.6.4c "izleme yetenekleri").
+    // MODES_IMPORT_READ'İN İÇİNDE YOK ({A,F} — içe-aktarma OKUMA rotası
+    // hiçbir zaman @Roles'ta RO taşımadı). SUMMARY_READ ve
+    // BUDGET_CHECK_READ'de RO VAR (K-2.6.4c "izleme yetenekleri").
+    // ↓ MODES_LEDGER_READ +READONLY (`Z43 §2` · `04_KARAR_KAYDI.md`,
+    // `B3` istisna-dalgası `Faz-B`, 2026-08-27) — `K-2.6.4c`: "İZLEYİCİ bir
+    // İZLEME YETENEKLERİ SETİDİR". Yokluk bir cümleden değil, `f3b9f82`
+    // ("add READONLY role") commit'inin dokunmadığı iki dosyadan geliyordu
+    // (`ledger.controller.ts` · `agreement-transaction.controller.ts`) —
+    // kayıtsız doğum, gerekçeli istisna değil. DAVRANIŞ GENİŞLİYOR: RO artık
+    // ledger-ailesi `GET`'lerini okuyabilir (yazma yok — RO hiçbir
+    // `*_WRITE` hücresinde değil). Pin: e2e davranış testi (izleme
+    // genişliyor, yazma genişlemiyor).
     CAPABILITIES.MODES_READ,
+    CAPABILITIES.MODES_LEDGER_READ,
     CAPABILITIES.MODES_ONINVOICE_READ,
     CAPABILITIES.SUMMARY_READ,
     CAPABILITIES.BUDGET_CHECK_READ,

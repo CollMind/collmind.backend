@@ -16,7 +16,6 @@ import { CplStatusResponseDto } from './dto/cpl-status.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../common/guards/capability.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
@@ -42,14 +41,17 @@ export class DashboardController {
    * Planner: scoped to their assigned CPLs.
    * All other roles: tenant-wide.
    */
+  // ⛔ `Z43 §1` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — `Z42 §3`'ün
+  // `−PLANNER` hükmü GERİ ÇEKİLDİ: bu uç `ProtectedRoute`-kapısız (`/` ve
+  // `/dashboard` `requiredRole` taşımıyor) ve tüketicisi `DashboardPage`,
+  // `/finance` DEĞİL — "tek tüketici" dayanağı bir GENELLEMEYDİ, ölçüm
+  // değil. Doğru okuma: hüküm yanlış değildi, HÜCRE ÜYELİĞİ yanlıştı —
+  // `dashboard/summary` kapsam-çözümlü (`Planner: scoped to their assigned
+  // CPLs`, yukarı bkz.) ve `SUMMARY_READ`'in (nesne-bağsız ∧
+  // çok-işlem-modüllü) tanımının DIŞINDA. `MODES_READ` tabanı zaten `5/5`
+  // ({A,CM,F,P,RO}) taşıyor ⇒ TRANSFER BİREBİR, davranış DEĞİŞMİYOR.
   @Get('summary')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MODES_READ)
   @ApiOperation({ summary: 'Get dashboard summary card metrics' })
   @ApiResponse({
     status: 200,

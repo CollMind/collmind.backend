@@ -30,12 +30,10 @@ import { BudgetService } from '../../../shared/budget/budget.service';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../../common/guards/capability.guard';
-import { Roles } from '../../../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
-import { UserRole } from '../../../../database/entities/user.entity';
 import { randomUUID } from 'crypto';
 
 // `B3 W6` göçü (2026-08-26, `Z35`) — GERÇEKLEŞME yazımı (`MODES_ACTUALS_WRITE`,
@@ -111,8 +109,16 @@ export class AgreementTransactionController {
     return { agreementId, total };
   }
 
+  // ⛔ `Z43 §3/§6` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) —
+  // `MODES_IMPORT_READ` ({A,F}) → `MODES_LEDGER_READ` ({A,F,P,RO}) TRANSFER
+  // (`§6` yerleşim, brief). Ölçüm: `batch`'te olup `findAll`'da olmayan alan
+  // **`[]`**; `findAll` (yukarı, `MODES_LEDGER_READ`) daha zengin
+  // (`agreement`,`customer` join'li). `PLANNER` `?batchId=` ile bu ucun
+  // döndürdüğü satırların BİREBİR AYNISINI zaten alıyor ⇒ AÇILIM YOK.
+  // DAVRANIŞ GENİŞLİYOR: `PLANNER` `403`'ten `200`'e, `READONLY` `403`'ten
+  // `200`'e döner.
   @Get('batch/:batchId')
-  @RequireCapability(CAPABILITIES.MODES_IMPORT_READ)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get transactions by batch ID' })
   findByBatch(
     @Param('batchId', ParseUUIDPipe) batchId: string,
@@ -222,8 +228,16 @@ export class AgreementTransactionController {
     return { count };
   }
 
+  // ⛔ `Z43 §2` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — `@Roles(ADMIN,
+  // PLANNER,FINANCE)` (`{A,F,P}`) bir AD-BENZERLİĞİ DOSYALAMASIYDI
+  // (`stats/summary` adı özet çağrıştırıyor); davranışı `MODES_LEDGER_READ`
+  // hücresinin (`A`'dan sonra `{A,F,P,RO}`) tam profili — aynı veri-ailesi,
+  // aynı sayfa. Transfer, `Z32`'nin (`SUMMARY_READ` tanımı) İHLALİ değil,
+  // DÜZELTİCİ UYGULAMASIDIR: bu uç kapsam-çözümlü DEĞİL, `SUMMARY_READ`'in
+  // tanımı (nesne-bağsız ∧ çok-işlem-modüllü) dışında. `−P` ölür (P zaten
+  // hedef hücrenin üyesi); `+RO` DAVRANIŞ GENİŞLİYOR.
   @Get('stats/summary')
-  @Roles(UserRole.ADMIN, UserRole.PLANNER, UserRole.FINANCE)
+  @RequireCapability(CAPABILITIES.MODES_LEDGER_READ)
   @ApiOperation({ summary: 'Get transaction statistics summary' })
   async getSummary(
     @TenantId() tenantId: string,

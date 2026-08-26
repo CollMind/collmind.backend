@@ -126,13 +126,18 @@ describe('Settlement (E2E)', () => {
       expect(res.body).toBeDefined();
     });
 
-    it('PLANNER summary okuyabilir → 200', async () => {
+    // ⛔ `Z43 §4` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — `SUMMARY_READ`'e
+    // göçürüldü ({A,CM,F,RO}) — `−PLANNER` DAVRANIŞ DARALTMASI. Dayanak
+    // `Z42 §3`: kayıtsız doğum (`d40ca16`) + `K-2.6.4`'ün planner cümlesi özet
+    // içermiyor. Eski davranış (PLANNER → 200) `git log`'da izlenebilir;
+    // bu pin YENİ davranışı sınar.
+    it('PLANNER summary OKUYAMAZ → 403 (Z43 §4 daraltması)', async () => {
       const planner = await loginAs(app, 'PLANNER');
 
       await request(app.getHttpServer())
         .get('/actuals-first/settlements/summary')
         .set(planner.authHeader())
-        .expect(200);
+        .expect(403);
     });
 
     it('FINANCE summary okuyabilir → 200', async () => {

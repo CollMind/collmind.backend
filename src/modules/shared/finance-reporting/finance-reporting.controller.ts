@@ -109,14 +109,13 @@ export class FinanceReportingController {
     return this.financeReportingService.getSpendComposition(tenantId, filters);
   }
 
+  // ⛔ `Z43 §4` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — `SUMMARY_READ`'e
+  // göçürüldü ({A,CM,F,RO}) — `−PLANNER` DAVRANIŞ DARALTMASI, ekran kapısı
+  // zaten PLANNER'sız (`Z43 §4`: "ekran kapısı zaten P'siz"). Dayanak
+  // `Z42 §3` (kayıtsız doğum `d40ca16` + `K-2.6.4`'ün planner cümlesi özet
+  // içermiyor); `Faz-A §3` ölçümünde bu daraltma AYAKTA bulundu.
   @Get('plan-performance')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.FINANCE,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.PLANNER,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.SUMMARY_READ)
   @ApiOperation({ summary: 'Get plan performance report' })
   @ApiResponse({
     status: 200,

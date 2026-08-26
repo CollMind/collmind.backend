@@ -21,11 +21,16 @@
  * ── PİN ŞEKLİ — İKİ GİRDİ / İKİ ÇIKTI (`CLAUDE.md §2.7 #6`) ─────────────────
  *
  *   1. PLANNER → 200                    (hedef genişliyor)
- *   2. CATEGORY_MANAGER/READONLY → 403  (dışarıdaki roller HÂLÂ kapalı —
+ *   2. CATEGORY_MANAGER → 403           (dışarıda kalan rol HÂLÂ kapalı —
  *                                         genişleme yalnız hedefte, "herkese
  *                                         aç" kazası değil)
  *
  * ADMIN/FINANCE zaten `200`; ayrıca ölçülür ki değişiklik onları bozmasın.
+ *
+ * ⛔ GÜNCELLEME (`Z43 §2`, `B3` istisna-dalgası `Faz-B`, 2026-08-27):
+ * `MODES_LEDGER_READ` hücresi ayrıca `+READONLY` aldı ({A,F,P} → {A,F,P,RO}).
+ * `READONLY` bu dosyada eskiden 403 bekleniyordu, şimdi `200` — pinler
+ * aşağıda güncellendi (CATEGORY_MANAGER hâlâ 403, tek dışarıda kalan rol).
  */
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
@@ -83,18 +88,24 @@ describe('B3 K2 — ledger-üçlüsü hizalaması: envelope/* {ADMIN,FINANCE} �
       expect(Array.isArray(res.body)).toBe(true);
     });
 
-    it.each([
-      ['CATEGORY_MANAGER', () => categoryManager],
-      ['READONLY', () => readonly],
-    ])(
-      '%s → 403 (değişmedi — genişleme yalnız PLANNER hedefinde, "herkese aç" değil)',
-      async (_label, getUser) => {
-        const res = await request(app.getHttpServer())
-          .get(`/ledger/envelope/${NONEXISTENT_UUID}`)
-          .set(getUser().authHeader());
-        expect(res.status).toBe(403);
-      },
-    );
+    it('CATEGORY_MANAGER → 403 (değişmedi — MODES_LEDGER_READ hücresinin üyesi değil)', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/ledger/envelope/${NONEXISTENT_UUID}`)
+        .set(categoryManager.authHeader());
+      expect(res.status).toBe(403);
+    });
+
+    // ⛔ `Z43 §2` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — `MODES_LEDGER_READ`
+    // `+READONLY` aldı ({A,F,P} → {A,F,P,RO}, `K-2.6.4c`: "İZLEYİCİ bir İZLEME
+    // YETENEKLERİ SETİDİR"). Eski beklenti (403) `git log`'da izlenebilir; bu
+    // pin YENİ davranışı sınar — izleme genişliyor, yazma genişlemiyor.
+    it('READONLY → 200 (Z43 §2 genişlemesi — GET izleme yeteneği)', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/ledger/envelope/${NONEXISTENT_UUID}`)
+        .set(readonly.authHeader());
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
   });
 
   describe('GET /ledger/envelope/:envelopeId/consumed', () => {
@@ -121,17 +132,20 @@ describe('B3 K2 — ledger-üçlüsü hizalaması: envelope/* {ADMIN,FINANCE} �
       expect(res.body).toHaveProperty('consumed');
     });
 
-    it.each([
-      ['CATEGORY_MANAGER', () => categoryManager],
-      ['READONLY', () => readonly],
-    ])(
-      '%s → 403 (değişmedi — genişleme yalnız PLANNER hedefinde)',
-      async (_label, getUser) => {
-        const res = await request(app.getHttpServer())
-          .get(`/ledger/envelope/${NONEXISTENT_UUID}/consumed`)
-          .set(getUser().authHeader());
-        expect(res.status).toBe(403);
-      },
-    );
+    it('CATEGORY_MANAGER → 403 (değişmedi — MODES_LEDGER_READ hücresinin üyesi değil)', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/ledger/envelope/${NONEXISTENT_UUID}/consumed`)
+        .set(categoryManager.authHeader());
+      expect(res.status).toBe(403);
+    });
+
+    // `Z43 §2` — bkz. yukarıdaki `/ledger/envelope/:envelopeId` yorumu, aynı gerekçe.
+    it('READONLY → 200 (Z43 §2 genişlemesi — GET izleme yeteneği)', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/ledger/envelope/${NONEXISTENT_UUID}/consumed`)
+        .set(readonly.authHeader());
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('consumed');
+    });
   });
 });

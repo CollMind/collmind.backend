@@ -25,7 +25,9 @@ import {
 } from './dto';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
-import { Roles } from '../../../../common/decorators/roles.decorator';
+import { CapabilityGuard } from '../../../../common/guards/capability.guard';
+import { RequireCapability } from '../../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../../common/authorization/capabilities';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../../common/decorators/tenant.decorator';
 import { UserRole } from '../../../../database/entities/user.entity';
@@ -36,10 +38,15 @@ import { UserRole } from '../../../../database/entities/user.entity';
 // OKUNMAZ). `close/:agreementId` etkilenmiyor: o rota @Roles TAŞIMIYOR,
 // RolesGuard onun için `requiredRoles` bulamaz → true (fail-open, mevcut
 // davranış korunur); erişimi hâlâ tek başına SettlementGuard denetliyor.
+// ⛔ `Z43 §4` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — `CapabilityGuard`
+// sınıf seviyesine EKLENDİ (`summary`'nin `SUMMARY_READ`'e göçü için şart).
+// Guard `@RequireCapability` metadata'sı yoksa `true` döner (fail-open) —
+// `close/:agreementId` (metadata yok) ETKİLENMİYOR, `SettlementGuard`
+// erişimi denetlemeye devam ediyor.
 @ApiTags('Settlements (Actuals-First)')
 @ApiBearerAuth()
 @Controller('actuals-first/settlements')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class SettlementController {
   constructor(
     private readonly summaryService: SettlementSummaryService,
@@ -49,21 +56,19 @@ export class SettlementController {
   /**
    * GET /actuals-first/settlements/summary
    *
-   * Settlement özet raporu — read-only, tüm authenticated kullanıcılar erişebilir.
-   * Planner: yalnızca kendi CPL scope'undaki agreements. Scope boşsa boş summary.
-   * Admin/Manager/Finance: tenant-wide.
+   * Settlement özet raporu — read-only.
+   * Admin/Manager/Finance/Readonly: tenant-wide.
    */
   // T-267 (B1 §1f) — ÖZET hücresi, 5 rol (ölçülmüş DAVRANIŞ, "ÖLÇÜM 1"):
-  // servis içeride resolveScope çağırıyor (planner → yalnız kendi CPL
-  // scope'u, diğerleri tenant-wide) — @Roles(ALL) bu davranışı DEĞİŞTİRMEZ,
-  // yalnız RolesGuard'ı gerçek kılar (yukarı bkz.).
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  // servis içeride resolveScope çağırıyordu (planner → yalnız kendi CPL
+  // scope'u, diğerleri tenant-wide).
+  // ⛔ `Z43 §4` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — `SUMMARY_READ`'e
+  // göçürüldü ({A,CM,F,RO}) — `−PLANNER` DAVRANIŞ DARALTMASI. Dayanak
+  // `Z42 §3` (kayıtsız doğum `d40ca16` + `K-2.6.4`'ün planner cümlesi özet
+  // içermiyor); `Faz-A §3` ölçümünde bu daraltma AYAKTA bulundu. PLANNER
+  // artık bu uca hiç ULAŞMIYOR — servisin `resolveScope` planner dalı bu
+  // rotadan ölü kod (diğer çağıranları varsa etkilenmez).
+  @RequireCapability(CAPABILITIES.SUMMARY_READ)
   @Get('summary')
   @ApiOperation({
     summary: 'Get settlement summary report',

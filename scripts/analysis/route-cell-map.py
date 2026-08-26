@@ -25,8 +25,15 @@ SUMMARY = {
  'finance-reporting/budget-at-risk','finance-reporting/cash-flow-projection',
  'finance-reporting/mechanic-effectiveness','finance-reporting/plan-performance',
  'finance-reporting/spend-composition','finance-reporting/variance-analysis',
- 'agreement-transactions/stats/summary','actuals-first/sales-actuals/summary',
- 'dashboard/summary','actuals-first/settlements/summary',
+ 'actuals-first/sales-actuals/summary','actuals-first/settlements/summary',
+ # ⛔ `Z43 §2` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) —
+ # `agreement-transactions/stats/summary` DÜŞTÜ: bir AD-BENZERLİĞİ
+ # DOSYALAMASIYDI, davranışı `MODES_LEDGER_READ`'in tam profili
+ # (bkz. `MODES_LEDGER_READ_ROUTES`).
+ # ⛔ `Z43 §1` (aynı dalga) — `dashboard/summary` DÜŞTÜ: kapsam-çözümlü
+ # (`resolveScopedCplIds`), `SUMMARY_READ`'in (nesne-bağsız ∧
+ # çok-işlem-modüllü) tanımının DIŞINDA. `MODES_READ` tabanına BİREBİR
+ # transfer (bkz. `MODES_READ_CROSS_ROUTES`).
 }
 # --- Z35: MODES_SUBMIT — gönderim/iptal/taslak ---
 SUBMIT_RE = re.compile(r'/(submit|cancel)(-[a-z-]+)?(/|$)|/return-to-draft(/|$)')
@@ -77,12 +84,26 @@ MODES_LEDGER_READ_ROUTES = {
  ('GET', 'ledger/agreement/:agreementId/consumed'),
  ('GET', 'ledger/envelope/:envelopeId'),
  ('GET', 'ledger/envelope/:envelopeId/consumed'),
+ # ⛔ `Z43 §2/§6` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — iki rota
+ # BURAYA taşındı:
+ #   stats/summary       — ad-benzerliği dosyalamasıydı, `SUMMARY`'den düştü.
+ #   batch/:batchId       — `MODES_IMPORT_READ_ROUTES`'tan taşındı (`§6`
+ #                          cümle-testi: `findAll`'un alt kümesi, açılım yok).
+ ('GET', 'agreement-transactions/stats/summary'),
+ ('GET', 'agreement-transactions/batch/:batchId'),
 }
 MODES_IMPORT_READ_ROUTES = {
- ('GET', 'agreement-transactions/batch/:batchId'),
  ('GET', 'agreement-transactions/template/csv'),
  ('GET', 'agreement-transactions/template/excel'),
  ('GET', 'on-invoice/template/csv'), ('GET', 'on-invoice/template/excel'),
+}
+# --- `Z43 §1` (`B3` istisna-dalgası `Faz-B`, 2026-08-27): `dashboard/summary`
+# `MODES_READ` tabanına transfer edildi — ama dosyası `shared/dashboard/`
+# altında (`FAM['shared']='SHARED'`), yani mekanik fam+verb kuralı onu
+# `SHARED_READ`'e düşürürdü. Tıpkı `MODES_LEDGER_READ_ROUTES` gibi (meth,path)
+# TAM eşleşmesiyle mekanik kuralın ÖNÜNE geçer.
+MODES_READ_CROSS_ROUTES = {
+ ('GET', 'dashboard/summary'),
 }
 MODES_ONINVOICE_READ_ROUTES = {
  ('GET', 'on-invoice/batch/:batchId'), ('GET', 'on-invoice/count'),
@@ -295,6 +316,7 @@ def cell_for(f, meth, path):
     if key in MODES_ONINVOICE_READ_ROUTES:     return 'MODES_ONINVOICE_READ','Z42'
     if key in BUDGET_CHECK_READ_ROUTES:        return 'BUDGET_CHECK_READ','Z42'
     if key in MASTER_DATA_GOVERNANCE_READ_ROUTES: return 'MASTER_DATA_GOVERNANCE_READ','Z42'
+    if key in MODES_READ_CROSS_ROUTES:         return 'MODES_READ','Z43'
     if path in SUMMARY:            return 'SUMMARY_READ','Z31/Z32'
     if path in APPROVE:            return 'MODES_APPROVE','YARGI'
     # ⛔ BU DAL fam+verb'DEN ONCE GELMEK ZORUNDA (code-reviewer S2, OLCULDU):
@@ -466,33 +488,51 @@ def reconcile(rows):
     # G2 onlari KAPSAMIYORDU. `DISIPLIN` -- "elle yazilmis uye-sayisi" ailesi ve
     # "bir duzeltme, duzelttigi SINIFIN yeni bir vakasini uretebilir".
     keys=Counter((r[1],r[2]) for r in rows)
-    for name,decl in (('Z36-POLICY', SHARED_POLICY_WRITE_ROUTES),
-                      ('Z36-ENVELOPE',SHARED_ENVELOPE_WRITE_ROUTES),
-                      ('Z36-SPEND',   SHARED_SPEND_WRITE_ROUTES),
-                      ('Z36-CALCREAD',SHARED_CALC_READ_ROUTES),
-                      ('Z36-MDCALCREAD',MASTER_DATA_CALC_READ_ROUTES),
-                      # ⛔ BESINCI UYE (K4, 2026-08-26): K4 yeni bir elle yazilmis
-                      # tablo ekledi ve bu donguye KAYDETMEDI — yani bayat-satir
-                      # kapisi olmadan duruyordu. code-reviewer cift yonlu mutasyonla
-                      # olctu: yeni tabloya olu uye -> exit 0 (KAPI YOK);
-                      # poz.kontrol Z36-CALCREAD'e olu uye -> exit 2 (kapi var).
-                      # ⚠️ Bu, G2b'nin KENDI YORUMUNUN anlattigi sinifin BESINCI
-                      # vakasi: "bir duzeltme, duzelttigi SINIFIN yeni bir vakasini
-                      # uretebilir" — ve bu kez ureten sey G2b'nin EKSIK KAPSAMIYDI.
-                      ('Z37-APPROVALQUEUE', APPROVAL_QUEUE_READ_ROUTES),
-                      # ⛔ Z42 §4/§5 (B3b-1 W9, 2026-08-26) — AYNI sınıf, beş
-                      # yeni tablo. Kayıtsız bırakılsaydı G2b'nin kendi
-                      # yorumunun anlattığı BEŞİNCİ vakanın ALTINCISI olurdu.
-                      ('Z42-LEDGER',  MODES_LEDGER_READ_ROUTES),
-                      ('Z42-IMPORT',  MODES_IMPORT_READ_ROUTES),
-                      ('Z42-ONINVOICE', MODES_ONINVOICE_READ_ROUTES),
-                      ('Z42-BUDGETCHECK', BUDGET_CHECK_READ_ROUTES),
-                      ('Z42-MDGOVREAD', MASTER_DATA_GOVERNANCE_READ_ROUTES)):
+    # ⛔ EVREN `cell_for`'UN KAYNAGINDAN TURETILIYOR (2026-08-27, Faz-B review B1)
+    #
+    # BIRINCI DENEME globals() uzerinden `*_ROUTES` + isinstance(set) idi ve
+    # yorumu "bir tur tabloyu eklemeyi UNUTAMAZ" diyordu. O IDDIA YANLISTI —
+    # code-reviewer IKI KACIS YOLUNU mutasyonla kanitladi:
+    #   TIP EKSENI  tabloyu `list` yap  → evrenden dustu, olu uye GORUNMEDI,
+    #               ama `key in [...]` calismaya devam etti ⇒ tablo CANLI, OLCULMUYOR
+    #   AD EKSENI   `_ROUTES` → `_OVERRIDES` → ayni sonuc (12 satir → 11)
+    # Ikisinde de `if not G2B_TABLOLAR` ATESLEMEDI: o kapi ancak TUM tablolar
+    # yok olursa calisir. ⇒ SESSIZ FAIL-OPEN.
+    #
+    # 📌 Ve bu, duzeltmenin KENDI yorumunda andigi kuralin ihlaliydi:
+    #    "bir DUZELTME, duzelttigi SINIFIN yeni bir vakasini uretebilir".
+    #    Faz-B'nin actigi delik kapandi; yerine DAHA SESSIZ bir varyanti dogdu.
+    #
+    # ⇒ DOGRU EVREN: hukum veren yer `cell_for`'dur. Onun KAYNAGINDAN
+    #   `if key in <AD>` dallarini cikar ve HER BIRININ olculdugunu zorunlu kil.
+    #   Ad ve tip artik SERBEST — kacis yolu yok, cunku evren `cell_for`'un
+    #   kendisidir. (`docs/DISIPLIN.md`: "DORDUNCU SORU — kontrolun girdisi,
+    #   kontrol ettigi seyden mi turuyor?" Hayir: girdi HUKUM VEREN KODDUR,
+    #   olculen ise TABLOLARIN ICERIGI.)
+    import inspect, re as _re
+    hukum_verenler = _re.findall(r'if key in ([A-Za-z_][A-Za-z0-9_]*)',
+                                 inspect.getsource(cell_for))
+    G2B_TABLOLAR = []
+    for ad in hukum_verenler:
+        tablo = globals().get(ad)
+        if tablo is None or not hasattr(tablo, '__contains__'):
+            err.append(f'G2b TABLO COZULEMEDI: cell_for `{ad}` ile hukum veriyor '
+                       f'ama o ad modul duzeyinde bir uyelik yapisi degil.')
+            continue
+        G2B_TABLOLAR.append((ad, tablo))
+    if not hukum_verenler:
+        err.append('G2b EVREN BOS: cell_for kaynagindan hicbir `if key in X` '
+                   'dali cikarilamadi — turetim bozuldu (bir kapi olcecek sey '
+                   'bulamiyorsa YOKTUR).')
+    for name, decl in sorted(G2B_TABLOLAR):
         dead=sorted(m for m in decl if keys.get(m,0)==0)
         dup =sorted(m for m in decl if keys.get(m,0)>1)
-        print(f'G2b {name:<13} bildirilen={len(decl)} olu={len(dead)} cift={len(dup)}', file=out)
+        print(f'G2b {name:34s} bildirilen={len(decl)} olu={len(dead)} '
+              f'cift={len(dup)}', file=out)
         for m in dead: err.append(f'G2b {name} OLU UYE (hicbir rotaya dusmuyor): {m[0]} {m[1]}')
         for m in dup:  err.append(f'G2b {name} CIFT UYE: {m[0]} {m[1]}')
+    print(f'G2b evren  cell_for hukum-dali={len(hukum_verenler)} '
+          f'olculen={len(G2B_TABLOLAR)}', file=out)
 
     # G3
     # T-285: EVREN yalnız ROLES-türü satırlar. Göçen rotanın @Roles'u YOKTUR
@@ -608,7 +648,7 @@ def reconcile(rows):
         'MASTER_DATA_WRITE': {'ADMIN'},
         'MODES_ACTUALS_WRITE': {'ADMIN', 'FINANCE'},
         'MODES_IMPORT_READ': {'ADMIN', 'FINANCE'},
-        'MODES_LEDGER_READ': {'ADMIN', 'FINANCE', 'PLANNER'},
+        'MODES_LEDGER_READ': {'ADMIN', 'FINANCE', 'PLANNER', 'READONLY'},
         'MODES_ONINVOICE_READ': {'ADMIN', 'FINANCE', 'PLANNER', 'READONLY'},
         'MODES_PLAN_WRITE': {'ADMIN', 'PLANNER'},
         'MODES_READ': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'PLANNER', 'READONLY'},
