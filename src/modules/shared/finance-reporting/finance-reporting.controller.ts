@@ -238,7 +238,15 @@ export class FinanceReportingController {
     return this.financeReportingService.getCashFlowProjection(
       tenantId,
       filters,
-      filters.months ?? 12,
+      // ⛔ `?? 12` KALDIRILDI (code-reviewer S1, 2026-08-26): ÖLÜ KOD ve
+      // İKİNCİ BİR VARSAYILAN. `plainToInstance` DTO'yu inşa ederken
+      // initializer (`= 12`) çalışır, yani `filters.months` HİÇBİR ZAMAN
+      // `undefined` değil. Mutasyonla ölçüldü: `?? 999` yapıldığında pin
+      // YEŞİL kaldı — sağ taraf hiç değerlendirilmiyor.
+      // Bırakılsaydı `İlke 4` (aynı olgunun iki temsili): DTO'daki varsayılan
+      // değişirse buradaki SESSİZCE ayrı bir varsayılan olurdu — ve pin bunu
+      // GÖRMÜYOR, yani ayrışma sessiz kalırdı.
+      filters.months as number,
     );
   }
 }

@@ -117,6 +117,11 @@ export class ReportFilters {
     minimum: 1,
     maximum: 60,
   })
+  // ⚠️ `60` SEÇİLMİŞ bir üst sınırdır (5 yıl) — ölçülmüş ya da BRD kaynaklı
+  // DEĞİL. Amacı sınırsız projeksiyon isteğini reddetmek. (`DISIPLIN`:
+  // "mekanik olarak türetilmiş bir değer, GEREKÇE değildir" — seçilmiş bir
+  // sayı sorun değil, ama SEÇİLMİŞ olduğu YAZILMALI; yoksa okuyucu onu bir
+  // BRD kuralı sanar.)
   @Type(() => Number)
   @IsInt()
   @Min(1)
