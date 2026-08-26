@@ -18,17 +18,14 @@ import {
 } from '@nestjs/swagger';
 import { BudgetService } from './budget.service';
 import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
-import { ReserveBudgetDto } from './dto/reserve-budget.dto';
 import { SplitBudgetEnvelopeDto } from './dto/split-budget-envelope.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../common/guards/capability.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
-import { UserRole } from '../../../database/entities/user.entity';
 
 @ApiTags('Budget')
 @ApiBearerAuth()
@@ -103,32 +100,23 @@ export class BudgetController {
     return this.budgetService.findEnvelopeById(tenantId, id);
   }
 
-  @Post('reserve')
-  @Roles(UserRole.PLANNER, UserRole.ADMIN)
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary:
-      'Reserve budget from an envelope (Event-sourced: creates RESERVE transaction)',
-  })
-  @ApiResponse({ status: 201, description: 'Budget reserved successfully' })
-  @ApiResponse({
-    status: 400,
-    description: 'Insufficient budget or invalid request',
-  })
-  async reserveBudget(
-    @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string },
-    @Body() reserveDto: ReserveBudgetDto,
-  ) {
-    return this.budgetService.reserveBudget(
-      tenantId,
-      user.id,
-      reserveDto.agreementId,
-      reserveDto.envelopeId,
-      reserveDto.amount,
-      reserveDto.currency || 'TRY',
-    );
-  }
+  // `POST /budget/reserve` (`reserveBudget`) KALDIRILDI (T-289, `Z38`,
+  // `B3` kaza-dalgası `K6(c)`, 2026-08-26). Kanonik motor
+  // `reserveForAgreement` (agreement onayından, `agreement.service.ts:750`)
+  // ve `reserveTypedForPlan` (plan onayından) tek yoldur — bkz.
+  // `test/budget-reserve-canonical-path.e2e-spec.ts`. Kaldırma gerekçesi:
+  //   (1) K-2.2.4'ün ("Rezerve ANLAŞMA ONAYLANDIĞINDA dolar") tetikleyicisini
+  //       ATLAYAN doğrulanmamış ikinci bir yazma yolu (yapısal),
+  //   (2) uç yapısal olarak KIRIK ve ÖLÜ — `findEnvelopeWithLock`
+  //       transaction'sız çağrılıyor, `setLock('pessimistic_write')` HER
+  //       ÇAĞRIDA `PessimisticLockTransactionRequiredError` ile 500 veriyor
+  //       (repro-pin, T-289 `F12`/`Z38 §1`),
+  //   (3) defter taraması: bu yolla doğmuş satır SIFIR (`budget_transactions`,
+  //       T-289 `K6(b)`) — `ADR-0012` devreye girmedi, fiziksel silme yok.
+  // `§7.1` çağıran taraması: `reserveBudget`'ın (bu servis metodu) tek
+  // çağıranı kaldırılan bu route'tu; başka üretim çağıranı YOK (grep,
+  // T-289 raporu). `budgetService.reserveBudget` metodu da bu adımda
+  // silindi.
 
   // T-267 (B1 §S3) — aynı gerekçe (yukarı bkz., BEŞ ROL) — kapsam ❌ aynı
   // şekilde bu turun dışında.

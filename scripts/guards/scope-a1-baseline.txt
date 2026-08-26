@@ -47,7 +47,6 @@ src/modules/shared/budget/budget.controller.ts|GET|budget/envelopes/:id/transact
 src/modules/shared/budget/budget.controller.ts|GET|budget/status	# Alan A — 0 accessScope atıf
 src/modules/shared/budget/budget.controller.ts|POST|budget/envelopes	# Alan A — 0 accessScope atıf
 src/modules/shared/budget/budget.controller.ts|POST|budget/envelopes/:id/split	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
-src/modules/shared/budget/budget.controller.ts|POST|budget/reserve	# Alan A YAZMA — 0 accessScope atıf (A1 içi öncelik #1)
 src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/budget-at-risk	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta
 src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/budget-utilization	# [[T-254]] KANITLI fail-open — boş kapsam kısıtı düşürüyor
 src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/cash-flow-projection	# [[T-254]] KANITLI fail-open — 0 accessScope atıf bu route'ta

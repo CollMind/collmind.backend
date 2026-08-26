@@ -153,7 +153,6 @@ src/modules/shared/budget/budget-reservation.service.ts @typescript-eslint/no-ex
 src/modules/shared/budget/budget.repository.ts @typescript-eslint/no-explicit-any 2
 src/modules/shared/budget/budget.service.spec.ts @typescript-eslint/no-explicit-any 18
 src/modules/shared/budget/dto/create-budget-envelope.dto.ts @typescript-eslint/no-explicit-any 1
-src/modules/shared/budget/dto/reserve-budget.dto.ts @typescript-eslint/no-unused-vars 1
 src/modules/shared/dashboard/dashboard.service.spec.ts @typescript-eslint/no-explicit-any 23
 src/modules/shared/dashboard/dashboard.service.ts @typescript-eslint/no-explicit-any 12
 src/modules/shared/finance-reporting/dto/cash-flow-report.dto.ts @typescript-eslint/no-unused-vars 1

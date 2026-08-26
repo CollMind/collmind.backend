@@ -193,75 +193,11 @@ export class BudgetService {
     return envelope;
   }
 
-  // Budget reservation (Event-Sourced: BudgetTransaction with RESERVE type)
-  async reserveBudget(
-    tenantId: string,
-    userId: string,
-    agreementId: string,
-    envelopeId: string,
-    amount: number,
-    currency: string = 'TRY',
-  ): Promise<BudgetTransaction> {
-    // Get envelope with pessimistic lock (MC-001: Same envelope serialized)
-    const envelope = await this.budgetRepository.findEnvelopeWithLock(
-      tenantId,
-      envelopeId,
-    );
-
-    if (!envelope) {
-      throw new NotFoundException(
-        `Budget envelope with ID ${envelopeId} not found`,
-      );
-    }
-
-    if (envelope.status !== BudgetEnvelopeStatus.ACTIVE) {
-      throw new BadRequestException('Budget envelope is not active');
-    }
-
-    // Check idempotency (prevent duplicate reservations)
-    const idempotencyKey = `RESERVE|AGREEMENT|${agreementId}|${envelopeId}`;
-    const existing =
-      await this.budgetRepository.findTransactionByIdempotencyKey(
-        tenantId,
-        idempotencyKey,
-      );
-    if (existing) {
-      throw new ConflictException(
-        'Budget reservation already exists for this agreement',
-      );
-    }
-
-    // Check available amount using v_budget_summary view (BRD-compliant)
-    const { available, sufficient } =
-      await this.budgetRepository.checkBudgetAvailability(
-        envelopeId,
-        tenantId,
-        amount,
-      );
-
-    if (!sufficient) {
-      throw new BadRequestException(
-        `Insufficient budget available. Available: ${available}, Requested: ${amount}`,
-      );
-    }
-
-    // Create RESERVE transaction (event-sourced)
-    const transaction = await this.budgetRepository.createTransaction({
-      tenantId,
-      envelopeId: envelope.id,
-      txType: BudgetTransactionType.RESERVE,
-      txStatus: BudgetTransactionStatus.POSTED, // Immediate posting
-      sourceType: BudgetTransactionSourceType.AGREEMENT,
-      sourceId: agreementId,
-      amount,
-      currency,
-      idempotencyKey,
-      description: `Budget reservation for agreement ${agreementId}`,
-      createdBy: userId,
-    });
-
-    return transaction;
-  }
+  // `reserveBudget` (event-sourced, manuel/serbest-metin `agreementId`)
+  // KALDIRILDI (T-289, `Z38`, `B3` kaza-dalgası `K6(c)`, 2026-08-26).
+  // Kanonik yol: `reserveForAgreement` (anlaşma onayı) ve
+  // `reserveTypedForPlan` (plan onayı) — bkz. kaldırılan metodun üstündeki
+  // `budget.controller.ts` notu.
 
   // Release reserved budget (create RELEASE transaction)
   async releaseBudget(
