@@ -37,7 +37,7 @@ import { Region } from '../../../database/entities/region.entity';
 // kümesiyle BİREBİR. Kanonik kaynak `ROLE_CAPABILITIES`; atama kapısı `G6`
 // (45 rotanın HEPSİNDE ölçülüyor).
 // göç öncesi/sonrası @Roles kümesiyle BİREBİR, davranış KORUNUYOR.
-// `MASTER_DATA_MANAGE` bu göçe DAHİL DEĞİL — `W8`'in kapanışında ele alınır.
+// `MASTER_DATA_MANAGE` bu göçe DAHİL DEĞİL — B3 W8 kapanışında (Z39 dalga-sonu H3) DÜŞTÜ (sıfır-rota, bkz. capabilities.ts).
 @ApiTags('Master Data - Regions')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)

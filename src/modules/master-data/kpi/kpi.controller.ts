@@ -23,21 +23,33 @@ import { CreateKpiDto } from './dto/create-kpi.dto';
 import { UpdateKpiDto } from './dto/update-kpi.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UserRole } from '../../../database/entities/user.entity';
 import { Kpi } from '../../../database/entities/kpi.entity';
 
+// `B3 W8` göçü (2026-08-26) — dokuz rotanın sekizi `@Roles` → `@RequireCapability`.
+//   POST/PATCH/DELETE/seed-defaults  `@Roles(ADMIN)`                                        → `MASTER_DATA_WRITE` ({ADMIN})
+//   GET (liste·grid/:planId·grid·calculable·:id)  `@Roles(ADMIN,PLANNER,CATEGORY_MANAGER,FINANCE,READONLY)` → `MASTER_DATA_READ` (5/5)
+// `ROLE_CAPABILITIES`'te ikisi de göç öncesi @Roles kümesiyle BİREBİR —
+// davranış KORUNUYOR. Kanonik kaynak `ROLE_CAPABILITIES`; atama kapısı `G6`.
+// ⛔ `POST validate-formula` GÖÇE DAHİL DEĞİL — `Z36 §5` karar-bekler
+// (`K-2.6.6` fail-closed'ı bir üyelik gerekçesi değil; "kural-yönetiminin
+// okuma aynası" ihtimali ürün sahibi kararı bekliyor). `@Roles(ADMIN)`
+// AYNEN kalır.
 @ApiTags('Master Data - KPIs')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('master-data/kpis')
 export class KpiController {
   constructor(private readonly kpiService: KpiService) {}
 
   @Post()
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Create a new KPI definition' })
   @ApiResponse({
     status: 201,
@@ -50,13 +62,7 @@ export class KpiController {
 
   // T-267 (B1 §1b) — modül-READ, 5 rol. Aynı gerekçe 1a ile (K-2.6.4, her rol
   // için ayrı cümle) — bkz. brand.controller.ts.
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get()
   @ApiOperation({ summary: 'Get all KPI definitions' })
   @ApiResponse({ status: 200, description: 'List of KPIs', type: [Kpi] })
@@ -78,13 +84,7 @@ export class KpiController {
   // (T-028c) — veri FİLTRESİ değil. Kova (scope-ratchet) bu yüzden B'den
   // C'ye taşındı (Z31 H4-5a): "veri sınıfı aynıysa kova aynı — KAPININ
   // VARLIĞI kova belirlemez."
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get('grid/:planId')
   @ApiOperation({
     summary: 'Get KPIs visible in planning grid for a specific plan',
@@ -107,13 +107,7 @@ export class KpiController {
   // diye PLAN verisine bağlıyordu — kardeşin KENDİ gerekçesi çürüdü
   // (yukarı bkz.), bu satır ETKİLENMEDİ: bu uç zaten hiç plan-gate
   // taşımıyor (kova hep C'ydi), kaynağı tek katalog tablosu (main.kpis).
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get('grid')
   @ApiOperation({ summary: 'Get KPIs visible in planning grid' })
   @ApiResponse({ status: 200, description: 'Grid KPIs', type: [Kpi] })
@@ -122,13 +116,7 @@ export class KpiController {
   }
 
   // T-267 (B1 §1b) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get('calculable')
   @ApiOperation({ summary: 'Get all calculable KPIs in order' })
   @ApiResponse({ status: 200, description: 'Calculable KPIs', type: [Kpi] })
@@ -137,13 +125,7 @@ export class KpiController {
   }
 
   // T-267 (B1 §1b) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get(':id')
   @ApiOperation({ summary: 'Get KPI by ID' })
   @ApiResponse({ status: 200, description: 'KPI details', type: Kpi })
@@ -155,7 +137,7 @@ export class KpiController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Update KPI definition' })
   @ApiResponse({
     status: 200,
@@ -171,7 +153,7 @@ export class KpiController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete KPI definition' })
   @ApiResponse({ status: 204, description: 'KPI deleted successfully' })
@@ -179,6 +161,13 @@ export class KpiController {
     return this.kpiService.remove(tenantId, id);
   }
 
+  // ⛔ `Z36 §5` KARAR-BEKLER — `MASTER_DATA_WRITE`'a mekanik göçe AÇILMADI.
+  // Yazma yüzeyi ölçüldü 0 (kalıcı yazma yok, salt doğrulama), ama
+  // `K-2.6.6` ("kural yoksa reddet") fail-closed bir İLKEDİR, bir VERİ-SINIFI
+  // kuralı DEĞİL — bir üyelik gerekçesi olarak KULLANILAMAZ (`Z36 §6`).
+  // Açık ihtimal: "kural-yönetiminin okuma aynası" ise evi `SINIF A`
+  // (`SHARED_POLICY_WRITE`) komşuluğudur, katalog-READ değil. Ürün sahibi
+  // kararı bekliyor. `@Roles(ADMIN)` AYNEN kalır.
   @Post('validate-formula')
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Validate a KPI formula' })
@@ -188,7 +177,7 @@ export class KpiController {
   }
 
   @Post('seed-defaults')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Seed default KPI definitions' })
   @ApiResponse({ status: 201, description: 'Default KPIs created' })
   seedDefaults(@TenantId() tenantId: string) {

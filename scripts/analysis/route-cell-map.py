@@ -83,6 +83,16 @@ SHARED_CALC_READ_ROUTES = {
  ('POST', 'lta-agreements/calculate/base-spend'),
  ('POST', 'lta-agreements/calculate/planned-spend'),
 }
+# --- Z36 §5 (2026-08-26, ürün sahibi KABUL, W8 kapanışı): mechanic
+# hesap-okuma ikilisi — POST ama yazma yüzeyi ÖLÇÜLDÜ 0 (T-267 B1 §S2),
+# küme göç öncesi @Roles ile BİREBİR (5/5). `SHARED_CALC_READ_ROUTES`'un
+# `MASTER_DATA` karşılığı — ayrı tablo, çünkü hedef hücre `MASTER_DATA_READ`
+# (SHARED_READ değil). `validate-formula` ÇİFTİ BURAYA DAHİL DEĞİL —
+# karar-bekler, mekanik POST→WRITE kuralına düşmeye devam eder.
+MASTER_DATA_CALC_READ_ROUTES = {
+ ('POST', 'master-data/mechanics/applicable'),
+ ('POST', 'master-data/mechanics/check-combination'),
+}
 
 # --- Z35: MODES_WRITE bölünmesi — ÜYELİK ALT-MODÜLDEN (davranış) ---
 # ⛔ @Roles'tan TÜRETİLMEZ: hücre, yönettiği şeyden türetilirse harita bir
@@ -226,6 +236,7 @@ def cell_for(f, meth, path):
     if key in SHARED_ENVELOPE_WRITE_ROUTES: return 'SHARED_ENVELOPE_WRITE','Z36'
     if key in SHARED_SPEND_WRITE_ROUTES:    return 'SHARED_SPEND_WRITE','Z36'
     if key in SHARED_CALC_READ_ROUTES:      return 'SHARED_READ','Z36'
+    if key in MASTER_DATA_CALC_READ_ROUTES: return 'MASTER_DATA_READ','Z36'
     if key in APPROVAL_QUEUE_READ_ROUTES:   return 'APPROVAL_QUEUE_READ','Z37'
     if path in SUMMARY:            return 'SUMMARY_READ','Z31/Z32'
     if path in APPROVE:            return 'MODES_APPROVE','YARGI'
@@ -402,6 +413,7 @@ def reconcile(rows):
                       ('Z36-ENVELOPE',SHARED_ENVELOPE_WRITE_ROUTES),
                       ('Z36-SPEND',   SHARED_SPEND_WRITE_ROUTES),
                       ('Z36-CALCREAD',SHARED_CALC_READ_ROUTES),
+                      ('Z36-MDCALCREAD',MASTER_DATA_CALC_READ_ROUTES),
                       # ⛔ BESINCI UYE (K4, 2026-08-26): K4 yeni bir elle yazilmis
                       # tablo ekledi ve bu donguye KAYDETMEDI — yani bayat-satir
                       # kapisi olmadan duruyordu. code-reviewer cift yonlu mutasyonla
@@ -572,15 +584,13 @@ def reconcile(rows):
     # ⇒ KURAL: bir istisna listesine giris eklemeden once OLC — "bu giris
     #   kaldirilirsa kapi BUGUN kirmiziya doner mi?" Cevap hayirsa giris
     #   GEREKSIZDIR ve yazilmaz.
-    BEKLEYEN = {
-        # ⚠️ W7 KAPANDI (2026-08-26) — bu giris artik YALNIZ W8'IN ISI.
-        # "Hangi turun isi" disiplini: aksi halde W8'de "W7 zaten kapatti
-        # sanmistim" okumasi mumkun olurdu (code-reviewer Nit 2).
-        # W8 (master-data kpi+mechanic) — TEK TASIYICI uye: bildirilen ama HIC uretilmiyor
-        # (hicbir rota bu hucreyi turetmiyor), yani W7/W8 kapanisina kadar
-        # `olu` kontrolune duser. W8 KAPANISINDA ya rota alir ya DUSER.
-        'MASTER_DATA_MANAGE',
-    }
+    # ⛔ W8 KAPANDI (2026-08-26, dalga-sonu H3) — `MASTER_DATA_MANAGE` LISTENIN
+    # TEK TASIYICI uyesiydi. Kapanista OLCULDU: `@RequireCapability(CAPABILITIES.
+    # MASTER_DATA_MANAGE)` deseni `*.controller.ts` genelinde SIFIR eslesme
+    # (dokuz katalog controller'i + kpi + mechanic, 19+45 rotanin HICBIRI onu
+    # turetmedi). Rota ALMADI -> DUSTU (CAPABILITIES.ts'ten SILINDI, F12 izli).
+    # Liste bu yuzden BOS — bir sonraki dalganin BEKLEYEN'i kendi turunde acar.
+    BEKLEYEN: set[str] = set()
     bildirilen = set(re.findall(r'^  ([A-Z_]+): \'[a-z\-]+:[a-z\-]+\',',
                                 src(CAPS_TS), re.M))
     uretilen = {r[4] for r in rows if r[4] and r[4] not in ('-', 'beyan')}

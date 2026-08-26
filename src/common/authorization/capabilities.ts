@@ -562,7 +562,14 @@ export const CAPABILITIES = {
 
   MASTER_DATA_READ: 'master-data:read',
   MASTER_DATA_WRITE: 'master-data:write',
-  MASTER_DATA_MANAGE: 'master-data:manage',
+  // ⛔ `MASTER_DATA_MANAGE` DÜŞTÜ (`Z39` `dalga-sonu H3`, 2026-08-26 · `B3 W8`
+  // kapanışı) — sıfır-rota kanıtı: `@RequireCapability(CAPABILITIES.
+  // MASTER_DATA_MANAGE)` deseni `*.controller.ts` genelinde SIFIR eşleşme
+  // (dokuz katalog controller'ı + `kpi` + `mechanic`, 64 rotanın hiçbiri onu
+  // türetmiyor — `W7`/`W8` iki hücreye BÖLÜNDÜ, `_READ`/`_WRITE`, `_MANAGE`
+  // hiçbir rota almadı). `W7` kapanışında `BEKLEYEN` listesinde bekletildi
+  // (tek taşıyıcı üye); `W8` kapanışında `G8` ile ölçüldü ve DÜŞTÜ. İleride
+  // bir `MANAGE` rotası doğarsa hücre KARARLA geri gelir.
 
   // ⛔ BLOKE (2026-08-17 turundan sonra da) — MODES_READ.
   // Union çöküşe düşüyor, ürün sahibi kararı bekliyor.
@@ -793,7 +800,8 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // CAPABILITIES yorumu.
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.MASTER_DATA_WRITE,
-    CAPABILITIES.MASTER_DATA_MANAGE,
+    // ↓ MASTER_DATA_MANAGE DÜŞTÜ (Z39 dalga-sonu H3, B3 W8 kapanışı) —
+    // sıfır-rota, bkz. CAPABILITIES yorumu.
     // ↓ Z35 bölünmesi (2026-08-24): ADMIN her iki natif kümede de zaten
     // vardı ({A,F} ve {A,P}) — bölünme ADMIN için sonuç DEĞİŞTİRMEZ.
     CAPABILITIES.MODES_ACTUALS_WRITE,
