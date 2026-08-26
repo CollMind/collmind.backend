@@ -593,6 +593,47 @@ export const CAPABILITIES = {
 
   NOTIFICATION_WRITE: 'notification:write',
 
+  // ✅ ÇÖZÜLDÜ (ürün sahibi, `Z37 §3`, 2026-08-26 · koda iniş: `B3` kaza-dalgası `K4` Parça 1).
+  // `SHARED_READ`'in DÖRT İSTİSNASINDAN İKİSİ (`GET /approvals` ·
+  // `GET /approvals/pending`) BURAYA göçer — SINIF-ADI, KÜME-ADI DEĞİL
+  // (`shared-read`'in kendi üyelik ekseni bunlara uymuyor: ikisi de ONAY
+  // KUYRUĞU görünürlüğü, `SHARED_READ`'in "tanım + kural yönetimi" tabanı
+  // değil). Küme `{ADMIN,CATEGORY_MANAGER,FINANCE,READONLY}` göç öncesi
+  // @Roles ile BİREBİR — davranış KORUNUYOR (pin:
+  // `test/shared-read-exceptions-boundary.e2e-spec.ts`, PLANNER 403 alır,
+  // diğer dördü 403 ALMAZ).
+  //
+  // `Z18` şartı — HER ROL için AYRI cümle (union'dan değil, üyelik
+  // sözleşmesinden):
+  //   ADMIN             sistem yöneticisi, her yüzeye görünürlük — `K-2.6.4`
+  //                      YÖNETİCİ satırı, "tanımlar, kural yönetimi" TABANI
+  //                      dahil her modülü kapsar.
+  //   CATEGORY_MANAGER   onay kuyruğunun bir TARAFI — `plans/:id/approve` ·
+  //                      `/reject` · `/escalate-to-finance`'te `@Roles`'ta
+  //                      zaten var (`MODES_APPROVE`); kuyruğu GÖRMEDEN
+  //                      onaylayamaz.
+  //   FINANCE            `agreements/:id/approve` · `/reject`'te `@Roles`'ta
+  //                      zaten var; eşik-üstü onaycı, kendi bekleyen
+  //                      işlerini görebilmeli.
+  //   READONLY           `K-2.6.4c` "İZLEYİCİ bir İZLEME YETENEKLERİ
+  //                      SETİDİR" — onay kuyruğu bir izleme yüzeyi, işlem
+  //                      yüzeyi değil (READONLY onay VEREMEZ, `MODES_APPROVE`/
+  //                      `SHARED_APPROVE` hiçbir yerinde READONLY yok).
+  //   PLANNER'ın YOKLUĞU  — cümlelenebiliyor, `K-2.6.4` (`L2_03:406`)
+  //                      "PLANLAMACI — …, GÖNDERİM — günlük kullanıcı" der;
+  //                      PLANNER kendi `MODES_SUBMIT` yüzeyinde gönderim
+  //                      yapar ama hiçbir onay-kararı rotasında (`MODES_
+  //                      APPROVE`/`SHARED_APPROVE`) `@Roles`'ta YOK. Onay
+  //                      KUYRUĞU bir ONAYCI yüzeyidir — PLANNER gönderen
+  //                      taraf, onaycı değil.
+  //
+  // Kaynak: `docs/brd-v2/04_KARAR_KAYDI.md` `Z37 §3` · `docs/process/
+  // B3_KAZA_DALGASI_BRIEF.md §1.5`. `SHARED_READ`'in DÖRT İSTİSNA notu bu
+  // ikisi için F12 izini burada bırakıyor — kalan iki istisna
+  // (`finance-reporting/budget-variance` · `spend-calculation/
+  // validate-budget/:planId`) hâlâ `SHARED_READ` yorumunda, GÖÇ-DIŞI.
+  APPROVAL_QUEUE_READ: 'approval-queue:read',
+
   // ✅ ÇÖZÜLDÜ (ürün sahibi, 2026-08-25 · koda iniş: B3 W4a ADIM 0).
   // SHARED_READ = 5/5. ⚠️ İDDİA ZAYIFLATILDI (code-reviewer S2, 2026-08-25):
   // önce "küme mekanik bir birleşimden değil YAZILI BİR CÜMLEDEN türüyor"
@@ -609,6 +650,14 @@ export const CAPABILITIES = {
   // spend-calculation/validate-budget/:planId) GÖÇ-DIŞI ve karar-bekler —
   // her biri için tek soru: "eksik rolün YOKLUĞU cümlelenebiliyor mu?"
   // (F12 izi — eski kayıt: "⛔ BLOKE (2026-08-17 turundan sonra da)".)
+  // ⛔ BAYAT (`Z37 §3`, 2026-08-26 · `B3` kaza-dalgası `K4` Parça 1) —
+  // dördün İKİSİ (`approvals` · `approvals/pending`) `PLANNER`'sızlığı
+  // cümlelendi ve `APPROVAL_QUEUE_READ`'e GÖÇTÜ (yukarı bkz., `NOTIFICATION_
+  // WRITE`'dan sonra). Kalan İKİSİ (`finance-reporting/budget-variance` ·
+  // `spend-calculation/validate-budget/:planId`) hâlâ burada, GÖÇ-DIŞI —
+  // biri `SUMMARY_READ`'e devredildi (`Z37 §3`), diğeri `git log -L`
+  // taramasıyla KAYITLI bir istisna olduğu ölçüldü (T-249, `kaza` DEĞİL) ve
+  // ürün sahibine geri gönderildi. Bu satır `F12` gereği SİLİNMEDİ.
   //
   // ⛔ BAYAT (Z36 §5, 2026-08-26 · koda iniş: B3 W4b) — ÜÇ hesap-okuma
   // rotası da BURAYA göçtü: `POST lta-agreements/context/rates` ·
@@ -734,6 +783,9 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
   [UserRole.ADMIN]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — tanımlar ve kural yönetimi — okuma tabanı dahil.
     CAPABILITIES.SHARED_READ,
+    // ↓ APPROVAL_QUEUE_READ (Z37 §3, B3 K4 Parça 1, 2026-08-26) — sistem
+    // yöneticisi her yüzeye görünür; K-2.6.4 YÖNETİCİ tabanı.
+    CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.ADMIN_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.CUSTOMER_WRITE,
@@ -788,6 +840,12 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
   [UserRole.PLANNER]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — plan/taktik/hacim girişi için bütçe-anlaşma görünürlüğü şart.
     CAPABILITIES.SHARED_READ,
+    // ⛔ APPROVAL_QUEUE_READ VERİLMEDİ (Z37 §3, B3 K4 Parça 1, 2026-08-26) —
+    // bilinçli, davranış-koruyucu. K-2.6.4 (L2_03:406) "PLANLAMACI — …,
+    // GÖNDERİM — günlük kullanıcı" der; PLANNER MODES_SUBMIT'te gönderim
+    // yapar ama hiçbir onay-kararı rotasında (MODES_APPROVE/SHARED_APPROVE)
+    // @Roles'ta yok. Onay kuyruğu bir ONAYCI yüzeyidir — PLANNER gönderen
+    // taraf, onaycı değil. Pin: test/shared-read-exceptions-boundary.e2e-spec.ts.
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.CUSTOMER_WRITE,
     CAPABILITIES.CUSTOMER_MANAGE,
@@ -828,6 +886,11 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
   [UserRole.CATEGORY_MANAGER]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — kategori bütçe sahibi: onay ve zarf yönetimi görünürlük ister.
     CAPABILITIES.SHARED_READ,
+    // ↓ APPROVAL_QUEUE_READ (Z37 §3, B3 K4 Parça 1, 2026-08-26) — onay
+    // kuyruğunun bir TARAFI: plans/:id/{approve,reject,escalate-to-finance}
+    // rotalarında @Roles'ta zaten var (MODES_APPROVE); kuyruğu görmeden
+    // onaylayamaz.
+    CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
@@ -850,6 +913,10 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
   [UserRole.FINANCE]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — eşik üstü onay/transfer/mutabakat görünürlük ister.
     CAPABILITIES.SHARED_READ,
+    // ↓ APPROVAL_QUEUE_READ (Z37 §3, B3 K4 Parça 1, 2026-08-26) —
+    // agreements/:id/{approve,reject} rotalarında @Roles'ta zaten var;
+    // eşik-üstü onaycı kendi bekleyen işlerini görebilmeli.
+    CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
     // ↓ Z35 bölünmesi (2026-08-24): FINANCE yalnız GERÇEKLEŞME tarafında.
@@ -898,6 +965,11 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
   [UserRole.READONLY]: [
     // ↓ SHARED_READ (W4a, 2026-08-25) — İZLEYİCİ bir İZLEME YETENEKLERİ SETİDİR (K-2.6.4c).
     CAPABILITIES.SHARED_READ,
+    // ↓ APPROVAL_QUEUE_READ (Z37 §3, B3 K4 Parça 1, 2026-08-26) — K-2.6.4c
+    // "İZLEYİCİ bir İZLEME YETENEKLERİ SETİDİR": onay kuyruğu bir izleme
+    // yüzeyi, işlem yüzeyi değil (READONLY onay VEREMEZ — MODES_APPROVE/
+    // SHARED_APPROVE hiçbir yerinde READONLY yok).
+    CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.NOTIFICATION_WRITE,

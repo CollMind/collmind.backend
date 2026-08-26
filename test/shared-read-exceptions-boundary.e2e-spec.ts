@@ -1,17 +1,30 @@
 /**
  * shared-read-exceptions-boundary.e2e-spec.ts
  *
- * `SHARED_READ` hücresinin **DÖRT İSTİSNASI** — göç-dışı, karar-bekler.
- * Dördü de tam **bir rol eksik** (4/5), yani hücrenin NEGATİF YARISINI
- * taşıyan tek rotalar bunlar.
+ * `SHARED_READ` hücresinin **DÖRT İSTİSNASI** — orijinal envanter (2026-08-25).
+ *
+ * ⛔ BAYAT (`Z37 §3`, `B3` kaza-dalgası `K4` Parça 1, 2026-08-26): İKİSİ
+ * (`GET approvals` · `GET approvals/pending`) `APPROVAL_QUEUE_READ`'e GÖÇTÜ
+ * — artık `SHARED_READ`'in istisnası DEĞİL, kendi hücresinin TABANI
+ * (`{ADMIN,CATEGORY_MANAGER,FINANCE,READONLY}`, `PLANNER` bilinçli dışarıda
+ * — bkz. `capabilities.ts`, `APPROVAL_QUEUE_READ` yorumu). Kalan iki istisna
+ * (`finance-reporting/budget-variance` · `spend-calculation/validate-budget/
+ * :planId`) hâlâ `SHARED_READ` kapsamında, göç-dışı.
+ *
+ * Bu dosya `F12` gereği SİLİNMEDİ — dördün de NEGATİF YARISINI TEK YERDE
+ * pinliyor ve göç sonrası da geçerli: `APPROVAL_QUEUE_READ` `PLANNER`'ı aynı
+ * şekilde dışarıda bırakıyor. `ROUTES` sabiti artık `SHARED_READ`'in değil
+ * `APPROVAL_QUEUE_READ`'in negatif yarısını temsil ediyor.
  *
  * ⛔ NEDEN BU DOSYA VAR (code-reviewer S3, 2026-08-25):
- * Dördünden İKİSİ bugüne kadar YALNIZ BİR KOD YORUMUYLA korunuyordu —
- * `GET approvals` ve `GET approvals/pending` (`PLANNER` eksik). Mekanik
- * hiçbir kapı, o ikisini *"hücre SHARED_READ, göçürelim"* diye taşıyan bir
- * sonraki dalgayı durdurmaz: `route-scope` yeşil kalır (CAPABILITY kovası),
- * `single-mechanism` yeşil, `G6` yeşil (hücre uyuyor), `G7` yeşil (TSV
- * yeniden üretilirse). `PLANNER` sessizce ONAY KUYRUĞUNU görürdü.
+ * `GET approvals` ve `GET approvals/pending` göç ÖNCESİ YALNIZ BİR KOD
+ * YORUMUYLA korunuyordu (`PLANNER` eksik). Mekanik hiçbir kapı, o ikisini
+ * *"hücre SHARED_READ, göçürelim"* diye taşıyan bir dalgayı durdurmazdı:
+ * `route-scope` yeşil kalır (CAPABILITY kovası), `single-mechanism` yeşil,
+ * `G6` yeşil (hücre uyuyor), `G7` yeşil (TSV yeniden üretilirse). `PLANNER`
+ * sessizce ONAY KUYRUĞUNU görürdü. Göç sonrası da aynı risk geçerli — bu
+ * sefer hedef `APPROVAL_QUEUE_READ`'in kendisi: bir sonraki dalga `PLANNER`ı
+ * bu hücreye eklerse, bu pin onu KIRMIZIYA döndürür.
  *
  * `CLAUDE.md` Done tanımı: *"bağlayıcı koşullar bir guard'a bağlandı —
  * bağlanamıyorsa koşul TAVSİYEYE düşürülür ve öyle işaretlenir."* Bu koşul
@@ -40,8 +53,9 @@ describe('SHARED_READ istisnaları — onay kuyruğu PLANNER’a KAPALI', () => 
   let finance: LoginResult;
   let readonly: LoginResult;
 
-  // 4/5 — PLANNER YOK. Kaynak: approval.controller.ts @Roles(...) ve
-  // capabilities.ts'in "DÖRT İSTİSNA" notu (B3 W4a ADIM 0).
+  // PLANNER YOK. Kaynak: approval.controller.ts @RequireCapability(
+  // APPROVAL_QUEUE_READ) ve capabilities.ts'in ROLE_CAPABILITIES'i (Z37 §3,
+  // B3 K4 Parça 1) — göç öncesi @Roles(...) kümesiyle BİREBİR.
   const ROUTES = ['approvals', 'approvals/pending'];
 
   beforeAll(async () => {

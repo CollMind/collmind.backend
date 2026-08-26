@@ -11,13 +11,11 @@ import { ApprovalService } from './approval.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../common/guards/capability.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
 import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
 import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { SelfScoped } from '../../../common/decorators/self-scoped.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
-import { UserRole } from '../../../database/entities/user.entity';
 
 @ApiTags('Approvals')
 @ApiBearerAuth()
@@ -26,13 +24,13 @@ import { UserRole } from '../../../database/entities/user.entity';
 export class ApprovalController {
   constructor(private readonly approvalService: ApprovalService) {}
 
+  // `B3` kaza-dalgası `K4` Parça 1 göçü (`Z37 §3`, 2026-08-26): eski
+  // `@Roles(ADMIN,CATEGORY_MANAGER,FINANCE,READONLY)` →
+  // `@RequireCapability(APPROVAL_QUEUE_READ)`. `ROLE_CAPABILITIES`'te aynı
+  // dört rol — davranış BİREBİR korunuyor (pin:
+  // `test/shared-read-exceptions-boundary.e2e-spec.ts`).
   @Get()
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.APPROVAL_QUEUE_READ)
   @ApiOperation({ summary: 'Get all approval requests' })
   findAll(
     @TenantId() tenantId: string,
@@ -47,13 +45,10 @@ export class ApprovalController {
     });
   }
 
+  // `B3` kaza-dalgası `K4` Parça 1 göçü (`Z37 §3`, 2026-08-26) — aynı
+  // gerekçe (yukarı bkz.).
   @Get('pending')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.APPROVAL_QUEUE_READ)
   @ApiOperation({ summary: 'Get pending approval requests for current user' })
   findPending(@TenantId() tenantId: string, @CurrentUser('id') userId: string) {
     return this.approvalService.findPendingForUser(userId, tenantId);

@@ -47,6 +47,17 @@ APPROVE = {
  'plans/:id/review', 'plans/:id/escalate-to-finance',
 }
 
+# --- Z37 §3 (B3 kaza-dalgası K4 Parça 1, 2026-08-26): APPROVAL_QUEUE_READ —
+# SHARED_READ'in dört istisnasından ikisi göçtü. Genel fam+verb kuralı
+# (SHARED_READ) bunu YAKALAMAZ — ayırt edici genel "shared/ altında GET"
+# değil, ONAY KUYRUĞU GÖRÜNÜRLÜĞÜ (K-2.6.4'ün onaycı yüzeyi). Üyelik
+# `capabilities.ts`'in ROLE_CAPABILITIES'inde `{ADMIN,CATEGORY_MANAGER,
+# FINANCE,READONLY}` (PLANNER bilinçli dışarıda — pin:
+# test/shared-read-exceptions-boundary.e2e-spec.ts).
+APPROVAL_QUEUE_READ_ROUTES = {
+ ('GET', 'approvals'), ('GET', 'approvals/pending'),
+}
+
 # --- Z36 (B3 W4b): SHARED_WRITE bölünmesi — ÜYELİK YOL+FİİL'DEN (davranış),
 # genel fam+verb kuralından DEĞİL. Ayırt edici mekanik bir birleşim değil:
 # YAZILAN NESNENİN SAHİPLİĞİ (`04_KARAR_KAYDI.md` Z36 §2). Genel
@@ -215,6 +226,7 @@ def cell_for(f, meth, path):
     if key in SHARED_ENVELOPE_WRITE_ROUTES: return 'SHARED_ENVELOPE_WRITE','Z36'
     if key in SHARED_SPEND_WRITE_ROUTES:    return 'SHARED_SPEND_WRITE','Z36'
     if key in SHARED_CALC_READ_ROUTES:      return 'SHARED_READ','Z36'
+    if key in APPROVAL_QUEUE_READ_ROUTES:   return 'APPROVAL_QUEUE_READ','Z37'
     if path in SUMMARY:            return 'SUMMARY_READ','Z31/Z32'
     if path in APPROVE:            return 'MODES_APPROVE','YARGI'
     if fam=='MODES' and SUBMIT_RE.search('/'+path):  return 'MODES_SUBMIT','Z35'
