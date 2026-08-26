@@ -23,20 +23,26 @@ import { CreateRegionDto } from './dto/create-region.dto';
 import { UpdateRegionDto } from './dto/update-region.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
-import { UserRole } from '../../../database/entities/user.entity';
 import { Region } from '../../../database/entities/region.entity';
 
+// `B3 W7` göçü (2026-08-26) — 5 rota `@Roles` → `@RequireCapability`.
+// `ROLE_CAPABILITIES`'te `MASTER_DATA_READ` = 5/5 (ADMIN,PLANNER,
+// CATEGORY_MANAGER,FINANCE,READONLY), `MASTER_DATA_WRITE` = {ADMIN} —
+// göç öncesi/sonrası @Roles kümesiyle BİREBİR, davranış KORUNUYOR.
+// `MASTER_DATA_MANAGE` bu göçe DAHİL DEĞİL — `W8`'in kapanışında ele alınır.
 @ApiTags('Master Data - Regions')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('master-data/regions')
 export class RegionController {
   constructor(private readonly regionService: RegionService) {}
 
   @Post()
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Create a new region' })
   @ApiResponse({
     status: 201,
@@ -57,13 +63,7 @@ export class RegionController {
   //   KATEGORİ MÜDÜRÜ: "kategori bütçe sahibi" — kataloğu okumak zorunda
   //   FİNANS: "mutabakat · içe aktarma" — kalem eşleştirmek için katalog gerekir
   //   İZLEYİCİ: "salt görüntüleme" — K-2.6.4c izleme yetenekleri seti
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get()
   @ApiOperation({ summary: 'Get all regions' })
   @ApiResponse({ status: 200, description: 'List of regions', type: [Region] })
@@ -75,13 +75,7 @@ export class RegionController {
   }
 
   // T-267 (B1 §1a) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get(':id')
   @ApiOperation({ summary: 'Get region by ID' })
   @ApiResponse({ status: 200, description: 'Region details', type: Region })
@@ -93,7 +87,7 @@ export class RegionController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Update region' })
   @ApiResponse({
     status: 200,
@@ -109,7 +103,7 @@ export class RegionController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete region' })
   @ApiResponse({ status: 204, description: 'Region deleted successfully' })

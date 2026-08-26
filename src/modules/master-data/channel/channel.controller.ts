@@ -23,22 +23,28 @@ import { CreateChannelDto } from './dto/create-channel.dto';
 import { UpdateChannelDto } from './dto/update-channel.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { Request } from '@nestjs/common';
-import { UserRole } from '../../../database/entities/user.entity';
 import { Channel } from '../../../database/entities/channel.entity';
 
+// `B3 W7` göçü (2026-08-26) — 5 rota `@Roles` → `@RequireCapability`.
+// `ROLE_CAPABILITIES`'te `MASTER_DATA_READ` = 5/5 (ADMIN,PLANNER,
+// CATEGORY_MANAGER,FINANCE,READONLY), `MASTER_DATA_WRITE` = {ADMIN} —
+// göç öncesi/sonrası @Roles kümesiyle BİREBİR, davranış KORUNUYOR.
+// `MASTER_DATA_MANAGE` bu göçe DAHİL DEĞİL — `W8`'in kapanışında ele alınır.
 @ApiTags('Master Data - Channels')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('master-data/channels')
 export class ChannelController {
   constructor(private readonly channelService: ChannelService) {}
 
   @Post()
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Create a new channel' })
   @ApiResponse({
     status: 201,
@@ -68,13 +74,7 @@ export class ChannelController {
   //   KATEGORİ MÜDÜRÜ: "kategori bütçe sahibi" — kataloğu okumak zorunda
   //   FİNANS: "mutabakat · içe aktarma" — kalem eşleştirmek için katalog gerekir
   //   İZLEYİCİ: "salt görüntüleme" — K-2.6.4c izleme yetenekleri seti
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get()
   @ApiOperation({ summary: 'Get all channels' })
   @ApiResponse({
@@ -90,13 +90,7 @@ export class ChannelController {
   }
 
   // T-267 (B1 §1a) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get(':id')
   @ApiOperation({ summary: 'Get channel by ID' })
   @ApiResponse({ status: 200, description: 'Channel details', type: Channel })
@@ -108,7 +102,7 @@ export class ChannelController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Update channel' })
   @ApiResponse({
     status: 200,
@@ -134,7 +128,7 @@ export class ChannelController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete channel' })
   @ApiResponse({ status: 204, description: 'Channel deleted successfully' })

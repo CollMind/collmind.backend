@@ -23,20 +23,26 @@ import { CreateFuDto } from './dto/create-fu.dto';
 import { UpdateFuDto } from './dto/update-fu.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import { Roles } from '../../../common/decorators/roles.decorator';
+import { CapabilityGuard } from '../../../common/guards/capability.guard';
+import { RequireCapability } from '../../../common/decorators/require-capability.decorator';
+import { CAPABILITIES } from '../../../common/authorization/capabilities';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
-import { UserRole } from '../../../database/entities/user.entity';
 import { ForecastingUnit } from '../../../database/entities/forecasting-unit.entity';
 
+// `B3 W7` göçü (2026-08-26) — 5 rota `@Roles` → `@RequireCapability`.
+// `ROLE_CAPABILITIES`'te `MASTER_DATA_READ` = 5/5 (ADMIN,PLANNER,
+// CATEGORY_MANAGER,FINANCE,READONLY), `MASTER_DATA_WRITE` = {ADMIN} —
+// göç öncesi/sonrası @Roles kümesiyle BİREBİR, davranış KORUNUYOR.
+// `MASTER_DATA_MANAGE` bu göçe DAHİL DEĞİL — `W8`'in kapanışında ele alınır.
 @ApiTags('Master Data - Forecasting Units')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('master-data/forecasting-units')
 export class FuController {
   constructor(private readonly fuService: FuService) {}
 
   @Post()
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Create a new Forecasting Unit' })
   @ApiResponse({
     status: 201,
@@ -54,13 +60,7 @@ export class FuController {
   //   KATEGORİ MÜDÜRÜ: "kategori bütçe sahibi" — kataloğu okumak zorunda
   //   FİNANS: "mutabakat · içe aktarma" — kalem eşleştirmek için katalog gerekir
   //   İZLEYİCİ: "salt görüntüleme" — K-2.6.4c izleme yetenekleri seti
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get()
   @ApiOperation({ summary: 'Get all Forecasting Units' })
   @ApiResponse({
@@ -83,13 +83,7 @@ export class FuController {
   }
 
   // T-267 (B1 §1a) — aynı gerekçe (yukarı bkz.)
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.PLANNER,
-    UserRole.CATEGORY_MANAGER,
-    UserRole.FINANCE,
-    UserRole.READONLY,
-  )
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @Get(':id')
   @ApiOperation({ summary: 'Get Forecasting Unit by ID' })
   @ApiResponse({
@@ -105,7 +99,7 @@ export class FuController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @ApiOperation({ summary: 'Update Forecasting Unit' })
   @ApiResponse({
     status: 200,
@@ -121,7 +115,7 @@ export class FuController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN)
+  @RequireCapability(CAPABILITIES.MASTER_DATA_WRITE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete Forecasting Unit' })
   @ApiResponse({
