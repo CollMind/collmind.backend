@@ -229,6 +229,12 @@ def cell_for(f, meth, path):
     if key in APPROVAL_QUEUE_READ_ROUTES:   return 'APPROVAL_QUEUE_READ','Z37'
     if path in SUMMARY:            return 'SUMMARY_READ','Z31/Z32'
     if path in APPROVE:            return 'MODES_APPROVE','YARGI'
+    # ⛔ BU DAL fam+verb'DEN ONCE GELMEK ZORUNDA (code-reviewer S2, OLCULDU):
+    # SUBMIT_RE'ye uyan BES rotanin BESI DE ayni anda modes_write_cell()'den
+    # PLAN aliyor. Dallar takas edilirse G6 BES uyusmazlikla kirmiziya doner
+    # (mutasyonla olculdu: dal kaldirilinca exit 2, besi de ADIYLA).
+    # ⚠️ modes_write_cell()'in docstring'i "koruyan sey siradan DEGIL" diyor —
+    # o cumle IC dongu cifti icin DOGRU, BU DIS dal icin TERSI gecerli.
     if fam=='MODES' and SUBMIT_RE.search('/'+path):  return 'MODES_SUBMIT','Z35'
     verb = 'READ' if meth=='GET' else 'WRITE'
     if fam=='USER' and verb=='READ':                 return 'USER_MANAGE','Z20'
@@ -449,6 +455,63 @@ def reconcile(rows):
             if got!=EXPECT[r[4]]: mism.append((r[4],r[1],r[2],r[3]))
     n_split=sum(1 for r in rows if r[4] in EXPECT and r[6]=='ROLES')
     print(f'G5 Z35 bolunmesi   uye={n_split}  @Roles uyusmazligi={len(mism)}', file=out)
+
+    # ⛔ EVREN BOSALDIGINDA KAPI SUSMAZ — GOREV DEVRINI KANITLAR (W6, 2026-08-26)
+    #
+    # W6 EXPECT hucrelerinin TAMAMINI gocurdu ⇒ G5'in evreni SIFIRLANDI.
+    # Bu savunulabilir (G6 gocmusu kapsiyor) AMA sessiz birakilamaz:
+    # §2.7 #9 — "kapsami kendini bosaltan kapi, TEMIZ ile BOS'u ayni cikti ile
+    # raporlar; sinyal SABITSE sinyal DEGILDIR" (T-100'un kanonik vakasi).
+    #
+    # ⇒ Bos evren bir ISTIRAHAT degil, bir DEVIR IDDIASIDIR — ve iddia OLCULUR:
+    #   EXPECT hucreli her satir ya ROLES (G5'in isi) ya CAP (G6'nin isi) olmali.
+    #   Ucuncu bir tur varsa O SATIR HICBIR KAPININ KAPSAMINDA DEGILDIR.
+    # ⛔ ONCEKI "DEVIR KANITI" KALDIRILDI (code-reviewer B2, 2026-08-26).
+    # Iki dal YAPISAL OLARAK ERISILEMEZDI: r[6] tek bir yerde (:630) ve IKILI bir
+    # uclu-operatorden dogar ('CAP' if has_cap else 'ROLES') ⇒ ucuncu deger
+    # IMKANSIZ. Ve dali atesleyen mutasyon O UCLU-OPERATORU degistirmek zorunda
+    # kaldi ⇒ KANIT KURULUMU OLCULEN DURUMU URETTI (§2.7 #4).
+    # ⚠️ Daha kotusu: erisilemez dallar kapinin KIRMIZI VEREBILDIGI IZLENIMINI
+    # yaratiyordu — oysa G5 hicbir gercek girdide kirmizi VEREMIYORDU.
+    # (Ucuncusu `ortada` zaten G4'un ikinci kopyasiydi — §2.7 #8.)
+    #
+    # ⇒ §2.7 #9'a verilen cevap §2.7 #4'un yeni bir vakasi oldu. Dogru cevap
+    #   asagida: kapiya BAGIMSIZ BIR REFERANS vermek.
+
+    # ==================================================================
+    # G5b — Z35 HUKMU <-> ROLE_CAPABILITIES  (kapinin GERCEK isi)
+    # ==================================================================
+    # ⛔ NEDEN: W6 EXPECT hucrelerinin TAMAMINI gocurdu ⇒ G5'in @Roles evreni
+    # SIFIRLANDI ve kapi HICBIR GIRDIDE kirmizi veremez oldu. Olculdu
+    # (code-reviewer B1): PLANNER'a MODES_ACTUALS_WRITE verildiginde — yani
+    # Z35'in TAM OLARAK yasakladigi sey — cikti `exit 0` ve G5 ihlali
+    # EKRANA BASIP GECTI (`EXPECT[...] = ['ADMIN','FINANCE','PLANNER']`).
+    #
+    # ⚠️ VE "G6 kapsiyor" IDDIASI OLCUMLE YANLISTI: G6 `beyan != turetim`
+    # yapar — hucre ADINI olcer, hucrenin ROL KUMESINI DEGIL. ROLE_CAPABILITIES
+    # G6'nin girdisi bile degil. G5'in isi devredilmedi, DUSTU.
+    #
+    # ⇒ COZUM: kapiya BAGIMSIZ bir referans ver. EXPECT ROLE_CAPABILITIES'ten
+    #   turer; onu KARAR KAYDININ hukmuyle cakistir. Boylece
+    #   "DORDUNCU SORU" saglanir: kontrolun girdisi, kontrol ettigi seyden
+    #   TUREMIYOR — ve evren asla bosalmaz (kaynak kod, rota degil).
+    Z35_HUKUM = {
+        # docs/brd-v2/04_KARAR_KAYDI.md `Z35` — MODES_WRITE'in IKIYE bolunmesi.
+        # Ayirt edici: DEFTER ETKISI (gerceklesme/alim ↔ plan/anlasma tanimi).
+        'MODES_ACTUALS_WRITE': {'ADMIN', 'FINANCE'},
+        'MODES_PLAN_WRITE': {'ADMIN', 'PLANNER'},
+    }
+    for c, hukum in sorted(Z35_HUKUM.items()):
+        canli = set(EXPECT.get(c, set()))
+        if canli != hukum:
+            err.append(
+                f'G5b Z35 HUKMU IHLAL: {c} — karar kaydi {sorted(hukum)}, '
+                f'ROLE_CAPABILITIES {sorted(canli) or "BOS"}. Z35 bu bolunmeyi '
+                f'DEFTER ETKISI ekseninde karara bagladi; kume degisikligi bir '
+                f'KARAR ISTER (yeni bir Z-kaydi), sessiz duzenleme DEGIL.')
+    print(f'G5b Z35 hukmu    kontrol={len(Z35_HUKUM)} ihlal='
+          f'{sum(1 for c,h in Z35_HUKUM.items() if set(EXPECT.get(c,set()))!=h)}',
+          file=out)
     for c,m,pth,rl in mism:
         err.append(f'G5 UYUSMAZLIK: {m} {pth} hucre={c} @Roles={rl}')
 

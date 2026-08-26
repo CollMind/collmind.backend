@@ -60,7 +60,7 @@ export class AgreementTransactionController {
   ) {}
 
   @Post()
-  // @Roles: docs/brd-v2/04_KARAR_KAYDI.md Z35 · K-2.6.14 (docs/brd-v2/03_IS_KURALLARI/L2_03).
+  // Kural: docs/brd-v2/04_KARAR_KAYDI.md Z35 · K-2.6.14 (docs/brd-v2/03_IS_KURALLARI/L2_03).
   @RequireCapability(CAPABILITIES.MODES_ACTUALS_WRITE)
   @ApiOperation({ summary: 'Create single off-invoice transaction' })
   create(
