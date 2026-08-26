@@ -545,7 +545,14 @@ export const CAPABILITIES = {
 
   CUSTOMER_READ: 'customer:read',
   CUSTOMER_WRITE: 'customer:write',
-  CUSTOMER_MANAGE: 'customer:manage',
+  // ⛔ `CUSTOMER_MANAGE` DÜŞTÜ (`Z39`, 2026-08-26 · `B3 W5` kapanışı, `H3`
+  // emsali) — `route-cell-map.py:234` bu hücreyi TÜRETEMİYOR (üretici
+  // `*_MANAGE`'i yalnız `USER`'a özel tutuyor, `Z20`'ye bağlı) ⇒ sıfır-rota
+  // kanıtı: `@RequireCapability(CAPABILITIES.CUSTOMER_MANAGE)` deseni
+  // `*.controller.ts` genelinde SIFIR eşleşme. Genel kural
+  // ("arkasında rota olmayan bir hücre haritada DURMAZ", `H3`) burada İLK
+  // KEZ tetikleyicisiyle uygulandı (`dalga-sonu H3`). İleride bir `MANAGE`
+  // rotası doğarsa hücre KARARLA geri gelir.
 
   MASTER_DATA_READ: 'master-data:read',
   MASTER_DATA_WRITE: 'master-data:write',
@@ -676,45 +683,22 @@ export const CAPABILITIES = {
   // hâlâ WRITE'ta, karar-bekler; tek hücre iki ailenin eksenini
   // düzleştirirdi.
   SHARED_READ: 'shared:read',
-  // ⚠️ BAYAT (Z36, 2026-08-26) — `SHARED_WRITE` hücre olarak KALIYOR (silinmedi,
-  // hâlâ LTA dörtlüsü (kaza-dalgası, `T-293`'e bağlı) burada yaşıyor),
-  // ama `Z36`'nın gerçek eksen ölçümü sekiz rotayı üç ayrı yeteneğe böldü —
-  // bkz. `SHARED_POLICY_WRITE` / `SHARED_ENVELOPE_WRITE` / `SHARED_SPEND_WRITE`.
-  // ⚠️ ATIF GÜNCELLENDİ (2026-08-26, `K6c/d`): `budget/reserve` bu listeden
-  //   ÇIKARILDI — uç SİLİNDİ (`T-289` / `Z38 §1`). Kalan rota sayısı 5 → 4., ama `Z36`'nın gerçek eksen ölçümü
-  // (`K-2.6.4a/b` SoD + sahiplik, "defter etkisi" DEĞİL) sekiz rotayı üç ayrı
-  // yeteneğe böldü — bkz. `SHARED_POLICY_WRITE` / `SHARED_ENVELOPE_WRITE` /
-  // `SHARED_SPEND_WRITE` (aşağı). Union burada artık göçen sekiz rotayı
+  // ⛔ `SHARED_WRITE` DÜŞTÜ (`Z39`, 2026-08-26 · `B3 W5` kapanışı, `H3`
+  // emsali) — sıfır-rota kanıtı: `@RequireCapability(CAPABILITIES.
+  // SHARED_WRITE)` deseni `*.controller.ts` genelinde SIFIR eşleşme
+  // (`Z36` sekiz rotayı `SHARED_POLICY_WRITE`/`SHARED_ENVELOPE_WRITE`/
+  // `SHARED_SPEND_WRITE`'a böldüğünden beri). Union `{ADMIN,PLANNER,
+  // CATEGORY_MANAGER,FINANCE}` koruduğu HİÇBİR rotanın kümesinden genişti —
+  // KİLİT METNİ (o sessiz-genişleme uyarısının tam metni) SİLİNMEDİ,
+  // `.claude/backlog/tasks/T-293.md`'ye TAŞINDI: LTA dörtlüsü `T-293`
+  // çözülmeden zaten bu sabite göçmeyecekti; doğru hücre kararla ve
+  // cümlesiyle o gün doğar.
   //
-  // ⛔ VE BİR KİLİT — ÖLÇÜLDÜ 2026-08-26 (code-reviewer B2):
-  //   @RequireCapability(SHARED_WRITE) taşıyan rota   SIFIR
-  //     (poz.kontrol: aynı grep SHARED_READ icin 23 satir donuyor)
-  //   bu sabiti tasiyan roller   {ADMIN, PLANNER, CATEGORY_MANAGER, FINANCE}
-  //   kalan DORT rotanin @Roles union'i  {ADMIN}
-  //     ⚠️ DEGER DUZELTILDI (2026-08-26, code-reviewer): once
-  //     "bes rota / {ADMIN, PLANNER}" yaziyordu. `budget/reserve`
-  //     o union'daki PLANNER'in TEK KAYNAGIYDI; uc silinince union
-  //     {ADMIN}'e dustu. Ilk duzeltme SAYIYI (5→4) duzeltti ama
-  //     DEGERI birakti — bayat-yorum sinifinin ayni turda tekrari.
-  // Yani union, koruduğu HİÇBİR rotanın kümesinden GENİŞ. Bu sabite yeni bir
-  // rota bağlanırsa (kaza-dalgasında LTA dörtlüsü — `budget/reserve` artık
-  //   YOK, `K6c/d`'de SİLİNDİ, `T-289`)
-  // {ADMIN} → DÖRT ROL **sessiz genişleme** olur (fark artık DAHA BÜYÜK), ve bugün bunu
-  // gören guard YOK — `G6`'nın evreni yalnız GÖÇMÜŞ rotalar.
-  // ⇒ BU SABİTE YENİ ROTA BAĞLANMADAN ÖNCE UNION DARALTILIR.
-  //   (Önceki cümle "roller yalnız kalan rotalar için geçerli" diyordu ve bu
-  //    genişlemeyi ONAYLAR gibi okunuyordu — ölçümle yanlış.)
-  // ✅ ÇÖZÜLDÜ (2026-08-17, UNION) — {ADMIN,CATEGORY_MANAGER,FINANCE,
-  // PLANNER}. Bkz. yukarı, "ÇÖZÜLDÜ" alt-başlığı (`approval-policies` uyarısı dahil).
-  SHARED_WRITE: 'shared:write',
-  // 11. taksonomi düzeltmesi (2026-08-17): `PATCH /approval-policies/:id`
-  // SHARED_WRITE'tan BURAYA taşındı — konfigürasyon ucu, ADMIN kalıyor.
-  // ⛔ BAYAT (Z36, 2026-08-26): bu satır artık YANLIŞ — `PATCH
-  // /approval-policies/:id` `Z36`'da `SHARED_MANAGE` DEĞİL,
-  // `SHARED_POLICY_WRITE`'a göçtü (SINIF A, `{ADMIN}`, aşağı bkz.).
-  // `SHARED_MANAGE` sabiti KALIYOR — bugün başka atanmış rota YOK
-  // (`ROLE_CAPABILITIES`'te hiçbir role verilmedi), F12 izi bu yüzden burada.
-  SHARED_MANAGE: 'shared:manage',
+  // ⛔ `SHARED_MANAGE` DÜŞTÜ (`Z39`, aynı kapanış) — sıfır-rota kanıtı:
+  // `ROLE_CAPABILITIES`'te hiçbir role verilmemişti (bugün başka atanmış
+  // rota YOK notu doğruydu, `H3` genel kuralı burada tetikleyicisiyle
+  // uygulandı). `PATCH /approval-policies/:id` zaten `SHARED_POLICY_WRITE`'a
+  // göçmüştü (SINIF A, `{ADMIN}`) — bu sabit onun için de gerekmiyordu.
 
   // ✅ Z36 BÖLÜNMESİ KODA İNDİ (2026-08-26, B3 W4b ADIM 0).
   // `SHARED_WRITE`'ın SEKİZ rotası üçe ayrıldı — ayırt edici `Z35`'in
@@ -737,7 +721,11 @@ export const CAPABILITIES = {
   // ✅ ÇÖZÜLDÜ (2026-08-17, dal 1 — tek rol kümesi, mekanik) — {ADMIN}.
   TENANT_READ: 'tenant:read',
   TENANT_WRITE: 'tenant:write',
-  TENANT_MANAGE: 'tenant:manage',
+  // ⛔ `TENANT_MANAGE` DÜŞTÜ (`Z39`, 2026-08-26 · `B3 W5` kapanışı, `H3`
+  // emsali) — `W2` kapandığından beri sıfır rota; sıfır-rota kanıtı:
+  // `@RequireCapability(CAPABILITIES.TENANT_MANAGE)` deseni `*.controller.ts`
+  // genelinde SIFIR eşleşme. İleride bir `MANAGE` rotası doğarsa hücre
+  // KARARLA geri gelir.
 
   // ✅ ÇÖZÜLDÜ (2026-08-17, dal 1 — tek rol kümesi, mekanik) — {ADMIN}.
   USER_WRITE: 'user:write',
@@ -791,7 +779,8 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.ADMIN_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.CUSTOMER_WRITE,
-    CAPABILITIES.CUSTOMER_MANAGE,
+    // ↓ CUSTOMER_MANAGE DÜŞTÜ (Z39, B3 W5 kapanışı) — sıfır-rota, bkz.
+    // CAPABILITIES yorumu.
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.MASTER_DATA_WRITE,
     CAPABILITIES.MASTER_DATA_MANAGE,
@@ -802,8 +791,10 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // ↓ Z30 H2 (2026-08-24) — dal 1, mekanik.
     CAPABILITIES.MODES_SUBMIT,
     CAPABILITIES.NOTIFICATION_WRITE,
-    CAPABILITIES.SHARED_WRITE,
-    CAPABILITIES.SHARED_MANAGE,
+    // ↓ SHARED_WRITE / SHARED_MANAGE DÜŞTÜ (Z39, B3 W5 kapanışı) —
+    // sıfır-rota, bkz. CAPABILITIES yorumu. ADMIN'in yazma yeteneği bugün
+    // SHARED_POLICY_WRITE/SHARED_ENVELOPE_WRITE/SHARED_SPEND_WRITE'ta
+    // (aşağı) — Z36 bölünmesinden beri yürürlükte.
     // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — ADMIN üçünde de zaten vardı
     // (`{A}`, `{A,F}`, `{A,P}`) — bölünme ADMIN için sonuç DEĞİŞTİRMEZ.
     // SINIF A (`SHARED_POLICY_WRITE`): dayanak `K-2.6.4` rol kataloğunun
@@ -834,7 +825,8 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // ↓ TENANT_READ: dal 1 (tek rol kümesi — `GET /tenants` zaten ADMIN-only).
     CAPABILITIES.TENANT_READ,
     CAPABILITIES.TENANT_WRITE,
-    CAPABILITIES.TENANT_MANAGE,
+    // ↓ TENANT_MANAGE DÜŞTÜ (Z39, B3 W5 kapanışı) — sıfır-rota, bkz.
+    // CAPABILITIES yorumu.
     // ↓ USER_WRITE: dal 1 (tek rol kümesi — 4 ADMIN-only route zaten ADMIN'de).
     CAPABILITIES.USER_WRITE,
     CAPABILITIES.USER_MANAGE,
@@ -859,7 +851,8 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // Pin: test/approval-queue-read-boundary.e2e-spec.ts.
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.CUSTOMER_WRITE,
-    CAPABILITIES.CUSTOMER_MANAGE,
+    // ↓ CUSTOMER_MANAGE DÜŞTÜ (Z39, B3 W5 kapanışı) — sıfır-rota, bkz.
+    // CAPABILITIES yorumu.
     CAPABILITIES.MASTER_DATA_READ,
     // ↓ Z35 bölünmesi (2026-08-24): PLANNER yalnız PLAN/ANLAŞMA tarafında.
     // ⛔ GERÇEKLEŞME yazımı (agreement-transaction · on-invoice ·
@@ -872,17 +865,9 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // "PLANLAMACI — …, GÖNDERİM — günlük kullanıcı".
     CAPABILITIES.MODES_SUBMIT,
     CAPABILITIES.NOTIFICATION_WRITE,
-    // ⚠️ BAYAT — `F12` izi (2026-08-26, code-reviewer S7). Aşağıdaki gerekçe
-    // `budget`/`budget-allocation` yazma uçlarını sayıyordu. `Z36` sekiz rotayı
-    // üç ayrı yeteneğe böldü ve `K6c/d` `budget/reserve`'ü SİLDİ ⇒ `PLANNER`'ın
-    // `SHARED_WRITE` altında bugün SIFIR rotası var (kalan dört LTA ucu `{ADMIN}`,
-    // union `{ADMIN}`). Yürürlükteki `PLANNER` yazma yeteneği: `SHARED_SPEND_WRITE`
-    // (aşağı). ⛔ Bu satır bir GEÇİŞ KALINTISIDIR — `SHARED_WRITE` union'ı
-    // daraltılmadan bu sabite yeni rota bağlanmaz (yukarıdaki KİLİT).
-    //
-    // ~~↓ SHARED_WRITE union'ı PLANNER'a budget-allocation/budget/
-    // lta-agreement yazma uçlarını açıyor (approval-policies dahil).~~
-    CAPABILITIES.SHARED_WRITE,
+    // ↓ SHARED_WRITE DÜŞTÜ (Z39, B3 W5 kapanışı) — sıfır-rota; kilit metni
+    // .claude/backlog/tasks/T-293.md'ye taşındı, bkz. CAPABILITIES yorumu.
+    // Yürürlükteki PLANNER yazma yeteneği: SHARED_SPEND_WRITE (aşağı).
     // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — SINIF C (`SHARED_SPEND_WRITE`)
     // {ADMIN,PLANNER}: PLANNER, plan→FU→SKU mekanik dağıtımının ızgara-
     // yazımını yapan taraf (`distribute`/`recalculate-on-volume-change`,
@@ -905,8 +890,9 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
     CAPABILITIES.NOTIFICATION_WRITE,
-    // ↓ ADIM 3 Faz A (2026-08-17, UNION) — bkz. CAPABILITIES yorumu.
-    CAPABILITIES.SHARED_WRITE,
+    // ↓ SHARED_WRITE DÜŞTÜ (Z39, B3 W5 kapanışı) — sıfır-rota, bkz.
+    // CAPABILITIES yorumu. CATEGORY_MANAGER'ın Z36 üçlüsünden aldığı YOK
+    // (aşağıdaki not KORUNDU — bugün de doğru).
     // ⛔ Z36 bölünmesi (2026-08-26, B3 W4b) — CATEGORY_MANAGER SIFIR aldı.
     // Sekiz rotanın hiçbirinde CM `@Roles`'ta yoktu (approval-policies
     // {ADMIN} · budget/envelopes[,/split] {ADMIN,FINANCE} · spend-calc
@@ -938,7 +924,9 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // listesine çarpıyordu (plan YAZIMI yok).
     CAPABILITIES.MODES_ACTUALS_WRITE,
     CAPABILITIES.NOTIFICATION_WRITE,
-    CAPABILITIES.SHARED_WRITE,
+    // ↓ SHARED_WRITE DÜŞTÜ (Z39, B3 W5 kapanışı) — sıfır-rota, bkz.
+    // CAPABILITIES yorumu. FINANCE'in yürürlükteki yazma yeteneği
+    // SHARED_ENVELOPE_WRITE (aşağı, SINIF B).
     // ↓ Z36 bölünmesi (2026-08-26, B3 W4b) — SINIF B (`SHARED_ENVELOPE_WRITE`)
     // {ADMIN,FINANCE}. ⚠️ GEREKÇE DÜZELTİLDİ (code-reviewer S2, 2026-08-26)
     // — önce `K-2.2.9c`'ye ("finans zarfı büyütür") yaslanıyordu; ölçüm
