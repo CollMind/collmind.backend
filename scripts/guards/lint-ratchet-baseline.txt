@@ -1,6 +1,6 @@
 # lint-ratchet baseline (backend) — T-113 ratchet reference
 # date:    2026-08-26
-# commit:  cd8ef61
+# commit:  699bac2
 # guard:   lint-ratchet v1 (backend)
 # total:   189 (file,rule) tuples, 945 problems, 173 files
 # format:  <file> <ruleId> <errorCount+warningCount for that rule in that file>

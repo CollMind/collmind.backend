@@ -119,4 +119,35 @@ describe('Cash Flow Projection — months parametre sözleşmesi (E2E, T-294)', 
       },
     );
   });
+
+  // ⛔ S3 (code-reviewer): `months`'un PAYLAŞILAN `ReportFilters`'tan çıkarılması
+  // (`T-294` `S2` → `T-296`) davranışsal olarak doğruydu ama HİÇBİR TESTE
+  // BAĞLI DEĞİLDİ. Bugün yeşil; yarın biri `months`'u paylaşılan DTO'ya geri
+  // koyarsa SESSİZCE geri döner ve sekiz uç yine `?months=6`'yı kabul edip
+  // YOK SAYAR. `CLAUDE.md §4.2`: "bağlayıcı koşul bir guard'a bağlanır."
+  it('KARDEŞ UÇLAR `months`i REDDEDER — paylaşılan DTO`dan çıktığının kanıtı', async () => {
+    const admin = await loginAs(app, 'ADMIN');
+    for (const yol of [
+      'spend-composition',
+      'budget-utilization',
+      'spend-trend',
+    ]) {
+      const res = await request(app.getHttpServer())
+        .get(`/finance-reporting/${yol}?months=6`)
+        .set(admin.authHeader());
+      expect(res.status).toBe(400);
+      expect(String(res.body.message)).toContain('months');
+    }
+  });
+
+  // POZİTİF YARI: aynı parametre KENDİ ucunda kabul edilir. Bu olmadan
+  // yukarıdaki assertion, `months`in HİÇBİR YERDE çalışmadığı bozuk durumda
+  // da yeşil kalırdı (`§2.7 #9`: "sinyal sabitse sinyal değildir").
+  it('POZ.KONTROL — kendi ucu `months`i KABUL eder', async () => {
+    const admin = await loginAs(app, 'ADMIN');
+    await request(app.getHttpServer())
+      .get('/finance-reporting/cash-flow-projection?months=6')
+      .set(admin.authHeader())
+      .expect(200);
+  });
 });

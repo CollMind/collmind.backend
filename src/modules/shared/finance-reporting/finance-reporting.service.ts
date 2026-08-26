@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Plan } from '../../../database/entities/plan.entity';
@@ -1005,6 +1010,26 @@ export class FinanceReportingService {
       plannedOnInvoice = prevTrend.totalOnInvoice;
       plannedOffInvoice = prevTrend.totalOffInvoice;
       plannedTotal = plannedOnInvoice + plannedOffInvoice;
+    } else {
+      // ⛔ §2.5 — "if yazıp else bırakmamak" YASAK, ve bu vaka onun BİREBİR metni.
+      //
+      // `ComparisonType` ÜÇ değer taşıyor; burada YALNIZ İKİSİNİN dalı var.
+      // `FORECAST_VS_ACTUAL` bu `else` olmadan sessizce düşüyordu ve
+      // `planned* = 0` KALIYORDU — yani uç `200` dönüp PLANLANAN BÜTÇEYİ
+      // SIFIR gösteriyordu (ölçüldü: budget_vs_actual 1.600.000 ↔
+      // forecast_vs_actual 0).
+      //
+      // ⚠️ VE YOL BU TURDA AÇILDI: `T-296` öncesi `?comparisonType=...`
+      // whitelist'e takılıp `400` alıyordu, yani yalnız JS varsayılanı
+      // (`budget_vs_actual`) koşuyordu. Çıplak `@Query`'yi DTO'ya taşımak
+      // üç enum değerinin ÜÇÜNÜ DE açtı — bir örtü kalktı ve altındaki
+      // sessiz sıfır göründü (`DISIPLIN`: "bir örtü kaldırılırken altındaki
+      // AYNI COMMIT'te kapanır").
+      throw new BadRequestException(
+        `comparisonType='${comparisonType}' desteklenmiyor: bu karşılaştırma ` +
+          `için planlanan tutar hesaplanamıyor. Desteklenenler: ` +
+          `${ComparisonType.BUDGET_VS_ACTUAL}, ${ComparisonType.PREVIOUS_PERIOD}.`,
+      );
     }
 
     const variances: VarianceItem[] = [
