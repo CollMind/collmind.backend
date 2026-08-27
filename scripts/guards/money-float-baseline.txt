@@ -1,8 +1,8 @@
 # money-float baseline — ADR 0007 Karar 3b ratchet reference
-# date:    2026-08-23
-# commit:  b26c3e9
+# date:    2026-08-27
+# commit:  efc3d93
 # guard:   money-float v1
-# total:   114 findings in 27 files
+# total:   112 findings in 26 files
 # format:  <file> <count>   (sorted by file; only non-zero counts)
 src/database/seeds/budget-alert-configuration.seed.ts 1
 src/database/seeds/product.seed.ts 2
@@ -19,7 +19,6 @@ src/modules/modes/actuals-first/ledger/ledger.service.ts 1
 src/modules/modes/actuals-first/on-invoice/on-invoice.repository.ts 1
 src/modules/modes/actuals-first/on-invoice/on-invoice.service.ts 9
 src/modules/modes/actuals-first/on-invoice/services/on-invoice-file-parser.service.ts 1
-src/modules/modes/actuals-first/on-invoice/services/on-invoice-validation.service.ts 2
 src/modules/modes/actuals-first/settlement/settlement-close.service.ts 1
 src/modules/modes/actuals-first/settlement/settlement-summary.service.ts 1
 src/modules/modes/planning-first/plan/approval-workflow.service.ts 8
