@@ -1295,9 +1295,26 @@ export class FinanceReportingService {
       }
 
       const allocated = Number(summary.allocatedAmount) || 0;
-      const reserved = Number(summary.reservedAmount) || 0;
-      const consumed = Number(summary.consumedAmount) || 0;
-      const available = Number(summary.availableAmount) || 0;
+      // ⛔ `|| 0` KALDIRILDI (`Z47` review 🟡-6, `T-291` sınıfı) — ve
+      // `Number()` de: `BudgetSummaryView` bu alanları `DecimalTransformer`
+      // ile ZATEN `number` döndürür. `Number(x) || 0` iki ayrı sessiz sıfır
+      // üretiyordu: `null` girdide (transformer `null`'ı olduğu gibi geçirir)
+      // ve GERÇEK `0`'ı ayırt edemeden. Burası bir VARYANS RAPORU — sessiz
+      // sıfır, "sapma yok" diye okunur (`§2.5`).
+      const reserved = summary.reservedAmount;
+      const consumed = summary.consumedAmount;
+      const available = summary.availableAmount;
+      if (
+        !Number.isFinite(reserved) ||
+        !Number.isFinite(consumed) ||
+        !Number.isFinite(available)
+      ) {
+        throw new Error(
+          `INV-B-009 ailesi: v_budget_summary satırı sonlu olmayan değer ` +
+            `taşıyor (envelope=${summary.envelopeId}) — varyans raporu ` +
+            `sessizce 0'a düşmez.`,
+        );
+      }
 
       const variance = consumed - allocated;
       const variancePercent =

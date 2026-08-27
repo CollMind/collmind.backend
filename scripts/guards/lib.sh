@@ -19,7 +19,7 @@
 # Guard adlarının TEK doğruluk kaynağı. `run-all.sh` koşacağı guard listesini
 # buradan okur — iki yerde tutulursa biri güncellenip diğeri unutulduğunda ya
 # doğrulama reddeder ya runner sessizce atlar.
-GUARD_NAMES_VALID="migration-schema ledger-direction financial-ordering schema-isolation money-float mode-split lint-ratchet app-runtime-grants route-scope scope-ratchet roles-ratchet alan-guard-ratchet domain-guard-parity view-security-invoker"
+GUARD_NAMES_VALID="migration-schema ledger-direction financial-ordering schema-isolation money-float mode-split lint-ratchet app-runtime-grants route-scope scope-ratchet roles-ratchet alan-guard-ratchet domain-guard-parity view-security-invoker dropped-column-absence"
 
 # `ENV` joker anahtarını kullanabilen guard'lar (dosya:satır'ı olmayan bulgular).
 GUARD_NAMES_ENV_OK="schema-isolation"
