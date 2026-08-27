@@ -137,7 +137,7 @@ export class BudgetService {
     tenantId: string,
     createDto: CreateBudgetEnvelopeDto,
     manager?: EntityManager,
-  ): Promise<BudgetEnvelope> {
+  ): Promise<BudgetEnvelope | (BudgetEnvelope & { availableAmount: number })> {
     // Auto-generate code and name if not provided
     const channel = createDto.channel || 'UNKNOWN';
     const category = createDto.category || 'GENERAL';
@@ -169,29 +169,101 @@ export class BudgetService {
         channel,
         category,
         tenantId,
-        availableAmount: createDto.allocatedAmount,
+        // `availableAmount` KALDIRILDI (`INV-B-009` / `Z47`) — kolon artık
+        // yok, kanonik kaynak `v_budget_summary` (sorgu anında türetilir).
         consumedAmount: 0,
         status: createDto.status || BudgetEnvelopeStatus.DRAFT,
       },
       manager,
     );
 
-    return envelope;
+    // ⛔ `Z47` review 🟡-2 — ÇIPLAK ENTITY DÖNÜŞÜNÜN ÜÇÜNCÜ KAPISI.
+    // `available_amount` kolonu öldü (`Z47`), ama `POST /budget/envelopes`'in
+    // yanıtı hâlâ ham entity'ydi ⇒ alan JSON'dan SESSİZCE kayboldu; frontend
+    // `budget.types.ts` onu `availableAmount: number` diye VAAT EDİYOR.
+    // Bugün çökmüyordu çünkü `useCreateBudgetEnvelope` yalnız
+    // `invalidateQueries` yapıyor, gövdeyi RENDER ETMİYOR — yani kırığı
+    // VERİNİN KULLANILMAMASI örtüyordu (`§2.7`).
+    // ⇒ `findEnvelopeById`/`findAllEnvelopes` ile AYNI zenginleştirme.
+    // ⚠️ `manager` verildiyse (dış transaction) view HENÜZ commit görmemiş
+    // olabilir; o yolda türetim YAPILMAZ ve alan da UYDURULMAZ — çağıran
+    // zaten transaction içinde, okumayı kendi yapar.
+    if (manager) {
+      return envelope;
+    }
+    const summary = await this.budgetRepository.getBudgetSummary(
+      envelope.id,
+      tenantId,
+    );
+    if (!summary) {
+      throw new Error(
+        `INV-B-009: v_budget_summary has no row for freshly created envelope ` +
+          `${envelope.id} (${envelope.code}) — refusing to return a response ` +
+          `without the canonical available amount.`,
+      );
+    }
+    return { ...envelope, availableAmount: summary.availableAmount };
   }
 
-  async findAllEnvelopes(tenantId: string): Promise<BudgetEnvelope[]> {
-    return this.budgetRepository.findAllEnvelopes(tenantId);
+  /**
+   * INV-B-009 / Z47 — `GET /budget/envelopes` (`findAllEnvelopes`) served the
+   * bare entity, which is where `available_amount` (the now-dropped stale
+   * snapshot column) reached `collmind.frontend`'s envelope list/dashboard
+   * components. Now that the column is gone, `availableAmount` is attached
+   * here from `v_budget_summary` (canonical, ledger-derived) — the JSON
+   * field name is preserved so no frontend change is required, but its
+   * VALUE is now always live.
+   *
+   * Every envelope has exactly one `v_budget_summary` row (the view is
+   * built directly `FROM main.budget_envelopes`, one row per envelope,
+   * COALESCEd subquery sums — measured: `pg_get_viewdef`). A missing
+   * summary row for an envelope that was just read is a data-integrity
+   * contradiction, not an absent-value case — §2.5 forbids silently
+   * defaulting it to 0, so it throws.
+   */
+  async findAllEnvelopes(
+    tenantId: string,
+  ): Promise<Array<BudgetEnvelope & { availableAmount: number }>> {
+    const [envelopes, summaries] = await Promise.all([
+      this.budgetRepository.findAllEnvelopes(tenantId),
+      this.budgetRepository.getAllBudgetSummaries(tenantId),
+    ]);
+    const summaryByEnvelopeId = new Map<string, BudgetSummaryView>(
+      summaries.map((s) => [s.envelopeId, s]),
+    );
+    return envelopes.map((envelope) => {
+      const summary = summaryByEnvelopeId.get(envelope.id);
+      if (!summary) {
+        throw new Error(
+          `INV-B-009: v_budget_summary has no row for envelope ${envelope.id} ` +
+            `(${envelope.code}) — cannot compute available amount without the ` +
+            `canonical view.`,
+        );
+      }
+      return {
+        ...envelope,
+        availableAmount: summary.availableAmount,
+      };
+    });
   }
 
   async findEnvelopeById(
     tenantId: string,
     id: string,
-  ): Promise<BudgetEnvelope> {
+  ): Promise<BudgetEnvelope & { availableAmount: number }> {
     const envelope = await this.budgetRepository.findEnvelopeById(tenantId, id);
     if (!envelope) {
       throw new NotFoundException(`Budget envelope with ID ${id} not found`);
     }
-    return envelope;
+    const summary = await this.budgetRepository.getBudgetSummary(id, tenantId);
+    if (!summary) {
+      throw new Error(
+        `INV-B-009: v_budget_summary has no row for envelope ${id} ` +
+          `(${envelope.code}) — cannot compute available amount without the ` +
+          `canonical view.`,
+      );
+    }
+    return { ...envelope, availableAmount: summary.availableAmount };
   }
 
   // `reserveBudget` (event-sourced, manuel/serbest-metin `agreementId`)
@@ -1682,15 +1754,14 @@ export class BudgetService {
       }
 
       // 6. Original row keeps its id, becomes ON_INVOICE (FK safety —
-      // see class JSDoc). `availableAmount`/`consumedAmount` follow the same
-      // convention as #createEnvelope (available = allocated at
-      // (re-)initialization) — these two columns are NOT maintained by any
-      // encumbrance write path in this codebase (v_budget_summary is the
-      // real-time source of truth), so this is consistent with their
-      // existing (pre-split) semantics, not a new staleness.
+      // see class JSDoc). `availableAmount` KALDIRILDI (`INV-B-009` /
+      // `Z47`) — kolon artık yok; `consumedAmount` bu convention'ı
+      // koruyor (0'dan başlar) çünkü kendi başına bir tüketim kovası
+      // (ledger-bağımsız), `available` gibi bir kopya değil.
+      // `v_budget_summary` (allocated - reserved - consumed) hâlâ
+      // real-time source of truth.
       envelope.spendType = BudgetSpendType.ON_INVOICE;
       envelope.allocatedAmount = onInvoiceAllocated;
-      envelope.availableAmount = onInvoiceAllocated;
       envelope.updatedBy = userId;
       const onEnvelope = await this.budgetRepository.updateEnvelope(
         envelope,
@@ -1705,7 +1776,6 @@ export class BudgetService {
           fiscalYear: envelope.fiscalYear,
           period: envelope.period,
           allocatedAmount: offInvoiceAllocated,
-          availableAmount: offInvoiceAllocated,
           consumedAmount: 0,
           status: envelope.status,
           budgetOwnerId: envelope.budgetOwnerId,

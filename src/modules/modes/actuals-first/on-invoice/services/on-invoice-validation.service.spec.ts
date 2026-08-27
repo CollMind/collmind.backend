@@ -66,11 +66,10 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
   beforeEach(async () => {
     budgetService = {
       findEnvelopeByDimensions: jest.fn(),
-      // INV-B-009 / Z45 §3: the service now cross-checks the envelope's
-      // stale snapshot column against the canonical view before trusting
-      // either. Default: no divergence (matches `envelope.availableAmount`/
-      // `allocatedAmount` set by each test) — individual tests below reflect
-      // the same figures unless explicitly testing the divergence path.
+      // INV-B-009 / Z47: `budget_envelopes.available_amount` (the stale
+      // snapshot column) is DROPPED. `v_budget_summary` (via
+      // `getEnvelopeBudgetSummary`) is now the ONLY source the service
+      // reads for "available" — no cross-check remains.
       getEnvelopeBudgetSummary: jest.fn(),
     };
     budgetThresholdService = {
@@ -175,7 +174,6 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
     });
     budgetService.findEnvelopeByDimensions.mockResolvedValue({
       id: 'env-1',
-      availableAmount: 5000,
       allocatedAmount: 10000,
     });
     budgetService.getEnvelopeBudgetSummary.mockResolvedValue({
@@ -197,7 +195,6 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
   it('still reports real figures when the envelope reads fine', async () => {
     budgetService.findEnvelopeByDimensions.mockResolvedValue({
       id: 'env-1',
-      availableAmount: 5000,
       allocatedAmount: 10000,
     });
     budgetService.getEnvelopeBudgetSummary.mockResolvedValue({
@@ -212,49 +209,50 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
     expect(impact.status).toBe(UtilizationStatus.GREEN);
   });
 
-  // INV-B-009 / Z45 §3 — REPRO PİNİ: `budget_envelopes.available_amount`
-  // (the stale snapshot column) and `v_budget_summary.available_amount`
-  // (the canonical, ledger-derived view) disagree — as measured live on
-  // ENV-2026-NKA-Q1/Q2 (two of four envelopes, diff ₺96.500/₺75.000). The
-  // service must not silently trust either number: it reports the row as
-  // unavailable (same failure shape as an unreadable envelope, T-098),
-  // never a wrong RAG verdict built on a stale figure.
-  it('[YAPISAL] refuses to trust a stale envelope column that disagrees with v_budget_summary (INV-B-009)', async () => {
+  // INV-B-009 / Z47 — the stale `budget_envelopes.available_amount` column
+  // (previously cross-checked against `v_budget_summary` by this service,
+  // see git history / Z45 §3) is DROPPED: it never had a sync mechanism
+  // (no reserve/commit/release path updated it) and diverged from the
+  // canonical view on 2 of 4 live envelopes. `v_budget_summary` is now the
+  // ONLY source read for "available" — `findEnvelopeByDimensions`'s
+  // resolved envelope is used ONLY to obtain the envelope id (and for the
+  // absent-envelope branch below); its (now nonexistent) `availableAmount`
+  // field is never consulted. This is a single-source contract pin: the
+  // service must not read anything BUT `getEnvelopeBudgetSummary` for the
+  // figures it reports.
+  it('[YAPISAL] reads available/allocated exclusively from v_budget_summary — the envelope lookup contributes only its id', async () => {
     budgetService.findEnvelopeByDimensions.mockResolvedValue({
-      id: 'env-divergent',
-      availableAmount: 500000, // stale column — never decremented by RESERVE
-      allocatedAmount: 500000,
+      id: 'env-single-source',
+      // No `availableAmount`/`allocatedAmount` on the resolved envelope —
+      // if the service silently fell back to reading them off this object,
+      // `current`/`allocated` would be `NaN`-derived and the assertions
+      // below (real values from the view) would fail.
     });
     budgetService.getEnvelopeBudgetSummary.mockResolvedValue({
-      availableAmount: 403500, // canonical — allocated(500000) - reserved(95000) - consumed(1500)
+      availableAmount: 403500, // allocated(500000) - reserved(95000) - consumed(1500)
       allocatedAmount: 500000,
     });
 
     const [impact] = (await simulate()).rows;
 
-    expect(impact.dataStatus).toBe('unavailable');
-    expect(impact.current).toBeNull();
-    expect(impact.status).toBeNull();
+    expect(budgetService.getEnvelopeBudgetSummary).toHaveBeenCalledWith(
+      'env-single-source',
+      TENANT_ID,
+    );
+    expect(impact.dataStatus).toBe('ok');
+    expect(impact.current).toBe(403500);
   });
 
-  // Positive control for the pin above: when the two sources AGREE, the row
-  // is 'ok' and carries the canonical (view) figure — proving the divergence
-  // check, not some unrelated failure, is what flips the previous case.
-  it('[YAPISAL] reports ok using the canonical view figure when column and view agree', async () => {
-    budgetService.findEnvelopeByDimensions.mockResolvedValue({
-      id: 'env-agree',
-      availableAmount: 200000,
-      allocatedAmount: 200000,
-    });
-    budgetService.getEnvelopeBudgetSummary.mockResolvedValue({
-      availableAmount: 200000,
-      allocatedAmount: 200000,
-    });
+  // Absent-envelope branch is untouched by the column drop (T-098 sibling,
+  // CLAUDE.md §2.4 — recorded, not decided here) — this pin exists so a
+  // future edit to the found-envelope branch cannot silently break it.
+  it('reports missing envelope without ever calling getEnvelopeBudgetSummary', async () => {
+    budgetService.findEnvelopeByDimensions.mockResolvedValue(null);
 
     const [impact] = (await simulate()).rows;
 
-    expect(impact.dataStatus).toBe('ok');
-    expect(impact.current).toBe(200000);
+    expect(budgetService.getEnvelopeBudgetSummary).not.toHaveBeenCalled();
+    expect(impact.current).toBe(0);
   });
 });
 

@@ -18,7 +18,6 @@ export async function seedBudgetEnvelopes(
       fiscalYear: '2026',
       period: '2026-01', // Matches agreement periodMonth
       allocatedAmount: 500000,
-      availableAmount: 500000,
       consumedAmount: 0,
       status: BudgetEnvelopeStatus.ACTIVE,
       currency: 'TRY',
@@ -32,7 +31,6 @@ export async function seedBudgetEnvelopes(
       fiscalYear: '2026',
       period: '2026-02', // Matches approved agreement periodMonth
       allocatedAmount: 600000,
-      availableAmount: 600000,
       consumedAmount: 0,
       status: BudgetEnvelopeStatus.ACTIVE,
       currency: 'TRY',
@@ -46,7 +44,6 @@ export async function seedBudgetEnvelopes(
       fiscalYear: '2026',
       period: '2026-01',
       allocatedAmount: 300000,
-      availableAmount: 300000,
       consumedAmount: 0,
       status: BudgetEnvelopeStatus.ACTIVE,
       currency: 'TRY',
@@ -60,7 +57,6 @@ export async function seedBudgetEnvelopes(
       fiscalYear: '2026',
       period: '2026-02',
       allocatedAmount: 200000,
-      availableAmount: 200000,
       consumedAmount: 0,
       status: BudgetEnvelopeStatus.ACTIVE,
       currency: 'TRY',

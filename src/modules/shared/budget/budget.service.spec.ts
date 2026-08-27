@@ -92,6 +92,12 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
         .mockImplementation((envelope: any) =>
           Promise.resolve({ ...envelope, id: `env-off-${Math.random()}` }),
         ),
+      // INV-B-009 / Z47 (available_amount dropped): findAllEnvelopes /
+      // findEnvelopeById now enrich from v_budget_summary.
+      findAllEnvelopes: jest.fn(),
+      findEnvelopeById: jest.fn(),
+      getAllBudgetSummaries: jest.fn(),
+      getBudgetSummary: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -1151,7 +1157,6 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
         fiscalYear: '2026',
         period: '2026-01',
         allocatedAmount: 1000000,
-        availableAmount: 1000000,
         consumedAmount: 0,
         status: 'ACTIVE',
         currency: 'TRY',
@@ -1482,6 +1487,80 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
         TENANT_ID,
         ENVELOPE_ID,
         queryRunner.manager,
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // INV-B-009 / Z47 — `budget_envelopes.available_amount` DROPPED.
+  // `findAllEnvelopes`/`findEnvelopeById` used to return the bare entity
+  // (which carried the now-dead column); they now enrich from
+  // `v_budget_summary` so `GET /budget/envelopes` and `GET
+  // /budget/envelopes/:id` keep serving an `availableAmount` field —
+  // just always a live one. This is the discovered reader (not in the
+  // original task brief): `collmind.frontend`'s envelope list/dashboard
+  // components consume exactly these two endpoints.
+  // -------------------------------------------------------------------
+  describe('findAllEnvelopes / findEnvelopeById — INV-B-009 view enrichment', () => {
+    it('findEnvelopeById attaches the canonical (view) availableAmount to the entity', async () => {
+      mockBudgetRepository.findEnvelopeById.mockResolvedValue({
+        id: ENVELOPE_ID,
+        code: 'ENV-1',
+        allocatedAmount: 1000000,
+      } as BudgetEnvelope);
+      mockBudgetRepository.getBudgetSummary.mockResolvedValue({
+        envelopeId: ENVELOPE_ID,
+        availableAmount: 403500,
+        allocatedAmount: 1000000,
+      });
+
+      const result = await service.findEnvelopeById(TENANT_ID, ENVELOPE_ID);
+
+      expect(mockBudgetRepository.getBudgetSummary).toHaveBeenCalledWith(
+        ENVELOPE_ID,
+        TENANT_ID,
+      );
+      expect(result.availableAmount).toBe(403500);
+      expect(result.id).toBe(ENVELOPE_ID); // entity fields still present
+    });
+
+    it('findEnvelopeById throws (does not default to 0) when v_budget_summary has no row', async () => {
+      mockBudgetRepository.findEnvelopeById.mockResolvedValue({
+        id: ENVELOPE_ID,
+        code: 'ENV-1',
+        allocatedAmount: 1000000,
+      } as BudgetEnvelope);
+      mockBudgetRepository.getBudgetSummary.mockResolvedValue(null);
+
+      await expect(
+        service.findEnvelopeById(TENANT_ID, ENVELOPE_ID),
+      ).rejects.toThrow(/INV-B-009/);
+    });
+
+    it('findAllEnvelopes joins each entity to its v_budget_summary row by envelopeId', async () => {
+      mockBudgetRepository.findAllEnvelopes.mockResolvedValue([
+        { id: 'env-a', code: 'A', allocatedAmount: 100 } as BudgetEnvelope,
+        { id: 'env-b', code: 'B', allocatedAmount: 200 } as BudgetEnvelope,
+      ]);
+      mockBudgetRepository.getAllBudgetSummaries.mockResolvedValue([
+        { envelopeId: 'env-b', availableAmount: 150, allocatedAmount: 200 },
+        { envelopeId: 'env-a', availableAmount: 75, allocatedAmount: 100 },
+      ]);
+
+      const result = await service.findAllEnvelopes(TENANT_ID);
+
+      expect(result.find((e) => e.id === 'env-a')?.availableAmount).toBe(75);
+      expect(result.find((e) => e.id === 'env-b')?.availableAmount).toBe(150);
+    });
+
+    it('findAllEnvelopes throws (does not skip or default) when an envelope has no matching summary row', async () => {
+      mockBudgetRepository.findAllEnvelopes.mockResolvedValue([
+        { id: 'env-orphan', code: 'X', allocatedAmount: 100 } as BudgetEnvelope,
+      ]);
+      mockBudgetRepository.getAllBudgetSummaries.mockResolvedValue([]);
+
+      await expect(service.findAllEnvelopes(TENANT_ID)).rejects.toThrow(
+        /INV-B-009/,
       );
     });
   });

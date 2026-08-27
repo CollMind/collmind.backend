@@ -204,6 +204,25 @@ export class AgreementTransactionController {
       };
     }
 
+    // INV-B-009 / Z47: `envelope.availableAmount` DÜŞTÜ (kolon senkron
+    // mekanizması hiç olmamış bayat bir kopyaydı — bkz.
+    // `1814000000000-DropAvailableAmountFromBudgetEnvelopes.ts`). Kanonik
+    // kaynak `v_budget_summary`; her envelope'un tam bir satırı vardır
+    // (`getEnvelopeBudgetSummary` bunu `budget.service.ts` `INV-B-009`
+    // JSDoc'unda garanti eder). Eksikse §2.5 gereği sessizce 0'a düşülmez —
+    // atılır.
+    const summary = await this.budgetService.getEnvelopeBudgetSummary(
+      envelope.id,
+      tenantId,
+    );
+    if (!summary) {
+      throw new Error(
+        `INV-B-009: v_budget_summary has no row for envelope ${envelope.id} ` +
+          `(${envelope.code}) — cannot compute budget impact without the canonical view.`,
+      );
+    }
+    const currentAvailable = summary.availableAmount;
+
     return {
       envelope: {
         id: envelope.id,
@@ -211,9 +230,9 @@ export class AgreementTransactionController {
         channel: envelope.channel || channelCode,
         category: envelope.category || categoryCode,
         period: envelope.period,
-        availableAmount: envelope.availableAmount,
+        availableAmount: currentAvailable,
       },
-      currentAvailable: envelope.availableAmount,
+      currentAvailable,
       channel: channelCode,
       category: categoryCode,
       period: fiscalPeriod,

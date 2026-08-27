@@ -65,14 +65,13 @@ export class BudgetEnvelope extends BaseEntity {
   })
   consumedAmount!: number;
 
-  @Column({
-    name: 'available_amount',
-    type: 'decimal',
-    precision: 15,
-    scale: 2,
-    transformer: DecimalTransformer,
-  })
-  availableAmount!: number;
+  // `available_amount` KALDIRILDI (`INV-B-009` / `Z47`, migration
+  // `1814000000000-DropAvailableAmountFromBudgetEnvelopes.ts`). Hiçbir
+  // reserve/commit/release yolu bu kolonu güncellemiyordu — kanonik
+  // "kullanılabilir" kaynağı `main.v_budget_summary`'dir (BudgetSummaryView
+  // entity'si, `allocated - reserved(incl. COMMIT) - consumed`, sorgu anında
+  // türetilir). `T-101` dersi: burada bir `@Column` bırakılırsa bir sonraki
+  // `migration:generate` kolonu gerekçesiz geri getirir — bilerek YOK.
 
   @Column({
     type: 'enum',
