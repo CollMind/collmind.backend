@@ -40,9 +40,21 @@ import { UserRole } from '../../../../database/entities/user.entity';
 // davranış korunur); erişimi hâlâ tek başına SettlementGuard denetliyor.
 // ⛔ `Z43 §4` (`B3` istisna-dalgası `Faz-B`, 2026-08-27) — `CapabilityGuard`
 // sınıf seviyesine EKLENDİ (`summary`'nin `SUMMARY_READ`'e göçü için şart).
-// Guard `@RequireCapability` metadata'sı yoksa `true` döner (fail-open) —
-// `close/:agreementId` (metadata yok) ETKİLENMİYOR, `SettlementGuard`
-// erişimi denetlemeye devam ediyor.
+//
+// ⛔⛔ BAYAT UYARI, `B4` `A′` keskinleştirme-2 İLE DÜZELTİLDİ (`Z44`, "`DUR`
+// ÇÖZÜLDÜ — SEÇENEK 1", 2026-08-27): yukarıdaki `~~Guard @RequireCapability
+// metadata'sı yoksa true döner (fail-open) — close/:agreementId ETKİLENMİYOR~~`
+// cümlesi `CapabilityGuard` `default-deny`'a döndükten SONRA (`A′`) TAM
+// TERSİNE döndü — bir AKTİF-YANLIŞ güvenlik argümanına dönüşürdü (DISIPLIN:
+// "guard'ın davranışı değişirken ona yaslanan her belgelenmiş-varsayım AYNI
+// diff'te güncellenir"). `CapabilityGuard` artık metadata YOKKEN `false`
+// döner (`§6` — DEFAULT-DENY); `close/:agreementId` yine de ETKİLENMİYOR,
+// ama SEBEP FARKLI: rota `@UseGuards(SettlementGuard)` taşıyor ve
+// `SettlementGuard` `KNOWN_DOMAIN_GUARD_NAMES`'te TANINAN bir domain-guard
+// — `CapabilityGuard` bu rotayı `§3`'te (TANINAN DOMAIN-GUARD adımı) MUAF
+// sayar, fail-open'a HİÇ ulaşmaz. Bu muafiyet `domain-guard-parity.sh` +
+// `alan-guard-ratchet.sh` ile korunur (bkz. `capability.guard.ts` dosya
+// başı).
 @ApiTags('Settlements (Actuals-First)')
 @ApiBearerAuth()
 @Controller('actuals-first/settlements')

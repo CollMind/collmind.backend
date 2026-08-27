@@ -173,9 +173,14 @@ fi
 # adlarını KULLANMAZ — kendi sentetik adlarını kullanır ki üretim listesiyle
 # YANLIŞLIKLA örtüşüp kanalı yanlış doğrulamasın; migration-schema.sh'in
 # GUARD_MIG_DIR deseniyle aynı aile).
-# CapabilityGuard neden INFRA: capability.guard.ts:38-40 — yetenek metadata'sı
-# YOKSA canActivate TRUE döner, yani guard TEK BAŞINA koruma SAĞLAMAZ (kod
-# okunarak doğrulandı, varsayılmadı). DOMAIN sayılsaydı yalnız CapabilityGuard
+# CapabilityGuard neden INFRA: ⚠️ REVİZE (A-prime review S1, 2026-08-27) —
+# ~~capability.guard.ts:38-40: yetenek metadata'sı YOKSA canActivate TRUE
+# döner~~ ARTIK YANLIŞ: `B4 A-prime` guard'ı DEFAULT-DENY yaptı, metadata
+# yokken FALSE döner. Cümle `A-prime` altında AKTİF-YANLIŞTI ve bu bloğun
+# YÜRÜRLÜKTEKİ gerekçesiydi. YENİ GEREKÇE (sınıflandırma DEĞİŞMİYOR, yalnız
+# dayanağı): CapabilityGuard bir YETENEK kapısıdır, bir ALAN kapısı değil —
+# ALAN_GUARD kovası "rota kendi erişimini KENDİ domain-guard'ı ile zorluyor"
+# demektir; CapabilityGuard bunu YAPMAZ, yetenek bildirimine bakar. DOMAIN sayılsaydı yalnız CapabilityGuard
 # taşıyan (ama @RequireCapability taşımayan) bir rota ALAN_GUARD = "korunuyor"
 # diye sınıflanırdı — oysa KORUMASIZ. INFRA fail-safe taraftır; fixture ile
 # ölçüldü (Dalga-M/W1 review D): DOMAIN altında böyle bir rota FILTRESIZ'den
@@ -303,8 +308,9 @@ else
       echo "!! [$GUARD_NAME] SETUP HATASI: @RequireCapability taşıyan rota(lar) CapabilityGuard ZİNCİRDE DEĞİL:"
       printf '%s\n' "$CAP_NO_GUARD" | sed 's/^/!!   /'
       echo "!! @RequireCapability DEKORATÖRÜ YETMEZ — GUARD ZİNCİRİ de gerekir."
-      echo "!! capability.guard.ts:38-40: yetenek metadata'sı bulunamazsa canActivate"
-      echo "!! TRUE döner. Guard zincirde yoksa metadata HİÇ OKUNMAZ; ve @Roles de"
+      echo "!! capability.guard.ts (A-prime sonrasi, 2026-08-27): guard ZINCIRDE ise"
+      echo "!! ve yetenek metadata'si YOKSA canActivate FALSE doner (DEFAULT-DENY)."
+      echo "!! Ama guard ZINCIRDE DEGILSE metadata HIC OKUNMAZ; ve @Roles de"
       echo "!! kaldırıldığı için RolesGuard da true döner ⇒ rota HER kimliği"
       echo "!! doğrulanmış kullanıcıya AÇILIR (BİLEŞİMSEL FAIL-OPEN, Dalga-M S2)."
       echo "!! Bu bir KOVA DEĞİL, KURULUM HATASIDIR."
@@ -357,6 +363,34 @@ ROLES_N="$(awk -F'\t' '$1=="ROLES"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 ALAN_N="$(awk -F'\t' '$1=="ALAN_GUARD"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 CAP_N="$(awk -F'\t' '$1=="CAPABILITY"' "$CLASSIFIED" | wc -l | tr -d ' ')"
 FILTRESIZ_N="$(awk -F'\t' '$1=="FILTRESIZ"' "$CLASSIFIED" | wc -l | tr -d ' ')"
+
+# --- --list-roles: bugünkü ROLES envanterini bas (LİSTE, sayı DEĞİL) -------
+# `roles-ratchet.sh`'ın kaynağı — İKİNCİ bir parser YAZILMADI (İlke: mevcut
+# mekanizmayı yeniden kullan, `route-scope.sh`'ın kendi yorumundaki ders).
+if [ "${1:-}" = "--list-roles" ]; then
+  echo "# route-scope ROLES envanteri — B4 A′ kalan-@Roles ratchet kaynağı (Z44)"
+  echo "# date:    $(date +%Y-%m-%d)"
+  echo "# commit:  $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  echo "# scope:   $TOTAL_ROUTES rota (src/**/*.controller.ts, $CONTROLLER_COUNT dosya)"
+  echo "# format:  R <dosya>|<YÖNTEM>|<yol> <satır>"
+  echo "#   anahtar <dosya>|<YÖNTEM>|<yol> — RATCHET yalnız bunu karşılaştırır."
+  awk -F'\t' '$1=="ROLES" { printf "R %s %s\n", $2, $4 }' "$CLASSIFIED" | LC_ALL=C sort
+  exit 0
+fi
+
+# --- --list-alan-guard: bugünkü ALAN_GUARD envanterini bas (LİSTE, sayı
+# DEĞİL) — `alan-guard-ratchet.sh`'ın kaynağı, `--list-roles` İLE AYNI
+# ŞEKİL (İKİNCİ bir parser YAZILMADI).
+if [ "${1:-}" = "--list-alan-guard" ]; then
+  echo "# route-scope ALAN_GUARD envanteri — B4 A′ keskinleştirme-2 ratchet kaynağı (Z44)"
+  echo "# date:    $(date +%Y-%m-%d)"
+  echo "# commit:  $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  echo "# scope:   $TOTAL_ROUTES rota (src/**/*.controller.ts, $CONTROLLER_COUNT dosya)"
+  echo "# format:  G <dosya>|<YÖNTEM>|<yol> <satır>"
+  echo "#   anahtar <dosya>|<YÖNTEM>|<yol> — RATCHET yalnız bunu karşılaştırır."
+  awk -F'\t' '$1=="ALAN_GUARD" { printf "G %s %s\n", $2, $4 }' "$CLASSIFIED" | LC_ALL=C sort
+  exit 0
+fi
 
 # --- --baseline: bugünkü FILTRESIZ envanterini bas (LİSTE, sayı DEĞİL) ------
 if [ "${1:-}" = "--baseline" ]; then

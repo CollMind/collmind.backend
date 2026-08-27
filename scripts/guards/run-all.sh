@@ -170,6 +170,54 @@ else
   exit 1
 fi
 
+# roles-ratchet'in de kendi self-test'i AYRI bir dosyadır (`B4` `A′`, `Z44
+# §2/§4`) — aynı gerekçe: bu guard `route-scope.sh --list-roles`'u fixture
+# ağacına yönlendirerek sınanır (İKİNCİ bir parser/fixture seti YAZILMADI —
+# route-scope'un kendi fixture'ı yeniden kullanıldı). Aynı zincirleme kuralı
+# burada da geçerli: self-test dosyası VAR ama hiçbir gerçek kapı yolu onu
+# ÇAĞIRMIYORSA "doğrulama bir kapıdır, durdurmuyorsa doğrulama değildir"
+# ihlal edilir.
+echo "=== self-test (roles-ratchet) ==="
+if bash "$DIR/roles-ratchet-self-test.sh"; then
+  echo "(roles-ratchet fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! roles-ratchet kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
+# alan-guard-ratchet'in de kendi self-test'i AYRI bir dosyadır (`B4` `A′`
+# keskinleştirme-2, `Z44`) — `roles-ratchet-self-test.sh` ile AYNI desen
+# (aynı fixture ağacı, farklı kova). Aynı zincirleme kuralı burada da
+# geçerli: self-test dosyası VAR ama hiçbir gerçek kapı yolu onu
+# ÇAĞIRMIYORSA "doğrulama bir kapıdır, durdurmuyorsa doğrulama değildir"
+# ihlal edilir.
+echo "=== self-test (alan-guard-ratchet) ==="
+if bash "$DIR/alan-guard-ratchet-self-test.sh"; then
+  echo "(alan-guard-ratchet fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! alan-guard-ratchet kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
+# domain-guard-parity'nin de kendi self-test'i AYRI bir dosyadır (`B4` `A′`
+# keskinleştirme-1, `Z44`) — bu guard İKİ bağımsız kaynağı (route-scope.sh
+# KAYNAK A, capability.guard.ts KAYNAK B) çakıştırıyor, fixture'ları geçici
+# dosya KOPYALARIdır (route-scope/roles-ratchet ailesinin SRC_DIR fixture
+# desenine göre FARKLI — kaynak tam bir kaynak dosya, bir dizin değil).
+# Aynı zincirleme kuralı burada da geçerli: self-test dosyası VAR ama
+# hiçbir gerçek kapı yolu onu ÇAĞIRMIYORSA "doğrulama bir kapıdır,
+# durdurmuyorsa doğrulama değildir" ihlal edilir.
+echo "=== self-test (domain-guard-parity) ==="
+if bash "$DIR/domain-guard-parity-self-test.sh"; then
+  echo "(domain-guard-parity fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! domain-guard-parity kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 # single-mechanism'in self-test'i AYRI BİR DOSYA DEĞİL — `--self-test`
 # bayrağıyla AYNI dosyada, ve bu daha İYİ: self-test ile gerçek kapı AYNI
 # `run_gate()`'i çağırıyor, yani §2.7 #8'in ("bir kontrolü sınayan test o

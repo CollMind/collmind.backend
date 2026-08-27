@@ -19,7 +19,7 @@ module.exports = function (options, webpack) {
 
   // ForkTsCheckerWebpackPlugin bellek limitini artır veya devre dışı bırak
   const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
-  
+
   // Mevcut plugin'leri kontrol et ve ForkTsCheckerWebpackPlugin'i güncelle
   const plugins = options.plugins
     .filter((plugin) => {
@@ -30,6 +30,20 @@ module.exports = function (options, webpack) {
 
   return {
     ...options,
+    // ⛔ SINIF ADLARI KORUNMALI (`B4 A-prime`, 2026-08-27 — review `S2`).
+    // `CapabilityGuard` domain-guard muafiyetini `constructor.name` ile
+    // çözüyor (`KNOWN_DOMAIN_GUARD_NAMES`, `src/common/guards/
+    // capability.guard.ts`). Minify sınıf adlarını değiştirirse muafiyet
+    // DÜŞER — yön güvenlidir (fail-CLOSED, `403`), ama sonuç bir ÜRETİM
+    // KESİNTİSİDİR: `settlements/close` erişilemez hâle gelir ve bunu ilk
+    // gören KULLANICI olur.
+    // Bugün `@nestjs/cli` varsayılanı `mode: 'none'` (ölçüldü: `dist/main.js`
+    // içinde `SettlementGuard` 8 kez geçiyor) — ama o ÖRTÜK bir varsayılandı
+    // ve hiçbir kapı onu tutmuyordu. Artık AÇIKÇA yazılı:
+    optimization: {
+      ...(options.optimization || {}),
+      minimize: false,
+    },
     externals: externals,
     output: {
       ...options.output,

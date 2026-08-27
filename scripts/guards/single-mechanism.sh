@@ -47,10 +47,34 @@ run_gate() {
   # ROTA — ve route-scope onu "PUBLIC" diye sınıflar, yani hiçbir kapı görmez.
   # SELF×CAPABILITY de aynı aile (iki farklı yüklem, hangisi bağlıyor?).
   # Bugün üçü de 0 (ölçüldü), ama kova sırası bunları SESSİZCE çözüyordu.
-  both=$(printf '%s\n' "$out" | awk -F'\t' '
+  # ⛔ EVREN KAYNAK A'DAN: `route-scope.sh`'ın KNOWN_DOMAIN_GUARDS'ı aynen
+  # geçirilir — İKİNCİ bir liste YAZILMAZ. `domain-guard-parity.sh` zaten
+  # KAYNAK A ↔ KAYNAK B eşitliğini zorluyor; buraya üçüncü bir kopya koymak
+  # `İlke-4` olurdu (`docs/DISIPLIN.md`: türetilmiş > taranmış > yazılmış).
+  local _dg=" ${ROUTE_SCOPE_DOMAIN_GUARDS:-ReversalGuard SettlementGuard} "
+  both=$(printf '%s\n' "$out" | awk -F'\t' -v DG="$_dg" '
+    function has_domain(csv,   n,a,i) {
+      if (csv=="-" || csv=="") return 0
+      n=split(csv,a,",")
+      for(i=1;i<=n;i++) if (index(DG," " a[i] " ")>0) return 1
+      return 0
+    }
     ($5=="1" && $9=="1") { printf "%s\t%s\t%s\t%s\t@Roles+@RequireCapability\n",$1,$2,$3,$4 }
     ($6=="1" && $9=="1") { printf "%s\t%s\t%s\t%s\t@Public+@RequireCapability\n",$1,$2,$3,$4 }
     ($8=="1" && $9=="1") { printf "%s\t%s\t%s\t%s\t@SelfScoped+@RequireCapability\n",$1,$2,$3,$4 }
+    # DORDUNCU CIFT (A-prime review B1, 2026-08-27) — Z44 keskinlestirme-1
+    # CapabilityGuard bir DORDUNCU muafiyet ureticisi kazandi (TANINAN
+    # DOMAIN-GUARD) ama bu awk programina EKLENMEMISTI ⇒ @RequireCapability
+    # + domain-guard cifti HICBIR KAPI tarafindan gorulmuyordu. Olculdu
+    # (fixture): route-scope EXIT=0 · single-mechanism EXIT=0 · parity
+    # konusu degil · ratchet tabani degismiyor. Poz. kontrol: ayni fixture
+    # @Roles+cap ile EXIT=3 veriyordu ⇒ arac kor degil, KAPSAMI eksikti.
+    # $7 = guardsCSV (controller ∪ rota seviyesi birlesimi, route-scope.awk:8)
+    # NOT: bu blok TEK TIRNAKLI bir awk programinin icindedir — Turkce kesme
+    # isareti U+0027 tirnagi KAPATIR. Bu satirlarda kesme isareti
+    # KULLANILMAZ. (Bu uyarinin ILK yazimi kendi kesme isaretiyle sozdizimi
+    # hatasi verdi — kurali yazdigin tur, o kurali en cok ihlal ettigin tur.)
+    ($9=="1" && has_domain($7)) { printf "%s\t%s\t%s\t%s\t@RequireCapability+TANINAN-DOMAIN-GUARD\n",$1,$2,$3,$4 }
   ' || true)
 
   echo "=== [single-mechanism] rota başına tek mekanizma ==="

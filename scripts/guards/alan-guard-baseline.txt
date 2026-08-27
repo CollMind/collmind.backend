@@ -1,0 +1,8 @@
+# route-scope ALAN_GUARD envanteri — B4 A′ keskinleştirme-2 ratchet kaynağı (Z44)
+# date:    2026-08-27
+# commit:  10a387b
+# scope:   222 rota (src/**/*.controller.ts, 33 dosya)
+# format:  G <dosya>|<YÖNTEM>|<yol> <satır>
+#   anahtar <dosya>|<YÖNTEM>|<yol> — RATCHET yalnız bunu karşılaştırır.
+G src/modules/modes/actuals-first/reversal/reversal.controller.ts|POST|actuals-first/reversals/agreement-transaction/:transactionId 38
+G src/modules/modes/actuals-first/settlement/settlement.controller.ts|POST|actuals-first/settlements/close/:agreementId 100

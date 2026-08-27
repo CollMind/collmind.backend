@@ -1,0 +1,21 @@
+# route-scope ROLES envanteri — B4 A′ kalan-@Roles ratchet kaynağı (Z44)
+# date:    2026-08-27
+# commit:  10a387b
+# scope:   222 rota (src/**/*.controller.ts, 33 dosya)
+# format:  R <dosya>|<YÖNTEM>|<yol> <satır>
+#   anahtar <dosya>|<YÖNTEM>|<yol> — RATCHET yalnız bunu karşılaştırır.
+R src/modules/modes/actuals-first/agreement/agreement.controller.ts|POST|agreements/:id/approve 184
+R src/modules/modes/actuals-first/agreement/agreement.controller.ts|POST|agreements/:id/reject 209
+R src/modules/modes/planning-first/plan/plan.controller.ts|GET|plans/pending-approvals 116
+R src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/approve 443
+R src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/escalate-to-finance 407
+R src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/reject 474
+R src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/review 381
+R src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/budget-at-risk 137
+R src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/budget-variance 193
+R src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/cash-flow-projection 222
+R src/modules/shared/finance-reporting/finance-reporting.controller.ts|GET|finance-reporting/variance-analysis 170
+R src/modules/shared/lta/lta-agreement.controller.ts|PATCH|lta-agreements/:id 110
+R src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements 47
+R src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/:id/activate 126
+R src/modules/shared/lta/lta-agreement.controller.ts|POST|lta-agreements/:id/terminate 141
