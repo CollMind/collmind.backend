@@ -1,7 +1,7 @@
 /**
  * tenant-capability-boundary.e2e-spec.ts
  *
- * `B3 W2` göçü — `tenant.controller.ts`'in SEKİZ rotası `@Roles(ADMIN)` →
+ * `B3 W2` göçü — `tenant.controller.ts`'in rotaları `@Roles(ADMIN)` →
  * `@RequireCapability(TENANT_READ|TENANT_WRITE)` göçürüldü. `ROLE_CAPABILITIES`'te
  * ikisi de yalnız `UserRole.ADMIN`'de (`capabilities.ts:667-669`) — yani göç
  * öncesi/sonrası davranış birebir aynı olmalı: ADMIN geçer, ADMIN dışı HER rol 403.
@@ -11,10 +11,18 @@
  * CapabilityGuard'dan geldiği ancak `403` ALMAYAN bir kardeş (ADMIN → guard
  * geçiyor) yanında yazılıysa ayırt edilir.
  *
- * ⚠️ Yan etkili dört rota (`POST /tenants`, `PATCH/DELETE /tenants/:id`,
- * `POST /tenants/:id/activate|suspend`) `agreement-transaction-role-boundary`
- * numarasıyla yazıldı: izinli rol için de gövde/hedef KASTEN geçersiz —
- * guard geçsin, servis/ValidationPipe reddetsin (400/404), DB'ye HİÇBİR SATIR
+ * ⛔ `T-307-m2` / `Z46 §1` (2026-08-27) — `POST /tenants` (create) ·
+ * `DELETE /tenants/:id` (remove) · `GET /tenants` (findAll/liste) BURADAN
+ * KALDIRILDI: bu rotalar artık YOK (yaşam-döngüsü operatör-yoluna taşındı,
+ * bkz. `tenant.controller.ts` başlık yorumu). Bu dosyanın onlara ait
+ * describe blokları da kaldırıldı — kalan sınama yüzeyi: `GET /tenants/:id`,
+ * `GET /tenants/:id/stats`, `PATCH /tenants/:id`, `POST /tenants/:id/
+ * activate|suspend` (tümü self-tenant, kiracı-içi meşru yüzey).
+ *
+ * ⚠️ Yan etkili rotalar (`PATCH /tenants/:id`, `POST /tenants/:id/
+ * activate|suspend`) `agreement-transaction-role-boundary` numarasıyla
+ * yazıldı: izinli rol için de hedef KASTEN geçersiz (kendi tenant'ı DEĞİL)
+ * — guard geçsin, self-tenant guard reddetsin (403), DB'ye HİÇBİR SATIR
  * YAZILMASIN.
  *
  * ⛔ VE KORUMA BU NUMARANIN KENDİSİDİR — `T-047` DEĞİL.
@@ -35,13 +43,12 @@
  * `test/tenant-cross-tenant-isolation.e2e-spec.ts`'te (iki-tenant fixture,
  * gerçek satır taşıyan T2).
  *
- *   POST /tenants                → name 'x' (MinLength(3) ihlali) → ADMIN 400
- *   PATCH/DELETE /tenants/:id    → rastgele (var olmayan) UUID     → ADMIN 403 (self-tenant guard)
+ *   PATCH /tenants/:id           → rastgele (var olmayan) UUID     → ADMIN 403 (self-tenant guard)
  *   POST /tenants/:id/activate   → rastgele (var olmayan) UUID     → ADMIN 403 (self-tenant guard)
  *   POST /tenants/:id/suspend    → rastgele (var olmayan) UUID     → ADMIN 403 (self-tenant guard)
  *
- * Salt-okunur üç rota (`GET /tenants`, `GET /tenants/:id`, `GET
- * /tenants/:id/stats`) doğrudan pinlenir — DB'ye zaten yazmıyorlar.
+ * Salt-okunur rotalar (`GET /tenants/:id`, `GET /tenants/:id/stats`)
+ * doğrudan pinlenir — DB'ye zaten yazmıyorlar.
  */
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
@@ -79,25 +86,6 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
 
   afterAll(async () => {
     await closeTestApp();
-  });
-
-  describe('GET /tenants (TENANT_READ)', () => {
-    it('ADMIN → 200 (POZ.KONTROL — guard GEÇİYOR)', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/tenants')
-        .set(admin.authHeader());
-      expect(res.status).toBe(200);
-    });
-
-    it.each(OTHER_ROLES)(
-      '%s → 403 (TENANT_READ yalnız ADMIN)',
-      async (_l, getUser) => {
-        const res = await request(app.getHttpServer())
-          .get('/tenants')
-          .set(getUser().authHeader());
-        expect(res.status).toBe(403);
-      },
-    );
   });
 
   describe('GET /tenants/:id (TENANT_READ)', () => {
@@ -161,29 +149,6 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
     });
   });
 
-  describe('POST /tenants (TENANT_WRITE) — guard GEÇSİN, DTO REDDETSİN', () => {
-    const INVALID_BODY = { name: 'x' }; // MinLength(3) ihlali
-
-    it('ADMIN → 400 (POZ.KONTROL — guard geçti, ValidationPipe reddetti)', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/tenants')
-        .set(admin.authHeader())
-        .send(INVALID_BODY);
-      expect(res.status).toBe(400);
-    });
-
-    it.each(OTHER_ROLES)(
-      '%s → 403 (TENANT_WRITE yalnız ADMIN)',
-      async (_l, getUser) => {
-        const res = await request(app.getHttpServer())
-          .post('/tenants')
-          .set(getUser().authHeader())
-          .send(INVALID_BODY);
-        expect(res.status).toBe(403);
-      },
-    );
-  });
-
   describe('PATCH /tenants/:id (TENANT_WRITE) — guard GEÇSİN, self-tenant guard reddetsin', () => {
     // T-307: NONEXISTENT_UUID admin'in kendi tenant'ı olamayacağı için
     // self-tenant guard servisin 404'ünden ÖNCE ateşliyor — hiçbir satır
@@ -210,32 +175,6 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
           .patch(`/tenants/${NONEXISTENT_UUID}`)
           .set(getUser().authHeader())
           .send({ name: 'Guard Boundary Test Tenant' });
-        expect(res.status).toBe(403);
-      },
-    );
-  });
-
-  describe('DELETE /tenants/:id (TENANT_WRITE) — guard GEÇSİN, self-tenant guard reddetsin', () => {
-    it('ADMIN → 403 (POZ.KONTROL — capability guard geçti, self-tenant guard reddetti; T-307)', async () => {
-      const res = await request(app.getHttpServer())
-        .delete(`/tenants/${NONEXISTENT_UUID}`)
-        .set(admin.authHeader());
-      expect(res.status).toBe(403);
-      // ⛔ AYIRT EDİCİ (review `B4`): status TEK BAŞINA yetmez — bu testte
-      // ADMIN de diğer roller de 403 bekliyor ⇒ POZİTİF KONTROL ÇÖKMÜŞTÜ.
-      // `TENANT_WRITE` yarın ADMIN'den alınsa test YEŞİL KALIRDI. İki 403'ü
-      // AYIRAN ŞEY MESAJDIR: CapabilityGuard `false` → Nest'in varsayılan
-      // 'Forbidden resource'; assertSelfTenant → kendi cümlesi.
-      // ⇒ ADMIN'in capability kapısını GEÇTİĞİ burada kanıtlanır.
-      expect(String(res.body.message)).toContain('kendi kiracınızı');
-    });
-
-    it.each(OTHER_ROLES)(
-      '%s → 403 (TENANT_WRITE yalnız ADMIN)',
-      async (_l, getUser) => {
-        const res = await request(app.getHttpServer())
-          .delete(`/tenants/${NONEXISTENT_UUID}`)
-          .set(getUser().authHeader());
         expect(res.status).toBe(403);
       },
     );

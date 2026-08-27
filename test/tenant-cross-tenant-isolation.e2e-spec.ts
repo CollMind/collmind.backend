@@ -20,6 +20,12 @@
  * DEĞİLDİR (`Z45 §2` madde 3) — T2 burada GERÇEK bir satır taşıyor (kendi
  * `name`/`status`/`id`'si ile), boş sonuç `T1-ADMIN → T2` reddinin
  * DELİLİ değil, T2'nin HİÇ VAR OLMAMASININ delili olurdu.
+ *
+ * ⛔ `T-307-m2` / `Z46 §1` (2026-08-27) — `DELETE /tenants/:id` (remove) ve
+ * `GET /tenants` (findAll/liste) rotaları KALDIRILDI (yaşam-döngüsü
+ * operatör-yoluna taşındı, bkz. `tenant.controller.ts`). Bu iki rotaya ait
+ * testler buradan da kaldırıldı — kalan yüzey (`GET /tenants/:id`, `PATCH`,
+ * `activate`, `suspend`, `stats`) hâlâ self-tenant guard'la sınanıyor.
  */
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
@@ -114,19 +120,6 @@ describe('Tenant routes — cross-tenant isolation (T-307, E2E)', () => {
     expect(check[0].name).toBe(tenantBName);
   });
 
-  it('[DAVRANIŞSAL][YAPISAL] DELETE /tenants/:id — T1-ADMIN → T2 → 403, T2 silinmez', async () => {
-    const res = await request(app.getHttpServer())
-      .delete(`/tenants/${tenantBId}`)
-      .set(admin.authHeader());
-    expect(res.status).toBe(403);
-
-    const check = await dataSource.query(
-      `SELECT deleted_at FROM main.tenants WHERE id = $1`,
-      [tenantBId],
-    );
-    expect(check[0].deleted_at).toBeNull();
-  });
-
   it('[DAVRANIŞSAL][YAPISAL] POST /tenants/:id/activate — T1-ADMIN → T2 → 403', async () => {
     const res = await request(app.getHttpServer())
       .post(`/tenants/${tenantBId}/activate`)
@@ -160,17 +153,5 @@ describe('Tenant routes — cross-tenant isolation (T-307, E2E)', () => {
       .get(`/tenants/${admin.tenantId}`)
       .set({ Authorization: `Bearer ${tenantBToken}` });
     expect(res.status).toBe(403);
-  });
-
-  // ── GET /tenants (liste) — T2-ADMIN kendi kiracısını görür, T1'i GÖRMEZ ─
-  it('[DAVRANIŞSAL][YAPISAL] GET /tenants — T2-ADMIN listesinde yalnız T2 var, T1 YOK', async () => {
-    const res = await request(app.getHttpServer())
-      .get('/tenants')
-      .set({ Authorization: `Bearer ${tenantBToken}` });
-    expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    const ids = res.body.map((t: { id: string }) => t.id);
-    expect(ids).toEqual([tenantBId]);
-    expect(ids).not.toContain(admin.tenantId);
   });
 });

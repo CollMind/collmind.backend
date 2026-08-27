@@ -2,13 +2,17 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { TenantService } from './tenant.service';
 import { TenantRepository } from './tenant.repository';
 import { Tenant, TenantStatus } from '../../database/entities/tenant.entity';
-import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+
+// ⛔ `T-307-m2` / `Z46 §1` (2026-08-27) — `create`/`findAll`/`remove` test
+// blokları buradan KALDIRILDI; ilgili servis metotları artık YOK (bkz.
+// `tenant.service.ts` başlık yorumu). Yaşam-döngüsü SCRIPT + SEED yoluyla —
+// bu servisin unit testinin kapsamı dışında.
 
 describe('TenantService', () => {
   let service: TenantService;
@@ -53,117 +57,6 @@ describe('TenantService', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
-  });
-
-  describe('create', () => {
-    const createTenantDto: CreateTenantDto = {
-      name: 'New Tenant',
-      domain: 'new-tenant',
-    };
-
-    it('should create a new tenant successfully', async () => {
-      tenantRepository.findByName.mockResolvedValue(null);
-      tenantRepository.findByDomain.mockResolvedValue(null);
-      tenantRepository.create.mockReturnValue(mockTenant);
-      tenantRepository.save.mockResolvedValue(mockTenant);
-
-      const result = await service.create(createTenantDto);
-
-      expect(tenantRepository.findByName).toHaveBeenCalledWith(
-        createTenantDto.name,
-      );
-      expect(tenantRepository.findByDomain).toHaveBeenCalledWith(
-        createTenantDto.domain,
-      );
-      expect(tenantRepository.create).toHaveBeenCalled();
-      expect(tenantRepository.save).toHaveBeenCalled();
-      expect(result).toEqual(mockTenant);
-    });
-
-    it('should throw ConflictException if tenant with name already exists', async () => {
-      tenantRepository.findByName.mockResolvedValue(mockTenant);
-
-      await expect(service.create(createTenantDto)).rejects.toThrow(
-        ConflictException,
-      );
-      expect(tenantRepository.findByName).toHaveBeenCalledWith(
-        createTenantDto.name,
-      );
-    });
-
-    it('should throw ConflictException if domain is already taken', async () => {
-      tenantRepository.findByName.mockResolvedValue(null);
-      tenantRepository.findByDomain.mockResolvedValue(mockTenant);
-
-      await expect(service.create(createTenantDto)).rejects.toThrow(
-        ConflictException,
-      );
-      expect(tenantRepository.findByDomain).toHaveBeenCalledWith(
-        createTenantDto.domain,
-      );
-    });
-
-    it('should convert date strings to Date objects', async () => {
-      const dtoWithDates: CreateTenantDto = {
-        ...createTenantDto,
-        subscriptionStartDate: '2024-01-01',
-        subscriptionEndDate: '2024-12-31',
-      };
-
-      tenantRepository.findByName.mockResolvedValue(null);
-      tenantRepository.findByDomain.mockResolvedValue(null);
-      tenantRepository.create.mockReturnValue(mockTenant);
-      tenantRepository.save.mockResolvedValue(mockTenant);
-
-      await service.create(dtoWithDates);
-
-      expect(tenantRepository.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subscriptionStartDate: expect.any(Date),
-          subscriptionEndDate: expect.any(Date),
-        }),
-      );
-    });
-
-    it('should allow creating tenant without domain', async () => {
-      const dtoWithoutDomain: CreateTenantDto = {
-        name: 'New Tenant',
-      };
-
-      tenantRepository.findByName.mockResolvedValue(null);
-      tenantRepository.create.mockReturnValue(mockTenant);
-      tenantRepository.save.mockResolvedValue(mockTenant);
-
-      const result = await service.create(dtoWithoutDomain);
-
-      expect(tenantRepository.findByDomain).not.toHaveBeenCalled();
-      expect(result).toEqual(mockTenant);
-    });
-  });
-
-  describe('findAll', () => {
-    // T-307 / Z45 §2: `findAll` no longer lists every tenant in the DB — it
-    // returns the caller's OWN tenant (as a 1-element array) or an empty
-    // array. `tenants` has no `tenant_id` column, so this is the only place
-    // the scope can be enforced (bkz. `tenant.service.ts` başlık yorumu).
-    it("returns the caller's own tenant as a single-element array", async () => {
-      tenantRepository.findOne.mockResolvedValue(mockTenant);
-
-      const result = await service.findAll(mockTenantId);
-
-      expect(tenantRepository.findOne).toHaveBeenCalledWith({
-        where: { id: mockTenantId },
-      });
-      expect(result).toEqual([mockTenant]);
-    });
-
-    it('returns an empty array when the caller has no tenant row', async () => {
-      tenantRepository.findOne.mockResolvedValue(null);
-
-      const result = await service.findAll('nonexistent-tenant');
-
-      expect(result).toEqual([]);
-    });
   });
 
   describe('findOne', () => {
@@ -274,28 +167,6 @@ describe('TenantService', () => {
       expect(tenantRepository.findByName).not.toHaveBeenCalled();
       expect(tenantRepository.findByDomain).not.toHaveBeenCalled();
       expect(result.status).toBe(TenantStatus.SUSPENDED);
-    });
-  });
-
-  describe('remove', () => {
-    it('should soft remove tenant', async () => {
-      tenantRepository.findOne.mockResolvedValue(mockTenant);
-      tenantRepository.softRemove.mockResolvedValue(mockTenant);
-
-      await service.remove(mockTenantId, mockTenantId);
-
-      expect(tenantRepository.findOne).toHaveBeenCalledWith({
-        where: { id: mockTenantId },
-      });
-      expect(tenantRepository.softRemove).toHaveBeenCalledWith(mockTenant);
-    });
-
-    // T-307 headline bug: "a tenant's ADMIN could delete ANOTHER tenant".
-    it('[YAPISAL] refuses to remove another tenant (cross-tenant delete pin)', async () => {
-      await expect(
-        service.remove('T2-id', 'T1-caller-tenant-id'),
-      ).rejects.toThrow(ForbiddenException);
-      expect(tenantRepository.softRemove).not.toHaveBeenCalled();
     });
   });
 

@@ -1,8 +1,8 @@
 # lint-ratchet baseline (backend) — T-113 ratchet reference
-# date:    2026-08-26
-# commit:  699bac2
+# date:    2026-08-27
+# commit:  15ef8a1
 # guard:   lint-ratchet v1 (backend)
-# total:   189 (file,rule) tuples, 945 problems, 173 files
+# total:   185 (file,rule) tuples, 939 problems, 170 files
 # format:  <file> <ruleId> <errorCount+warningCount for that rule in that file>
 # KEY IS (file, rule), NOT file alone — see this script's header for why.
 src/common/guards/admin-restrictions.guard.ts @typescript-eslint/no-unused-vars 2
@@ -174,7 +174,7 @@ src/modules/shared/spend-calculation/spend-distribution.service.ts @typescript-e
 src/modules/shared/spend-calculation/spend-validation.service.spec.ts @typescript-eslint/no-explicit-any 18
 src/modules/tenant/tenant.repository.ts @typescript-eslint/no-explicit-any 3
 src/modules/tenant/tenant.service.spec.ts @typescript-eslint/no-explicit-any 5
-src/modules/tenant/tenant.service.ts @typescript-eslint/no-explicit-any 2
+src/modules/tenant/tenant.service.ts @typescript-eslint/no-explicit-any 1
 src/modules/user/auth.controller.ts @typescript-eslint/no-explicit-any 2
 src/modules/user/strategies/jwt.strategy.ts @typescript-eslint/no-explicit-any 1
 src/modules/user/user.controller.ts @typescript-eslint/no-explicit-any 3

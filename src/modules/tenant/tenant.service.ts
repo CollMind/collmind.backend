@@ -5,67 +5,21 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { TenantRepository } from './tenant.repository';
-import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { Tenant, TenantStatus } from '../../database/entities/tenant.entity';
 
+// ⛔ `T-307-m2` / `Z46 §1` (2026-08-27) — `create()`/`findAll()`/`remove()`
+// buradan KALDIRILDI (bkz. `tenant.controller.ts` başlık yorumu — aynı
+// gerekçe, tek yazım burada tekrar edilmiyor). Tenant yaşam-döngüsünün
+// bugünkü meşru yolu SCRIPT + SEED (`src/database/seeds/tenant.seed.ts`),
+// sahibi OPERATÖR.
+//
+// `Z45 §2`'nin daha önce buraya yazdığı `findAll` kısıtlama yorumu
+// (çağıranın kendi tenant'ını 1 elemanlı dizi olarak döndürme) bu hükümle
+// KÖKTEN ortadan kalktı — uç artık hiç YOK, kısıtlanacak bir şey kalmadı.
 @Injectable()
 export class TenantService {
   constructor(private readonly tenantRepository: TenantRepository) {}
-
-  async create(createTenantDto: CreateTenantDto): Promise<Tenant> {
-    // Check if tenant with same name exists
-    const existingName = await this.tenantRepository.findByName(
-      createTenantDto.name,
-    );
-    if (existingName) {
-      throw new ConflictException('Tenant with this name already exists');
-    }
-
-    // Check if domain is already taken
-    if (createTenantDto.domain) {
-      const existingDomain = await this.tenantRepository.findByDomain(
-        createTenantDto.domain,
-      );
-      if (existingDomain) {
-        throw new ConflictException('This domain is already taken');
-      }
-    }
-
-    // Convert date strings to Date objects
-    const tenantData: any = { ...createTenantDto };
-    if (createTenantDto.subscriptionStartDate) {
-      tenantData.subscriptionStartDate = new Date(
-        createTenantDto.subscriptionStartDate,
-      );
-    }
-    if (createTenantDto.subscriptionEndDate) {
-      tenantData.subscriptionEndDate = new Date(
-        createTenantDto.subscriptionEndDate,
-      );
-    }
-
-    const tenant = this.tenantRepository.create(tenantData);
-    return this.tenantRepository.save(tenant);
-  }
-
-  /**
-   * `T-307` / `Z45 §2` — `GET /tenants` bir kiracının admin'ine BAŞKA
-   * kiracıların satırlarını göstermiyor artık. Ürün önceden HİÇBİR
-   * `tenant_id` predicate'i taşımıyordu (`tenants` tablosunun kendisi
-   * `tenant_id` sütunu TAŞIMAZ — RLS ile çözülemeyen dört tablodan biri,
-   * `Z45 §2`; çözüm bu yüzden uygulama katmanında). Frontend `getAll()`'u
-   * bir DİZİ olarak tüketiyor (`tenants.service.ts#useTenants` →
-   * `TenantList.tsx`) — rota tamamen ÖLMEDİ (tüketici sıfır değil,
-   * `Z45 §2` madde 1), bunun yerine "kendi kaydım" tekil sonucuna daraldı:
-   * çağıranın KENDİ kiracısı varsa 1 elemanlı, hiç yoksa 0 elemanlı dizi.
-   */
-  async findAll(callerTenantId: string): Promise<Tenant[]> {
-    const own = await this.tenantRepository.findOne({
-      where: { id: callerTenantId },
-    });
-    return own ? [own] : [];
-  }
 
   /**
    * [[T-258]] ⛔ P0 — `relations: ['users']` KALDIRILDI (2026-08-21).
@@ -145,22 +99,6 @@ export class TenantService {
 
     Object.assign(tenant, updateTenantDto);
     return this.tenantRepository.save(tenant);
-  }
-
-  // ⚠️ `T-307` / `Z45 §2` madde 2 — `create`/`delete` (bu metod) için "bir
-  // kiracının admin'inin kiracı yaratması/silmesi" hiçbir `K`-kaydında YOK,
-  // ve tüketici ölçümü SIFIR DEĞİL (`collmind.frontend`: `TenantForm.tsx`
-  // `useCreateTenant`, `TenantList.tsx` `useDeleteTenant` — ikisi de canlı).
-  // Hüküm bu durumda DUR'dur: mekanizmanın kendisi (create/delete admin
-  // yetkisinde mi kalmalı, yoksa operatör-yoluna mı devredilmeli) BURADA
-  // KARARLAŞTIRILMADI — ürün sahibine bırakıldı. Yalnız CANLI cross-tenant
-  // sızıntı (T1'in ADMIN'i T2'yi SİLEBİLİYORDU) kapatıldı: `remove` artık
-  // `findOne`'ın `assertSelfTenant` kontrolünden geçiyor, aynı `update`/
-  // `activate`/`suspend` gibi. Bu, "kim silebilir" sorusuna cevap vermiyor —
-  // yalnız "yalnız KENDİ kiracısını silebilir" diyor.
-  async remove(id: string, callerTenantId: string): Promise<void> {
-    const tenant = await this.findOne(id, callerTenantId);
-    await this.tenantRepository.softRemove(tenant);
   }
 
   async activate(id: string, callerTenantId: string): Promise<Tenant> {

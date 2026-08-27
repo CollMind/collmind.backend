@@ -1,15 +1,12 @@
 import {
   Controller,
   Get,
-  Post,
   Body,
   Patch,
   Param,
   ParseUUIDPipe,
-  Delete,
   UseGuards,
-  HttpCode,
-  HttpStatus,
+  Post,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import {
@@ -19,7 +16,6 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { TenantService } from './tenant.service';
-import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { TenantResponseDto } from './dto/tenant-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -34,37 +30,31 @@ import { CAPABILITIES } from '../../common/authorization/capabilities';
 // tek rol kümesi, mekanik) — davranış KORUNUYOR (pin:
 // `test/tenant-capability-boundary.e2e-spec.ts`, göç öncesi/sonrası
 // birebir: ADMIN geçer, ADMIN dışı HER rol 403).
+//
+// ⛔ `T-307-m2` / `Z46 §1` (2026-08-27) — YAŞAM-DÖNGÜSÜ OPERATÖR-YOLUNA:
+// `POST /tenants` (create) · `DELETE /tenants/:id` (remove) · `GET /tenants`
+// (findAll/liste) buradan KALICI OLARAK KALDIRILDI.
+//
+// Gerekçe (`Z46 §1` hükmü): `ADMIN` bu üründe KİRACI-İÇİ bir rol; kiracı
+// YARATMAK/SİLMEK tanım gereği PLATFORM-SEVİYESİ bir iştir. Kiracı-içi bir
+// yetkinin kiracı-üstü bir nesneye dokunması `T-307`'nin (canlı cross-tenant
+// sızıntı bulgusu) ta kendisiydi — create/delete'i ADMIN'de tutmak aynı
+// sınıfın "ama biz kullanıyoruz" muafiyetli hâli olurdu.
+//
+// Bugünkü (ve tek) meşru yol: SCRIPT + SEED (`src/database/seeds/
+// tenant.seed.ts`), sahibi OPERATÖR — ürün-içi hiçbir `K`-kaydı self-service
+// tenant onboarding TANIMLAMIYOR. Ürünleşirse `Faz-3` kararıyla (bir süzgeç
+// olarak) gelir; bu üründe bugün YOK.
+//
+// GET/PATCH `:id` ve `:id/activate`|`:id/suspend`|`:id/stats` KALDI — bunlar
+// yaşam-döngüsü değil, KENDİ KİRACISININ ayarı (kiracı-içi meşru yüzey,
+// zaten `assertSelfTenant` ile kilitli, bkz. `tenant.service.ts`).
 @ApiTags('Tenants')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 @Controller('tenants')
 export class TenantController {
   constructor(private readonly tenantService: TenantService) {}
-
-  @Post()
-  @RequireCapability(CAPABILITIES.TENANT_WRITE)
-  @ApiOperation({ summary: 'Create a new tenant' })
-  @ApiResponse({
-    status: 201,
-    description: 'Tenant created successfully',
-    type: TenantResponseDto,
-  })
-  @ApiResponse({ status: 409, description: 'Tenant already exists' })
-  create(@Body() createTenantDto: CreateTenantDto) {
-    return this.tenantService.create(createTenantDto);
-  }
-
-  @Get()
-  @RequireCapability(CAPABILITIES.TENANT_READ)
-  @ApiOperation({ summary: 'Get all tenants' })
-  @ApiResponse({
-    status: 200,
-    description: 'List of tenants',
-    type: [TenantResponseDto],
-  })
-  findAll(@CurrentUser('tenantId') callerTenantId: string) {
-    return this.tenantService.findAll(callerTenantId);
-  }
 
   // [[T-258]] ⛔ P0 (2026-08-21): @Roles YOK'tu → her rol (READONLY dahil)
   // erişiyordu, ve servis 9 kullanıcının HAM kaydını (passwordHash dahil)
@@ -102,18 +92,6 @@ export class TenantController {
     @CurrentUser('tenantId') callerTenantId: string,
   ) {
     return this.tenantService.update(id, updateTenantDto, callerTenantId);
-  }
-
-  @Delete(':id')
-  @RequireCapability(CAPABILITIES.TENANT_WRITE)
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete tenant' })
-  @ApiResponse({ status: 204, description: 'Tenant deleted successfully' })
-  remove(
-    @Param('id', ParseUUIDPipe) id: string,
-    @CurrentUser('tenantId') callerTenantId: string,
-  ) {
-    return this.tenantService.remove(id, callerTenantId);
   }
 
   @Post(':id/activate')
