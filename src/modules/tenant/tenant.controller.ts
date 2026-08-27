@@ -11,6 +11,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import {
   ApiTags,
   ApiOperation,
@@ -61,8 +62,8 @@ export class TenantController {
     description: 'List of tenants',
     type: [TenantResponseDto],
   })
-  findAll() {
-    return this.tenantService.findAll();
+  findAll(@CurrentUser('tenantId') callerTenantId: string) {
+    return this.tenantService.findAll(callerTenantId);
   }
 
   // [[T-258]] ⛔ P0 (2026-08-21): @Roles YOK'tu → her rol (READONLY dahil)
@@ -80,8 +81,11 @@ export class TenantController {
     type: TenantResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Tenant not found' })
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.tenantService.findOne(id);
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser('tenantId') callerTenantId: string,
+  ) {
+    return this.tenantService.findOne(id, callerTenantId);
   }
 
   @Patch(':id')
@@ -95,8 +99,9 @@ export class TenantController {
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateTenantDto: UpdateTenantDto,
+    @CurrentUser('tenantId') callerTenantId: string,
   ) {
-    return this.tenantService.update(id, updateTenantDto);
+    return this.tenantService.update(id, updateTenantDto, callerTenantId);
   }
 
   @Delete(':id')
@@ -104,24 +109,33 @@ export class TenantController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete tenant' })
   @ApiResponse({ status: 204, description: 'Tenant deleted successfully' })
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.tenantService.remove(id);
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser('tenantId') callerTenantId: string,
+  ) {
+    return this.tenantService.remove(id, callerTenantId);
   }
 
   @Post(':id/activate')
   @RequireCapability(CAPABILITIES.TENANT_WRITE)
   @ApiOperation({ summary: 'Activate tenant' })
   @ApiResponse({ status: 200, description: 'Tenant activated' })
-  activate(@Param('id', ParseUUIDPipe) id: string) {
-    return this.tenantService.activate(id);
+  activate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser('tenantId') callerTenantId: string,
+  ) {
+    return this.tenantService.activate(id, callerTenantId);
   }
 
   @Post(':id/suspend')
   @RequireCapability(CAPABILITIES.TENANT_WRITE)
   @ApiOperation({ summary: 'Suspend tenant' })
   @ApiResponse({ status: 200, description: 'Tenant suspended' })
-  suspend(@Param('id', ParseUUIDPipe) id: string) {
-    return this.tenantService.suspend(id);
+  suspend(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser('tenantId') callerTenantId: string,
+  ) {
+    return this.tenantService.suspend(id, callerTenantId);
   }
 
   // T-267 (B1 §1e) — KARDEŞ uç: tenant.controller'ın yedi kardeşinin
@@ -131,7 +145,10 @@ export class TenantController {
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get tenant statistics' })
   @ApiResponse({ status: 200, description: 'Tenant statistics' })
-  getStats(@Param('id', ParseUUIDPipe) id: string) {
-    return this.tenantService.getStats(id);
+  getStats(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser('tenantId') callerTenantId: string,
+  ) {
+    return this.tenantService.getStats(id, callerTenantId);
   }
 }

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { BudgetRepository } from './budget.repository';
+import { BudgetSummaryView } from '../../../database/entities/budget-summary.view-entity';
 // T-057: imported for use within this class AND re-exported so mode-service
 // callers (`plan.service.ts`, `agreement-transaction.service.ts`) derive
 // "is this dimension split?" from the SAME guard-error shape without
@@ -1441,6 +1442,30 @@ export class BudgetService {
       );
     }
     return results;
+  }
+
+  /**
+   * INV-B-009 / Z45 §3 — canonical, ledger-derived budget summary for an
+   * ALREADY-RESOLVED envelope id.
+   *
+   * Callers who already hold a `BudgetEnvelope` (from `findEnvelopeByDimensions`
+   * or similar) must NOT trust `envelope.availableAmount` — that column is a
+   * snapshot written only at envelope creation and split time; no reserve/
+   * commit/release path updates it (measured, `INV-B-009`: two of four live
+   * envelopes diverge from `v_budget_summary`, the other two match only
+   * because nothing was ever reserved against them). `main.v_budget_summary`
+   * is the canonical source (`allocated - reserved - consumed`, derived live
+   * from `budget_transactions`/`ledger_entries` — `K-2.2` ailesinin ruhu).
+   *
+   * This is a THIN wrapper, not a second derivation point (T-049/T-052/T-053
+   * dersi): it delegates to the same `budgetRepository.getBudgetSummary` the
+   * rest of this service already uses (`getBudgetStatus` above).
+   */
+  async getEnvelopeBudgetSummary(
+    envelopeId: string,
+    tenantId: string,
+  ): Promise<BudgetSummaryView | null> {
+    return this.budgetRepository.getBudgetSummary(envelopeId, tenantId);
   }
 
   /**

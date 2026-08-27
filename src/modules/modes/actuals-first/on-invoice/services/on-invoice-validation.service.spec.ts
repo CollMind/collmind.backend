@@ -36,7 +36,10 @@ const result = () => ({
 
 describe('OnInvoiceValidationService — budget impact failure path (T-098)', () => {
   let service: OnInvoiceValidationService;
-  let budgetService: { findEnvelopeByDimensions: jest.Mock };
+  let budgetService: {
+    findEnvelopeByDimensions: jest.Mock;
+    getEnvelopeBudgetSummary: jest.Mock;
+  };
   let budgetThresholdService: {
     getThresholds: jest.Mock;
     toStatus: jest.Mock;
@@ -61,7 +64,15 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
     }>;
 
   beforeEach(async () => {
-    budgetService = { findEnvelopeByDimensions: jest.fn() };
+    budgetService = {
+      findEnvelopeByDimensions: jest.fn(),
+      // INV-B-009 / Z45 §3: the service now cross-checks the envelope's
+      // stale snapshot column against the canonical view before trusting
+      // either. Default: no divergence (matches `envelope.availableAmount`/
+      // `allocatedAmount` set by each test) — individual tests below reflect
+      // the same figures unless explicitly testing the divergence path.
+      getEnvelopeBudgetSummary: jest.fn(),
+    };
     budgetThresholdService = {
       getThresholds: jest.fn().mockResolvedValue({
         warning: 80,
@@ -163,6 +174,11 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
       reason: 'no-configuration',
     });
     budgetService.findEnvelopeByDimensions.mockResolvedValue({
+      id: 'env-1',
+      availableAmount: 5000,
+      allocatedAmount: 10000,
+    });
+    budgetService.getEnvelopeBudgetSummary.mockResolvedValue({
       availableAmount: 5000,
       allocatedAmount: 10000,
     });
@@ -180,6 +196,11 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
   // returned `unavailable` unconditionally. It is what makes them distinguishing.
   it('still reports real figures when the envelope reads fine', async () => {
     budgetService.findEnvelopeByDimensions.mockResolvedValue({
+      id: 'env-1',
+      availableAmount: 5000,
+      allocatedAmount: 10000,
+    });
+    budgetService.getEnvelopeBudgetSummary.mockResolvedValue({
       availableAmount: 5000,
       allocatedAmount: 10000,
     });
@@ -189,6 +210,51 @@ describe('OnInvoiceValidationService — budget impact failure path (T-098)', ()
     expect(impact.dataStatus).toBe('ok');
     expect(impact.current).toBe(5000);
     expect(impact.status).toBe(UtilizationStatus.GREEN);
+  });
+
+  // INV-B-009 / Z45 §3 — REPRO PİNİ: `budget_envelopes.available_amount`
+  // (the stale snapshot column) and `v_budget_summary.available_amount`
+  // (the canonical, ledger-derived view) disagree — as measured live on
+  // ENV-2026-NKA-Q1/Q2 (two of four envelopes, diff ₺96.500/₺75.000). The
+  // service must not silently trust either number: it reports the row as
+  // unavailable (same failure shape as an unreadable envelope, T-098),
+  // never a wrong RAG verdict built on a stale figure.
+  it('[YAPISAL] refuses to trust a stale envelope column that disagrees with v_budget_summary (INV-B-009)', async () => {
+    budgetService.findEnvelopeByDimensions.mockResolvedValue({
+      id: 'env-divergent',
+      availableAmount: 500000, // stale column — never decremented by RESERVE
+      allocatedAmount: 500000,
+    });
+    budgetService.getEnvelopeBudgetSummary.mockResolvedValue({
+      availableAmount: 403500, // canonical — allocated(500000) - reserved(95000) - consumed(1500)
+      allocatedAmount: 500000,
+    });
+
+    const [impact] = (await simulate()).rows;
+
+    expect(impact.dataStatus).toBe('unavailable');
+    expect(impact.current).toBeNull();
+    expect(impact.status).toBeNull();
+  });
+
+  // Positive control for the pin above: when the two sources AGREE, the row
+  // is 'ok' and carries the canonical (view) figure — proving the divergence
+  // check, not some unrelated failure, is what flips the previous case.
+  it('[YAPISAL] reports ok using the canonical view figure when column and view agree', async () => {
+    budgetService.findEnvelopeByDimensions.mockResolvedValue({
+      id: 'env-agree',
+      availableAmount: 200000,
+      allocatedAmount: 200000,
+    });
+    budgetService.getEnvelopeBudgetSummary.mockResolvedValue({
+      availableAmount: 200000,
+      allocatedAmount: 200000,
+    });
+
+    const [impact] = (await simulate()).rows;
+
+    expect(impact.dataStatus).toBe('ok');
+    expect(impact.current).toBe(200000);
   });
 });
 

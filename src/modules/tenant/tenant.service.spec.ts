@@ -4,7 +4,11 @@ import { TenantRepository } from './tenant.repository';
 import { Tenant, TenantStatus } from '../../database/entities/tenant.entity';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 
 describe('TenantService', () => {
   let service: TenantService;
@@ -138,24 +142,35 @@ describe('TenantService', () => {
   });
 
   describe('findAll', () => {
-    it('should return all tenants', async () => {
-      const tenants = [mockTenant];
-      tenantRepository.find.mockResolvedValue(tenants);
+    // T-307 / Z45 §2: `findAll` no longer lists every tenant in the DB — it
+    // returns the caller's OWN tenant (as a 1-element array) or an empty
+    // array. `tenants` has no `tenant_id` column, so this is the only place
+    // the scope can be enforced (bkz. `tenant.service.ts` başlık yorumu).
+    it("returns the caller's own tenant as a single-element array", async () => {
+      tenantRepository.findOne.mockResolvedValue(mockTenant);
 
-      const result = await service.findAll();
+      const result = await service.findAll(mockTenantId);
 
-      expect(tenantRepository.find).toHaveBeenCalledWith({
-        order: { createdAt: 'DESC' },
+      expect(tenantRepository.findOne).toHaveBeenCalledWith({
+        where: { id: mockTenantId },
       });
-      expect(result).toEqual(tenants);
+      expect(result).toEqual([mockTenant]);
+    });
+
+    it('returns an empty array when the caller has no tenant row', async () => {
+      tenantRepository.findOne.mockResolvedValue(null);
+
+      const result = await service.findAll('nonexistent-tenant');
+
+      expect(result).toEqual([]);
     });
   });
 
   describe('findOne', () => {
-    it('should return tenant by id', async () => {
+    it('should return tenant by id when the caller is that tenant', async () => {
       tenantRepository.findOne.mockResolvedValue(mockTenant);
 
-      const result = await service.findOne(mockTenantId);
+      const result = await service.findOne(mockTenantId, mockTenantId);
 
       // [[T-258]] relations: ['users'] KALDIRILDI — tek tüketici ölçüldü
       // ve hiçbiri `.users` okumuyordu; ilişki artık hiç yüklenmiyor.
@@ -168,9 +183,19 @@ describe('TenantService', () => {
     it('should throw NotFoundException if tenant not found', async () => {
       tenantRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.findOne(mockTenantId)).rejects.toThrow(
+      await expect(service.findOne(mockTenantId, mockTenantId)).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    // T-307 / Z45 §2 — REPRO PİNİ: `T1`'in ADMIN'i `T2`'yi okumaya
+    // çalışırsa 403 alır, satır asla katalogdan OKUNMAZ (`tenantRepository.
+    // findOne` hiç çağrılmadığı doğrulanıyor — early-return, yarış yok).
+    it('[YAPISAL] throws ForbiddenException — and never reads the DB row — for a cross-tenant id (INV-T cross-tenant pin)', async () => {
+      await expect(
+        service.findOne('T2-id', 'T1-caller-tenant-id'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(tenantRepository.findOne).not.toHaveBeenCalled();
     });
   });
 
@@ -186,7 +211,11 @@ describe('TenantService', () => {
         ...updateTenantDto,
       } as any);
 
-      const result = await service.update(mockTenantId, updateTenantDto);
+      const result = await service.update(
+        mockTenantId,
+        updateTenantDto,
+        mockTenantId,
+      );
 
       expect(tenantRepository.findOne).toHaveBeenCalled();
       expect(tenantRepository.save).toHaveBeenCalled();
@@ -205,9 +234,9 @@ describe('TenantService', () => {
       tenantRepository.findOne.mockResolvedValue(existingTenant);
       tenantRepository.findByName.mockResolvedValue(conflictingTenant);
 
-      await expect(service.update(mockTenantId, updateDto)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.update(mockTenantId, updateDto, mockTenantId),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('should check domain uniqueness when updating domain', async () => {
@@ -222,9 +251,9 @@ describe('TenantService', () => {
       tenantRepository.findOne.mockResolvedValue(existingTenant);
       tenantRepository.findByDomain.mockResolvedValue(conflictingTenant);
 
-      await expect(service.update(mockTenantId, updateDto)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.update(mockTenantId, updateDto, mockTenantId),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('should allow updating without changing name or domain', async () => {
@@ -236,7 +265,11 @@ describe('TenantService', () => {
         ...updateDto,
       } as any);
 
-      const result = await service.update(mockTenantId, updateDto);
+      const result = await service.update(
+        mockTenantId,
+        updateDto,
+        mockTenantId,
+      );
 
       expect(tenantRepository.findByName).not.toHaveBeenCalled();
       expect(tenantRepository.findByDomain).not.toHaveBeenCalled();
@@ -249,12 +282,20 @@ describe('TenantService', () => {
       tenantRepository.findOne.mockResolvedValue(mockTenant);
       tenantRepository.softRemove.mockResolvedValue(mockTenant);
 
-      await service.remove(mockTenantId);
+      await service.remove(mockTenantId, mockTenantId);
 
       expect(tenantRepository.findOne).toHaveBeenCalledWith({
         where: { id: mockTenantId },
       });
       expect(tenantRepository.softRemove).toHaveBeenCalledWith(mockTenant);
+    });
+
+    // T-307 headline bug: "a tenant's ADMIN could delete ANOTHER tenant".
+    it('[YAPISAL] refuses to remove another tenant (cross-tenant delete pin)', async () => {
+      await expect(
+        service.remove('T2-id', 'T1-caller-tenant-id'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(tenantRepository.softRemove).not.toHaveBeenCalled();
     });
   });
 
@@ -267,7 +308,7 @@ describe('TenantService', () => {
         status: TenantStatus.ACTIVE,
       } as any);
 
-      const result = await service.activate(mockTenantId);
+      const result = await service.activate(mockTenantId, mockTenantId);
 
       expect(result.status).toBe(TenantStatus.ACTIVE);
     });
@@ -281,7 +322,7 @@ describe('TenantService', () => {
         status: TenantStatus.SUSPENDED,
       } as any);
 
-      const result = await service.suspend(mockTenantId);
+      const result = await service.suspend(mockTenantId, mockTenantId);
 
       expect(result.status).toBe(TenantStatus.SUSPENDED);
     });
@@ -298,7 +339,7 @@ describe('TenantService', () => {
 
       tenantRepository.getTenantStats.mockResolvedValue(stats);
 
-      const result = await service.getStats(mockTenantId);
+      const result = await service.getStats(mockTenantId, mockTenantId);
 
       expect(tenantRepository.getTenantStats).toHaveBeenCalledWith(
         mockTenantId,

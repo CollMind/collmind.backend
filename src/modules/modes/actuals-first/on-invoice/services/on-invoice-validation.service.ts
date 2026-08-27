@@ -16,6 +16,7 @@ import { CustomerStatus } from '../../../../../database/entities/customer.entity
 import { UtilizationStatus } from '../../../../shared/finance-reporting/dto/budget-utilization.dto';
 import { diagnosticsOf } from '../../../../../common/errors/diagnostics';
 import { ResolvedThresholds } from '../../../../shared/budget/budget-threshold.service';
+import { moneyFromNumericString } from '../../../../../common/numeric/money';
 
 export interface ValidationError {
   rowNumber: number;
@@ -572,11 +573,72 @@ export class OnInvoiceValidationService {
         );
 
         if (foundEnvelope) {
-          const current = Number(foundEnvelope.availableAmount) || 0;
+          // INV-B-009 / Z45 §3: `foundEnvelope.availableAmount` is a snapshot
+          // column that no reserve/commit/release path updates after envelope
+          // creation (measured: two of four live envelopes diverge from
+          // `v_budget_summary`; the other two match only because nothing was
+          // ever reserved against them — see `.claude/backlog/tasks/T-307.md`
+          // sibling note and `docs/brd-v2/04_KARAR_KAYDI.md` `Z45 §3`).
+          // `v_budget_summary` (allocated − reserved − consumed, derived live
+          // from the ledger) is canonical. A `500` here would raise an alarm;
+          // silently trusting the stale column would raise a WRONG NUMBER
+          // that colours a RAG verdict — the worse failure. So: read both,
+          // and if they disagree, THROW rather than silently pick one. The
+          // surrounding try/catch (below) already turns a thrown error into
+          // `dataStatus: 'unavailable'` for this row — no new failure surface.
+          const summary = await this.budgetService.getEnvelopeBudgetSummary(
+            foundEnvelope.id,
+            tenantId,
+          );
+          if (!summary) {
+            throw new Error(
+              `INV-B-009: v_budget_summary has no row for envelope ${foundEnvelope.id} ` +
+                `(${envelope.envelopeCode}) — cannot compute budget impact without the canonical view.`,
+            );
+          }
+
+          // ⛔ AYRIŞMA KARŞILAŞTIRMASI `Number` ÜZERİNDEN YAPILMAZ
+          // (review `B1`, 2026-08-27). İlk yazımda iki değer `Number()`'a
+          // düşürülüp `!==` ile karşılaştırılıyordu — bu, `ADR 0007 Karar 3b`'nin
+          // kapattığı **IEEE754 eşitlik** sınıfıdır, ve burada bir **RAG
+          // KARARININ KAPISINDA** duruyordu. Postgres `numeric`'i pg sürücüsü
+          // **string** olarak döndürür; karşılaştırma o string'in **normalize
+          // edilmiş** hâli üzerinden yapılır, kayan noktaya hiç inilmeden.
+          // ⛔ §7 — YENİ KOD YAZMADAN ÖNCE ARANDI, ve ARAÇ ZATEN VARDI.
+          // İlk yazımda buraya yerel bir `normalizeDecimal` konmuştu; o,
+          // `T-105`'in "dört ayrı implementasyonun yerine geçen TEK yer"
+          // olarak kurduğu `src/common/numeric`'in BEŞİNCİ kopyası olurdu —
+          // ve modülün kapatmak için var olduğu sınıfın ta kendisi.
+          // `moneyFromNumericString` string'i TAM SAYI minor birime çevirir
+          // ⇒ karşılaştırma kayan noktaya hiç inmeden, TAM yapılır
+          // (`ADR 0007 Karar 3b`). Geçersiz girdi ATAR — sessiz `0` yok (§2.5).
+          const columnMinor = moneyFromNumericString(
+            String(foundEnvelope.availableAmount ?? ''),
+          );
+          const viewMinor = moneyFromNumericString(
+            String(summary.availableAmount ?? ''),
+          );
+          if (columnMinor !== viewMinor) {
+            throw new Error(
+              `INV-B-009: budget_envelopes.available_amount (${columnMinor} minor) diverges from ` +
+                `v_budget_summary.available_amount (${viewMinor} minor) for envelope ${foundEnvelope.id} ` +
+                `(${envelope.envelopeCode}). Ayrışma alarmı — yanlış rakamla RAG'den iyidir (Z45 §3).`,
+            );
+          }
+
+          // RAG aritmetiği (yüzde eşiği) sayısal — ve bu, bu dosyanın
+          // `money-float` tabanındaki mevcut iki bulgusunun sınıfı; ayrışma
+          // kapısı YUKARIDA, kayan noktaya inmeden geçildi.
+          const current = Number(summary.availableAmount); // canonical, ledger-derived
           const after = current - envelope.thisUpload;
 
           // Status belirleme (RAG) — config-driven thresholds, tenant-scoped
-          const allocated = Number(foundEnvelope.allocatedAmount) || 0;
+          const allocated = Number(summary.allocatedAmount);
+          if (!Number.isFinite(allocated)) {
+            throw new Error(
+              `INV-B-009: v_budget_summary.allocated_amount is not a finite number for envelope ${foundEnvelope.id} — refusing to default to 0.`,
+            );
+          }
           const utilizationAfter =
             allocated > 0 ? ((allocated - after) / allocated) * 100 : 0;
 

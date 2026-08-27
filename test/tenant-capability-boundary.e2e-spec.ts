@@ -25,10 +25,20 @@
  * büyürken `T-047` **yeşil kalır**. Sahip olmadığı bir korumayı `T-047`'ye
  * atfetmek `W1`'in `S-3` sınıfıydı — tekrarlanmıyor.
  *
+ * ⚠️ `T-307` / `Z45 §2` GÜNCELLEMESİ (2026-08-27): `tenant.service.ts` artık
+ * `id === callerTenantId` zorunluluğu taşıyor (`assertSelfTenant`) —
+ * `NONEXISTENT_UUID` ADMIN'in KENDİ kiracısı olamayacağı için bu kontrol
+ * SERVİSİN 404/DTO reddinden ÖNCE ateşler. Aşağıdaki ADMIN beklentileri bu
+ * yüzden `404`/`not 403`'ten `403`'e GÜNCELLENDİ — capability guard hâlâ
+ * geçiyor (rol sınırı bu dosyanın konusu, hâlâ doğru), ama self-tenant
+ * guard'ı ARDINDAN ateşliyor. Cross-tenant izolasyonun kendisinin pini
+ * `test/tenant-cross-tenant-isolation.e2e-spec.ts`'te (iki-tenant fixture,
+ * gerçek satır taşıyan T2).
+ *
  *   POST /tenants                → name 'x' (MinLength(3) ihlali) → ADMIN 400
- *   PATCH/DELETE /tenants/:id    → rastgele (var olmayan) UUID     → ADMIN 404
- *   POST /tenants/:id/activate   → rastgele (var olmayan) UUID     → ADMIN 404
- *   POST /tenants/:id/suspend    → rastgele (var olmayan) UUID     → ADMIN 404
+ *   PATCH/DELETE /tenants/:id    → rastgele (var olmayan) UUID     → ADMIN 403 (self-tenant guard)
+ *   POST /tenants/:id/activate   → rastgele (var olmayan) UUID     → ADMIN 403 (self-tenant guard)
+ *   POST /tenants/:id/suspend    → rastgele (var olmayan) UUID     → ADMIN 403 (self-tenant guard)
  *
  * Salt-okunur üç rota (`GET /tenants`, `GET /tenants/:id`, `GET
  * /tenants/:id/stats`) doğrudan pinlenir — DB'ye zaten yazmıyorlar.
@@ -91,28 +101,44 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
   });
 
   describe('GET /tenants/:id (TENANT_READ)', () => {
-    it('ADMIN → 404 (POZ.KONTROL — guard GEÇİYOR, servis 404 üretiyor)', async () => {
+    // T-307: `id` must equal the caller's OWN tenant now (self-tenant
+    // guard), so NONEXISTENT_UUID would give ADMIN a 403 too — collapsing
+    // the positive control this file's header describes (§2.7 #6: "403
+    // alone is not proof"). Using ADMIN's REAL tenant id keeps both guards
+    // (capability + self-tenant) passing, so 200 still isolates "this is a
+    // CAPABILITY boundary test" from the self-tenant boundary (pinned
+    // separately in tenant-cross-tenant-isolation.e2e-spec.ts).
+    it('ADMIN → 200 (POZ.KONTROL — guard GEÇİYOR, own tenant id)', async () => {
       const res = await request(app.getHttpServer())
-        .get(`/tenants/${NONEXISTENT_UUID}`)
+        .get(`/tenants/${admin.tenantId}`)
         .set(admin.authHeader());
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(200);
     });
 
     it.each(OTHER_ROLES)(
       '%s → 403 (TENANT_READ yalnız ADMIN)',
       async (_l, getUser) => {
         const res = await request(app.getHttpServer())
-          .get(`/tenants/${NONEXISTENT_UUID}`)
+          .get(`/tenants/${admin.tenantId}`)
           .set(getUser().authHeader());
         expect(res.status).toBe(403);
       },
     );
+
+    // T-307 self-tenant guard, isolated from the capability guard above:
+    // ADMIN (correct capability) targeting a NON-self id is still rejected.
+    it('ADMIN → 403 targeting a non-self id (self-tenant guard, independent of capability)', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/tenants/${NONEXISTENT_UUID}`)
+        .set(admin.authHeader());
+      expect(res.status).toBe(403);
+    });
   });
 
   describe('GET /tenants/:id/stats (TENANT_READ)', () => {
-    it('ADMIN → guard GEÇİYOR (403 DEĞİL)', async () => {
+    it('ADMIN → guard GEÇİYOR (403 DEĞİL, own tenant id)', async () => {
       const res = await request(app.getHttpServer())
-        .get(`/tenants/${NONEXISTENT_UUID}/stats`)
+        .get(`/tenants/${admin.tenantId}/stats`)
         .set(admin.authHeader());
       expect(res.status).not.toBe(403);
     });
@@ -121,11 +147,18 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
       '%s → 403 (TENANT_READ yalnız ADMIN)',
       async (_l, getUser) => {
         const res = await request(app.getHttpServer())
-          .get(`/tenants/${NONEXISTENT_UUID}/stats`)
+          .get(`/tenants/${admin.tenantId}/stats`)
           .set(getUser().authHeader());
         expect(res.status).toBe(403);
       },
     );
+
+    it('ADMIN → 403 targeting a non-self id (self-tenant guard, independent of capability)', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/tenants/${NONEXISTENT_UUID}/stats`)
+        .set(admin.authHeader());
+      expect(res.status).toBe(403);
+    });
   });
 
   describe('POST /tenants (TENANT_WRITE) — guard GEÇSİN, DTO REDDETSİN', () => {
@@ -151,13 +184,23 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
     );
   });
 
-  describe('PATCH /tenants/:id (TENANT_WRITE) — guard GEÇSİN, servis 404 üretsin', () => {
-    it('ADMIN → 404 (POZ.KONTROL — guard geçti)', async () => {
+  describe('PATCH /tenants/:id (TENANT_WRITE) — guard GEÇSİN, self-tenant guard reddetsin', () => {
+    // T-307: NONEXISTENT_UUID admin'in kendi tenant'ı olamayacağı için
+    // self-tenant guard servisin 404'ünden ÖNCE ateşliyor — hiçbir satır
+    // yazılmıyor (eski davranışla AYNI garanti, farklı status kodu).
+    it('ADMIN → 403 (POZ.KONTROL — capability guard geçti, self-tenant guard reddetti; T-307)', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/tenants/${NONEXISTENT_UUID}`)
         .set(admin.authHeader())
         .send({ name: 'Guard Boundary Test Tenant' });
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(403);
+      // ⛔ AYIRT EDİCİ (review `B4`): status TEK BAŞINA yetmez — bu testte
+      // ADMIN de diğer roller de 403 bekliyor ⇒ POZİTİF KONTROL ÇÖKMÜŞTÜ.
+      // `TENANT_WRITE` yarın ADMIN'den alınsa test YEŞİL KALIRDI. İki 403'ü
+      // AYIRAN ŞEY MESAJDIR: CapabilityGuard `false` → Nest'in varsayılan
+      // 'Forbidden resource'; assertSelfTenant → kendi cümlesi.
+      // ⇒ ADMIN'in capability kapısını GEÇTİĞİ burada kanıtlanır.
+      expect(String(res.body.message)).toContain('kendi kiracınızı');
     });
 
     it.each(OTHER_ROLES)(
@@ -172,12 +215,19 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
     );
   });
 
-  describe('DELETE /tenants/:id (TENANT_WRITE) — guard GEÇSİN, servis 404 üretsin', () => {
-    it('ADMIN → 404 (POZ.KONTROL — guard geçti)', async () => {
+  describe('DELETE /tenants/:id (TENANT_WRITE) — guard GEÇSİN, self-tenant guard reddetsin', () => {
+    it('ADMIN → 403 (POZ.KONTROL — capability guard geçti, self-tenant guard reddetti; T-307)', async () => {
       const res = await request(app.getHttpServer())
         .delete(`/tenants/${NONEXISTENT_UUID}`)
         .set(admin.authHeader());
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(403);
+      // ⛔ AYIRT EDİCİ (review `B4`): status TEK BAŞINA yetmez — bu testte
+      // ADMIN de diğer roller de 403 bekliyor ⇒ POZİTİF KONTROL ÇÖKMÜŞTÜ.
+      // `TENANT_WRITE` yarın ADMIN'den alınsa test YEŞİL KALIRDI. İki 403'ü
+      // AYIRAN ŞEY MESAJDIR: CapabilityGuard `false` → Nest'in varsayılan
+      // 'Forbidden resource'; assertSelfTenant → kendi cümlesi.
+      // ⇒ ADMIN'in capability kapısını GEÇTİĞİ burada kanıtlanır.
+      expect(String(res.body.message)).toContain('kendi kiracınızı');
     });
 
     it.each(OTHER_ROLES)(
@@ -191,12 +241,19 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
     );
   });
 
-  describe('POST /tenants/:id/activate (TENANT_WRITE) — guard GEÇSİN, servis 404 üretsin', () => {
-    it('ADMIN → 404 (POZ.KONTROL — guard geçti)', async () => {
+  describe('POST /tenants/:id/activate (TENANT_WRITE) — guard GEÇSİN, self-tenant guard reddetsin', () => {
+    it('ADMIN → 403 (POZ.KONTROL — capability guard geçti, self-tenant guard reddetti; T-307)', async () => {
       const res = await request(app.getHttpServer())
         .post(`/tenants/${NONEXISTENT_UUID}/activate`)
         .set(admin.authHeader());
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(403);
+      // ⛔ AYIRT EDİCİ (review `B4`): status TEK BAŞINA yetmez — bu testte
+      // ADMIN de diğer roller de 403 bekliyor ⇒ POZİTİF KONTROL ÇÖKMÜŞTÜ.
+      // `TENANT_WRITE` yarın ADMIN'den alınsa test YEŞİL KALIRDI. İki 403'ü
+      // AYIRAN ŞEY MESAJDIR: CapabilityGuard `false` → Nest'in varsayılan
+      // 'Forbidden resource'; assertSelfTenant → kendi cümlesi.
+      // ⇒ ADMIN'in capability kapısını GEÇTİĞİ burada kanıtlanır.
+      expect(String(res.body.message)).toContain('kendi kiracınızı');
     });
 
     it.each(OTHER_ROLES)(
@@ -210,12 +267,19 @@ describe('B3 W2 — tenant.controller yetenek sınırı {ADMIN}', () => {
     );
   });
 
-  describe('POST /tenants/:id/suspend (TENANT_WRITE) — guard GEÇSİN, servis 404 üretsin', () => {
-    it('ADMIN → 404 (POZ.KONTROL — guard geçti)', async () => {
+  describe('POST /tenants/:id/suspend (TENANT_WRITE) — guard GEÇSİN, self-tenant guard reddetsin', () => {
+    it('ADMIN → 403 (POZ.KONTROL — capability guard geçti, self-tenant guard reddetti; T-307)', async () => {
       const res = await request(app.getHttpServer())
         .post(`/tenants/${NONEXISTENT_UUID}/suspend`)
         .set(admin.authHeader());
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(403);
+      // ⛔ AYIRT EDİCİ (review `B4`): status TEK BAŞINA yetmez — bu testte
+      // ADMIN de diğer roller de 403 bekliyor ⇒ POZİTİF KONTROL ÇÖKMÜŞTÜ.
+      // `TENANT_WRITE` yarın ADMIN'den alınsa test YEŞİL KALIRDI. İki 403'ü
+      // AYIRAN ŞEY MESAJDIR: CapabilityGuard `false` → Nest'in varsayılan
+      // 'Forbidden resource'; assertSelfTenant → kendi cümlesi.
+      // ⇒ ADMIN'in capability kapısını GEÇTİĞİ burada kanıtlanır.
+      expect(String(res.body.message)).toContain('kendi kiracınızı');
     });
 
     it.each(OTHER_ROLES)(

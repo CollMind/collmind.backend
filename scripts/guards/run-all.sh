@@ -233,12 +233,32 @@ else
   exit 1
 fi
 
+# view-security-invoker'ın da kendi self-test'i AYRI bir dosyadır (`T-308`,
+# `Z45 §1`) — bu guard bir DB sorgusu koşturur (`pg_class`/`pg_namespace`),
+# self-test.sh'in kaynak-ağacı fixture desenine UYMAZ; `VIEW_GUARD_DB_QUERY`
+# env override'ıyla mock script'lere yönlendirilerek sınanır (schema-isolation
+# ailesinin DB-erişim desenine en yakın, ama exit-kod sözleşmesi kasıtlı
+# FARKLI: DB-erişilemez burada exit 2'dir, exit 0/SKIPPED değil). Aynı
+# zincirleme kuralı burada da geçerli: self-test dosyası VAR ama hiçbir
+# gerçek kapı yolu onu ÇAĞIRMIYORSA "doğrulama bir kapıdır, durdurmuyorsa
+# doğrulama değildir" ihlal edilir.
+echo "=== self-test (view-security-invoker) ==="
+if bash "$DIR/view-security-invoker-self-test.sh"; then
+  echo "(view-security-invoker fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! view-security-invoker kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0
 SKIPPED_BAD=0
 RATCHET_FAILED=0
 LINT_RATCHET_FAILED=0
+SETUP_FAILED=0
+SETUP_FAILED_NAMES=""
 SUMMARY=""
 
 for g in "${GUARDS[@]}"; do
@@ -253,11 +273,32 @@ for g in "${GUARDS[@]}"; do
   # olursa olsun koşumu durdurur. Hangisi olduğunu bu blok İDDİA ETMEZ — $OUT
   # (guard'ın kendi stdout'u, ör. "SKIPPED: domain list not found") aşağıda
   # basılır; ayırt eden odur, stderr'deki guard mesajı da ayrıca görünür.
+  # ⛔ DEĞİŞTİ (Z45 zinciri review B3, 2026-08-27) — ESKİDEN BURADA `exit 2`
+  # VARDI VE KOŞUMU ANINDA DURDURUYORDU. Ölçülmüş sonuç: `view-security-invoker`
+  # (bu turda doğdu, DB gerektiriyor) Docker kapalıyken `exit 2` verdi ⇒ döngü
+  # BURADA durdu ⇒ `:348` money-float ratchet ve `:409` lint-ratchet kapıları
+  # HİÇ KOŞMADI ⇒ `npm run guards` "bir guard atlandı" değil, "HİÇBİR KAPI
+  # ÖLÇÜM ÜRETMEDİ" demek oldu.
+  #
+  # Ve o sırada İKİ ratchet GERÇEKTEN KIRMIZIYDI (elle çağrılınca görüldü):
+  #   money-float  on-invoice-validation.service.ts  2 -> 3
+  #   lint-ratchet yeni test dosyası + üç GONE satırı
+  # ⇒ `docs/DISIPLIN.md`: "bir kusur BAŞKA bir kusur tarafından örtülebilir" —
+  #   ve burada ÖRTEN ŞEY, AYNI TURUN KENDİ EKLENTİSİYDİ.
+  #
+  # ⇒ YENİ ŞEKİL: `exit 2` BİRİKTİRİLİR, koşum DEVAM EDER, ve DB-BAĞIMSIZ
+  #   kapılar YİNE ÖLÇER. Sözleşme korunur — sonda `exit 2` verilir, ve
+  #   "ölçemedim" bir `0`'a YUVARLANMAZ.
+  #   (Mühür yasası: kapının üç meşru çıktısı — yeşil · kırmızı · ölçemedim.
+  #    Bu değişiklik ÜÇÜNCÜSÜNÜ KORUR, ama onu bir SUSTURUCU olmaktan çıkarır.)
   if [ "$RC" -eq 2 ]; then
     echo "=== $g ==="
     [ -n "$OUT" ] && printf '%s\n' "$OUT"
-    echo "!! guard KURULUM HATASI / ÖLÇÜM YAPILMADI (exit 2, detay yukarıda/stderr'de) — koşum durduruldu"
-    exit 2
+    echo "!! guard KURULUM HATASI / ÖLÇÜM YAPILMADI (exit 2, detay yukarıda/stderr'de)"
+    echo "!! ⇒ BU GUARD ÖLÇÜLMEDİ; koşum DİĞER kapılarla DEVAM EDİYOR ve sonda exit 2 verilecek."
+    SETUP_FAILED=1
+    SETUP_FAILED_NAMES="${SETUP_FAILED_NAMES}${SETUP_FAILED_NAMES:+, }$g"
+    continue
   fi
 
   # SIFIRDAN FARKLI HER RC BİR KURULUM HATASIDIR — ve bu satır 2026-08-13'te
@@ -493,5 +534,17 @@ if [ "$GUARD_MODE" = "block" ]; then
     echo "  → GUARD_MODE=block ve route-cell-map mutabakatı düştü: exit 1"
     exit 1
   fi
+fi
+
+# ⛔ ÖLÇÜLMEYEN GUARD'LAR — EN SONDA, ve BULGULARIN ARDINDAN (B3, 2026-08-27).
+# Sıra bilinçli: önce GERÇEK bulgular (exit 1) raporlanır, çünkü onlar
+# ÖLÇÜLMÜŞ şeylerdir; "ölçemedim" en sonda gelir ve KOŞUMU SUSTURMAZ.
+# ⚠️ Ama YUTULMAZ da: exit 2, mühür yasasının üçüncü meşru çıktısıdır
+# ("yeşil · kırmızı · ÖLÇEMEDİM") ve bir `0`'a asla yuvarlanmaz.
+if [ "$SETUP_FAILED" -eq 1 ]; then
+  echo "!! ⛔ ÖLÇÜM YAPILMAYAN GUARD(LAR): $SETUP_FAILED_NAMES"
+  echo "!!    Diğer kapılar KOŞTU ve yukarıda raporlandı — ama bu koşum TAM DEĞİLDİR."
+  echo "!!    exit 2 (kurulum hatası / ölçüm yapılmadı — bir BULGU DEĞİL)"
+  exit 2
 fi
 exit 0

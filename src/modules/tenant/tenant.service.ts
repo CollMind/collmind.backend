@@ -1,6 +1,7 @@
 import {
   Injectable,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { TenantRepository } from './tenant.repository';
@@ -48,10 +49,22 @@ export class TenantService {
     return this.tenantRepository.save(tenant);
   }
 
-  async findAll(): Promise<Tenant[]> {
-    return this.tenantRepository.find({
-      order: { createdAt: 'DESC' },
+  /**
+   * `T-307` / `Z45 §2` — `GET /tenants` bir kiracının admin'ine BAŞKA
+   * kiracıların satırlarını göstermiyor artık. Ürün önceden HİÇBİR
+   * `tenant_id` predicate'i taşımıyordu (`tenants` tablosunun kendisi
+   * `tenant_id` sütunu TAŞIMAZ — RLS ile çözülemeyen dört tablodan biri,
+   * `Z45 §2`; çözüm bu yüzden uygulama katmanında). Frontend `getAll()`'u
+   * bir DİZİ olarak tüketiyor (`tenants.service.ts#useTenants` →
+   * `TenantList.tsx`) — rota tamamen ÖLMEDİ (tüketici sıfır değil,
+   * `Z45 §2` madde 1), bunun yerine "kendi kaydım" tekil sonucuna daraldı:
+   * çağıranın KENDİ kiracısı varsa 1 elemanlı, hiç yoksa 0 elemanlı dizi.
+   */
+  async findAll(callerTenantId: string): Promise<Tenant[]> {
+    const own = await this.tenantRepository.findOne({
+      where: { id: callerTenantId },
     });
+    return own ? [own] : [];
   }
 
   /**
@@ -73,13 +86,25 @@ export class TenantService {
    * alanını DTO ile filtrelemek (yükleyip sonra atmak) burada gereksiz bir
    * ikinci katman olurdu — İlke 1: uç bu veriyi zaten hiç İSTEMEMELİ.
    *
-   * ⛔ ÜÇÜNCÜ KUSUR — BU DÜZELTMENİN KAPSAMI DIŞINDA: bu sorgu `id` dışında
-   * hiçbir tenant-scope predicate'i taşımıyor — bir `ADMIN` başka bir
-   * tenant'ın kaydını `id` ile isteyebilir. Bugün gösterilemiyor (dev DB'de
-   * tek tenant var), ama `@Roles(ADMIN)` bunu KAPATMAZ. Adresi `ADIM 5`
-   * (RLS) — bkz. `docs/` FAZ1_PLAN §7. Kasten dokunulmadı.
+   * ⛔ ÜÇÜNCÜ KUSUR — `T-307` / `Z45 §2` İLE KAPANDI: bu sorgu artık `id`
+   * dışında bir predicate TAŞIMIYOR OLSA BİLE (`tenants` tablosu
+   * `tenant_id` sütunu YOK, RLS ile çözülemez) çağıranın kimliği
+   * `assertSelfTenant` ile KONTROL EDİLİYOR — bir `ADMIN` `id === kendi
+   * tenant'ı` DEĞİLSE 403 alır, satır hiç DÖNMEZ. Önceki hâlde bu kontrol
+   * yoktu (dev DB'de tek tenant olduğu için gösterilemiyordu); pin:
+   * `test/tenant-cross-tenant-isolation.e2e-spec.ts` (iki-tenant fixture).
    */
-  async findOne(id: string): Promise<Tenant> {
+  private assertSelfTenant(id: string, callerTenantId: string): void {
+    if (id !== callerTenantId) {
+      throw new ForbiddenException(
+        'Bu kiracıya erişim yetkiniz yok — yalnız kendi kiracınızı görebilir/değiştirebilirsiniz.',
+      );
+    }
+  }
+
+  async findOne(id: string, callerTenantId: string): Promise<Tenant> {
+    this.assertSelfTenant(id, callerTenantId);
+
     const tenant = await this.tenantRepository.findOne({
       where: { id },
     });
@@ -91,8 +116,12 @@ export class TenantService {
     return tenant;
   }
 
-  async update(id: string, updateTenantDto: UpdateTenantDto): Promise<Tenant> {
-    const tenant = await this.findOne(id);
+  async update(
+    id: string,
+    updateTenantDto: UpdateTenantDto,
+    callerTenantId: string,
+  ): Promise<Tenant> {
+    const tenant = await this.findOne(id, callerTenantId);
 
     // Check name uniqueness if changing
     if (updateTenantDto.name && updateTenantDto.name !== tenant.name) {
@@ -118,24 +147,36 @@ export class TenantService {
     return this.tenantRepository.save(tenant);
   }
 
-  async remove(id: string): Promise<void> {
-    const tenant = await this.findOne(id);
+  // ⚠️ `T-307` / `Z45 §2` madde 2 — `create`/`delete` (bu metod) için "bir
+  // kiracının admin'inin kiracı yaratması/silmesi" hiçbir `K`-kaydında YOK,
+  // ve tüketici ölçümü SIFIR DEĞİL (`collmind.frontend`: `TenantForm.tsx`
+  // `useCreateTenant`, `TenantList.tsx` `useDeleteTenant` — ikisi de canlı).
+  // Hüküm bu durumda DUR'dur: mekanizmanın kendisi (create/delete admin
+  // yetkisinde mi kalmalı, yoksa operatör-yoluna mı devredilmeli) BURADA
+  // KARARLAŞTIRILMADI — ürün sahibine bırakıldı. Yalnız CANLI cross-tenant
+  // sızıntı (T1'in ADMIN'i T2'yi SİLEBİLİYORDU) kapatıldı: `remove` artık
+  // `findOne`'ın `assertSelfTenant` kontrolünden geçiyor, aynı `update`/
+  // `activate`/`suspend` gibi. Bu, "kim silebilir" sorusuna cevap vermiyor —
+  // yalnız "yalnız KENDİ kiracısını silebilir" diyor.
+  async remove(id: string, callerTenantId: string): Promise<void> {
+    const tenant = await this.findOne(id, callerTenantId);
     await this.tenantRepository.softRemove(tenant);
   }
 
-  async activate(id: string): Promise<Tenant> {
-    const tenant = await this.findOne(id);
+  async activate(id: string, callerTenantId: string): Promise<Tenant> {
+    const tenant = await this.findOne(id, callerTenantId);
     tenant.status = TenantStatus.ACTIVE;
     return this.tenantRepository.save(tenant);
   }
 
-  async suspend(id: string): Promise<Tenant> {
-    const tenant = await this.findOne(id);
+  async suspend(id: string, callerTenantId: string): Promise<Tenant> {
+    const tenant = await this.findOne(id, callerTenantId);
     tenant.status = TenantStatus.SUSPENDED;
     return this.tenantRepository.save(tenant);
   }
 
-  async getStats(id: string): Promise<any> {
+  async getStats(id: string, callerTenantId: string): Promise<any> {
+    this.assertSelfTenant(id, callerTenantId);
     return this.tenantRepository.getTenantStats(id);
   }
 }
