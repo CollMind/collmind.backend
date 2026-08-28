@@ -7,6 +7,79 @@
  * T-060: scope widened (approval_requests / admin_audit_logs / users) —
  * see the comment above countRows() for how this scope was determined
  * (measured, not guessed) and global-setup.js for the invariant itself.
+ *
+ * `T-319` (`Z59` kapsam eki, 2026-08-28) — İKİNCİ KEZ kör nokta: `Z59`
+ * dalgası `notifications`'a ilk üretim yazıcısını verdi ve tam bir
+ * `npm run test:e2e` koşumu `main.notifications`'ta 16 satır artık bıraktı
+ * — invariant bunu YAKALAMADI çünkü `countRows()` ELLE YAZILMIŞ 7 tablo
+ * sayıyordu (`notifications` listede yoktu). Dosyanın kendi yorumu
+ * (aşağıdaki eski `countRows` metni, `T-060`) BUNU zaten kaydediyordu:
+ * "approval_requests 9.116, plans 0 — invaryantın bütün bir tabloya kör
+ * olduğunun kanıtı." Elle yazılmış bir liste, dokuzda dokuz oranla, bir
+ * SONRAKİ üretim yazıcısına yine kör kalır.
+ *
+ * ⇒ DOĞRU DÜZELTME "notifications ekle" DEĞİL: EVREN artık `pg_catalog`'DAN
+ * TÜRETİLİR — `main` şemasındaki HER `relkind='r'` tablo, bu dosyanın
+ * bağlandığı role (`DB_RUNTIME_USERNAME`, aşağıda `resolveCountableTables`)
+ * gerçekten `SELECT` yapabiliyorsa sayılır.
+ *
+ * ⛔⛔ AMA BU YARIM BİR DÜZELTMEDİR — ve bu yorumun ilk hâli TAM TERSİNİ
+ * İDDİA EDİYORDU ("böylece bu sınıf ÜÇÜNCÜ KEZ doğamaz"), oysa aynı yorum
+ * BLOKU 12 satır aşağıda "o tablolara yeni bir yazıcı gelirse ... invaryant
+ * YİNE kör kalır" diyordu. İKİ ÇELİŞKİLİ İDDİA, TEK BLOKTA — ve manşet
+ * olan, teslim edilmeyendi. (`Z58 §3` sınıfı: kısmen doğru bir güvence,
+ * TAMAMEN doğru okunur. Düzeltildi 2026-08-28, Team Lead review.)
+ *
+ * YÜRÜRLÜKTEKİ İDDİA — dar ve ölçülmüş: evren artık ELLE YAZILMIŞ DEĞİL,
+ * `app_runtime`'ın SELECT edebildiği 39 tablo için TÜRETİLMİŞTİR. Kalan
+ * 9 tabloda invaryant HÂLÂ KÖRDÜR (aşağıdaki liste).
+ *
+ * ⚠️ VE KÖRLÜĞÜN SEBEBİ BİR ZORUNLULUK DEĞİL, GEÇERLİLİĞİNİ YİTİRMİŞ BİR
+ * GEREKÇEDİR. Aşağıdaki `requireEnv` bloğu `app_runtime`'ı şöyle
+ * gerekçelendiriyor: "ölçtüğü tablolar zaten uygulamanın kendisi tarafından
+ * sürekli okunuyor". Bu, evren ELLE SEÇİLMİŞ UYGULAMA TABLOLARI iken
+ * doğruydu; evren TÜM ŞEMAYA türetildiği an ÖNCÜLÜ KALKTI.
+ * ⇒ `Z60 §1`: "bir gerekçe, dayandığı ölçümün TARİHİYLE yaşar" — ve o
+ *   ölçümü değiştiren tur (BU TUR) gerekçeyi okumak zorundaydı.
+ * Ölçüldü: `app_migrate` ve `app_operator` 48/48 tabloyu görüyor;
+ * `DB_MIGRATE_USERNAME`/`PASSWORD` .env'de MEVCUT. Yani düzeltme elde —
+ * ama sayım rolünü değiştirmek `K-2.6.13a/d` gerekçesine dokunur ve
+ * tenant-kapsamı olmayan tablolar (`migrations`, `typeorm_metadata`) için
+ * yeni bir sayım şekli gerektirir ⇒ AYRI TASK, hüküm bekler (`T-324`).
+ *
+ * ⚠️ `information_schema.tables`/`information_schema.role_table_grants`
+ * DEĞİL, `pg_catalog` (`pg_class`/`pg_namespace`/`has_table_privilege`)
+ * kullanılıyor — ÖLÇÜLDÜ: `information_schema.role_table_grants`,
+ * `app_operator` ile sorgulandığında `app_runtime`'ın `notifications`
+ * üzerindeki GERÇEK `arw` (SELECT/INSERT/UPDATE) grant'ini GÖSTERMİYOR
+ * (yalnız grantor/grantee/PUBLIC görünürlüğü — Postgres kısıtı), oysa
+ * `pg_class.relacl` (`has_table_privilege` üzerinden) doğru sonucu verir.
+ * Bu dosyanın KENDİSİ `DB_RUNTIME_USERNAME` (`app_runtime`) ile bağlanır —
+ * evren de O ROLÜN görebildiği tablolarla sınırlı olmalı, başka bir rolün
+ * (ör. `app_operator`) görebildikleriyle DEĞİL; aksi hâlde bu fonksiyon
+ * kendi bağlantısıyla erişemeyeceği bir tabloyu saymaya çalışıp "permission
+ * denied" ile suite'i (invaryantla ilgisiz bir sebeple) kırar.
+ *
+ * Ölçüldü (2026-08-28, `app_operator` bağlantısıyla): `main` şemasında 48
+ * `relkind='r'` tablo var; `app_runtime` bunların 39'unda `SELECT`
+ * hakkına sahip (`has_table_privilege('app_runtime', oid, 'SELECT')`).
+ * Erişilemeyen 9 tablo (`_t019_backfilled_tx`, `claim_matches`, `claims`,
+ * `fiscal_periods`, `migrations`, `roles`, `tactic_realizations`,
+ * `typeorm_metadata`, `user_role_assignments`) BİLEREK DIŞARIDA — sessizce
+ * DEĞİL: `globalSetup` bu listeyi konsola BASAR (§2.5: kapsam daralması
+ * sessiz olamaz). `migrations`/`typeorm_metadata` zaten şema-yönetim
+ * defterleridir (kiracı verisi değil); `claims`/`claim_matches`/
+ * `fiscal_periods`/`roles`/`tactic_realizations`/`user_role_assignments`
+ * için bu invaryantın SESSİZCE dışarıda bıraktığı bir kapsam — o tablolara
+ * yeni bir yazıcı gelirse ve `app_runtime` hâlâ `SELECT` alamıyorsa bu
+ * invaryant YİNE kör kalır; bu ayrı, raporlanan bir bulgudur (bkz. task
+ * raporu), bu dosyanın kapsamı değildir.
+ *
+ * 39 sayılabilir tablonun 38'i `tenant_id` kolonu taşıyor ve o kolonla
+ * kiracıya daraltılır; `tenants`'ın kendisi (kiracı satırının bizzat
+ * kendisi) `id = $1` ile sayılır. Başka hiçbir tablo bu iki şekle
+ * uymuyorsa (ölçüldü: uymuyor) — uysaydı bu fonksiyon SESSİZCE atlamak
+ * yerine AÇIK hata fırlatır (§2.5).
  */
 
 const { Client } = require('pg');
@@ -72,132 +145,89 @@ async function resolveFixtureTenantId(client) {
 }
 
 /**
- * Counts main.agreements / main.plans / main.plan_fus / main.plan_skus for
- * the given tenant — INCLUDING soft-deleted rows (no `deleted_at IS NULL`
- * filter). This is deliberate: a soft-deleted row that lost its 'E2E-'
- * prefix on rename is exactly the leak class T-047 closes (see
- * 'bump-before-delete', found soft-deleted with 0 active rows but 94
- * physical rows during T-047 triage) — filtering it out would make the
- * invariant blind to it again.
+ * `T-319` — EVREN `pg_catalog`'dan türetilir (bkz. dosya başı yorumu).
+ * Döner: `{ countable: [{ table, hasTenantId }], excludedNoSelect: [string] }`.
+ * `client` PARAMETRESİYLE bağlanan role GÖRE (`current_user`) hesaplanır —
+ * sabit bir rol adı YAZILMAZ, sorgu `has_table_privilege(current_user, ...)`
+ * kullanır (bu dosyanın DB_RUNTIME_USERNAME ile bağlandığı bilinse de, rol
+ * adını iki yerde tekrarlamamak için tek kaynak `current_user`).
+ */
+async function resolveCountableTables(client) {
+  const s = schema();
+  const res = await client.query(
+    `SELECT c.relname AS table_name,
+            EXISTS (
+              SELECT 1 FROM pg_attribute a
+               WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                 AND a.attnum > 0 AND NOT a.attisdropped
+            ) AS has_tenant_id,
+            has_table_privilege(current_user, c.oid, 'SELECT') AS can_select
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1
+        AND c.relkind = 'r'
+      ORDER BY c.relname`,
+    [s],
+  );
+
+  const countable = [];
+  const excludedNoSelect = [];
+  for (const row of res.rows) {
+    if (!row.can_select) {
+      excludedNoSelect.push(row.table_name);
+      continue;
+    }
+    countable.push({ table: row.table_name, hasTenantId: row.has_tenant_id });
+  }
+  return { countable, excludedNoSelect };
+}
+
+/**
+ * `T-047`/`T-060`/`T-319` — suite-wide row-count invariant, tenant-scoped,
+ * evren `pg_catalog`'dan TÜRETİLMİŞ (bkz. dosya başı yorumu — elle yazılmış
+ * liste artık YOK).
  *
- * T-060 — SCOPE WIDENING (measured, not guessed):
- * Team Lead measured `main.approval_requests` at 9,116 rows with
- * `main.plans` at 0 — proof the T-047 invariant above was blind to a whole
- * table. Instead of guessing which OTHER tables might also leak, every
- * `main.*` table was row-counted immediately before and immediately after
- * one full, unmodified `npm run test:e2e` run (dev DB, no reset). Only
- * THREE tables had a non-zero delta:
- *   approval_requests  +38   (main.plans/agreements FK-less polymorphic
- *                              entity_id — cleanupTestPlans/
- *                              cleanupTestAgreements never touched it)
- *   admin_audit_logs   +6    (all entity_type='AGREEMENT_TRANSACTION' —
- *                              reversal.service.ts's REVERSE audit row,
- *                              also FK-less polymorphic entity_id;
- *                              cleanupTestAgreements deleted the
- *                              agreement_transactions row but never the
- *                              audit row pointing at it)
- *   users              +1    (role-journey.e2e-spec.ts N9 — POST /users
- *                              creates a throwaway PLANNER to prove
- *                              fail-closed scope; no DELETE /users exists,
- *                              only `deactivate` was called, so the row
- *                              stayed forever — measured: 289/298 rows,
- *                              97% of the whole table, from this one test)
- * Every other table (budget_transactions, ledger_entries, plan_fus,
- * plan_skus, ...) had delta=0 in that same measurement — i.e. the existing
- * cleanup helpers already return them to baseline, so adding them here
- * would add noise, not coverage.
+ * Her sayılabilir tablo için: `tenant_id` kolonu varsa `WHERE tenant_id =
+ * $1`; tablo `tenants`'ın KENDİSİYSE `WHERE id = $1`; ikisi de değilse
+ * (bugün ölçülen evrende YOK, ama gelecekte olabilir) — §2.5: sessizce
+ * atlanmaz, AÇIK hata.
  *
- * All three root causes were fixed (test/helpers/seed-e2e.ts:
- * cleanupTestPlans/cleanupTestAgreements now also delete the
- * approval_requests/admin_audit_logs rows that point at the plan/agreement/
- * agreement_transaction ids they delete; a new cleanupTestUsers hard-deletes
- * role-journey's throwaway user by exact id). These three tables are added
- * to the invariant as RAW counts (not "orphan counts") deliberately: after
- * the fix, a leak-free run nets to zero on all of them (re-measured, see
- * task report) — a raw-count regression is the simplest signal and, unlike
- * an orphan-count, doesn't quietly hide a NEW kind of leak that happens to
- * leave a non-orphaned-looking row behind.
- *
- * Why admin_audit_logs as a RAW count is safe (this contradicts the T-047
- * global-setup.js comment, which deliberately excluded it as "expected,
- * legitimate append-only growth" — that assumption was re-checked here, not
- * inherited): every current e2e admin_audit_logs producer in this suite
- * (agreement.service.ts 'AGREEMENT', reversal.service.ts
- * 'AGREEMENT_TRANSACTION', settlement-close.service.ts 'AGREEMENT',
- * sales-actuals.service.ts 'SalesActualBatch') writes against a fixture
- * that some cleanup helper in this run deletes (cleanupTestAgreements /
- * cleanupSalesActuals) — none of the *current* specs write audit rows
- * against the seed's own agreements (reversal.e2e-spec.ts and
- * settlement.e2e-spec.ts both have explicit comments confirming they
- * stopped using `fixture.approvedAgreementId` for exactly this reason).
- * mechanic.service.ts / channel.service.ts also write admin_audit_logs but
- * no e2e spec calls those endpoints, so they never fire here. If that ever
- * changes, this raw count will correctly go red — the fix then is to widen
- * the matching cleanup helper, not to loosen this invariant.
- *
- * T-244 (2026-08-20): this changed — measured, not guessed. `user.service.ts`
- * (`POST /users`) now writes a SCOPE_UPDATE row on every successful create
- * (`entity_id` = the new user's id), and user-scope-creation.e2e-spec.ts
- * alone creates several. This DID go red exactly as predicted above
- * (`adminAuditLogs: 35 -> 42`), and the fix taken was the one this comment
- * prescribes: `cleanupTestUsers` (seed-e2e.ts) was widened to also delete
- * the matching `admin_audit_logs` rows (keyed on `entity_id = ANY(userIds)`)
- * before deleting the users themselves — the invariant was NOT loosened.
- *
- * ⚠️ `entity_type` for this producer was ITSELF corrected mid-review
- * (code-review, `m1`, `DENETIM_SOZLUGU.md` `Z17`): the first implementation
- * used `'user_scope'`, measured as the ONE exception to a 16/16 convention
- * (`entity_type` names the table `entity_id` belongs to) — `entity_id` was
- * never a `user_scopes.id`, always the affected user's id, so
- * `JOIN user_scopes ON id = entity_id` always returned 0 rows. Corrected to
- * `'user'` (`SCOPE_AUDIT_ENTITY_TYPE`, user-scope.entity.ts) — `seed-e2e.ts`
- * imports that same constant so this comment and the DELETE it describes
- * cannot drift apart again.
+ * Döner: `{ tables: { <tableName>: count }, excludedNoSelect: string[],
+ * connectedAsRole: string }`.
  */
 async function countRows(client, tenantId) {
   const s = schema();
-  const agreements = await client.query(
-    `SELECT count(*)::int AS c FROM ${s}.agreements WHERE tenant_id = $1`,
-    [tenantId],
-  );
-  const plans = await client.query(
-    `SELECT count(*)::int AS c FROM ${s}.plans WHERE tenant_id = $1`,
-    [tenantId],
-  );
-  const planFus = await client.query(
-    `SELECT count(*)::int AS c FROM ${s}.plan_fus pf
-       JOIN ${s}.plans p ON p.id = pf.plan_id
-      WHERE p.tenant_id = $1`,
-    [tenantId],
-  );
-  const planSkus = await client.query(
-    `SELECT count(*)::int AS c FROM ${s}.plan_skus ps
-       JOIN ${s}.plan_fus pf ON pf.id = ps.plan_fu_id
-       JOIN ${s}.plans p ON p.id = pf.plan_id
-      WHERE p.tenant_id = $1`,
-    [tenantId],
-  );
-  const approvalRequests = await client.query(
-    `SELECT count(*)::int AS c FROM ${s}.approval_requests WHERE tenant_id = $1`,
-    [tenantId],
-  );
-  const adminAuditLogs = await client.query(
-    `SELECT count(*)::int AS c FROM ${s}.admin_audit_logs WHERE tenant_id = $1`,
-    [tenantId],
-  );
-  const users = await client.query(
-    `SELECT count(*)::int AS c FROM ${s}.users WHERE tenant_id = $1`,
-    [tenantId],
-  );
-  return {
-    agreements: agreements.rows[0].c,
-    plans: plans.rows[0].c,
-    planFus: planFus.rows[0].c,
-    planSkus: planSkus.rows[0].c,
-    approvalRequests: approvalRequests.rows[0].c,
-    adminAuditLogs: adminAuditLogs.rows[0].c,
-    users: users.rows[0].c,
-  };
+  const { countable, excludedNoSelect } = await resolveCountableTables(client);
+
+  const roleRes = await client.query('SELECT current_user AS u');
+  const connectedAsRole = roleRes.rows[0].u;
+
+  const tables = {};
+  for (const { table, hasTenantId } of countable) {
+    let whereClause;
+    if (hasTenantId) {
+      whereClause = 'tenant_id = $1';
+    } else if (table === 'tenants') {
+      whereClause = 'id = $1';
+    } else {
+      // §2.5 sessiz sıfır/atlama yasağı: bu tablo ne tenant_id taşıyor ne
+      // `tenants`'ın kendisi — nasıl kiracıya daraltılacağı BİLİNMİYOR.
+      // Sessizce global count almak (ya da atlamak) başka kiracıların
+      // paralel test/veri yazımını bu invaryanta karıştırabilir/gizleyebilir.
+      throw new Error(
+        `e2e-row-count: '${table}' ne tenant_id taşıyor ne 'tenants' — ` +
+          `bu tabloyu nasıl kiracıya daraltacağı bilinmiyor. Sessizce ` +
+          `atlanmadı: countRows() bu tablo için AÇIKÇA ele alınmalı.`,
+      );
+    }
+    const res = await client.query(
+      `SELECT count(*)::int AS c FROM ${s}.${table} WHERE ${whereClause}`,
+      [tenantId],
+    );
+    tables[table] = res.rows[0].c;
+  }
+
+  return { tables, excludedNoSelect, connectedAsRole };
 }
 
 module.exports = { connect, resolveFixtureTenantId, countRows };

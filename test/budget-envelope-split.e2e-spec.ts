@@ -32,6 +32,10 @@ import { randomUUID } from 'crypto';
 import { createTestApp, closeTestApp } from './helpers/app-bootstrap';
 import { loginAs, clearTokenCache } from './helpers/auth';
 import { loadE2EFixture, E2EFixture } from './helpers/seed-e2e';
+import {
+  getAdminDataSource,
+  closeAdminDataSource,
+} from './helpers/admin-datasource';
 
 describe('Budget Envelope Split — T-019b Faz 2 (E2E)', () => {
   let app: INestApplication;
@@ -57,6 +61,19 @@ describe('Budget Envelope Split — T-019b Faz 2 (E2E)', () => {
       );
       const ids: string[] = rows.map((r: { id: string }) => r.id);
       if (ids.length > 0) {
+        // `T-319` (`Z59` kapsam eki) — ÖLÇÜLDÜ: bu suite'in re-home (SP-E2E-06)
+        // ve diğer split senaryoları küçük `allocatedAmount` zarflarını %80/%90
+        // eşiğine taşıyor, `budget-tier-notification.service.ts`'in ilk üretim
+        // yazıcısını (`Z59`) tetikliyor — genişletilmiş T-047 evreni (`T-319`)
+        // bunu satır artığı olarak yakaladı, eski (elle yazılmış 7 tablo)
+        // evren KÖRDÜ. `main.notifications`'ta `app_runtime`'ın DELETE hakkı
+        // yok (ölçüldü, relacl: `arw` — DELETE'siz, ledger_entries/
+        // admin_audit_logs ile aynı korunmuş-tablo ailesi) — `app_migrate`.
+        const adminDataSource = await getAdminDataSource();
+        await adminDataSource.query(
+          `DELETE FROM main.notifications WHERE metadata->>'budgetEnvelopeId' = ANY($1::text[])`,
+          [ids],
+        );
         await dataSource.query(
           `DELETE FROM main.budget_transactions WHERE envelope_id = ANY($1::uuid[])`,
           [ids],
@@ -71,6 +88,7 @@ describe('Budget Envelope Split — T-019b Faz 2 (E2E)', () => {
     }
 
     await closeTestApp();
+    await closeAdminDataSource();
   });
 
   async function createFreshUnsplitEnvelope(

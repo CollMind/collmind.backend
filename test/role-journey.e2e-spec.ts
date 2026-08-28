@@ -40,7 +40,10 @@ import {
   cleanupTestAgreements,
   cleanupTestUsers,
 } from './helpers/seed-e2e';
-import { closeAdminDataSource } from './helpers/admin-datasource';
+import {
+  getAdminDataSource,
+  closeAdminDataSource,
+} from './helpers/admin-datasource';
 import * as bcrypt from 'bcrypt';
 import {
   User,
@@ -225,6 +228,21 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       );
       const a19EnvIds: string[] = a19EnvRows.map((r: { id: string }) => r.id);
       if (a19EnvIds.length > 0) {
+        // `T-319` (`Z59` kapsam eki) — ÖLÇÜLDÜ: bu suite'in A19 zarfı
+        // (küçük `allocatedAmount`, RESERVE'ler onu %80/%90 eşiğine
+        // taşıyor) `budget-tier-notification.service.ts`'in ilk üretim
+        // yazıcısını (`Z59`) TETİKLİYOR — 4 satır artık bırakıyordu
+        // (genişletilmiş T-047 evreni bunu YAKALADI, elle yazılmış eski
+        // evren KÖRDÜ). `main.notifications` üzerinde `app_runtime`'ın
+        // DELETE hakkı yok (ölçüldü, relacl: `arw` — DELETE'siz,
+        // ledger_entries/admin_audit_logs ile aynı korunmuş-tablo ailesi)
+        // — bu yüzden `app_migrate` (`adminDataSource`). envelope_id
+        // sütunu YOK (`notifications` polimorfik, `metadata` jsonb'de).
+        const adminDataSource = await getAdminDataSource();
+        await adminDataSource.query(
+          `DELETE FROM main.notifications WHERE metadata->>'budgetEnvelopeId' = ANY($1::text[])`,
+          [a19EnvIds],
+        );
         await dataSource.query(
           `DELETE FROM main.budget_transactions WHERE envelope_id = ANY($1::uuid[])`,
           [a19EnvIds],
