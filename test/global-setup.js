@@ -77,6 +77,16 @@
  * artık `pg_catalog`'dan TÜRETİLİYOR (`e2e-row-count.js#resolveCountableTables`).
  * Bu dosya artık HANGİ tabloların sayıldığını sabit yazmıyor; `countRows()`
  * ne döndürürse onu snapshot'lar.
+ *
+ * `T-324` (`Z61` HÜKÜM (a), 2026-08-28) — `T-319`'un evreni YARIM'dı:
+ * `pg_catalog`'dan türetiliyordu AMA `app_runtime`'ın SELECT edebildiği
+ * 39/48 tabloyla filtreleniyordu (9 tablo kördü). Sayım bağlantısı
+ * `app_migrate`'e taşındı (`e2e-row-count.js#connect`, ölçüldü: 48/48) —
+ * evren artık YETKİ FİLTRESİ TAŞIMIYOR. `excludedNoSelect` alanı bu
+ * yüzden KALDIRILDI: evren zaten tam olduğu için "SELECT hakkı olmadığı
+ * için dışarıda bırakılan" bir küme YOK — bir gün olursa
+ * `resolveCountableTables()` bunu sessizce dışarıda bırakmaz, AÇIK hata
+ * fırlatır (bkz. e2e-row-count.js).
  */
 
 const fs = require('fs');
@@ -89,10 +99,7 @@ module.exports = async function globalSetup() {
   const client = await connect();
   try {
     const tenantId = await resolveFixtureTenantId(client);
-    const { tables, excludedNoSelect, connectedAsRole } = await countRows(
-      client,
-      tenantId,
-    );
+    const { tables, connectedAsRole } = await countRows(client, tenantId);
 
     fs.writeFileSync(
       SNAPSHOT_PATH,
@@ -101,24 +108,13 @@ module.exports = async function globalSetup() {
 
     // eslint-disable-next-line no-console
     console.log(
-      `[T-047/T-319 invariant] BAŞLANGIÇ satır sayıları (tenant=Wella ` +
-        `Turkey, role=${connectedAsRole}, ${Object.keys(tables).length} ` +
-        `tablo, pg_catalog'dan türetilmiş evren):`,
+      `[T-047/T-319/T-324 invariant] BAŞLANGIÇ satır sayıları (tenant=` +
+        `Wella Turkey, role=${connectedAsRole}, ${Object.keys(tables).length} ` +
+        `tablo, pg_catalog'dan türetilmiş TAM evren — yetki filtresi YOK, ` +
+        `T-324/Z61):`,
     );
     // eslint-disable-next-line no-console
     console.log('  ' + JSON.stringify(tables));
-    if (excludedNoSelect.length > 0) {
-      // §2.5: kapsam daralması SESSİZ değil — hangi tabloların bu rolün
-      // SELECT erişimi olmadığı için evren DIŞINDA kaldığı açıkça basılır.
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[T-047/T-319 invariant] ⚠️ ${connectedAsRole} rolünün SELECT ` +
-          `hakkı olmadığı için evren DIŞINDA bırakılan ${excludedNoSelect.length} ` +
-          `tablo: ${excludedNoSelect.join(', ')} — bu tablolara yazan bir ` +
-          `yol varsa bu invaryant ona KÖR kalır (bkz. e2e-row-count.js dosya ` +
-          `başı yorumu).`,
-      );
-    }
   } finally {
     await client.end();
   }
