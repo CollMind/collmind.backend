@@ -65,13 +65,30 @@ SELECT
 --    operatör-yetkisi (superuser'ın bugünkü BYPASSRLS'inin insan-yolundaki
 --    tek meşru mirasçısı).
 --
---    ⛔ `K1a`'NIN DENETİM-İZİ İDDİASI YOKTUR (Z52 §3): aşağıdaki
+--    ~~⛔ `K1a`'NIN DENETİM-İZİ İDDİASI YOKTUR (Z52 §3): aşağıdaki
 --    `log_statement=all` rol seviyesinde yalnız `NE`'yi verir — `KİM`'i
---    (log_line_prefix'te %u yok, küme-seviyesi) ve `KALICILIĞI`
---    (logging_collector off, postmaster-seviyesi, `docker rm` ile iz YOK)
+--    (log_line_prefix'te %u yok) ve `KALICILIĞI` (logging_collector off)
 --    VERMEZ. O ikisi `K1b`'nin işidir, ve `K1b` KAPANMADAN "operatör
---    denetim-olaylıdır" cümlesi HİÇBİR BELGEDE KURULAMAZ. "1/3 doğru bir
---    iddia, tamamen yanlış olandan DAHA TEHLİKELİDİR."
+--    denetim-olaylıdır" cümlesi HİÇBİR BELGEDE KURULAMAZ.~~
+--
+--    ✅ BORÇ KAPANDI — `K1b` PİNİ GEÇTİ (2026-08-28, `exit 0`).
+--    Üç parçanın ÜÇÜ DE ölçüldü:
+--      NE          `log_statement=all`        (rol seviyesi, bu dosya)
+--      KİM         `log_line_prefix=%m [%p] %u@%d %a`   ⇒ pin ölçtü:
+--                  `app_runtime@` 1 satır · `app_operator@` 4 satır,
+--                  MARKER METNİ OLMADAN, yalnız `%u` alanıyla ayrışıyor
+--      KALICILIK   `logging_collector=on` + `collmind-tpm-postgres-logs`
+--                  volume'u ⇒ `docker rm` iz bırakır
+--    ⇒ "operatör denetim-olaylıdır" cümlesi ARTIK KURULABİLİR.
+--
+--    ⚠️ Ve `F12` gereği eski metin SİLİNMEDİ, üstü çizildi: bu borcun
+--    NEDEN vardığı ve NASIL kapandığı kayıtta kalır. Dersi de kalır:
+--    "1/3 doğru bir iddia, tamamen yanlış olandan DAHA TEHLİKELİDİR."
+--
+--    ⛔ VE ÜÇ PARÇADAN İKİSİ ORTAM-SEVİYESİDİR (`docker-compose.yml`),
+--    bu dosya DEĞİL — yani bir taze kurulumda bu dosya tek başına
+--    denetim-izini SAĞLAMAZ. İlk-deploy ön koşulu `4`
+--    (compose-tanımı ↔ canlı-container eşleşmesi) bunun kapısıdır.
 SELECT
   CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_operator')
     THEN format('ALTER ROLE app_operator WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS NOREPLICATION', :'operator_pw')
