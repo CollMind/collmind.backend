@@ -251,6 +251,58 @@ else
   exit 1
 fi
 
+# schema-isolation'ın da kendi self-test'i AYRI bir dosyadır (T-314/D) — bu
+# guard artık (view-security-invoker/dropped-column-absence gibi) KENDİ
+# bağlantısını kurar, meta-repo'daki `scripts/db-query.sh`'a bağımlı değil.
+# Aynı zincirleme kuralı burada da geçerli: self-test dosyası VAR ama hiçbir
+# gerçek kapı yolu onu ÇAĞIRMIYORSA "doğrulama bir kapıdır, durdurmuyorsa
+# doğrulama değildir" ihlal edilir.
+echo "=== self-test (schema-isolation) ==="
+if bash "$DIR/schema-isolation-self-test.sh"; then
+  echo "(schema-isolation fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! schema-isolation kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
+# app-operator-grants'ın da kendi self-test'i AYRI bir dosyadır (T-314/A) —
+# view-security-invoker'ın DB-env-override deseniyle aynı aile. Aynı
+# zincirleme kuralı: self-test dosyası VAR ama hiçbir gerçek kapı yolu onu
+# ÇAĞIRMIYORSA "doğrulama bir kapıdır, durdurmuyorsa doğrulama değildir"
+# ihlal edilir.
+echo "=== self-test (app-operator-grants) ==="
+if bash "$DIR/app-operator-grants-self-test.sh"; then
+  echo "(app-operator-grants fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! app-operator-grants kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
+# bypassrls-hygiene'in de kendi self-test'i AYRI bir dosyadır (EK 1/a, Z53 §4a).
+echo "=== self-test (bypassrls-hygiene) ==="
+if bash "$DIR/bypassrls-hygiene-self-test.sh"; then
+  echo "(bypassrls-hygiene fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! bypassrls-hygiene kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
+# new-table-rls'in de kendi self-test'i AYRI bir dosyadır (EK 1/b, Z53 §4b /
+# Z54 §3) — bu guard bir baseline dosyası da tüketir (money-float/mode-split
+# ailesiyle aynı "kapı doğar, mevcut borç tolere edilir, yeni ihlal bloklar"
+# deseni), bu yüzden self-test hem DB mock'unu hem baseline'ı override eder.
+echo "=== self-test (new-table-rls) ==="
+if bash "$DIR/new-table-rls-self-test.sh"; then
+  echo "(new-table-rls fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! new-table-rls kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0

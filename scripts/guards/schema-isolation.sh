@@ -27,22 +27,27 @@ source "$ROOT/scripts/guards/lib.sh"
 
 validate_allowlist "$ALLOWLIST" || exit 2
 
-# scripts/db-query.sh meta-repo kökündedir; backend bir submodule.
-DB_QUERY="$ROOT/../scripts/db-query.sh"
-
-# ⛔ Z52 §4 — sarmalayıcı bulunamazsa `-U postgres` FALLBACK'İ ÖLDÜ. Bu,
-# "DB'ye erişilemedi" (ölçülebilir, meşru SKIPPED nedeni) ile "sarmalayıcı
-# yok" (bir tooling eksikliği, sessizce superuser'a düşülmemeli) AYRI
-# sinyallerdir — ikincisi burada net bir hata mesajıyla exit 2 döner, DB
-# gerçekten kapalıyken guard'ın kendi SKIPPED/exit-0 mantığı (aşağıda,
-# `db_query` çağrısının BOŞ dönmesiyle) hâlâ çalışır.
-if [ ! -x "$DB_QUERY" ]; then
-  echo "!! [$GUARD_NAME] sarmalayıcı bulunamadı ($DB_QUERY) — postgres'e FALLBACK ETMEZ, ölçüm yapılamadı" >&2
-  exit 2
-fi
-
+# ⛔ T-314/D (K1a review S4) — ESKİDEN bu guard `../scripts/db-query.sh`
+# (META-REPO kökünde) sarmalayıcısına bağımlıydı. Backend bir SUBMODULE'dür
+# — yalnız `collmind.backend`'i klonlayan (ya da `git worktree` ile izole
+# doğrulama yapan, T-269'un tavsiye ettiği desen) bir ağaçta o dosya HİÇ YOK,
+# yani `npm run guards` backend-only bir ağaçta HER ZAMAN bu guard'ı
+# atlıyordu — DB açıkken bile. Kardeş guard'lar (`dropped-column-absence`,
+# `view-security-invoker`) zaten KENDİ bağlantısını kuruyordu; aynı desen
+# burada da uygulanıyor. `-U postgres` FALLBACK'İ yine YOK (K1a/Z52 §4) —
+# insan-yolu `app_operator`'dür.
+#
+# Test/self-test için DB sorgu katmanı SCHEMA_ISO_DB_QUERY ile override
+# edilebilir (view-security-invoker'ın VIEW_GUARD_DB_QUERY deseniyle aynı).
 db_query() {
-  bash "$DB_QUERY" "$1" 2>/dev/null
+  local sql="$1"
+  if [ -n "${SCHEMA_ISO_DB_QUERY:-}" ] && [ -x "$SCHEMA_ISO_DB_QUERY" ]; then
+    "$SCHEMA_ISO_DB_QUERY" "$sql"
+    return $?
+  fi
+  docker exec -i collmind-tpm-postgres psql -U app_operator -d collmind_tpm \
+    -v ON_ERROR_STOP=1 -t -A -c "$sql" 2>/dev/null
+  return $?
 }
 
 NS="$(db_query "SELECT nspname FROM pg_namespace WHERE nspname IN ('main','public');")" || NS=""

@@ -1,0 +1,64 @@
+# new-table-rls.sh baseline — TAZE ÖLÇÜM (2026-08-28, ADIM 6/EK 1-b)
+#
+# Bu KARARIN KAYDI değil, bir ENVANTERDİR: bugün `tenant_id` taşıyan ve
+# `ENABLE`/`FORCE ROW LEVEL SECURITY` HİÇBİRİNE sahip OLMAYAN 44 tablo
+# (main şeması, relkind='r', view'lar hariç — bkz. view-security-invoker.sh).
+#
+# ⛔ STATÜ: `blocked` (T-308 deseni, Z53 §4b) — bu liste RLS-AKTİVASYON
+# dalgasının İLK MADDESİNDE (Z54 §3) TEK TEK kapatılır; guard bu liste
+# İÇİNDEKİ tablolara bulgu üretmez (mevcut borç TOLERE edilir), ama listede
+# OLMAYAN (yeni doğan) bir tenant_id tablosu ENABLE+FORCE ÇİFTİ OLMADAN
+# doğarsa KIRMIZI verir (Z54: "tenant_id taşıyan tablo ENABLE+FORCE ÇİFTİ
+# OLMADAN DOĞAMAZ").
+#
+# AÇILMA KOŞULU: bir migration bu tablolardan birine
+#   ALTER TABLE main.<tablo> ENABLE ROW LEVEL SECURITY;
+#   ALTER TABLE main.<tablo> FORCE ROW LEVEL SECURITY;
+# uyguladığında, o tablo bu dosyadan ÇIKARILIR (satır silinir) — aksi hâlde
+# guard artık gerçek olmayan bir "hâlâ borç" iddiasında bulunur.
+#
+# Format: bir satır bir tablo adı. `#` ile başlayan satırlar yorum.
+admin_audit_logs
+agreement_transactions
+agreements
+approval_policies
+approval_requests
+brands
+budget_alert_configurations
+budget_envelopes
+budget_policies
+budget_transactions
+categories
+channels
+claim_matches
+claims
+cpls
+customers
+fiscal_periods
+forecasting_units
+generic_units
+kpis
+ledger_entries
+lta_agreements
+lta_plan_overrides
+lta_rates
+mechanic_spend_breakdown
+mechanics
+notifications
+on_invoice_batches
+on_invoice_entries
+plan_approval_history
+plan_fus
+plan_mechanic_values
+plan_skus
+plans
+regions
+roles
+sales_actual_batches
+sales_actuals
+skus
+tactic_realizations
+tactics
+user_role_assignments
+user_scopes
+users

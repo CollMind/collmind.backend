@@ -57,8 +57,8 @@ export class AdminAuditService {
     entityId: string | undefined,
     ipAddress: string | undefined,
     result: 'SUCCESS' | 'FAILURE',
-    beforeValues?: Record<string, any>,
-    afterValues?: Record<string, any>,
+    beforeValues?: Record<string, unknown>,
+    afterValues?: Record<string, unknown>,
     justification?: string,
   ): Promise<AdminAuditLog>;
   /**
@@ -83,13 +83,25 @@ export class AdminAuditService {
     entityId: string | undefined,
     ipAddress: string | undefined,
     result: 'SUCCESS' | 'FAILURE',
-    beforeValues: Record<string, any> | undefined,
-    afterValues: Record<string, any> | undefined,
+    beforeValues: Record<string, unknown> | undefined,
+    afterValues: Record<string, unknown> | undefined,
     justification: string | undefined,
     options: LogAdminActionOptions,
   ): Promise<AdminAuditLog>;
+  /**
+   * T-314/B (K1a review S7, Z52 §2) — PLATFORM-SEVİYESİ EYLEM imzası.
+   * `Z52 §2` `tenant_id`'yi nullable yaptı ("NULL burada bilgi-eksikliği
+   * DEĞİL, katman bilgisidir") ama ÜÇ overload'ın da `tenantId: string`
+   * (nullable OLMAYAN) parametre taşıması bu yeteneği MEKANİK OLARAK
+   * erişilemez bırakıyordu — `null` hiçbir çağrı yerinden GEÇİRİLEMİYORDU.
+   * Bu overload `tenantId: null`'ı AÇIKÇA kabul eder (üçüncü, ayrı bir imza
+   * — mevcut iki overload'a SESSİZCE `| null` eklemek TS'te `tenantId`'nin
+   * her çağrı yerinde `string | null` görünmesine yol açar ve derleyici o
+   * belirsizliği HER ÇAĞRI YERİNDE zorlardı; ayrı imza yerine bunun
+   * yapılmaması bilinçli — mevcut 13+ çağrı yeri DEĞİŞMEDEN derlenir).
+   */
   async logAdminAction(
-    tenantId: string,
+    tenantId: null,
     adminId: string,
     adminEmail: string,
     actionType: string,
@@ -97,8 +109,22 @@ export class AdminAuditService {
     entityId: string | undefined,
     ipAddress: string | undefined,
     result: 'SUCCESS' | 'FAILURE',
-    beforeValues?: Record<string, any>,
-    afterValues?: Record<string, any>,
+    beforeValues?: Record<string, unknown>,
+    afterValues?: Record<string, unknown>,
+    justification?: string,
+    options?: LogAdminActionOptions,
+  ): Promise<AdminAuditLog>;
+  async logAdminAction(
+    tenantId: string | null,
+    adminId: string,
+    adminEmail: string,
+    actionType: string,
+    entityType: string,
+    entityId: string | undefined,
+    ipAddress: string | undefined,
+    result: 'SUCCESS' | 'FAILURE',
+    beforeValues?: Record<string, unknown>,
+    afterValues?: Record<string, unknown>,
     justification?: string,
     options?: LogAdminActionOptions,
   ): Promise<AdminAuditLog> {
@@ -239,6 +265,39 @@ export class AdminAuditService {
     const query = this.auditLogRepository
       .createQueryBuilder('log')
       .where('log.tenantId = :tenantId', { tenantId })
+      .orderBy('log.createdAt', 'DESC')
+      .limit(limit);
+
+    if (adminId) {
+      query.andWhere('log.adminId = :adminId', { adminId });
+    }
+
+    return query.getMany();
+  }
+
+  /**
+   * T-314/B (K1a review S7) — platform-seviyesi (`tenant_id IS NULL`) satırlar
+   * için OKUMA TARAFI. `getAuditLogs`'un `.where('log.tenantId = :tenantId')`
+   * ifadesi SQL NULL semantiği gereği `tenant_id = NULL`'ı ASLA eşleştirmez —
+   * bu satırlar o metottan HİÇBİR PARAMETREYLE görünmez (kırılmıyor,
+   * GÖRÜNMÜYOR). Ayrı bir metot: sessizce `tenantId` parametresini nullable
+   * yapıp aynı `=` operatörüyle "çalışıyor gibi" bırakmak §2.5'in yasakladığı
+   * sessiz-boş-dönüş sınıfına girerdi.
+   *
+   * ⚠️ HTTP yüzeyi BİLEREK YOK — bu yeteneği tenant-scoped bir admin
+   * endpoint'ine (`@TenantId()` bağlamlı `AdminAuditController`) bağlamak
+   * "platform-seviyesi eylemi kim görebilir" sorusuna (bugünkü RBAC'te
+   * tanımsız bir platform/süper-admin rolü ister) sessizce cevap üretirdi.
+   * `T-314` AC'sinin izin verdiği açık devir: K1b/RLS-aktivasyon dalgasının
+   * rol tasarımı bu HTTP yolunu açar.
+   */
+  async getPlatformAuditLogs(
+    adminId?: string,
+    limit = 100,
+  ): Promise<AdminAuditLog[]> {
+    const query = this.auditLogRepository
+      .createQueryBuilder('log')
+      .where('log.tenantId IS NULL')
       .orderBy('log.createdAt', 'DESC')
       .limit(limit);
 

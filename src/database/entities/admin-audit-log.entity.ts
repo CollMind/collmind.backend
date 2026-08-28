@@ -29,7 +29,11 @@ export class AdminAuditLog {
     comment:
       'NULL = platform-seviyesi eylem (tenant bağımsız operatör işi) — bilgi eksikliği DEĞİL, katman bilgisi. Z52 §2.',
   })
-  tenantId?: string;
+  // T-314/B — `string | null` (`undefined` DEĞİL): platform-seviyesi satırlar
+  // AÇIKÇA `null` yazar (bkz. admin-audit.service.ts logAdminAction'ın
+  // `tenantId: null` overload'ı) — `undefined` "hiç set edilmedi" anlamına
+  // gelirdi ve TypeORM'un varsayılan-değer davranışıyla karışırdı.
+  tenantId?: string | null;
 
   @Column({ name: 'admin_id', type: 'uuid' })
   adminId!: string;

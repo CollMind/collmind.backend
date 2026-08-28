@@ -7,10 +7,50 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: collmind_tpm
     ports:
-      - '5432:5432'
+      # ⛔ 5434 (review B2, 2026-08-28) — CANLI container 5434→5432 yayınlıyor
+      # ve `.env` `DB_PORT=5434` diyor. Eski hâli `5432:5432` idi; container_name
+      # PİNLİ olduğu için `docker compose up -d postgres` canlıyı DEVRALIP
+      # yeniden yaratır ve host portunu SESSİZCE 5432ye düşürürdü.
+      # ⛔ VE MASKELEME TAM BURADA: tüm guardlar `docker exec` kullanıyor ⇒
+      #   YEŞİL KALIRLAR. Kırılan tek şey UYGULAMA olurdu — kapılar göremez.
+      # Volume-adı tuzağının KARDEŞİ: "bu container bu compose ile yaratılmamış".
+      - '5434:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # K1b (Z52 §3, Z51 §1 "kalıcılık" alanı) — dosya-tabanlı log ayrı bir
+      # volume'a yazılır. `postgres_data`'nın altına konmaz: PGDATA içine
+      # log yazmak `pg_basebackup`/replikasyon araçlarıyla çakışabilir, ve
+      # log rotasyonunun veri dizininden BAĞIMSIZ yaşam döngüsü olmalı.
+      - postgres_logs:/var/log/postgresql
       - ./docker/init-schema.sql:/docker-entrypoint-initdb.d/init-schema.sql
+    # K1b (Z52 §3) — sağlayıcının "kim" ve "kalıcılık" alanları:
+    #   log_line_prefix  '%u' EKLENDİ  ⇒ aktör (KİM) artık log satırında.
+    #                    '%d'/'%a' de eklendi (database, application_name) —
+    #                    brief Z51 §1: "%u (+ %d, %a)".
+    #   log_connections  on  ⇒ Z51'de rol-seviyesinde REDDEDİLMİŞTİ
+    #                    (superuser-backend context, EXIT=1); burada KÜME
+    #                    (postgresql.conf/command-line) seviyesinde verilir.
+    #   logging_collector on + log_directory VOLUME'a ⇒ Z51'in üçüncü
+    #                    kırmızı satırı: log artık yalnız `docker logs`
+    #                    (stdout, `docker rm` ile kaybolan) akışında değil,
+    #                    kalıcı volume'da dosya olarak duruyor.
+    # ⚠️ logging_collector açmak container'ın YENİDEN YARATILMASINI
+    #    gerektirir (postmaster-context parametre) — bkz.
+    #    docs/verification/ADIM6_K1B_KAPANIS_PINI_BEKLIYOR.md — geri dönüş yolu
+    #    orada YAZILI. ⚠️ `T-047` etkisi ÖLÇÜLEMEDİ (container yeniden yaratma
+    #    İNSAN EYLEMİ bekliyor); o belge bunu AÇIKÇA söyler — "ölçülü" DEMEZ.
+    command:
+      - postgres
+      - -c
+      - logging_collector=on
+      - -c
+      - log_directory=/var/log/postgresql
+      - -c
+      - log_filename=postgresql-%Y-%m-%d_%H%M%S.log
+      - -c
+      - log_line_prefix=%m [%p] %u@%d %a
+      - -c
+      - log_connections=on
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 10s
@@ -41,6 +81,19 @@ services:
     restart: unless-stopped
 
 volumes:
+  # ⛔ KRİTİK (ölçüldü, ADIM 6 turu) — bu container BUGÜN bu compose
+  # dosyasıyla YARATILMAMIŞ (muhtemelen `docker run` ile, elle). Gerçek veri
+  # volume'unun adı `collmind-tpm-postgres-data`'DIR — compose'un ürettiği
+  # varsayılan ad (`<proje-öneki>_postgres_data`, ör.
+  # `collmindbackend_postgres_data`) DEĞİL. `name:` PİN'İ OLMADAN
+  # `docker compose up -d postgres` (K1b'nin container-yeniden-yaratma
+  # adımı) TAMAMEN BOŞ bir volume'a bağlanır — sessiz VERİ KAYBI. Aynı
+  # gerekçeyle `postgres_logs` de sabit adla pinlendi (tutarlılık —
+  # gelecekte bu dosya BAŞKA bir ortamda `docker compose up` ile SIFIRDAN
+  # çalıştırılırsa, `name:` orada da idempotent create-if-missing yapar).
   postgres_data:
+    name: collmind-tpm-postgres-data
+  postgres_logs:
+    name: collmind-tpm-postgres-logs
 
 
