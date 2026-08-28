@@ -9,7 +9,10 @@ import { seedUsers } from './user.seed';
 import { seedChannels } from './channel.seed';
 import { seedCustomers } from './customer.seed';
 import { seedCpls } from './cpl.seed';
-import { seedBudgetEnvelopes } from './budget-envelope.seed';
+import {
+  seedBudgetEnvelopes,
+  backfillBudgetEnvelopeOwners,
+} from './budget-envelope.seed';
 import { seedBudgetAlertConfigurations } from './budget-alert-configuration.seed';
 import { seedMechanics } from './mechanic.seed';
 import { seedProducts } from './product.seed';
@@ -101,6 +104,25 @@ export async function runAllSeeds(dataSource: DataSource): Promise<void> {
 
   // 6a. Seed budget alert configurations (config-driven thresholds — T-012)
   await seedBudgetAlertConfigurations(dataSource, tenant.id);
+
+  // 6b. `Z59 §3b`: backfill `budget_owner_id` for envelopes that have none —
+  // `T-318` measured 4/4 NULL in production, which turns the WARNING (%80)
+  // tier notification into a hard 500 the moment an envelope crosses the
+  // threshold. Owner: `category.manager@wella.com` (Z59 §3 — Team Lead
+  // decision; must NOT be a FINANCE user, see that section for why).
+  const categoryManagerUser = users.find(
+    (u) => u.email === 'category.manager@wella.com',
+  );
+  if (!categoryManagerUser) {
+    throw new Error(
+      '❌ category.manager@wella.com bulunamadı — budget envelope owner backfill için gerekli (Z59 §3b).',
+    );
+  }
+  await backfillBudgetEnvelopeOwners(
+    dataSource,
+    tenant.id,
+    categoryManagerUser,
+  );
   const nkaEnvelope =
     envelopes.find((e) => e.code.includes('NKA')) || envelopes[0];
   if (!nkaEnvelope) {

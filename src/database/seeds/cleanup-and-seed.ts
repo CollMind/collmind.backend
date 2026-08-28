@@ -8,7 +8,10 @@ import { seedUsers } from './user.seed';
 import { seedChannels } from './channel.seed';
 import { seedCustomers } from './customer.seed';
 import { seedCpls } from './cpl.seed';
-import { seedBudgetEnvelopes } from './budget-envelope.seed';
+import {
+  seedBudgetEnvelopes,
+  backfillBudgetEnvelopeOwners,
+} from './budget-envelope.seed';
 import { seedMechanics } from './mechanic.seed';
 import { seedProducts } from './product.seed';
 import { seedAgreements } from './agreement.seed';
@@ -131,6 +134,21 @@ export async function cleanupAndSeed(dataSource: DataSource): Promise<void> {
   }
   console.log(
     `   NKA Envelope: ${nkaEnvelope.code} (${nkaEnvelope.allocatedAmount} TRY)\n`,
+  );
+
+  // 6b. `Z59 §3b`: backfill `budget_owner_id` — bkz. index.ts'teki aynı adım.
+  const categoryManagerUser = users.find(
+    (u) => u.email === 'category.manager@wella.com',
+  );
+  if (!categoryManagerUser) {
+    throw new Error(
+      '❌ category.manager@wella.com bulunamadı — budget envelope owner backfill için gerekli (Z59 §3b).',
+    );
+  }
+  await backfillBudgetEnvelopeOwners(
+    dataSource,
+    tenant.id,
+    categoryManagerUser,
   );
 
   // 7. Seed mechanics (master-data; bağımlılık sırası: channels, CPLs tamamlandı)

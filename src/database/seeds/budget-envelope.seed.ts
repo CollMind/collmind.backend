@@ -3,6 +3,7 @@ import {
   BudgetEnvelope,
   BudgetEnvelopeStatus,
 } from '../entities/budget-envelope.entity';
+import { User } from '../entities/user.entity';
 
 export async function seedBudgetEnvelopes(
   dataSource: DataSource,
@@ -80,4 +81,67 @@ export async function seedBudgetEnvelopes(
 
   console.log(`✅ Seeded ${created.length} budget envelopes`);
   return created;
+}
+
+/**
+ * `Z59 §3b` backfill — `budget_owner_id` canlıda 4/4 zarfta NULL, ve `T-318`
+ * kanıtladı bu bir "hiç yazıcısı yok" boşluğu (henüz hiçbir form/akış bu
+ * alanı doldurmuyor, `Z59 §1`). Zorunlu kılınmıyor (`Z59 §3`: yol açmadan
+ * zorunluluk koymak yasak) — yalnız MEVCUT zarflara kanonik bir sahip
+ * atanıyor, böylece `WARNING` (%80) alıcı çözümlemesi canlıda hard-throw'a
+ * düşmüyor.
+ *
+ * Sahip: `category.manager@wella.com` (Team Lead kararı, `Z59 §3`) — zarf
+ * kanal+kategori kapsamlı, harcamanın sahibi kategori yöneticisi; ve bilerek
+ * `FINANCE` DEĞİL — `WARNING`'in owner-yolu ile `FINANCE`'e düşen fallback-yolu
+ * (`Z59 §2`) AYNI alıcıya düşerse, bir pin ikisini ayırt edemez (`DISIPLIN`:
+ * "fixture, ayırt etmek istediği iki tarafta FARKLI değer taşımalı").
+ *
+ * `T-316`'nın `budget-policy.seed.ts`'teki ÜÇ DURUM deseni izlenir:
+ *   ölçülmüş boş (`budgetOwnerId` NULL)  → DOLDUR
+ *   kanonik (zaten categoryManager'a eşit) → NO-OP
+ *   BAŞKA bir değer (kullanıcı bilinçli seçim yapmış olabilir) → ⛔ DOKUNMA + görünür uyarı
+ */
+export async function backfillBudgetEnvelopeOwners(
+  dataSource: DataSource,
+  tenantId: string,
+  categoryManagerUser: User,
+): Promise<void> {
+  const repo = dataSource.getRepository(BudgetEnvelope);
+  const envelopes = await repo.find({ where: { tenantId } });
+
+  let filled = 0;
+  let skippedCanonical = 0;
+  let skippedForeign = 0;
+
+  for (const envelope of envelopes) {
+    if (!envelope.budgetOwnerId) {
+      await repo.update(
+        { id: envelope.id },
+        {
+          budgetOwnerId: categoryManagerUser.id,
+          budgetOwnerEmail: categoryManagerUser.email,
+          budgetOwnerName: categoryManagerUser.fullName,
+        },
+      );
+      filled += 1;
+      continue;
+    }
+    if (envelope.budgetOwnerId === categoryManagerUser.id) {
+      skippedCanonical += 1;
+      continue;
+    }
+    // ⛔ DOKUNMA. Başka bir owner atanmış olabilir — bilinçli bir seçim
+    // olabilir (§2.5: gizli tie-break yasak).
+    console.warn(
+      `   BudgetEnvelopeOwners: zarf ${envelope.code} (${envelope.id}) ` +
+        `owner'ı ne boş ne kanonik (${envelope.budgetOwnerId}). ` +
+        `DOKUNULMADI — kiracı konfigürasyonu olabilir (Z59 §3).`,
+    );
+    skippedForeign += 1;
+  }
+
+  console.log(
+    `   BudgetEnvelopeOwners: ${filled} filled, ${skippedCanonical} already canonical, ${skippedForeign} foreign (untouched)`,
+  );
 }

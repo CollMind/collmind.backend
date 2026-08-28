@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EntityManager } from 'typeorm';
 import { BudgetReservationService } from './budget-reservation.service';
 import { BudgetRepository } from './budget.repository';
+import { BudgetTierNotificationService } from './budget-tier-notification.service';
 import {
   BudgetTransaction,
   BudgetTransactionType,
@@ -46,6 +47,14 @@ describe('BudgetReservationService', () => {
       providers: [
         BudgetReservationService,
         { provide: BudgetRepository, useValue: mockBudgetRepository },
+        // T-318: releaseNetReservation() calls this after successful
+        // releases — no-op mock, tiering has its own spec.
+        {
+          provide: BudgetTierNotificationService,
+          useValue: {
+            evaluateAndNotify: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 

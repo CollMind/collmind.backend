@@ -4,6 +4,7 @@ import { BudgetService } from './budget.service';
 import { BudgetRepository } from './budget.repository';
 import { BudgetThresholdService } from './budget-threshold.service';
 import { BudgetReservationService } from './budget-reservation.service';
+import { BudgetTierNotificationService } from './budget-tier-notification.service';
 import {
   BudgetTransaction,
   BudgetTransactionType,
@@ -111,6 +112,16 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
         {
           provide: BudgetReservationService,
           useValue: { releasePlanReservation: jest.fn() },
+        },
+        // T-318: writeTransaction() calls this after every
+        // budgetRepository.createTransaction — no-op mock here, this
+        // suite's assertions are about the transaction data, not tiering
+        // (BudgetTierNotificationService has its own spec).
+        {
+          provide: BudgetTierNotificationService,
+          useValue: {
+            evaluateAndNotify: jest.fn().mockResolvedValue(undefined),
+          },
         },
         // T-019b: BudgetService#splitEnvelope opens its own QueryRunner
         // transaction (mirrors ApprovalWorkflowService/PlanService pattern).

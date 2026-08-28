@@ -474,12 +474,20 @@ GRANT UPDATE (created_by, updated_by, is_active, updated_at)
 --    dosya) ile ölçüldü.
 --
 --    `notifications` — SELECT (`findByRecipient`/`findUnreadByRecipient`),
---      UPDATE (`markAsRead` → `save()` var olan satırda). INSERT
---      BİLEREK VERİLMEDİ: `NotificationService#createNotification`'ın
---      HİÇBİR üretim çağıranı yok (`grep -rn "createNotification" src`
---      → yalnız tanım; `NotificationModule` yalnız kendi controller'ına
---      inject ediliyor) — İlke 1, bugün ihtiyacı olmayan izin verilmez.
-GRANT SELECT, UPDATE ON :"schema".notifications TO app_runtime;
+--      UPDATE (`markAsRead` → `save()` var olan satırda), VE ARTIK INSERT.
+--      ⚠️ `T-318`/`T-322` (`Z59`, 2026-08-28) — bu bloğun "İlke 1, bugün
+--      ihtiyacı yok" gerekçesi ÇÜRÜDÜ: `BudgetTierNotificationService
+--      #evaluateAndNotify` artık `NotificationService#createNotification`'ın
+--      CANLI üreticisi (RESERVE/COMMIT/RELEASE'ten sonra WARNING/
+--      FINANCE_REVIEW kademe geçişinde çağrılıyor). Ölçüldü: GRANT'siz
+--      DB'de tam e2e koşumu `permission denied for table notifications`
+--      ile `budget-envelope-split.e2e-spec.ts` (SP-E2E-06) ve
+--      `role-journey.e2e-spec.ts` (C9c) suite'lerini 500'e düşürüyordu —
+--      bu guard'ın kendi belgelediği İKİNCİ SINIR'ın ("okuyor ama
+--      yazamıyor" ayrımını YAKALAMAZ) canlı bir örneği; `app-runtime-
+--      grants.sh` bunu YAKALAMAZ (tablonun SELECT/UPDATE'i zaten vardı),
+--      yalnız e2e ölçtü.
+GRANT SELECT, INSERT, UPDATE ON :"schema".notifications TO app_runtime;
 --    `brands` — SELECT (`findAll`/`findOne`/`findByCode`), INSERT
 --      (`create` → `save()` yeni satır), UPDATE (`update`/`remove` →
 --      `save()`/`softRemove()`, ikisi de var olan satırda). Hard DELETE

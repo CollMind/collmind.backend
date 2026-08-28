@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not } from 'typeorm';
+import { EntityManager, Repository, Not } from 'typeorm';
 import {
   Notification,
   NotificationStatus,
@@ -13,9 +13,24 @@ export class NotificationRepository {
     private readonly notificationRepository: Repository<Notification>,
   ) {}
 
-  async create(notification: Partial<Notification>): Promise<Notification> {
-    const newNotification = this.notificationRepository.create(notification);
-    return this.notificationRepository.save(newNotification);
+  /**
+   * `T-322` (`Z59 §5i`): `manager` verilirse (çağıran hâlâ açık bir
+   * QueryRunner transaction'ı içindeyse) yazım O manager üzerinden yapılır
+   * — aksi hâlde bildirim kendi bağlantısını kullanır ve dış transaction
+   * ROLLBACK olduğunda GERİDE KALIR (yanlış-pozitif finansal uyarı, "500'den
+   * sinsi" ailesi). Desen `budget-tier-notification.service.ts
+   * #evaluateAndNotify`'daki `manager?: EntityManager` ile AYNI — yeni bir
+   * mekanizma icat edilmedi.
+   */
+  async create(
+    notification: Partial<Notification>,
+    manager?: EntityManager,
+  ): Promise<Notification> {
+    const repo = manager
+      ? manager.getRepository(Notification)
+      : this.notificationRepository;
+    const newNotification = repo.create(notification);
+    return repo.save(newNotification);
   }
 
   // T-275: `recipientId` ZORUNLU parametre — `findByRecipient`/`findUnreadByRecipient`/
@@ -58,8 +73,14 @@ export class NotificationRepository {
     });
   }
 
-  async update(notification: Notification): Promise<Notification> {
-    return this.notificationRepository.save(notification);
+  async update(
+    notification: Notification,
+    manager?: EntityManager,
+  ): Promise<Notification> {
+    const repo = manager
+      ? manager.getRepository(Notification)
+      : this.notificationRepository;
+    return repo.save(notification);
   }
 
   async countUnread(tenantId: string, recipientId: string): Promise<number> {

@@ -19,6 +19,7 @@ import {
   BudgetReservationService,
   PlanReservationReleaseReason,
 } from './budget-reservation.service';
+import { BudgetTierNotificationService } from './budget-tier-notification.service';
 import { UtilizationStatus } from '../finance-reporting/dto/budget-utilization.dto';
 import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
 import {
@@ -67,12 +68,49 @@ export class BudgetService {
     private readonly budgetRepository: BudgetRepository,
     private readonly budgetThresholdService: BudgetThresholdService,
     private readonly budgetReservationService: BudgetReservationService,
+    // T-318 (Z57 §3): every budget_transaction write funnels through
+    // `writeTransaction` below, which evaluates a WARNING/FINANCE_REVIEW
+    // tier transition after each write (§7: `budgetRepository
+    // .createTransaction` has exactly two callers in the whole codebase —
+    // this file and `BudgetReservationService`; both are wired).
+    private readonly budgetTierNotificationService: BudgetTierNotificationService,
     // T-019b: split() needs its own QueryRunner transaction (envelope
     // FOR UPDATE lock + OFF-twin creation + re-home writes must all
     // commit/rollback atomically) — same pattern as
     // ApprovalWorkflowService/PlanService (docs/analysis/0005 §4).
     private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * T-318 (Z57 §3): single funnel for every `budget_transactions` write in
+   * this service (RESERVE/COMMIT/RELEASE) — replaces the bare
+   * `budgetRepository.createTransaction` call everywhere in this file so a
+   * tier-transition check (`K-2.2.7a` WARNING %80 / FINANCE_REVIEW %90) is
+   * never missed on a sibling write path (`§7.1`: "kardeş yol etkilenmiyor
+   * iddiası ölçülmeden yazılamaz" — the two other call-site families,
+   * `BudgetReservationService#releaseNetReservation`, are wired the same
+   * way, see that file).
+   *
+   * `K-2.2.7c`: thresholds apply only to the PLAN/COMMITMENT side — this is
+   * exactly that side (`budget_transactions`, not `ledger_entries`), so
+   * hooking here (and nowhere in the ledger-writing modules) is the correct
+   * boundary, not an oversight.
+   */
+  private async writeTransaction(
+    data: Partial<BudgetTransaction>,
+    manager?: EntityManager,
+  ): Promise<BudgetTransaction> {
+    const transaction = await this.budgetRepository.createTransaction(
+      data,
+      manager,
+    );
+    await this.budgetTierNotificationService.evaluateAndNotify(
+      data.tenantId as string,
+      data.envelopeId as string,
+      manager,
+    );
+    return transaction;
+  }
 
   /** T-019 Faz 1: does `tx` belong to the given plan-budget bucket? */
   private matchesBucket(
@@ -295,7 +333,7 @@ export class BudgetService {
     }
 
     // Create RELEASE transaction
-    const transaction = await this.budgetRepository.createTransaction({
+    const transaction = await this.writeTransaction({
       tenantId,
       envelopeId,
       txType: BudgetTransactionType.RELEASE,
@@ -487,7 +525,7 @@ export class BudgetService {
     }
 
     // Create RESERVE transaction
-    const transaction = await this.budgetRepository.createTransaction(
+    const transaction = await this.writeTransaction(
       {
         tenantId,
         envelopeId: envelope.id,
@@ -633,7 +671,7 @@ export class BudgetService {
         ? `RESERVE|PLAN|${planId}|${envelope.id}${bucketSuffix}`
         : `RESERVE|PLAN|${planId}|${envelope.id}${bucketSuffix}|GEN${envelopeReserves.length + 1}`;
 
-    const transaction = await this.budgetRepository.createTransaction(
+    const transaction = await this.writeTransaction(
       {
         tenantId,
         envelopeId: envelope.id,
@@ -751,7 +789,7 @@ export class BudgetService {
           manager,
         );
       if (!existingConvertRelease) {
-        await this.budgetRepository.createTransaction(
+        await this.writeTransaction(
           {
             tenantId,
             envelopeId,
@@ -771,7 +809,7 @@ export class BudgetService {
       }
 
       const commitKey = `COMMIT|PLAN|${planId}|${envelopeId}${bucketSuffix}`;
-      return this.budgetRepository.createTransaction(
+      return this.writeTransaction(
         {
           tenantId,
           envelopeId,
@@ -821,7 +859,7 @@ export class BudgetService {
     }
 
     const commitKey = `COMMIT|PLAN|${planId}|${envelope.id}${bucketSuffix}`;
-    return this.budgetRepository.createTransaction(
+    return this.writeTransaction(
       {
         tenantId,
         envelopeId: envelope.id,
@@ -1089,7 +1127,7 @@ export class BudgetService {
       return existing;
     }
 
-    return this.budgetRepository.createTransaction({
+    return this.writeTransaction({
       tenantId,
       envelopeId,
       txType: BudgetTransactionType.RELEASE,
@@ -1134,7 +1172,7 @@ export class BudgetService {
     }
 
     // Create RELEASE transaction
-    const transaction = await this.budgetRepository.createTransaction({
+    const transaction = await this.writeTransaction({
       tenantId,
       envelopeId,
       txType: BudgetTransactionType.RELEASE,
@@ -1834,7 +1872,7 @@ export class BudgetService {
             manager,
           );
         if (!existingRelease) {
-          await this.budgetRepository.createTransaction(
+          await this.writeTransaction(
             {
               tenantId,
               envelopeId: onEnvelope.id,
@@ -1861,7 +1899,7 @@ export class BudgetService {
             manager,
           );
         if (!existingNew) {
-          await this.budgetRepository.createTransaction(
+          await this.writeTransaction(
             {
               tenantId,
               envelopeId: offEnvelope.id,

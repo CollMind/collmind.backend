@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { EntityManager } from 'typeorm';
 import { NotificationRepository } from './notification.repository';
 import { EmailService } from './services/email.service';
 import {
@@ -17,6 +18,13 @@ export class NotificationService {
   ) {}
 
   // MC-002: Create notification with template
+  //
+  // `T-322` (`Z59 §5i`): `manager` opsiyonel — çağıran (ör.
+  // `BudgetTierNotificationService`) hâlâ açık bir RESERVE/COMMIT/RELEASE
+  // transaction'ı içindeyse verilir, ve yazım O transaction'a bağlanır.
+  // Verilmezse davranış öncekiyle BİREBİR (kendi bağlantısı). Desen
+  // `NotificationRepository#create`'in aynı parametresi — bkz. o dosyanın
+  // JSDoc'u.
   async createNotification(
     tenantId: string,
     type: NotificationType,
@@ -28,6 +36,7 @@ export class NotificationService {
       NotificationChannel.IN_APP,
       NotificationChannel.EMAIL,
     ],
+    manager?: EntityManager,
   ): Promise<Notification[]> {
     const template = this.getTemplate(type, metadata);
     const priority = this.getPriority(type);
@@ -35,26 +44,29 @@ export class NotificationService {
     const notifications: Notification[] = [];
 
     for (const channel of channels) {
-      const notification = await this.notificationRepository.create({
-        tenantId,
-        type,
-        recipientId,
-        recipientEmail,
-        recipientName,
-        channel,
-        priority,
-        subject: template.subject,
-        body: template.body,
-        metadata,
-        status:
-          channel === NotificationChannel.IN_APP
-            ? NotificationStatus.SENT
-            : NotificationStatus.PENDING,
-        expiresAt:
-          type === NotificationType.APPROVAL_REQUESTED
-            ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-            : undefined,
-      });
+      const notification = await this.notificationRepository.create(
+        {
+          tenantId,
+          type,
+          recipientId,
+          recipientEmail,
+          recipientName,
+          channel,
+          priority,
+          subject: template.subject,
+          body: template.body,
+          metadata,
+          status:
+            channel === NotificationChannel.IN_APP
+              ? NotificationStatus.SENT
+              : NotificationStatus.PENDING,
+          expiresAt:
+            type === NotificationType.APPROVAL_REQUESTED
+              ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+              : undefined,
+        },
+        manager,
+      );
 
       notifications.push(notification);
 
@@ -64,10 +76,10 @@ export class NotificationService {
         if (emailSent) {
           notification.status = NotificationStatus.SENT;
           notification.sentAt = new Date();
-          await this.notificationRepository.update(notification);
+          await this.notificationRepository.update(notification, manager);
         } else {
           notification.status = NotificationStatus.FAILED;
-          await this.notificationRepository.update(notification);
+          await this.notificationRepository.update(notification, manager);
         }
       }
     }
@@ -109,6 +121,13 @@ export class NotificationService {
         return {
           subject: `[Budget Alert] ${metadata.budgetEnvelopeName || 'N/A'} is 100% consumed`,
           body: this.getBudgetAlert100Template(metadata),
+        };
+
+      // T-318 (Z57 §3): K-2.2.7a FINANCE_REVIEW kademesi (%90).
+      case NotificationType.BUDGET_FINANCE_REVIEW:
+        return {
+          subject: `[Finance Review] ${metadata.budgetEnvelopeName || 'N/A'} reached ${metadata.financeReviewThresholdPct ?? metadata.consumptionPct ?? 'N/A'}% utilization`,
+          body: this.getBudgetFinanceReviewTemplate(metadata),
         };
 
       case NotificationType.AGREEMENT_EXPIRING:
@@ -171,10 +190,24 @@ Reason: ${metadata.rejectionReason || 'No reason provided'}
     `.trim();
   }
 
+  // `Z59 §2(a)`: owner çözümlenemediğinde bu şablon `FINANCE`'e gider — ve
+  // gövde alıcının FALLBACK-ALICISI OLDUĞUNU açıkça söylemek ZORUNDA
+  // (`Z59`: "sessiz-fallback'i görünür-fallback yapan şey log değil, ÜRÜN
+  // YÜZEYİNDE görünürlüktür"). `metadata.fallbackRecipient` bunu taşır —
+  // `BudgetTierNotificationService#notifyWarningFallbackToFinance`'in tek
+  // üreticisi.
   private getBudgetAlert80Template(metadata: Record<string, any>): string {
-    return `
-Hi ${metadata.budgetOwnerName || 'Budget Owner'},
+    const fallbackNotice = metadata.fallbackRecipient
+      ? `\n⚠️ Bu bildirim size bütçe sahibine (${
+          metadata.fallbackReason === 'OWNER_NOT_FOUND'
+            ? 'tanımlı ama bulunamadı'
+            : 'tanımsız'
+        }) yönlendirilemediği için, FINANCE fallback alıcısı olarak ulaştı.\n`
+      : '';
 
+    return `
+Hi ${metadata.fallbackRecipient ? 'Finance' : metadata.budgetOwnerName || 'Budget Owner'},
+${fallbackNotice}
 Budget envelope "${metadata.budgetEnvelopeName || 'N/A'}" has reached 80% utilization:
 
 Allocated: ${metadata.allocatedAmount || 0} TL
@@ -204,6 +237,33 @@ Available: 0 TL
     `.trim();
   }
 
+  // T-318 (Z57 §3): K-2.2.7a FINANCE_REVIEW (%90) — recipient is the FINANCE
+  // role, not a single budget owner (see BudgetTierNotificationService).
+  // `Record<string, unknown>` (not `any`, unlike this file's older sibling
+  // templates — lint-ratchet: a NEW `any` finding in this file is a
+  // regression, not a style match) — `any` is assignable into it at the one
+  // call site (getTemplate's `metadata: Record<string, any>`), so no cast
+  // is needed there.
+  private getBudgetFinanceReviewTemplate(
+    metadata: Record<string, unknown>,
+  ): string {
+    return `
+Hi Finance,
+
+Budget envelope "${metadata.budgetEnvelopeName || 'N/A'}" has reached the finance-review threshold (${metadata.financeReviewThresholdPct ?? 'N/A'}%):
+
+Allocated: ${metadata.allocatedAmount || 0} TL
+Reserved: ${metadata.reservedAmount || 0} TL
+Consumed: ${metadata.consumedAmount || 0} TL
+Available: ${metadata.availableAmount || 0} TL
+Utilization: ${metadata.consumptionPct || 0}%
+
+This is an informational notice (K-2.2.7b mode: ${metadata.financeReviewMode || 'N/A'}); no action is required unless your policy configures otherwise.
+
+[View Budget Details]
+    `.trim();
+  }
+
   private getAgreementExpiringTemplate(metadata: Record<string, any>): string {
     return `
 Hi ${metadata.agreementOwnerName || 'User'},
@@ -227,6 +287,8 @@ Days remaining: ${metadata.daysRemaining || 0}
       case NotificationType.APPROVAL_GRANTED:
       case NotificationType.BUDGET_ALERT_80:
         return NotificationPriority.MEDIUM;
+      case NotificationType.BUDGET_FINANCE_REVIEW:
+        return NotificationPriority.HIGH;
       case NotificationType.AGREEMENT_EXPIRING:
         return NotificationPriority.LOW;
       default:

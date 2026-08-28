@@ -11,6 +11,7 @@ import {
 } from '../../../database/entities/mechanic.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { BudgetService } from '../budget/budget.service';
+import { BudgetTierNotificationService } from '../budget/budget-tier-notification.service';
 import { MechanicService } from '../../master-data/mechanic/mechanic.service';
 import { ErrorSeverity, ErrorCategory } from './dto/validation-result.dto';
 
@@ -645,6 +646,10 @@ describe('SpendValidationService', () => {
         // none of `checkPlanBudgetAvailability`'s call graph touches these.
         {} as any,
         {} as any,
+        // BudgetTierNotificationService (T-318) — not `any` (lint-ratchet:
+        // a new `any` finding in this file would be a regression), same
+        // "unused in this call graph" placeholder via `unknown`.
+        {} as unknown as BudgetTierNotificationService,
         {} as any,
       );
 

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { BudgetRepository } from './budget.repository';
+import { BudgetTierNotificationService } from './budget-tier-notification.service';
 import {
   BudgetTransaction,
   BudgetTransactionType,
@@ -102,7 +103,14 @@ export type PlanReservationReleaseReason =
 export class BudgetReservationService {
   private readonly logger = new Logger(BudgetReservationService.name);
 
-  constructor(private readonly budgetRepository: BudgetRepository) {}
+  constructor(
+    private readonly budgetRepository: BudgetRepository,
+    // T-318 (Z57 §3): the OTHER (of exactly two, §7) caller of
+    // `budgetRepository.createTransaction` — see `releaseNetReservation`'s
+    // write below. Same tier-transition funnel as `BudgetService
+    // #writeTransaction`.
+    private readonly budgetTierNotificationService: BudgetTierNotificationService,
+  ) {}
 
   /**
    * Bir agreement'ın tüm zarflarındaki net rezervini (RESERVE+COMMIT−RELEASE)
@@ -301,6 +309,23 @@ export class BudgetReservationService {
           `Concurrent RELEASE already posted for ${sourceLabel}=${sourceId} envelope=${bucket.envelopeId} spendType=${bucket.spendType ?? 'UNTYPED'} (reason=${reason}) — no-op`,
         );
       }
+    }
+
+    // T-318 (Z57 §3): tier-transition check — deliberately OUTSIDE the
+    // per-bucket try/catch above, so a tier-check failure (e.g. no FINANCE
+    // user configured) is never mistaken for the idempotency
+    // unique-violation no-op that catch handles. One evaluation per
+    // DISTINCT envelope actually released this call (a source can release
+    // buckets on more than one envelope — T-019 kısıtı, see class JSDoc).
+    const releasedEnvelopeIds = Array.from(
+      new Set(releases.map((r) => r.envelopeId)),
+    );
+    for (const releasedEnvelopeId of releasedEnvelopeIds) {
+      await this.budgetTierNotificationService.evaluateAndNotify(
+        tenantId,
+        releasedEnvelopeId,
+        manager,
+      );
     }
 
     return releases;
