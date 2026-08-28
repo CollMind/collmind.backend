@@ -99,6 +99,13 @@ GRANT UPDATE ON :"schema".users TO app_runtime;
 --      yardımcı fonksiyonu (`DELETE FROM main.customers WHERE tenant_id =
 --      $1 AND code LIKE $2`).
 GRANT SELECT ON :"schema".budget_alert_configurations TO app_runtime;
+-- T-316 (budget_policies canlanır, Z57 §1): `BudgetPolicyService`
+-- `TypeOrmModule.forFeature([BudgetPolicy])` ile enjekte ediyor
+-- (app-runtime-grants guard'ı bunu tespit etti — `budget_policies`
+-- app_runtime için hiçbir haktan geçmiyordu). Yalnız SELECT: bu servis
+-- yalnız okur, eşik yazma yolu (K-2.2.8e denetim olayı) ayrı bir task'ın
+-- işi ve o geldiğinde kendi UPDATE hakkını ölçerek ekler.
+GRANT SELECT ON :"schema".budget_policies TO app_runtime;
 GRANT SELECT ON :"schema".budget_transactions TO app_runtime;
 GRANT SELECT ON :"schema".categories TO app_runtime;
 GRANT SELECT ON :"schema".channels TO app_runtime;

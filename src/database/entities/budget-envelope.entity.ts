@@ -29,6 +29,20 @@ export enum BudgetSpendType {
   OFF_INVOICE = 'OFF_INVOICE',
 }
 
+/**
+ * `Z57` / `T-317` (migration `1816000000000`) — `K-2.2.7a` davranış
+ * merdiveninin (`WARNING` %80 · `FINANCE_REVIEW` %90 · `BLOCKED` %100) zarf
+ * için EN SON BİLDİRİLEN basamağı. `P3` (tekrar-bastırma) gerekçesi: "olay
+ * bir GEÇİŞTİR, durum değil" — bu alan geçişi tespit etmek için gereken TEK
+ * durumdur (tarihçe değil). `NONE` = hiç bildirilmedi.
+ */
+export enum BudgetEnvelopeNotifiedTier {
+  NONE = 'NONE',
+  WARNING = 'WARNING',
+  FINANCE_REVIEW = 'FINANCE_REVIEW',
+  BLOCKED = 'BLOCKED',
+}
+
 @Entity({ name: 'budget_envelopes', schema: 'main' })
 @Index(['tenantId', 'code'], { unique: true })
 @Index(['tenantId', 'status'])
@@ -114,6 +128,15 @@ export class BudgetEnvelope extends BaseEntity {
     nullable: true,
   })
   spendType?: BudgetSpendType | null;
+
+  @Column({
+    name: 'last_notified_tier',
+    type: 'enum',
+    enum: BudgetEnvelopeNotifiedTier,
+    enumName: 'budget_envelope_last_notified_tier_enum',
+    default: BudgetEnvelopeNotifiedTier.NONE,
+  })
+  lastNotifiedTier!: BudgetEnvelopeNotifiedTier;
 
   @Column({ type: 'text', nullable: true })
   description?: string;

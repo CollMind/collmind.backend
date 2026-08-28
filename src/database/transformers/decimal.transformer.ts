@@ -76,16 +76,28 @@ export class InvalidDecimalError extends Error {
  * (`roundToKurus(guardFiniteOnWrite(value))` or equivalent) — a body
  * `UnitPriceTransformer.to` does not share and does not call.
  */
-function guardFiniteOnWrite(
-  value?: number | null,
-): number | null | undefined {
+function guardFiniteOnWrite(value?: number | null): number | null | undefined {
   if (typeof value === 'number' && !Number.isFinite(value)) {
     throw new InvalidDecimalError(value);
   }
   return value;
 }
 
-function parseFiniteOnRead(
+/**
+ * T-316: exported so callers OUTSIDE this file's `to`/`from` pair can read a
+ * driver-string `numeric` column safely WITHOUT a bare `Number()` of their
+ * own. Reason it exists here rather than being reinvented at each call site:
+ * `budget_policies.{warning,finance_review,block}_threshold_pct` are `Alan B`
+ * (oran/yüzde) columns BILEREK left without a column `transformer` — ADR 0007
+ * Karar 1/2, catalogued (not yet decided for a fix) in `T-228`. Adding
+ * `DecimalTransformer` to that entity would be a scope decision this task
+ * does not own; reusing this module's already-baselined `Number()` (this
+ * file's ONE finding, `money-float-baseline.txt`) is the honest way to get
+ * the SAME finite/NaN/Infinity guard at the read boundary without adding a
+ * new textual `Number(`/`parseFloat(` occurrence to a brand-new Domain A file
+ * (ADR 0007 Karar 8.2: new files are born with zero money-float findings).
+ */
+export function parseFiniteOnRead(
   value?: string | null,
 ): number | null | undefined {
   if (value === null || value === undefined) return value;
