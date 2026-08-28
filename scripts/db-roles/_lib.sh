@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# K-2.6.13 — `db-roles-setup.sh` ve `db-roles-grants.sh` arasında paylaşılan
+# K-2.6.13 — `db-roles-setup.sh`, `db-roles-grants.sh` ve
+# `db-roles-operator-grants.sh` (K1a) arasında paylaşılan
 # bağlantı mantığı. Kendi başına çalıştırılmaz, `source` edilir.
 #
 # B2 (code-reviewer bulgusu, 2026-08-16): betik ikiye ayrıldığı için
@@ -19,6 +20,25 @@
 # satırı superuser'ı parolasız doğrular (bkz. docker/pg_hba.conf). TCP
 # modunda (`host ... md5`) parola zorunludur.
 
+# ⛔ Z52 §4 / `Z29` İSTİSNA DİSİPLİNİ — ADIYLA LİSTELİ:
+# `DB_ADMIN_USERNAME` (superuser, varsayılan `postgres`) BU DOSYADA VE
+# YALNIZ aşağıdaki ÜÇ KURULUM-FONKSİYONUNDA kullanılır:
+#   1. db-roles-setup.sh   → 01-roles-and-ownership.sql  (rol/şema YARATMA)
+#   2. db-roles-grants.sh  → 02-runtime-grants.sql        (GRANT/REVOKE, rol
+#      yaratmadığı için superuser GEREKMEZ ama aynı `run_psql` sarmalayıcıyı
+#      paylaşır — ölçülü GRANT'ler zaten app_migrate/app_runtime'ı hedefler,
+#      superuser'ın YETKİSİ değil BAĞLANTISI kullanılır)
+#   3. db-roles-operator-grants.sh → 03-operator-grants.sql  (K1a, 2026-08-28)
+#      ⛔ BU SATIR BİR REVIEW BULGUSUYLA EKLENDİ: üçüncü kullanım, bu listeyi
+#      YAZAN commit'in KENDİSİNDE doğdu ve listeye yazılmadı — `CLAUDE.md`:
+#      "bir kuralı yazdığın tur, o kuralı en çok ihlal ettiğin turdur".
+#      Gerekçe `2.` ile aynı: GRANT vermek superuser GEREKTİRMEZ, ama aynı
+#      `run_psql` sarmalayıcısı paylaşılır.
+# BOOTSTRAP = rol yaratma · migration-zinciri kurulumu, TANIM GEREĞİ bu ikisi
+# DIŞINDA superuser YOKTUR — "insan-yolu" (etkileşimli sorgu/bakım/veri-erişimi)
+# `app_operator`'e (K1a) taşındı: `scripts/db-query.sh`, guard'lar,
+# `db-cleanup.ts`. Bu listeye üçüncü bir kurulum-fonksiyonu eklenirse
+# BURADA adıyla eklenir — sessiz bir üçüncü kullanım YASAK.
 DB_CONTAINER_NAME="${DB_CONTAINER_NAME:-collmind-tpm-postgres}"
 DB_DATABASE="${DB_DATABASE:-collmind_tpm}"
 DB_SCHEMA="${DB_SCHEMA:-main}"

@@ -15,8 +15,21 @@ export class AdminAuditLog {
   @Column({ type: 'uuid', primary: true, generated: 'uuid' })
   id!: string;
 
-  @Column({ name: 'tenant_id', type: 'uuid' })
-  tenantId!: string;
+  // Z52 §2 — NULL burada BİLGİ-EKSİKLİĞİ DEĞİL, KATMAN-BİLGİSİDİR:
+  // "platform-seviyesi eylem" (tenant'a bağlı olmayan operatör işi).
+  // Tenant'sız satırda bile `admin_id`/`admin_email` (kim) hâlâ ZORUNLU —
+  // bkz. migration 1815000000000. `comment` burada entity metadata'sının
+  // migration'ın `COMMENT ON COLUMN`'ı ile eşleşmesi için var — yoksa
+  // `migration:generate` DB'deki yorumu "entity'de yok" sayıp DROP önerir
+  // (T-101 disiplini: entity↔katalog eşit olmalı, sessiz drift üretilmez).
+  @Column({
+    name: 'tenant_id',
+    type: 'uuid',
+    nullable: true,
+    comment:
+      'NULL = platform-seviyesi eylem (tenant bağımsız operatör işi) — bilgi eksikliği DEĞİL, katman bilgisi. Z52 §2.',
+  })
+  tenantId?: string;
 
   @Column({ name: 'admin_id', type: 'uuid' })
   adminId!: string;
@@ -65,7 +78,10 @@ export class AdminAuditLog {
   createdAt!: Date;
 
   // Relations
-  @ManyToOne(() => Tenant)
+  // Z52 §1 — RESTRICT: denetim izi iz sürdüğü nesnenin yaşam döngüsüne tabi
+  // olamaz (ADR 0012'nin denetim-katmanı kardeşi). Tenant silme akışı,
+  // arşivlenmemiş logu olan bir tenant'ı silemez.
+  @ManyToOne(() => Tenant, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tenant_id' })
-  tenant!: Tenant;
+  tenant?: Tenant;
 }

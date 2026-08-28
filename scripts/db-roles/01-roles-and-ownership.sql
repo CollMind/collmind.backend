@@ -6,9 +6,10 @@
 -- ya da TCP modunda DB_ADMIN_PASSWORD ile). Tekrar çalıştırmak güvenlidir.
 --
 -- psql değişkenleri (çağıran script `-v` ile geçirir):
---   :'runtime_pw'   app_runtime parolası (SQL string literal olarak substitute edilir)
---   :'migrate_pw'   app_migrate parolası
---   :"schema"       hedef şema (identifier olarak substitute edilir, örn. main)
+--   :'runtime_pw'    app_runtime parolası (SQL string literal olarak substitute edilir)
+--   :'migrate_pw'    app_migrate parolası
+--   :'operator_pw'   app_operator parolası (K1a, Z52 §3/§4)
+--   :"schema"        hedef şema (identifier olarak substitute edilir, örn. main)
 
 \set ON_ERROR_STOP on
 
@@ -30,6 +31,15 @@ SELECT
   END AS ddl
 \gexec
 
+-- 1b) K1a / Z52 §5 — canlı sapma KAPATILIR: `app_runtime` elle
+--    `ALTER ROLE ... SET log_statement='all'` almıştı (Z51 §2, kayıtsız —
+--    repo genelinde SIFIR script/kod referansı). Sapmanın iki kusuru vardı
+--    (üretilemezlik + yanlış-rol) ve ikisi tek hamlede kapanıyor: ayar
+--    BURADA sıfırlanır (idempotent — hiç yoksa no-op), doğru yeri aşağıdaki
+--    app_operator bloğudur (Z52 §5: "canlı sapma betiğe KOPYALANMAZ, DOĞRU
+--    TASARIMA ÇEVRİLİR").
+ALTER ROLE app_runtime RESET log_statement;
+
 -- 2) app_migrate — DDL yetkili VE tablo sahibi (K-2.6.13b). Ayrı bir
 --    `app_owner` TANIMLANMAZ — bu bir tercih değil, kapalı bir karar
 --    (`_ISSUE_DB_ROLU.md` düzeltme notu, 2026-08-15). Runtime bağlantı
@@ -42,6 +52,36 @@ SELECT
     ELSE format('CREATE ROLE app_migrate LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION', :'migrate_pw')
   END AS ddl
 \gexec
+
+-- 2a) app_operator — K1a (Z52 §3/§4). "İNSAN-YOLU": etkileşimli sorgu,
+--    bakım, veri-erişimi (`db-query.sh`, guard'lar, e2e cleanup). BOOTSTRAP
+--    (rol/şema kurulumu, migration zinciri) BU ROLÜN İŞİ DEĞİL — o superuser
+--    ile kalır (Z52 §4, `Z29` istisna disipliniyle `_lib.sh`'te adıyla
+--    listeli).
+--
+--    NOSUPERUSER · NOCREATEDB · NOCREATEROLE · BYPASSRLS · NOREPLICATION.
+--    BYPASSRLS bilinçli: operatör RLS politikalarını (K1 sonrası paket)
+--    atlayarak okuyabilmeli — bu bir güvenlik açığı değil, tanımı gereği
+--    operatör-yetkisi (superuser'ın bugünkü BYPASSRLS'inin insan-yolundaki
+--    tek meşru mirasçısı).
+--
+--    ⛔ `K1a`'NIN DENETİM-İZİ İDDİASI YOKTUR (Z52 §3): aşağıdaki
+--    `log_statement=all` rol seviyesinde yalnız `NE`'yi verir — `KİM`'i
+--    (log_line_prefix'te %u yok, küme-seviyesi) ve `KALICILIĞI`
+--    (logging_collector off, postmaster-seviyesi, `docker rm` ile iz YOK)
+--    VERMEZ. O ikisi `K1b`'nin işidir, ve `K1b` KAPANMADAN "operatör
+--    denetim-olaylıdır" cümlesi HİÇBİR BELGEDE KURULAMAZ. "1/3 doğru bir
+--    iddia, tamamen yanlış olandan DAHA TEHLİKELİDİR."
+SELECT
+  CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_operator')
+    THEN format('ALTER ROLE app_operator WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS NOREPLICATION', :'operator_pw')
+    ELSE format('CREATE ROLE app_operator LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS NOREPLICATION', :'operator_pw')
+  END AS ddl
+\gexec
+
+-- Z52 §5 — sapmanın DOĞRU YERİ: kurulum betiğinde doğar, canlıda elle DEĞİL.
+-- İdempotent (her koşumda aynı değere set eder, no-op'a eşdeğer).
+ALTER ROLE app_operator SET log_statement = 'all';
 
 -- 2b) K-2.6.13 KARAR 2 (ürün sahibi, 2026-08-16) — ŞEMAYI BU BETİK YARATIR,
 --    app_migrate'e VERİTABANI DÜZEYİ CREATE VERİLMEZ.
@@ -98,6 +138,9 @@ CREATE SCHEMA IF NOT EXISTS :"schema";
 --    Bunlar üst seviyede (DO/$$ içinde DEĞİL) — `:"schema"` burada çalışır.
 GRANT USAGE, CREATE ON SCHEMA :"schema" TO app_migrate;
 GRANT USAGE ON SCHEMA :"schema" TO app_runtime;
+-- app_operator yalnız USAGE alır — app_migrate'in aksine CREATE YOK (DDL bu
+-- rolün işi değil, K1a'nın "insan-yolu" tanımı gereği).
+GRANT USAGE ON SCHEMA :"schema" TO app_operator;
 
 -- 4) Var olan nesnelerin sahipliğini app_migrate'e taşı. Idempotent — zaten
 --    sahipse no-op, hata vermez. Bugüne kadar `postgres` (superuser) ile

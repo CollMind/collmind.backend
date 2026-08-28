@@ -27,8 +27,11 @@
 # Tekrar çalıştırmak güvenlidir.
 #
 # Zorunlu env değişkenleri (sessizce varsayılan ÜRETİLMEZ):
-#   DB_RUNTIME_PASSWORD   app_runtime parolası
-#   DB_MIGRATE_PASSWORD   app_migrate parolası
+#   DB_RUNTIME_PASSWORD    app_runtime parolası
+#   DB_MIGRATE_PASSWORD    app_migrate parolası
+#   DB_OPERATOR_PASSWORD   app_operator parolası (K1a, Z52 §3/§4 — "insan-yolu":
+#                          etkileşimli sorgu/bakım, db-query.sh ve guard'ların
+#                          artık kullandığı rol; superuser'ın YERİNE geçer)
 #
 # Opsiyonel env değişkenleri ve TCP modu için `scripts/db-roles/_lib.sh`
 # başlığına bakın (bu betikle `db-roles-grants.sh` arasında paylaşılır).
@@ -37,6 +40,7 @@ set -euo pipefail
 
 : "${DB_RUNTIME_PASSWORD:?DB_RUNTIME_PASSWORD tanımlı olmalı — sessizce varsayılan üretilmez}"
 : "${DB_MIGRATE_PASSWORD:?DB_MIGRATE_PASSWORD tanımlı olmalı — sessizce varsayılan üretilmez}"
+: "${DB_OPERATOR_PASSWORD:?DB_OPERATOR_PASSWORD tanımlı olmalı — sessizce varsayılan üretilmez}"
 
 # shellcheck source=./db-roles/_lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/db-roles/_lib.sh"
@@ -44,7 +48,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/db-roles/_lib.sh"
 echo "▶ roller + sahiplik (idempotent) — $SQL_DIR/01-roles-and-ownership.sql"
 run_psql "$SQL_DIR/01-roles-and-ownership.sql" \
   -v runtime_pw="$DB_RUNTIME_PASSWORD" \
-  -v migrate_pw="$DB_MIGRATE_PASSWORD"
+  -v migrate_pw="$DB_MIGRATE_PASSWORD" \
+  -v operator_pw="$DB_OPERATOR_PASSWORD"
 
-echo "✅ Roller ve sahiplik uygulandı: app_runtime (DML, RLS'e tabi, sahip DEĞİL) · app_migrate (DDL, tablo/enum/fonksiyon sahibi)"
-echo "▶ sıradaki adım: 'npm run migration:run', ardından 'npm run db:roles:grants'"
+echo "✅ Roller ve sahiplik uygulandı: app_runtime (DML, RLS'e tabi, sahip DEĞİL) · app_migrate (DDL, tablo/enum/fonksiyon sahibi) · app_operator (insan-yolu, BYPASSRLS, sahip DEĞİL)"
+echo "▶ sıradaki adım: 'npm run migration:run', ardından 'npm run db:roles:grants' — ve ardından 'npm run db:roles:operator-grants' (4. adım, K1a)"

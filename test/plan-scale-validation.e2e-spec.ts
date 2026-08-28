@@ -40,7 +40,7 @@
  *      same capability.
  *
  * Mechanic codes/types verified live against the seed DB (not assumed):
- *   docker exec collmind-tpm-postgres psql -U postgres -d collmind_tpm -c \
+ *   docker exec collmind-tpm-postgres psql -U app_operator -d collmind_tpm -c \
  *     "SELECT code, mechanic_type, is_active FROM main.mechanics m
  *      JOIN main.tenants t ON t.id = m.tenant_id
  *      WHERE t.name = 'Wella Turkey' ORDER BY mechanic_type, code;"

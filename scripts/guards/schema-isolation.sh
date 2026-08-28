@@ -30,14 +30,19 @@ validate_allowlist "$ALLOWLIST" || exit 2
 # scripts/db-query.sh meta-repo kökündedir; backend bir submodule.
 DB_QUERY="$ROOT/../scripts/db-query.sh"
 
+# ⛔ Z52 §4 — sarmalayıcı bulunamazsa `-U postgres` FALLBACK'İ ÖLDÜ. Bu,
+# "DB'ye erişilemedi" (ölçülebilir, meşru SKIPPED nedeni) ile "sarmalayıcı
+# yok" (bir tooling eksikliği, sessizce superuser'a düşülmemeli) AYRI
+# sinyallerdir — ikincisi burada net bir hata mesajıyla exit 2 döner, DB
+# gerçekten kapalıyken guard'ın kendi SKIPPED/exit-0 mantığı (aşağıda,
+# `db_query` çağrısının BOŞ dönmesiyle) hâlâ çalışır.
+if [ ! -x "$DB_QUERY" ]; then
+  echo "!! [$GUARD_NAME] sarmalayıcı bulunamadı ($DB_QUERY) — postgres'e FALLBACK ETMEZ, ölçüm yapılamadı" >&2
+  exit 2
+fi
+
 db_query() {
-  if [ -x "$DB_QUERY" ]; then
-    bash "$DB_QUERY" "$1" 2>/dev/null
-  else
-    # Sarmalayıcı bulunamadı — docker exec'i doğrudan kullan (rapora yazılır).
-    docker exec -i collmind-tpm-postgres psql -U postgres -d collmind_tpm \
-      -v ON_ERROR_STOP=1 -c "$1" 2>/dev/null
-  fi
+  bash "$DB_QUERY" "$1" 2>/dev/null
 }
 
 NS="$(db_query "SELECT nspname FROM pg_namespace WHERE nspname IN ('main','public');")" || NS=""

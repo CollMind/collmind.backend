@@ -150,6 +150,7 @@ npm run migration:run
 çalıştırılabilir, MİGRASYONLARDAN SONRA):**
 ```bash
 npm run db:roles:grants
+npm run db:roles:operator-grants   # 4. adım — K1a: app_operator GRANT'leri (Z52 §3)
 ```
 ⚠️ Bu adım `4a`'dan **ayrıdır ve sıralaması önemlidir**: `02-runtime-grants.sql`
 tablolara GRANT verir ve tablolar bu adımdan önce (migration'lar koşmadan)

@@ -39,24 +39,26 @@ source "$ROOT/scripts/guards/lib.sh"
 
 validate_allowlist "$ALLOWLIST" || exit 2
 
-DB_QUERY="$ROOT/../scripts/db-query.sh"
-
 # db_query <sql> — stdout'a `-t -A` (tuple-only, unaligned) çıktı basar.
 # Dönüş kodu ÖLÇÜMÜN GÜVENİLİRLİĞİNİN tek kaynağıdır: sıfırdan farklıysa
 # "DB'ye ulaşılamadı", boş stdout ise "gerçekten sıfır satır" anlamına gelir
 # — ikisi ayrı sinyaldir, biri diğerine sessizce düşemez.
+#
+# ⛔ K1a / Z52 §4 — ÖNCEDEN bu fonksiyon her iki dalda da (bir `$DB_QUERY`
+# varlık kontrolü VARDI ama gövdede `$DB_QUERY` HİÇ ÇAĞRILMIYORDU) doğrudan
+# `docker exec ... -U postgres` çalıştırıyordu (`§2.7` sınıfı — kontrol var,
+# mekanizma ölü; `scripts/db-query.sh` yalnızca `-c` alır, `-t -A` bayrağını
+# taşımadığı için buradaki tuple-only/unaligned sözleşmeyi karşılayamıyor —
+# bu yüzden bu guard sarmalayıcıyı ÇAĞIRAMAZ, kendi bağlantısını kurar).
+# Düzeltilen tek şey ROL: `-U postgres` → `-U app_operator` — insan-yolu
+# artık superuser DEĞİL.
 db_query() {
   local sql="$1"
   if [ -n "${VIEW_GUARD_DB_QUERY:-}" ] && [ -x "$VIEW_GUARD_DB_QUERY" ]; then
     "$VIEW_GUARD_DB_QUERY" "$sql"
     return $?
   fi
-  if [ -x "$DB_QUERY" ]; then
-    docker exec -i collmind-tpm-postgres psql -U postgres -d collmind_tpm \
-      -v ON_ERROR_STOP=1 -t -A -c "$sql" 2>/dev/null
-    return $?
-  fi
-  docker exec -i collmind-tpm-postgres psql -U postgres -d collmind_tpm \
+  docker exec -i collmind-tpm-postgres psql -U app_operator -d collmind_tpm \
     -v ON_ERROR_STOP=1 -t -A -c "$sql" 2>/dev/null
   return $?
 }

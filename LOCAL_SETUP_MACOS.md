@@ -133,7 +133,7 @@ docker compose logs postgres
 Container içindeki PostgreSQL'e bağlanmak için:
 
 ```bash
-docker compose exec postgres psql -U postgres -d collmind_tpm
+docker compose exec postgres psql -U app_operator -d collmind_tpm  # K1a/Z52 §4: insan-yolu app_operator'dür, postgres DEĞİL
 ```
 
 PostgreSQL prompt'u görünecektir. Çıkmak için `\q` yazın.
@@ -375,6 +375,7 @@ tabloların VAR OLMASINI gerektirir. `Adım 1a`'nın tersine, migration'lardan
 
 ```bash
 npm run db:roles:grants
+npm run db:roles:operator-grants   # 4. adım — K1a: app_operator GRANT'leri (Z52 §3)
 ```
 
 Tekrar çalıştırmak güvenlidir VE YAKINSAKTIR: betik önce `app_runtime`'ın tüm
@@ -600,6 +601,7 @@ npm run migration:run
 
 # 5a. app_runtime GRANT setini uygula (K-2.6.13f — migration'lardan SONRA)
 npm run db:roles:grants
+npm run db:roles:operator-grants   # 4. adım — K1a: app_operator GRANT'leri (Z52 §3)
 
 # 6. (Opsiyonel) Seed verilerini yükle
 npm run seed:run
