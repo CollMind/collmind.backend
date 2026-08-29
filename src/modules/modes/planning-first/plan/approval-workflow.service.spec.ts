@@ -1098,8 +1098,19 @@ describe('ApprovalWorkflowService', () => {
         offInvoiceSpend: 40000,
       } as Plan;
 
+      // T-332: `findByIdForUpdate` is a deliberately join-free projection
+      // (approval-workflow.service.ts's `reviewPlan` docstring) — its
+      // returned row NEVER carries `channel`. Mocking it with the same
+      // relations-loaded `approvedPlan` object erases the one contract
+      // difference between it and `findById`, which is exactly what let
+      // T-331 (channelCode read off the locked/join-free row → always '')
+      // ship with 1223/1223 unit green.
+      const lockedPlan = {
+        ...approvedPlan,
+        channel: undefined,
+      } as unknown as Plan;
       planRepo.findById.mockResolvedValue(approvedPlan);
-      planRepo.findByIdForUpdate.mockResolvedValue(approvedPlan);
+      planRepo.findByIdForUpdate.mockResolvedValue(lockedPlan);
       planRepo.updateStatusCas.mockResolvedValue(1);
       approvalService.approve.mockResolvedValue({} as any);
       // T-029: commitAllBudgetForPlan now delegates to
@@ -1137,6 +1148,21 @@ describe('ApprovalWorkflowService', () => {
       );
       expect(approvalService.approve).toHaveBeenCalled();
       expect(queryRunner.commitTransaction).toHaveBeenCalled();
+      // T-332: channelCode MUST come from the pre-lock, relations-loaded
+      // `findById` read ('NKA', mockPlan.channel.code) — NOT from the
+      // join-free `findByIdForUpdate` row, which never carries `channel`
+      // and would silently degrade to '' (T-331's production bug).
+      expect(budgetService.commitAllReservedForPlan).toHaveBeenCalledWith(
+        mockPlanId,
+        expect.any(Number),
+        'NKA',
+        expect.any(String),
+        expect.any(String),
+        mockTenantId,
+        'reviewer-1',
+        queryRunnerManager,
+        expect.anything(),
+      );
     });
 
     it('should successfully reject plan', async () => {
