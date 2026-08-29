@@ -60,6 +60,7 @@ import {
   moneyFromNumericString,
   moneyToMajorUnits,
 } from '../../../common/numeric/money';
+import { addMonthsClamped } from '../../../common/date/add-months';
 
 /**
  * A `numeric(18,2)` column value as a number in TRY — T-093.
@@ -1089,8 +1090,13 @@ export class FinanceReportingService {
     const startDate = filters.startDate
       ? new Date(filters.startDate)
       : new Date();
-    const endDate = new Date(startDate);
-    endDate.setMonth(endDate.getMonth() + months);
+    // [[T-328]] `endDate.setMonth(getMonth() + months)` idi ve GÜN TAŞMASI
+    // yaşıyordu: hedef ayda o gün yoksa `setMonth` sessizce SONRAKİ aya taşar
+    // (`2026-01-31 + 1 ay` -> `2026-03-03`, yani istenen pencerenin İKİ KATI).
+    // Yön tehlikeliydi — pencere GENİŞLİYOR, uyarı yok, ve daha uzun bir
+    // tahsilat penceresi nakit akışını olduğundan iyi gösterebiliyordu.
+    // Kural ve ölçümler: `common/date/add-months.ts`.
+    const endDate = addMonthsClamped(startDate, months);
 
     const plans = await this.getFilteredPlans(tenantId, {
       ...filters,
