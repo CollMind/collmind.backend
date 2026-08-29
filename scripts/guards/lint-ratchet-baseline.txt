@@ -1,8 +1,8 @@
 # lint-ratchet baseline (backend) — T-113 ratchet reference
-# date:    2026-08-28
-# commit:  93f2666
+# date:    2026-08-29
+# commit:  c8ed7f1
 # guard:   lint-ratchet v1 (backend)
-# total:   184 (file,rule) tuples, 933 problems, 169 files
+# total:   183 (file,rule) tuples, 931 problems, 168 files
 # format:  <file> <ruleId> <errorCount+warningCount for that rule in that file>
 # KEY IS (file, rule), NOT file alone — see this script's header for why.
 src/common/guards/admin-restrictions.guard.ts @typescript-eslint/no-unused-vars 2
@@ -58,7 +58,6 @@ src/database/seeds/product.seed.ts @typescript-eslint/no-explicit-any 1
 src/database/seeds/test-happy-path.ts @typescript-eslint/no-explicit-any 19
 src/database/strategies/snake-case-naming.strategy.ts @typescript-eslint/no-unused-vars 2
 src/database/transformers/decimal.transformer.spec.ts prettier/prettier 1
-src/database/transformers/decimal.transformer.ts prettier/prettier 2
 src/modules/customer/customer.controller.ts @typescript-eslint/no-explicit-any 1
 src/modules/customer/customer.repository.ts @typescript-eslint/no-explicit-any 5
 src/modules/customer/customer.repository.ts @typescript-eslint/no-unused-vars 1
