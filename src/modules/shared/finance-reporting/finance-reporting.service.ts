@@ -121,6 +121,26 @@ function spendOf(raw: number | string): number {
   return moneyToMajorUnits(moneyFromNumericString(String(raw)));
 }
 
+/**
+ * First instant of the UTC calendar month `d` falls in.
+ *
+ * ⛔ Z63 §2 (iii) — THIS LIVES HERE, NOT IN `common/date/add-months.ts`.
+ * Adding months is general arithmetic and belongs to the shared helper;
+ * "a reporting bucket is snapped to the calendar month" is the SEMANTICS OF
+ * THIS REPORT. Pushing it into the helper would make the helper the prisoner
+ * of one report — the next caller ("weekly trend") needs the same arithmetic
+ * with a different normalisation.
+ *
+ * UTC on purpose, matching `addMonthsClamped` and the `toISOString()` that
+ * formats the label: the query's `startDate` arrives as an ISO `YYYY-MM-DD`
+ * string, which `new Date()` parses at UTC midnight, and the defect class
+ * `common/date/excel-serial-date.ts` documents (reading LOCAL components and
+ * writing a UTC string) is exactly how a bucket label slips a day.
+ */
+function startOfUtcMonth(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+}
+
 @Injectable()
 export class FinanceReportingService {
   private readonly logger = new Logger(FinanceReportingService.name);
@@ -427,7 +447,43 @@ export class FinanceReportingService {
   }
 
   /**
-   * Get spend trend report
+   * Get spend trend report.
+   *
+   * ⛔ KOVA TANIMI — MONTHLY (Z63/`T-329`, ürün sahibi hükmü `(c)`), TEK CÜMLE:
+   *
+   *   **Aylık bir kova BİR TAKVİM AYIDIR: sınırları ayın 1'i, etiketi o aydır,
+   *   ve uç kovalar KISMİ olabilir** — 15 Ocak'ta başlayan bir sorgu, 15-31'i
+   *   kapsayan ama etiketi yine "Ocak" olan bir kova üretir.
+   *
+   * Gerekçe ürün tarafında: *"aylık trend"* kullanıcı için ***"Şubat'ta ne
+   * harcandı"*** sorusudur — *"31 Ocak'tan 28 Şubat'a kayan pencerede ne
+   * harcandı"* değil. Bağımsız teyit: demo-Excel'in `Fund Utilization Report`
+   * kova yapısı da `Jan`/`Feb`/`Mar` kolonlarıdır (atadan gelen model de
+   * takvim-ayı).
+   *
+   * ⛔ DÜZELTİLEN KUSUR (`T-329`, düzeltmeden ÖNCE ölçüldü):
+   *
+   *     periodEnd.setMonth(periodEnd.getMonth() + 1);      // taşıyor
+   *     currentDate.setMonth(currentDate.getMonth() + 1);  // ve BİRİKİYOR
+   *
+   *     startDate=2026-01-31, endDate=2026-06-30
+   *       kovalar -> 2026-01-31 · 2026-03-03 · 2026-04-03 · 2026-05-03 · 2026-06-03
+   *       ⛔ ŞUBAT HİÇ YOK — ve Şubat'ın harcaması yok olmuyor, 31 gün
+   *          GENİŞLEMİŞ Ocak kovasına KATLANIYOR (ölçüldü: Ocak 100+200=300).
+   *       Sapma birikimli: kovalar ayın 3'üne kayıyor ve ORADA KALIYOR.
+   *     startDate=2026-01-28 (poz. kontrol) -> her ay yerinde; `setMonth`
+   *       yalnız başlangıç günü hedef ayda YOKSA taşar, yani kusur ayın ~28
+   *       gününde uykuda.
+   *
+   * ⚠️ Ay aritmetiği `common/date/add-months.ts`'ten (`addMonthsClamped`,
+   * `T-328`) gelir; takvim-ayı normalleştirmesi ORAYA GÖMÜLMEZ (Z63 §2 iii):
+   * yarın "haftalık trend" aynı yardımcıyı FARKLI bir normalleştirmeyle
+   * kullanacak — semantik RAPORUN, aritmetik yardımcının.
+   *
+   * ⚠️ DAILY/WEEKLY dalları bilerek dokunulmadı: gün ekleme `setDate` ile
+   * taşmaz (ay uzunluğuna bakmaz), ve o granülaritelerde kova = pencerenin
+   * başlangıcından itibaren sabit uzunlukta bir dilimdir — takvim hizası
+   * onların sözleşmesi değil (ölçüldü `T-329`, `§7.1`).
    */
   async getSpendTrend(
     tenantId: string,
@@ -449,6 +505,10 @@ export class FinanceReportingService {
     while (currentDate <= endDate) {
       const periodStart = new Date(currentDate);
       let periodEnd: Date;
+      // The bucket's LABEL. For daily/weekly it is the bucket's own start; for
+      // monthly it is the CALENDAR MONTH the bucket belongs to, which is not
+      // the same date when the edge bucket is partial (see the class doc).
+      let periodLabel = periodStart;
 
       if (granularity === ReportGranularity.DAILY) {
         periodEnd = new Date(currentDate);
@@ -459,10 +519,16 @@ export class FinanceReportingService {
         periodEnd.setDate(periodEnd.getDate() + 7);
         currentDate.setDate(currentDate.getDate() + 7);
       } else {
-        // Monthly
-        periodEnd = new Date(currentDate);
-        periodEnd.setMonth(periodEnd.getMonth() + 1);
-        currentDate.setMonth(currentDate.getMonth() + 1);
+        // Monthly — a bucket IS a calendar month (Z63/T-329).
+        //
+        // The boundary is the 1st of the NEXT month, never "start day + 1
+        // month": the latter both overflows (2026-01-31 -> 2026-03-03) and
+        // carries the drift into every following bucket. `periodStart` keeps
+        // the WINDOW's start on the first iteration, so the leading bucket is
+        // partial and the window is not silently widened backwards.
+        periodLabel = startOfUtcMonth(currentDate);
+        periodEnd = addMonthsClamped(startOfUtcMonth(currentDate), 1);
+        currentDate.setTime(periodEnd.getTime());
       }
 
       // Calculate spends for this period
@@ -517,7 +583,7 @@ export class FinanceReportingService {
       }
 
       dataPoints.push({
-        date: periodStart.toISOString().split('T')[0],
+        date: periodLabel.toISOString().split('T')[0],
         onInvoice,
         offInvoice,
         total: onInvoice + offInvoice,
