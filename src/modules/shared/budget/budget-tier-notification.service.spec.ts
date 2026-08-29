@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { InternalServerErrorException } from '@nestjs/common';
+import {
+  ConflictException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { BudgetTierNotificationService } from './budget-tier-notification.service';
@@ -59,6 +62,27 @@ describe('BudgetTierNotificationService', () => {
       reservedAmount: 0,
       availableAmount: 1000,
       utilizationPct,
+    } as unknown as BudgetSummaryView;
+  }
+
+  // `T-321`: `assertNotBlocked` computes its projected-pct from
+  // allocated/available (NOT from `utilizationPct`, which `buildSummary`
+  // above pins to a fixed 1000/1000 pair) — this builder controls those two
+  // independently so the projection math itself is exercised, not just the
+  // pre-computed `utilizationPct` field.
+  function buildBlockSummary(
+    allocatedAmount: number,
+    availableAmount: number,
+  ): BudgetSummaryView {
+    return {
+      envelopeId: ENVELOPE_ID,
+      tenantId: TENANT_ID,
+      allocatedAmount,
+      consumedAmount: 0,
+      reservedAmount: allocatedAmount - availableAmount,
+      availableAmount,
+      utilizationPct:
+        ((allocatedAmount - availableAmount) / allocatedAmount) * 100,
     } as unknown as BudgetSummaryView;
   }
 
@@ -417,6 +441,147 @@ describe('BudgetTierNotificationService', () => {
         )
         .map((c: unknown[]) => c[2]);
       expect(recipientIds.sort()).toEqual([FINANCE_1.id, FINANCE_2.id].sort());
+    });
+  });
+
+  // ═══ T-321 (Z62 §1 2c) — BLOCKED (%100), K-2.2.7a ═══
+  describe('T-321 — assertNotBlocked (K-2.2.7a BLOCKED: a GATE, called BEFORE write)', () => {
+    beforeEach(() => {
+      envelopeRepo.findOne.mockResolvedValue(buildEnvelope());
+    });
+
+    it(
+      'ilişki-pini (Z56 §4): eşik KONFİGÜRASYONDAN okunur, sabit değil — ' +
+        'projected 100% is REJECTED under the canonical blockPct=100 policy',
+      async () => {
+        policyService.resolvePolicy.mockResolvedValue(buildPolicy(80, 90, 100));
+        // allocated=1000, available=100 → already-encumbered=900;
+        // +100 requested → projected = (900+100)/1000*100 = 100 (boundary, >=)
+        summaryRepo.findOne.mockResolvedValueOnce(buildBlockSummary(1000, 100));
+
+        await expect(
+          service.assertNotBlocked(TENANT_ID, ENVELOPE_ID, 100),
+        ).rejects.toMatchObject({
+          response: { code: 'BUDGET_BLOCK_THRESHOLD_EXCEEDED' },
+        });
+      },
+    );
+
+    it('projected pct STRICTLY BELOW blockPct → resolves (does NOT throw)', async () => {
+      policyService.resolvePolicy.mockResolvedValue(buildPolicy(80, 90, 100));
+      // allocated=1000, available=100 → encumbered=900; +99 → projected=99.9 (<100)
+      summaryRepo.findOne.mockResolvedValueOnce(buildBlockSummary(1000, 100));
+
+      await expect(
+        service.assertNotBlocked(TENANT_ID, ENVELOPE_ID, 99),
+      ).resolves.toBeUndefined();
+    });
+
+    it(
+      '⛔ POZİTİF KONTROL (eşik DEĞİŞTİRİLİR, pin YİNE tutar): the EXACT ' +
+        'same summary (allocated=1000, available=200, +100 requested → ' +
+        'projected=90%) is ACCEPTED under the canonical blockPct=100 policy ' +
+        'but REJECTED once the tenant configures blockPct=90 — a hardcoded ' +
+        "'>= 100' check would pass both, proving the threshold is read " +
+        'from BudgetPolicyService, not baked into this method',
+      async () => {
+        summaryRepo.findOne.mockResolvedValueOnce(buildBlockSummary(1000, 200));
+        policyService.resolvePolicy.mockResolvedValueOnce(
+          buildPolicy(80, 90, 100),
+        );
+        await expect(
+          service.assertNotBlocked(TENANT_ID, ENVELOPE_ID, 100),
+        ).resolves.toBeUndefined();
+
+        summaryRepo.findOne.mockResolvedValueOnce(buildBlockSummary(1000, 200));
+        policyService.resolvePolicy.mockResolvedValueOnce(
+          buildPolicy(80, 90, 90),
+        );
+        await expect(
+          service.assertNotBlocked(TENANT_ID, ENVELOPE_ID, 100),
+        ).rejects.toMatchObject({
+          response: { code: 'BUDGET_BLOCK_THRESHOLD_EXCEEDED' },
+        });
+      },
+    );
+
+    it('§2.5 sessiz sıfır yasağı: allocatedAmount <= 0 ⇒ FIRLAR, sessizce 0/geçersiz bir eşik varsayılmaz', async () => {
+      policyService.resolvePolicy.mockResolvedValue(buildPolicy(80, 90, 100));
+      summaryRepo.findOne.mockResolvedValueOnce(buildBlockSummary(0, 0));
+
+      await expect(
+        service.assertNotBlocked(TENANT_ID, ENVELOPE_ID, 100),
+      ).rejects.toThrow(InternalServerErrorException);
+    });
+
+    it(
+      "K-2.2.7c ayrımı (bu dosyanın kendi assertNotBlocked doc'unun iddiası, " +
+        'burada AYRICA doğrulanır): assertNotBlocked bir GATE olduğu için ' +
+        'reddettiğinde ConflictException fırlatır (ledger/hakediş yolunun ' +
+        'kullandığı evaluateAndNotify InternalServerErrorException fırlatır — ' +
+        'İKİSİ FARKLI istisna tipi, çağıranın davranışı KARIŞTIRAMAYACAĞI ' +
+        'şekilde ayrışır)',
+      async () => {
+        policyService.resolvePolicy.mockResolvedValue(buildPolicy(80, 90, 100));
+        summaryRepo.findOne.mockResolvedValueOnce(buildBlockSummary(1000, 0));
+
+        await expect(
+          service.assertNotBlocked(TENANT_ID, ENVELOPE_ID, 1),
+        ).rejects.toBeInstanceOf(ConflictException);
+      },
+    );
+  });
+
+  // ═══ T-321 — evaluateAndNotify'ın BLOCKED tier'i: BİLDİRİM, gate DEĞİL ═══
+  describe('T-321 — evaluateAndNotify BLOCKED tier (bildirim, K-2.2.7c: süreci durdurmaz)', () => {
+    beforeEach(() => {
+      policyService.resolvePolicy.mockResolvedValue(buildPolicy(80, 90, 100));
+      userRepository.findById.mockResolvedValue(OWNER);
+      userRepository.findByRole.mockResolvedValue([FINANCE_1]);
+    });
+
+    it("%99 → %100 ⇒ BUDGET_ALERT_100 FINANCE'e gönderilir, lastNotifiedTier=BLOCKED olur (evaluateAndNotify hiçbir şeyi REDDETMEZ — yazım zaten olmuş)", async () => {
+      envelopeRepo.findOne.mockResolvedValueOnce(
+        buildEnvelope({
+          lastNotifiedTier: BudgetEnvelopeNotifiedTier.FINANCE_REVIEW,
+        }),
+      );
+      summaryRepo.findOne.mockResolvedValueOnce(buildSummary(100));
+
+      await expect(
+        service.evaluateAndNotify(TENANT_ID, ENVELOPE_ID),
+      ).resolves.toBeUndefined();
+
+      expect(notificationService.createNotification).toHaveBeenCalledTimes(1);
+      expect(notificationService.createNotification.mock.calls[0][1]).toBe(
+        NotificationType.BUDGET_ALERT_100,
+      );
+      expect(envelopeRepo.update).toHaveBeenCalledWith(
+        { id: ENVELOPE_ID, tenantId: TENANT_ID },
+        { lastNotifiedTier: BudgetEnvelopeNotifiedTier.BLOCKED },
+      );
+    });
+
+    it('P3 tekrar-bastırma BLOCKED için de tutar: %100 → %101, lastNotifiedTier zaten BLOCKED ⇒ SIFIR yeni bildirim', async () => {
+      envelopeRepo.findOne.mockResolvedValueOnce(
+        buildEnvelope({ lastNotifiedTier: BudgetEnvelopeNotifiedTier.BLOCKED }),
+      );
+      summaryRepo.findOne.mockResolvedValueOnce(buildSummary(101));
+
+      await service.evaluateAndNotify(TENANT_ID, ENVELOPE_ID);
+
+      expect(notificationService.createNotification).not.toHaveBeenCalled();
+      expect(envelopeRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('BLOCKED alıcı kümesi boş (FINANCE yok) ⇒ FIRLAR, yutulmaz (P4a ile aynı desen)', async () => {
+      userRepository.findByRole.mockResolvedValue([]);
+      envelopeRepo.findOne.mockResolvedValueOnce(buildEnvelope());
+      summaryRepo.findOne.mockResolvedValueOnce(buildSummary(100));
+
+      await expect(
+        service.evaluateAndNotify(TENANT_ID, ENVELOPE_ID),
+      ).rejects.toThrow(InternalServerErrorException);
     });
   });
 });

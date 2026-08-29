@@ -15,7 +15,7 @@ import {
   BudgetEnvelope,
   BudgetSpendType,
 } from '../../../database/entities/budget-envelope.entity';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 
 const TENANT_ID = 'tenant-001';
 const USER_ID = 'user-001';
@@ -46,6 +46,11 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
   let mockDataSource: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let queryRunner: any;
+  // T-321: exposed (not just inlined in the provider) so the
+  // "assertNotBlocked call-site wiring" describe block below can assert on
+  // calls / simulate a BLOCKED rejection.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockTierNotificationService: any;
 
   beforeEach(async () => {
     // T-019b: splitEnvelope() opens its own QueryRunner transaction; since
@@ -117,11 +122,29 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
         // budgetRepository.createTransaction — no-op mock here, this
         // suite's assertions are about the transaction data, not tiering
         // (BudgetTierNotificationService has its own spec).
+        // T-321: assertNotBlocked() is called BEFORE the write at the three
+        // new-encumbrance call sites — no-op mock here too (allow-by-default).
+        // Bu suite kapının KENDİ davranışını sınamaz; ÇAĞRI-YERİ BAĞLANTISINI
+        // sınar — aşağıdaki `T-321 — assertNotBlocked call-site wiring` bloğu.
+        //
+        // ⚠️ TEAM LEAD ÖLÇÜM HATASI, KAYDA (2026-08-29): bu yorumun bir ara
+        // hâli "hiçbir test yok" diyordu. YANLIŞTI — ölçüm dosya AJAN
+        // TARAFINDAN YAZILIRKEN alınmıştı (`+8 satır`, `grep 0`), oysa nihai
+        // hâl `+188 satır` ve blok `:171`'de. `DISIPLIN`: bir ölçüm, ölçtüğü
+        // şey DEĞİŞİRKEN alınırsa geçersizdir — ve "çürüten ölçüm de
+        // ölçümdür, aynı şekil-doğrulamasına tabidir".
+        //
+        // Kapının KENDİ reddetme/geçirme davranışının pini ise HÂLÂ AÇIK ve
+        // bu DOĞRUDUR (`CLAUDE.md §3`: "bir ajan kendi yazdığı kodun testini
+        // YAZMAZ — o qa-engineer'ın işidir") ⇒ `T-330`, iki-eksen şartıyla:
+        //   plan/taahhüt %100 aşımı  → REDDEDİLİR
+        //   RESERVE→COMMIT dönüşümü  → GEÇER   (`K-2.2.7c`: süreç durmaz)
         {
           provide: BudgetTierNotificationService,
-          useValue: {
+          useValue: (mockTierNotificationService = {
             evaluateAndNotify: jest.fn().mockResolvedValue(undefined),
-          },
+            assertNotBlocked: jest.fn().mockResolvedValue(undefined),
+          }),
         },
         // T-019b: BudgetService#splitEnvelope opens its own QueryRunner
         // transaction (mirrors ApprovalWorkflowService/PlanService pattern).
@@ -133,6 +156,170 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
     }).compile();
 
     service = module.get<BudgetService>(BudgetService);
+  });
+
+  // ---------------------------------------------------------------------
+  // T-321 (Z62 §1 2c) — assertNotBlocked call-site wiring. This describe
+  // block does NOT re-test the gate's own reject/pass math (that's
+  // budget-tier-notification.service.spec.ts's job, real DB-shaped
+  // fixtures) — it proves the TWO-AXIS split lives where the task's
+  // classification claims it does:
+  //   plan/taahhüt (NEW encumbrance)     → gate IS called, and a rejection
+  //                                          from it stops the write dead
+  //   RESERVE→COMMIT conversion (NOT new) → gate is NEVER called
+  // ---------------------------------------------------------------------
+  describe('T-321 — assertNotBlocked call-site wiring (K-2.2.7a BLOCKED, two-axis split)', () => {
+    it('reserveForAgreement: calls assertNotBlocked BEFORE writing, and a BLOCKED rejection stops the RESERVE write', async () => {
+      await service.reserveForAgreement(
+        AGREEMENT_ID,
+        1000,
+        'NKA',
+        '2026-01',
+        'TRY',
+        TENANT_ID,
+        USER_ID,
+        'OFF_INVOICE',
+      );
+      expect(mockTierNotificationService.assertNotBlocked).toHaveBeenCalledWith(
+        TENANT_ID,
+        ENVELOPE_ID,
+        1000,
+        undefined,
+      );
+
+      // MUTATION-SHAPED PROOF (without touching production code): the gate
+      // rejecting must mean NO budget_transactions row is ever written —
+      // if the call site awaited it but ignored the rejection, this would
+      // fail.
+      mockTierNotificationService.assertNotBlocked.mockRejectedValueOnce(
+        new ConflictException({ code: 'BUDGET_BLOCK_THRESHOLD_EXCEEDED' }),
+      );
+      mockBudgetRepository.createTransaction.mockClear();
+      await expect(
+        service.reserveForAgreement(
+          AGREEMENT_ID,
+          1000,
+          'NKA',
+          '2026-01', // mockBudgetRepository.findTransactionsBySource/findTransactionByIdempotencyKey are stateless (both mocked, not really tracking the first call's write) — the T-030 existing-reserve short-circuit never fires here regardless of period
+          'TRY',
+          TENANT_ID,
+          USER_ID,
+          'OFF_INVOICE',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('reserveForPlan: calls assertNotBlocked BEFORE writing, and a BLOCKED rejection stops the RESERVE write', async () => {
+      await service.reserveForPlan(
+        PLAN_ID,
+        250,
+        'NKA',
+        '2026-01',
+        'TRY',
+        TENANT_ID,
+        USER_ID,
+        'TOTAL',
+      );
+      expect(mockTierNotificationService.assertNotBlocked).toHaveBeenCalledWith(
+        TENANT_ID,
+        ENVELOPE_ID,
+        250,
+        undefined,
+      );
+
+      mockTierNotificationService.assertNotBlocked.mockRejectedValueOnce(
+        new ConflictException({ code: 'BUDGET_BLOCK_THRESHOLD_EXCEEDED' }),
+      );
+      mockBudgetRepository.createTransaction.mockClear();
+      await expect(
+        service.reserveForPlan(
+          'plan-002', // distinct plan — not an idempotent no-op
+          250,
+          'NKA',
+          '2026-01',
+          'TRY',
+          TENANT_ID,
+          USER_ID,
+          'TOTAL',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('commitReservedForPlan — legacy fallback (NO prior RESERVE, genuinely NEW encumbrance): calls assertNotBlocked, and a BLOCKED rejection stops the COMMIT write', async () => {
+      mockBudgetRepository.findTransactionsBySource.mockResolvedValue([]); // never reserved
+
+      await service.commitReservedForPlan(
+        PLAN_ID,
+        500,
+        'NKA',
+        '2026-01',
+        'TRY',
+        TENANT_ID,
+        USER_ID,
+        'TOTAL',
+      );
+      expect(mockTierNotificationService.assertNotBlocked).toHaveBeenCalledWith(
+        TENANT_ID,
+        ENVELOPE_ID,
+        500,
+        undefined,
+      );
+
+      mockTierNotificationService.assertNotBlocked.mockRejectedValueOnce(
+        new ConflictException({ code: 'BUDGET_BLOCK_THRESHOLD_EXCEEDED' }),
+      );
+      mockBudgetRepository.createTransaction.mockClear();
+      await expect(
+        service.commitReservedForPlan(
+          'plan-003',
+          500,
+          'NKA',
+          '2026-01',
+          'TRY',
+          TENANT_ID,
+          USER_ID,
+          'TOTAL',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(mockBudgetRepository.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it(
+      'commitReservedForPlan — RESERVE→COMMIT CONVERSION (outstanding RESERVE exists, NOT a new encumbrance — RELEASE+COMMIT of the SAME amount): ' +
+        'NEVER calls assertNotBlocked, even when the gate would reject everything (K-2.2.7c: this is not a "yeni giriş")',
+      async () => {
+        mockBudgetRepository.findTransactionsBySource.mockResolvedValue([
+          buildTx({
+            txType: BudgetTransactionType.RESERVE,
+            amount: 300,
+            spendType: null,
+          }),
+        ]);
+        // Poison the gate — if the conversion path called it even once,
+        // this whole test would reject.
+        mockTierNotificationService.assertNotBlocked.mockRejectedValue(
+          new ConflictException({ code: 'BUDGET_BLOCK_THRESHOLD_EXCEEDED' }),
+        );
+
+        const commit = await service.commitReservedForPlan(
+          PLAN_ID,
+          300,
+          'NKA',
+          '2026-01',
+          'TRY',
+          TENANT_ID,
+          USER_ID,
+          'TOTAL',
+        );
+
+        expect(commit.amount).toBe(300);
+        expect(
+          mockTierNotificationService.assertNotBlocked,
+        ).not.toHaveBeenCalled();
+      },
+    );
   });
 
   // ---------------------------------------------------------------------

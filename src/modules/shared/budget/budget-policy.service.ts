@@ -38,10 +38,10 @@ function readPct(raw: number, columnName: string): number {
  * ayırdığı iki farklı olgudur (bkz. `budget-policy.entity.ts` doc). Bu
  * dosya yalnız `budget_policies`'i okur.
  *
- * ⚠️ `%100 BLOCKED` kademesinin UYGULANMASI (bloklama davranışı) bu task'ın
- * kapsamı DIŞINDADIR — `T-321`, hüküm bekliyor. Bu servis yalnız
- * `blockPct` değerini KONFIGÜRASYONDAN okuyup döndürür; onu bir kontrole
- * bağlamak ayrı bir task'ın işi.
+ * `T-321` (`Z62 §1` `2c`): `%100 BLOCKED` kademesinin UYGULANMASI (bloklama
+ * davranışı) `BudgetTierNotificationService#assertNotBlocked`'a bağlandı —
+ * bu servis hâlâ yalnız `blockPct`'i (ve diğer eşikleri) KONFIGÜRASYONDAN
+ * okuyup döndürür; kontrol mantığı kasıtlı olarak burada DEĞİL.
  */
 
 export const BUDGET_POLICY_NOT_CONFIGURED_CODE = 'BUDGET_POLICY_NOT_CONFIGURED';

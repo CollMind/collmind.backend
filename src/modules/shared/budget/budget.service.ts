@@ -95,6 +95,19 @@ export class BudgetService {
    * exactly that side (`budget_transactions`, not `ledger_entries`), so
    * hooking here (and nowhere in the ledger-writing modules) is the correct
    * boundary, not an oversight.
+   *
+   * `T-321` (`Z62 §1` `2c`): `BLOCKED` (%100) is deliberately NOT gated
+   * inside this funnel — `evaluateAndNotify` here always runs AFTER the
+   * write (`createTransaction` above already executed), so it can only
+   * NOTIFY a post-hoc BLOCKED crossing, never PREVENT it. The actual gate
+   * (`BudgetTierNotificationService#assertNotBlocked`) is called BEFORE
+   * `writeTransaction` at the three call sites that create genuinely NEW
+   * encumbrance (`reserveForAgreement`, `reserveForPlan`,
+   * `commitReservedForPlan`'s no-prior-RESERVE fallback) — NOT here,
+   * because this funnel is also used by the RESERVE→COMMIT conversion
+   * (net encumbrance unchanged) and by RELEASE (reduces exposure), neither
+   * of which is a "new entry" `K-2.2.7a`'s BLOCKED kademesi is meant to
+   * reject.
    */
   private async writeTransaction(
     data: Partial<BudgetTransaction>,
@@ -492,6 +505,15 @@ export class BudgetService {
       );
     }
 
+    // `T-321` (`Z62 §1` `2c`): `K-2.2.7a` `BLOCKED` — yeni RESERVE girişi,
+    // policy.blockPct'ten okunan eşik aşılırsa yazımdan ÖNCE reddedilir.
+    await this.budgetTierNotificationService.assertNotBlocked(
+      tenantId,
+      envelope.id,
+      amount,
+      manager,
+    );
+
     // Check availability using view
     const { available, sufficient } =
       await this.budgetRepository.checkBudgetAvailability(
@@ -641,6 +663,14 @@ export class BudgetService {
       // orders by createdAt DESC).
       return envelopeReserves[0];
     }
+
+    // `T-321` (`Z62 §1` `2c`): `K-2.2.7a` `BLOCKED` — yeni RESERVE girişi.
+    await this.budgetTierNotificationService.assertNotBlocked(
+      tenantId,
+      envelope.id,
+      amount,
+      manager,
+    );
 
     // Check availability using view (accounts for existing RESERVE+COMMIT-RELEASE)
     const { available, sufficient } =
@@ -844,6 +874,17 @@ export class BudgetService {
         `No active budget envelope found for channel: ${channel}, period: ${periodMonth}`,
       );
     }
+
+    // `T-321` (`Z62 §1` `2c`): `K-2.2.7a` `BLOCKED` — legacy fallback dalı
+    // önceki bir RESERVE olmadan doğrudan COMMIT yazar, yani bu GENUINELY
+    // yeni bir encumbrance'dır (RESERVE→COMMIT dönüşümünden farklı olarak,
+    // bkz. dosya başı doc). Gate burada da geçerli.
+    await this.budgetTierNotificationService.assertNotBlocked(
+      tenantId,
+      envelope.id,
+      amount,
+      manager,
+    );
 
     const { available, sufficient } =
       await this.budgetRepository.checkBudgetAvailability(

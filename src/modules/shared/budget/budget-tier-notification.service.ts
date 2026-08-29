@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -26,10 +27,28 @@ import { UserRole } from '../../../database/entities/user.entity';
  * `T-318` (`Z57 §3`): olay üretimi — `K-2.2.7a` davranış merdiveninin
  * `WARNING` (%80) ve `FINANCE_REVIEW` (%90) kademeleri için bildirim.
  *
- * ⛔ `BLOCKED` (%100) BİLEREK DIŞARIDA — `T-321`, hüküm bekliyor (`Z57 §3b`).
- * Bu servis `policy.blockPct`'i hiç OKUMAZ ve `BudgetEnvelopeNotifiedTier
- * .BLOCKED`'ı hiçbir zaman YAZMAZ; enum değeri `T-317`'de tanımlı ama bu
- * servisin ulaşabileceği en yüksek kademe `FINANCE_REVIEW`'dir.
+ * `T-321` (`Z62 §1` `2c`): `BLOCKED` (%100) tamamlandı — İKİ AYRI YÜZEYİ var,
+ * karıştırılmaz:
+ *
+ *   (1) `assertNotBlocked` — bir GATE, `evaluateAndNotify`'DAN BAĞIMSIZ.
+ *       `BudgetService`'in üç "yeni encumbrance" çağrı noktasından (
+ *       `reserveForAgreement` · `reserveForPlan` · `commitReservedForPlan`'in
+ *       "hiç rezerve edilmemiş" fallback dalı — üçü de bugüne kadar yalnız
+ *       sabit `available >= amount` ile korunuyordu, `budgetRepository
+ *       .checkBudgetAvailability`: %100'e eşdeğer ama KONFİGÜRASYONDAN
+ *       OKUNMUYORDU, §2.3 ihlali) YAZIMDAN ÖNCE çağrılır ve eşik aşılıyorsa
+ *       yazımı hiç GERÇEKLEŞTİRMEDEN reddeder. `commitReservedForPlan`'in
+ *       RESERVE→COMMIT DÖNÜŞÜM dalı (RELEASE+COMMIT aynı tutar, net
+ *       encumbrance DEĞİŞMEZ) bu kapıdan GEÇMEZ — "yeni giriş" değil, zaten
+ *       encümbre edilmiş paranın kova değişimi.
+ *   (2) `evaluateAndNotify`'daki `BLOCKED` kademesi — bir BİLDİRİM, bir gate
+ *       değil. `finalTier` artık `policy.blockPct`'i okur ve tetiklenirse
+ *       FINANCE'e bilgilendirme yollar; hiçbir yazımı REDDETMEZ (yazım zaten
+ *       olmuş, bu metod her zaman YAZIMDAN SONRA çağrılır). Bu yüzden
+ *       `ledger_entries`/`ADJUST`/`TRANSFER`/RESERVE→COMMIT dönüşümü gibi
+ *       `assertNotBlocked`'ın kapsamadığı yollar bile envelope'u %100'ün
+ *       üstüne taşırsa FINANCE bundan haberdar olur — `K-2.2.7c` ("süreç
+ *       durmaz") ihlal edilmeden.
  *
  * ⛔ `K-2.2.7c`: eşikler yalnız PLAN/TAAHHÜT tarafına uygulanır (gerçekleşen
  * bir ledger/hakediş bütçe eşiğine takılmaz). Bu yüzden bu servis YALNIZ
@@ -138,12 +157,18 @@ export class BudgetTierNotificationService {
       envelope.categoryId ?? null,
     );
 
+    // `T-321` (`Z62 §1` `2c`): `BLOCKED` artık `policy.blockPct`'ten okunur —
+    // sabit `100` YAZILMAZ (§2.3). Bu, `assertNotBlocked`'ın YAZDIRMADIĞI
+    // yollardan (ledger/ADJUST/TRANSFER/RESERVE→COMMIT dönüşümü) doğan bir
+    // %100-üstü durumu BİLDİRMEK içindir — yazımı reddetmez.
     const finalTier: BudgetEnvelopeNotifiedTier =
-      percent >= policy.financeReviewPct
-        ? BudgetEnvelopeNotifiedTier.FINANCE_REVIEW
-        : percent >= policy.warningPct
-          ? BudgetEnvelopeNotifiedTier.WARNING
-          : BudgetEnvelopeNotifiedTier.NONE;
+      percent >= policy.blockPct
+        ? BudgetEnvelopeNotifiedTier.BLOCKED
+        : percent >= policy.financeReviewPct
+          ? BudgetEnvelopeNotifiedTier.FINANCE_REVIEW
+          : percent >= policy.warningPct
+            ? BudgetEnvelopeNotifiedTier.WARNING
+            : BudgetEnvelopeNotifiedTier.NONE;
 
     const originalTier = envelope.lastNotifiedTier;
     const rank = BudgetTierNotificationService.TIER_RANK;
@@ -162,6 +187,19 @@ export class BudgetTierNotificationService {
         originalRank < rank[BudgetEnvelopeNotifiedTier.FINANCE_REVIEW]
       ) {
         await this.notifyFinanceReview(
+          tenantId,
+          envelope,
+          summary,
+          percent,
+          policy,
+          manager,
+        );
+      }
+      if (
+        finalRank >= rank[BudgetEnvelopeNotifiedTier.BLOCKED] &&
+        originalRank < rank[BudgetEnvelopeNotifiedTier.BLOCKED]
+      ) {
+        await this.notifyBlocked(
           tenantId,
           envelope,
           summary,
@@ -351,6 +389,169 @@ export class BudgetTierNotificationService {
         [NotificationChannel.IN_APP],
         manager,
       );
+    }
+  }
+
+  /**
+   * `BLOCKED` (%100) alıcısı: `FINANCE_REVIEW` ile aynı desen (tenant
+   * içindeki tüm `FINANCE` rollü kullanıcılar) — bkz. `notifyFinanceReview`.
+   *
+   * ⛔ Bu metod bir GATE DEĞİLDİR — yalnız BİLGİLENDİRİR. Bu noktaya
+   * geldiğinde yazım zaten POSTED'dır (`evaluateAndNotify` her zaman
+   * yazımdan SONRA çağrılır); reddetme kararı `assertNotBlocked`'a aittir
+   * ve o, `envelope.lastNotifiedTier`'a hiç dokunmadan yazımdan ÖNCE
+   * çalışır. `K-2.2.7c`: bu yol da (RESERVE→COMMIT dönüşümü, ADJUST,
+   * TRANSFER gibi `assertNotBlocked`'ın kapsamadığı yazımlar) süreci
+   * DURDURMAZ — yalnız FINANCE'i haberdar eder.
+   */
+  private async notifyBlocked(
+    tenantId: string,
+    envelope: BudgetEnvelope,
+    summary: BudgetSummaryView,
+    percent: number,
+    policy: ResolvedBudgetPolicy,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const financeUsers = await this.userRepository.findByRole(
+      tenantId,
+      UserRole.FINANCE,
+    );
+    if (financeUsers.length === 0) {
+      throw new InternalServerErrorException({
+        code: 'BUDGET_TIER_RECIPIENT_EMPTY',
+        message:
+          `BLOCKED (%100) bildirimi için tenant ${tenantId} içinde FINANCE ` +
+          `rolünde kullanıcı yok — §2.5: alıcı kümesi boş, sessiz atlanmaz.`,
+      });
+    }
+
+    this.logger.warn(
+      `Budget envelope ${envelope.code} (${envelope.id}) reached BLOCKED ` +
+        `tier (${percent}%) — notifying ${financeUsers.length} FINANCE user(s)`,
+    );
+
+    const metadata = {
+      ...this.buildMetadata(envelope, summary, percent),
+      blockThresholdPct: policy.blockPct,
+    };
+
+    for (const user of financeUsers) {
+      await this.notificationService.createNotification(
+        tenantId,
+        NotificationType.BUDGET_ALERT_100,
+        user.id,
+        user.email,
+        user.fullName,
+        metadata,
+        [NotificationChannel.IN_APP],
+        manager,
+      );
+    }
+  }
+
+  /**
+   * `T-321` (`Z62 §1` `2c`): `K-2.2.7a` `BLOCKED` (%100) — YAZIMDAN ÖNCE
+   * çağrılan bir GATE. `policy.blockPct`'ten okur (§2.3, sabit YOK).
+   *
+   * ⛔ Yalnız BudgetService'in "yeni encumbrance" yaratan üç çağrı
+   * noktasından çağrılır (`reserveForAgreement` · `reserveForPlan` ·
+   * `commitReservedForPlan`'in fallback dalı). RESERVE→COMMIT dönüşümü
+   * (net encumbrance değişmez) ve `ledger_entries` yazan hiçbir yol bu
+   * metodu ÇAĞIRMAZ — `K-2.2.7c`: eşikler yalnız yeni PLAN/TAAHHÜT girişine
+   * uygulanır.
+   *
+   * `manager` verilirse (çağıran açık bir transaction içindeyse) hem
+   * envelope hem `v_budget_summary` okuması O manager üzerinden yapılır —
+   * `evaluateAndNotify`'daki aynı gerekçe (henüz commit edilmemiş
+   * RESERVE/COMMIT/RELEASE satırları aksi hâlde görünmez kalır).
+   */
+  async assertNotBlocked(
+    tenantId: string,
+    envelopeId: string,
+    amount: number,
+    manager?: EntityManager,
+  ): Promise<void> {
+    if (!Number.isFinite(amount)) {
+      throw new InternalServerErrorException(
+        `BudgetTierNotificationService#assertNotBlocked: amount finite ` +
+          `değil (envelope=${envelopeId}, tenant=${tenantId})`,
+      );
+    }
+
+    const envelopeRepo = manager
+      ? manager.getRepository(BudgetEnvelope)
+      : this.envelopeRepository;
+    const envelope = await envelopeRepo.findOne({
+      where: { tenantId, id: envelopeId },
+    });
+    if (!envelope) {
+      throw new InternalServerErrorException(
+        `BudgetTierNotificationService#assertNotBlocked: envelope ` +
+          `bulunamadı (envelope=${envelopeId}, tenant=${tenantId})`,
+      );
+    }
+
+    const summaryRepo = manager
+      ? manager.getRepository(BudgetSummaryView)
+      : this.dataSource.getRepository(BudgetSummaryView);
+    const summary = await summaryRepo.findOne({
+      where: { envelopeId, tenantId },
+    });
+    if (!summary) {
+      throw new InternalServerErrorException(
+        `BudgetTierNotificationService#assertNotBlocked: v_budget_summary ` +
+          `satırı yok (envelope=${envelopeId}, tenant=${tenantId})`,
+      );
+    }
+
+    if (
+      !Number.isFinite(summary.allocatedAmount) ||
+      summary.allocatedAmount <= 0
+    ) {
+      // §2.5: bölen sıfır/geçersizse sessizce atlanmaz — açık hata.
+      throw new InternalServerErrorException(
+        `BudgetTierNotificationService#assertNotBlocked: allocatedAmount ` +
+          `okunamadı/geçersiz (envelope=${envelopeId}, ` +
+          `allocatedAmount=${summary.allocatedAmount})`,
+      );
+    }
+    if (!Number.isFinite(summary.availableAmount)) {
+      throw new InternalServerErrorException(
+        `BudgetTierNotificationService#assertNotBlocked: availableAmount ` +
+          `okunamadı/finite değil (envelope=${envelopeId})`,
+      );
+    }
+
+    const policy = await this.budgetPolicyService.resolvePolicy(
+      tenantId,
+      envelope.channelId ?? null,
+      envelope.categoryId ?? null,
+    );
+
+    // encumbered(reserved+committed) + consumed(ledger) = allocated - available
+    const currentEncumberedAndConsumed =
+      summary.allocatedAmount - summary.availableAmount;
+    const projectedPct =
+      ((currentEncumberedAndConsumed + amount) / summary.allocatedAmount) * 100;
+
+    if (projectedPct >= policy.blockPct) {
+      // ADR 0007 Karar 3b ratchet: no `toFixed`/`Math.round` on a Domain A
+      // (money) value — same discipline as `evaluateAndNotify`'s `percent`
+      // logging above, template the raw number as-is.
+      this.logger.warn(
+        `BUDGET_BLOCK_THRESHOLD_EXCEEDED envelope=${envelope.code} ` +
+          `(${envelope.id}) tenant=${tenantId} projectedPct=${projectedPct} ` +
+          `blockThresholdPct=${policy.blockPct} requestedAmount=${amount}`,
+      );
+      throw new ConflictException({
+        code: 'BUDGET_BLOCK_THRESHOLD_EXCEEDED',
+        message:
+          `Bütçe zarfı ${envelope.code} (${envelope.id}) için işlem ` +
+          `reddedildi: talep sonrası kullanım %${projectedPct}, ` +
+          `blok eşiği %${policy.blockPct} (K-2.2.7a BLOCKED). Yeni RESERVE/` +
+          `COMMIT girişi eşik aşıldığında reddedilir; mevcut hakediş ` +
+          `kayıtları bu kısıttan etkilenmez (K-2.2.7c).`,
+      });
     }
   }
 
