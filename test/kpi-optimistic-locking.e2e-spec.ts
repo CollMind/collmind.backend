@@ -65,6 +65,30 @@ describe('KPI/formula config — optimistic locking (T-039, E2E)', () => {
     fixture = await loadE2EFixture(app);
     dataSource = app.get<DataSource>(getDataSourceToken());
 
+    // T-327 — idempotent kalıntı temizliği (belt-and-suspenders, `afterAll`ın
+    // TAMAMLAYICISI, YERİNE geçeni değil). `afterAll` (aşağıda) her normal
+    // koşumda `createdKpiIds`'i hard-DELETE eder ve bu ÖLÇÜLDÜ: tam bir
+    // `npm run test:e2e` koşumunda `main.kpis` delta 0 (T-327 raporu).
+    // Ama `afterAll` yalnız SÜREÇ normal biterse çalışır — Jest worker'ının
+    // ölmesi/kesilmesi (OOM, ctrl-C, CI timeout) `afterAll`ı ATLAR ve tam
+    // bunun izini 2026-08-16 tarihli altı `E2E_KPILOCK_*` satırı (kpi_group
+    // 'Test') 2026-08-28'e kadar canlı DB'de bıraktı (bkz. T-327 bulgusu).
+    // Hiçbir `afterAll` şekli bu sınıfı KAPATAMAZ (kesinti afterAll'dan
+    // ÖNCE olur); bu yüzden suite'in KENDİSİ bir sonraki koşumda kendi
+    // kalıntısını silerek kendiliğinden iyileşir — kapsam dar ve kesin:
+    // yalnız bu suite'in ürettiği kod deseni (`E2E_KPILOCK_%`), yalnız bu
+    // fixture tenant'ı. (b) şekli ("fixture yerine mevcut ürün KPI'ı
+    // kullan") REDDEDİLDİ: Layer 1/2/3 kendi `version` sayacını CAS ile
+    // mutasyona uğratıyor (stale-replay/race testleri) — paylaşılan bir
+    // ürün KPI'sının version'ını testler arası veya paralel koşumlar arası
+    // paylaşmak test izolasyonunu bozar ve Layer 4 gerçek bir formül
+    // değişikliği yapıp SKU hesaplamasını etkiliyor (üretim KPI'sında asla
+    // yapılmaması gereken bir mutasyon).
+    await dataSource.query(
+      `DELETE FROM main.kpis WHERE tenant_id = $1 AND kpi_code LIKE 'E2E_KPILOCK_%'`,
+      [fixture.tenantId],
+    );
+
     [CHANNEL_NKA, CATEGORY_SAC_BOYASI, FU_TUP_BOYA] = await Promise.all([
       resolveIdByCode(app, fixture.tenantId, 'channels', 'NKA'),
       resolveIdByCode(app, fixture.tenantId, 'categories', 'CAT-SAC-BOYASI'),
