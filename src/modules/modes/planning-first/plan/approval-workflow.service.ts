@@ -340,6 +340,20 @@ export class ApprovalWorkflowService {
       throw new NotFoundException(`Plan with ID ${planId} not found`);
     }
 
+    // T-331: capture the channel code from THIS relations-loaded, pre-lock
+    // read and hand it to `approvePlan` below. `findByIdForUpdate` is a
+    // deliberately join-free projection (`plan.repository.ts:124`, pinned by
+    // `plan.repository.spec.ts:302` — TypeORM cannot combine
+    // `pessimistic_write` with `relations`), so the locked row's `channel` is
+    // ALWAYS `undefined`; reading it there silently produced `''` and made
+    // every approve fail its budget-envelope lookup with a 400.
+    // Same split as the sibling canonical path `PlanService#submit`
+    // (`plan.service.ts:904`) and `#approve` (`plan.service.ts:1376`): the
+    // channel does not participate in the money/status race the lock closes
+    // (it is effectively immutable once a plan exists), so capturing it
+    // pre-lock is safe and does NOT widen the lock window.
+    const channelCode = plan.channel?.code || '';
+
     // Check if reviewer has permission
     if (
       plan.status !== PlanStatus.PENDING_APPROVAL &&
@@ -455,6 +469,7 @@ export class ApprovalWorkflowService {
             reviewerId,
             dto.comments,
             queryRunner.manager,
+            channelCode,
           );
           break;
         case ReviewDecision.REJECT:
@@ -508,9 +523,11 @@ export class ApprovalWorkflowService {
     approverId: string,
     comments: string | undefined,
     manager: EntityManager,
+    // T-331: MUST come from `reviewPlan`'s pre-lock, relations-loaded
+    // `findById` read — NOT from `plan`, which is the join-free
+    // `findByIdForUpdate` projection and therefore carries no `channel`.
+    channelCode: string,
   ): Promise<ReviewResult> {
-    const channelCode = plan.channel?.code || '';
-
     // T-019/T-048 cross-path fix: this is one of TWO canonical approve
     // routes (see plan.service.ts#approve for the other) — the plan may
     // have been submitted via EITHER canonical submit route (this class's
