@@ -727,3 +727,70 @@ export async function createOffInvoiceTransaction(
 
   return res.body.id;
 }
+
+/**
+ * [[T-293]] — LTA oran şartları için EBEVEYN yaşam döngüsü kaydı.
+ *
+ * `main.lta_agreements.agreement_id` `NOT NULL` (migration `1817000000000`,
+ * `Z38 §3(a)`: *"oran kademesi ebeveyne BAĞLI DOĞAR"*), yani bir LTA
+ * oran-şartları başlığı kurmak isteyen HER fixture önce bir
+ * `agreements`(agreement_type='LTA') kaydı üretmelidir.
+ *
+ * ⚠️ Ad öneki `E2E-` — `cleanupTestAgreements` bu ön eke bakıyor.
+ * ⚠️ LTA süre kuralı: `agreement.service.ts` `> 30 gün` şartı koyuyor.
+ * ⚠️ Kayıt `DRAFT` kalır; submit/approve akışı bu fixture'ın işi değil
+ * (LTA oran şartları yaşam döngüsü DURUMUNA değil, kaydın VARLIĞINA bağlı
+ * doğar — durum kapısı ayrı bir karar kalemidir, `T-293` raporu).
+ */
+export async function createLifecycleLtaAgreement(
+  app: INestApplication,
+  input: {
+    cplId: string;
+    channelId: string;
+    fuId: string;
+    tacticId: string;
+    mechanicId: string;
+    categoryId?: string;
+    namePrefix?: string;
+    startDate?: string;
+    endDate?: string;
+  },
+): Promise<string> {
+  const admin = await loginAs(app, 'ADMIN');
+  const res = await request(app.getHttpServer())
+    .post('/agreements')
+    .set(admin.authHeader())
+    .send({
+      agreementName: `${input.namePrefix || 'E2E-LTA-PARENT'}-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 7)}`,
+      agreementType: 'LTA',
+      cplId: input.cplId,
+      channelId: input.channelId,
+      ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+      fuId: input.fuId,
+      tacticId: input.tacticId,
+      mechanicId: input.mechanicId,
+      skuScope: 'FU',
+      capTotalAmount: 100000,
+      spendType: 'BOTH',
+      startDate: input.startDate || isoOffsetDays(0),
+      endDate: input.endDate || isoOffsetDays(90),
+      justification: 'E2E T-293 — LTA yaşam döngüsü ebeveyni',
+    });
+  if (res.status !== 201) {
+    throw new Error(
+      `createLifecycleLtaAgreement başarısız (${res.status}): ${JSON.stringify(res.body)}`,
+    );
+  }
+  return res.body.id;
+}
+
+/** `YYYY-MM-DD`, bugünden `days` gün sonrası (yerel takvim). */
+export function isoOffsetDays(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
+}

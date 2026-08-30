@@ -82,6 +82,23 @@ export class CreateLTARateDto {
 }
 
 export class CreateLTAAgreementDto {
+  /**
+   * `Z38 §3(a)` / [[T-293]] — YAŞAM DÖNGÜSÜ BAĞI, ZORUNLU.
+   *
+   * Oran şartları bir `main.agreements` (agreement_type=LTA) kaydına
+   * BAĞLI DOĞAR. Opsiyonel olsaydı öksüz bir oran-şartları başlığı
+   * doğabilirdi — T-293'ün ölçtüğü kırık durumun ta kendisi (motorun
+   * uyguladığı indirimin onaylı/denetlenebilir bir anlaşmaya izi
+   * sürülemiyordu).
+   */
+  @ApiProperty({
+    description:
+      'Yaşam döngüsü kaydının ID’si (main.agreements, agreement_type=LTA)',
+  })
+  @IsUUID()
+  @IsNotEmpty()
+  agreementId!: string;
+
   @ApiProperty({ description: 'CPL ID' })
   @IsUUID()
   @IsNotEmpty()

@@ -153,6 +153,8 @@ import { loginAs, clearTokenCache } from './helpers/auth';
 import {
   loadE2EFixture,
   cleanupTestPlans,
+  cleanupTestAgreements,
+  createLifecycleLtaAgreement,
   E2EFixture,
 } from './helpers/seed-e2e';
 import {
@@ -165,14 +167,55 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
   let dataSource: DataSource;
   let fixture: E2EFixture;
 
+  // [[T-293]] — `lta_agreements.agreement_id` NOT NULL oldu (migration
+  // `1817000000000`). Bu dosyanın üç doğrudan INSERT'i ve bir `POST`'u artık
+  // bir EBEVEYN `agreements`(LTA) kaydı gerektiriyor; master-data id'leri
+  // üst seviyeye taşındı (önce yalnız "Kusur 2" describe'ında vardı).
+  let mdChannelId: string;
+  let mdFuId: string;
+  let mdTacticId: string;
+  let mdMechanicId: string;
+
   beforeAll(async () => {
     app = await createTestApp();
     clearTokenCache();
     fixture = await loadE2EFixture(app);
     dataSource = app.get<DataSource>(getDataSourceToken());
+
+    const [ch, fu, tac, mec] = await Promise.all([
+      dataSource.query(
+        `SELECT id FROM main.channels WHERE tenant_id = $1 AND code = 'NKA'`,
+        [fixture.tenantId],
+      ),
+      dataSource.query(
+        `SELECT id FROM main.forecasting_units WHERE tenant_id = $1 AND code = 'FU-TUP-BOYA'`,
+        [fixture.tenantId],
+      ),
+      dataSource.query(
+        `SELECT id FROM main.tactics WHERE tenant_id = $1 AND deleted_at IS NULL LIMIT 1`,
+        [fixture.tenantId],
+      ),
+      dataSource.query(
+        `SELECT id FROM main.mechanics WHERE tenant_id = $1 AND deleted_at IS NULL LIMIT 1`,
+        [fixture.tenantId],
+      ),
+    ]);
+    if (!ch[0] || !fu[0] || !tac[0] || !mec[0]) {
+      throw new Error(
+        'E2E fixture eksik: channel/fu/tactic/mechanic bulunamadı (`npm run seed`).',
+      );
+    }
+    mdChannelId = ch[0].id;
+    mdFuId = fu[0].id;
+    mdTacticId = tac[0].id;
+    mdMechanicId = mec[0].id;
   });
 
   afterAll(async () => {
+    // ⚠️ SIRA: oran-şartları başlıkları describe'ların kendi afterAll'larında
+    // silindi; ebeveyn `agreements` satırları `E2E-` önekiyle
+    // `cleanupTestAgreements`/global-teardown kapsamında.
+    await cleanupTestAgreements(app, fixture.tenantId, 'E2E-LTA-PARENT');
     await closeTestApp();
     await closeAdminDataSource();
   });
@@ -190,13 +233,20 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
       // yüzden fixture doğrudan `app_migrate` (admin) bağlantısıyla
       // yazılıyor. T-249'un `insertNotification` deseniyle AYNI gerekçe:
       // app_runtime'ın bu tabloda INSERT'i yok.
+      const parentId = await createLifecycleLtaAgreement(app, {
+        cplId: fixture.cplId,
+        channelId: mdChannelId,
+        fuId: mdFuId,
+        tacticId: mdTacticId,
+        mechanicId: mdMechanicId,
+      });
       const admin = await getAdminDataSource();
       const rows: Array<{ id: string }> = await admin.query(
         `INSERT INTO main.lta_agreements
-           (tenant_id, cpl_id, agreement_name, agreement_code, effective_date, status)
-         VALUES ($1, $2, 'T-269 e2e fixture', $3, '2026-01-01', 'active')
+           (tenant_id, agreement_id, cpl_id, agreement_name, agreement_code, effective_date, status)
+         VALUES ($1, $2, $3, 'T-269 e2e fixture', $4, '2026-01-01', 'active')
          RETURNING id`,
-        [fixture.tenantId, fixture.cplId, `T269_E2E_${Date.now()}`],
+        [fixture.tenantId, parentId, fixture.cplId, `T269_E2E_${Date.now()}`],
       );
       agreementId = rows[0].id;
     });
@@ -320,13 +370,20 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
 
       // LTA agreement + rate: `createAgreement` 500 verdiği için (Kusur 3,
       // kapsam dışı) admin bağlantısıyla doğrudan yazılıyor.
+      const parentId = await createLifecycleLtaAgreement(app, {
+        cplId: fixture.cplId,
+        channelId: mdChannelId,
+        fuId: mdFuId,
+        tacticId: mdTacticId,
+        mechanicId: mdMechanicId,
+      });
       const admin = await getAdminDataSource();
       const agreementRows: Array<{ id: string }> = await admin.query(
         `INSERT INTO main.lta_agreements
-           (tenant_id, cpl_id, agreement_name, agreement_code, effective_date, status)
-         VALUES ($1, $2, 'T-269 override fixture', $3, '2026-01-01', 'active')
+           (tenant_id, agreement_id, cpl_id, agreement_name, agreement_code, effective_date, status)
+         VALUES ($1, $2, $3, 'T-269 override fixture', $4, '2026-01-01', 'active')
          RETURNING id`,
-        [fixture.tenantId, fixture.cplId, `T269_OVR_${Date.now()}`],
+        [fixture.tenantId, parentId, fixture.cplId, `T269_OVR_${Date.now()}`],
       );
       agreementId = agreementRows[0].id;
 
@@ -431,13 +488,20 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
     let createCplId: string;
 
     beforeAll(async () => {
+      const parentId = await createLifecycleLtaAgreement(app, {
+        cplId: fixture.cplId,
+        channelId: mdChannelId,
+        fuId: mdFuId,
+        tacticId: mdTacticId,
+        mechanicId: mdMechanicId,
+      });
       const admin = await getAdminDataSource();
       const rows: Array<{ id: string }> = await admin.query(
         `INSERT INTO main.lta_agreements
-           (tenant_id, cpl_id, agreement_name, agreement_code, effective_date, status)
-         VALUES ($1, $2, 'T-271 probe (write-path)', $3, '2026-01-01', 'draft')
+           (tenant_id, agreement_id, cpl_id, agreement_name, agreement_code, effective_date, status)
+         VALUES ($1, $2, $3, 'T-271 probe (write-path)', $4, '2026-01-01', 'draft')
          RETURNING id`,
-        [fixture.tenantId, fixture.cplId, `T271_PROBE_${Date.now()}`],
+        [fixture.tenantId, parentId, fixture.cplId, `T271_PROBE_${Date.now()}`],
       );
       probeAgreementId = rows[0].id;
 
@@ -486,6 +550,15 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
     });
 
     it("POST /lta-agreements (ADMIN) — 201: KUSUR 4 düzeltildi (validateNoOverlappingAgreements artık düşmüyor), KUSUR 3 düzeltildi (INSERT/lta_agreements + INSERT/lta_rates izinli) — satır GERÇEKTEN yazılıyor VE 'yaz-sonra-oku' (findById) GERÇEKTEN okuyor", async () => {
+      // [[T-293]] — bağ ZORUNLU: ebeveyn `agreements`(LTA) kaydı AYNI CPL
+      // için üretilir (servis `cplId` uyuşmazlığını REDDEDİYOR, §2.5).
+      const parentId = await createLifecycleLtaAgreement(app, {
+        cplId: createCplId,
+        channelId: mdChannelId,
+        fuId: mdFuId,
+        tacticId: mdTacticId,
+        mechanicId: mdMechanicId,
+      });
       const admin = await loginAs(app, 'ADMIN');
       const code = `T271_CREATE_PROBE_${Date.now()}`;
 
@@ -493,6 +566,7 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
         .post('/lta-agreements')
         .set(admin.authHeader())
         .send({
+          agreementId: parentId,
           cplId: createCplId,
           agreementName: 'T-271 create probe',
           agreementCode: code,
@@ -594,13 +668,25 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
     const createdIds: string[] = [];
 
     beforeAll(async () => {
+      const parentId = await createLifecycleLtaAgreement(app, {
+        cplId: fixture.cplId,
+        channelId: mdChannelId,
+        fuId: mdFuId,
+        tacticId: mdTacticId,
+        mechanicId: mdMechanicId,
+      });
       const admin = await getAdminDataSource();
       const rows: Array<{ id: string }> = await admin.query(
         `INSERT INTO main.lta_agreements
-           (tenant_id, cpl_id, agreement_name, agreement_code, effective_date, expiry_date, status)
-         VALUES ($1, $2, 'T-271 overlap base', $3, '2027-03-01', '2027-06-30', 'active')
+           (tenant_id, agreement_id, cpl_id, agreement_name, agreement_code, effective_date, expiry_date, status)
+         VALUES ($1, $2, $3, 'T-271 overlap base', $4, '2027-03-01', '2027-06-30', 'active')
          RETURNING id`,
-        [fixture.tenantId, fixture.cplId, `T271_OVR_BASE_${Date.now()}`],
+        [
+          fixture.tenantId,
+          parentId,
+          fixture.cplId,
+          `T271_OVR_BASE_${Date.now()}`,
+        ],
       );
       baseAgreementId = rows[0].id;
     });
@@ -617,6 +703,16 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
       effectiveDate: string,
       expiryDate?: string,
     ): Promise<number> {
+      // [[T-293]] — her deneme KENDİ ebeveynini alır: bağ TEKİL
+      // (`UQ_lta_agreements_agreement_id`), bir ebeveyn en çok bir
+      // oran-şartları başlığı taşır.
+      const parentId = await createLifecycleLtaAgreement(app, {
+        cplId: fixture.cplId,
+        channelId: mdChannelId,
+        fuId: mdFuId,
+        tacticId: mdTacticId,
+        mechanicId: mdMechanicId,
+      });
       const admin = await loginAs(app, 'ADMIN');
       // `agreementCode` `@Matches(/^[A-Z0-9_]+$/)` ile sınırlı (DTO) —
       // `Math.random().toString(36)` KÜÇÜK harf üretir ve 400 Bad Request
@@ -628,6 +724,7 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
         .post('/lta-agreements')
         .set(admin.authHeader())
         .send({
+          agreementId: parentId,
           cplId: fixture.cplId,
           agreementName: 'T-271 overlap attempt',
           agreementCode: code,
@@ -718,12 +815,24 @@ describe('T-269 — LTA agreement: app_runtime GRANT + plan-override join', () =
         .expect(201);
       z23PlanId = planRes.body.id;
 
+      const z23ParentId = await createLifecycleLtaAgreement(app, {
+        cplId: fixture.cplId,
+        channelId: mdChannelId,
+        fuId: mdFuId,
+        tacticId: mdTacticId,
+        mechanicId: mdMechanicId,
+      });
       const agRows: Array<{ id: string }> = await admin.query(
         `INSERT INTO main.lta_agreements
-           (tenant_id, cpl_id, agreement_name, agreement_code, effective_date, status)
-         VALUES ($1, $2, 'T-273 Z23 probe', $3, '2026-01-01', 'draft')
+           (tenant_id, agreement_id, cpl_id, agreement_name, agreement_code, effective_date, status)
+         VALUES ($1, $2, $3, 'T-273 Z23 probe', $4, '2026-01-01', 'draft')
          RETURNING id`,
-        [fixture.tenantId, fixture.cplId, `T273_Z23_${Date.now()}`],
+        [
+          fixture.tenantId,
+          z23ParentId,
+          fixture.cplId,
+          `T273_Z23_${Date.now()}`,
+        ],
       );
       z23AgreementId = agRows[0].id;
 

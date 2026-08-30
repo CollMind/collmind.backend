@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { BaseEntity } from './base.entity';
 import { Cpl } from './cpl.entity';
+import { Agreement } from './agreement.entity';
 import { MoneyTransformer } from '../transformers/decimal.transformer';
 
 export enum LTAAgreementStatus {
@@ -18,11 +19,31 @@ export enum LTAAgreementStatus {
 }
 
 @Entity({ name: 'lta_agreements', schema: 'main' })
+@Index('UQ_lta_agreements_agreement_id', ['agreementId'], {
+  unique: true,
+})
 @Index(['tenantId', 'agreementCode'], { unique: true })
 @Index(['cplId', 'status'])
 @Index(['effectiveDate', 'expiryDate'])
 @Index(['status'])
 export class LTAAgreement extends BaseEntity {
+  // `Z38 §3(a)` / [[T-293]] — YAŞAM DÖNGÜSÜ BAĞI. `main.agreements`
+  // (agreement_type=LTA) yaşam döngüsünün (onay · audit · SoD · defter bağı)
+  // kanonik yeri; bu tablo ORAN ŞARTLARININ kanonik yeri. Oran kademesi
+  // ebeveyne BAĞLI DOĞAR — bu yüzden kolon NOT NULL (migration
+  // `1817000000000`). Nullable olsaydı "bağsız da doğabilir" demek olurdu,
+  // yani T-293'ün ölçtüğü kırık durumun kendisi.
+  // ⚠️ `comment` metadata'sı BURADA olmak ZORUNDA (`1815` dersi): migration
+  // `COMMENT ON COLUMN` yazıyor; entity taşımazsa her `migration:generate`
+  // gerekçesiz bir `IS NULL` + geri-yazma çifti üretir.
+  @Column({
+    name: 'agreement_id',
+    type: 'uuid',
+    comment:
+      'Z38 §3(a): yaşam döngüsünün kanonik kaydı (main.agreements, agreement_type=LTA). Oran kademesi ona BAĞLI doğar.',
+  })
+  agreementId!: string;
+
   @Column({ name: 'cpl_id', type: 'uuid' })
   cplId!: string;
 
@@ -60,6 +81,25 @@ export class LTAAgreement extends BaseEntity {
   notes?: string;
 
   // Relations
+  // ⚠️ `onDelete: 'RESTRICT'` BURADA AÇIKÇA YAZILIR — FK migration
+  // `1817000000000`'de `ON DELETE RESTRICT` ile kurulur; entity susarsa
+  // TypeORM varsayılanı (`NO ACTION`) ile katalog arasında drift doğar ve
+  // `migration:generate` FK'yi her turda DROP/ADD etmeyi önerir. Adı da
+  // `foreignKeyConstraintName` ile sabitlenir (aynı gerekçe).
+  // Emsal: `1815` — entity'de eksik kalan metadata bir sonraki `generate`'te
+  // gerekçesiz drift üretir; bu dosyada `agreement_id`'nin `comment`'i de
+  // AYNI sebeple entity'de duruyor (ölçüldü: comment eklenince drift
+  // 1310 → 1304 satıra düştü ve bu FK'nin DROP/ADD çifti KAYBOLDU).
+  @ManyToOne(() => Agreement, {
+    onDelete: 'RESTRICT',
+    onUpdate: 'NO ACTION',
+  })
+  @JoinColumn({
+    name: 'agreement_id',
+    foreignKeyConstraintName: 'FK_lta_agreements_agreement',
+  })
+  agreement!: Agreement;
+
   @ManyToOne(() => Cpl)
   @JoinColumn({ name: 'cpl_id' })
   cpl!: Cpl;

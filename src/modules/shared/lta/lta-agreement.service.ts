@@ -12,6 +12,10 @@ import {
   LTAAgreementStatus,
 } from '../../../database/entities/lta-agreement.entity';
 import { LTARate } from '../../../database/entities/lta-rate.entity';
+import {
+  Agreement,
+  AgreementType,
+} from '../../../database/entities/agreement.entity';
 import { CreateLTAAgreementDto } from './dto/create-lta-agreement.dto';
 import { UpdateLTAAgreementDto } from './dto/update-lta-agreement.dto';
 import { CplService } from '../../master-data/cpl/cpl.service';
@@ -24,6 +28,11 @@ export class LTAAgreementService {
     private readonly ltaRepository: LTAAgreementRepository,
     @InjectRepository(LTARate)
     private readonly ltaRateRepository: Repository<LTARate>,
+    // [[T-293]] — yaşam döngüsü kaydının DOĞRULANMASI için. Yalnız okuma;
+    // `agreements` üzerindeki yazma/onay akışı bu modülün işi DEĞİL
+    // (`Z38 §3`: devir REDDEDİLDİ, bağ kuruldu).
+    @InjectRepository(Agreement)
+    private readonly agreementRepository: Repository<Agreement>,
     private readonly cplService: CplService,
   ) {}
 
@@ -33,6 +42,49 @@ export class LTAAgreementService {
   ): Promise<LTAAgreement> {
     // Validate CPL exists
     await this.cplService.findOne(tenantId, dto.cplId);
+
+    // ── [[T-293]] / `Z38 §3(a)` — YAŞAM DÖNGÜSÜ BAĞI ────────────────────
+    // Oran şartları bir `main.agreements` (agreement_type=LTA) kaydına
+    // BAĞLI DOĞAR. Üç ayrı kontrol, üçü de AÇIK HATA (§2.5: sessiz
+    // varsayılan / sessiz atlama yok):
+    //   1. ebeveyn var mı (tenant kapsamında)
+    //   2. ebeveyn gerçekten LTA mı  — STA bir yaşam döngüsü kaydına LTA
+    //      oran kademesi bağlanamaz
+    //   3. `cplId` ebeveyninkiyle aynı mı — iki temsil AYRIŞMAZ (`İlke 4`);
+    //      uyuşmazlık SESSİZCE ebeveyninkiyle DEĞİŞTİRİLMEZ, REDDEDİLİR
+    const parent = await this.agreementRepository.findOne({
+      where: { id: dto.agreementId, tenantId },
+    });
+    if (!parent) {
+      throw new NotFoundException(
+        `Yaşam döngüsü kaydı bulunamadı: agreements/${dto.agreementId}`,
+      );
+    }
+    if (parent.agreementType !== AgreementType.LTA) {
+      throw new BadRequestException(
+        `Yaşam döngüsü kaydı ${parent.agreementCode} tipi ` +
+          `'${parent.agreementType}' — LTA oran şartları yalnız ` +
+          `agreement_type='LTA' bir kayda bağlanabilir (Z38 §3(a)).`,
+      );
+    }
+    if (parent.cplId !== dto.cplId) {
+      throw new BadRequestException(
+        `cplId uyuşmazlığı: yaşam döngüsü kaydı ${parent.agreementCode} ` +
+          `CPL ${parent.cplId} için, gönderilen ${dto.cplId}. Sessizce ` +
+          `düzeltilmez (§2.5) — aynı olgunun iki temsili ayrışamaz.`,
+      );
+    }
+    const alreadyBound = await this.ltaRateRepository.manager.findOne(
+      LTAAgreement,
+      { where: { tenantId, agreementId: dto.agreementId } },
+    );
+    if (alreadyBound) {
+      throw new ConflictException(
+        `Yaşam döngüsü kaydı ${parent.agreementCode} zaten bir oran-şartları ` +
+          `başlığı taşıyor (${alreadyBound.agreementCode}). Bir kaydın EN ÇOK ` +
+          `BİR oran-şartları başlığı olur (UQ_lta_agreements_agreement_id).`,
+      );
+    }
 
     // Validate code uniqueness
     const existing = await this.ltaRepository.findByCode(
@@ -80,6 +132,7 @@ export class LTAAgreementService {
     // Create agreement
     const agreement = this.ltaRepository.create({
       tenantId,
+      agreementId: dto.agreementId,
       cplId: dto.cplId,
       agreementName: dto.agreementName,
       agreementCode: dto.agreementCode,
@@ -133,6 +186,30 @@ export class LTAAgreementService {
     const agreement = await this.ltaRepository.findById(tenantId, id);
     if (!agreement) {
       throw new NotFoundException(`LTA Agreement with ID ${id} not found`);
+    }
+
+    // [[T-293]] — KİMLİK ALANLARI PATCH ile DEĞİŞTİRİLEMEZ.
+    //
+    // `UpdateLTAAgreementDto = PartialType(CreateLTAAgreementDto)` ⇒ hem
+    // `agreementId` hem `cplId` şema düzeyinde KABUL edilir, ama aşağıdaki
+    // `Object.assign` ikisini de UYGULAMAZ. Sessizce yok saymak `§2.5`'in
+    // *"if yazıp else bırakmamak"* dalıdır — ve `cplId` için bu, yaratımda
+    // `400` ile korunan invaryantın (`parent.cplId === dto.cplId`) PATCH
+    // KAÇIŞ DELİĞİ olurdu: çağıran gönderdiğini uygulanmış sanır.
+    // ⇒ İkisi de AÇIKÇA reddedilir.
+    if (dto.agreementId && dto.agreementId !== agreement.agreementId) {
+      throw new BadRequestException(
+        'Yaşam döngüsü bağı (agreementId) güncellenemez. Bağı değiştirmek ' +
+          'yerine oran-şartları başlığı sonlandırılır ve yenisi doğru ' +
+          'yaşam döngüsü kaydına bağlı yaratılır.',
+      );
+    }
+    if (dto.cplId && dto.cplId !== agreement.cplId) {
+      throw new BadRequestException(
+        'cplId güncellenemez: oran şartlarının CPL’i, bağlı olduğu yaşam ' +
+          'döngüsü kaydının (agreements) CPL’inden gelir ve ondan ' +
+          'ayrışamaz (İlke 4). Sessizce yok sayılmaz (§2.5).',
+      );
     }
 
     // Cannot update expired agreements

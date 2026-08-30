@@ -80,3 +80,4 @@ src/common/numeric
 # sayılır ve taşıma taşıma olarak görünür, ödeme olarak değil. E15/E16 aynı
 # şeyi `src/common/numeric/` için yapmıştı; buradaki ölçek 77 kat.
 src/database
+src/modules/shared/lta

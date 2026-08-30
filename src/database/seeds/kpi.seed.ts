@@ -10,6 +10,11 @@
  */
 import { DataSource, Repository } from 'typeorm';
 import {
+  GP_ROI_PCT_FORMULA,
+  GP_ROI_PCT_DESCRIPTION,
+  GP_ROI_PCT_DEPENDS_ON,
+} from '../../common/kpi/roi-denominator';
+import {
   Kpi,
   FormulaType,
   CalculationLevel,
@@ -423,11 +428,12 @@ export const KPI_DEFAULTS: KpiSeedRow[] = [
     kpiCode: 'GP_ROI_PCT',
     kpiName: 'GP ROI %',
     kpiGroup: 'ROI',
-    kpiDescription:
-      'Incremental GP ROI %: INCR_GP / TOTAL_PLANNED_SPEND * 100 (BRD canonical — ADR 0011)',
+    kpiDescription: GP_ROI_PCT_DESCRIPTION,
     formulaType: FormulaType.EXPRESSION,
-    formulaText: 'INCR_GP / TOTAL_PLANNED_SPEND * 100',
-    dependsOnKpis: ['INCR_GP', 'TOTAL_PLANNED_SPEND'],
+    // `Z62 §6-3` / `B4` — TEK NOKTA (src/common/kpi/roi-denominator.ts).
+    // ⛔ Payda burada SABİTLENMEZ; dizge elle tekrarlanmaz.
+    formulaText: GP_ROI_PCT_FORMULA,
+    dependsOnKpis: [...GP_ROI_PCT_DEPENDS_ON],
     calculationOrder: 48,
     calculationLevel: CalculationLevel.SKU,
     displayFormat: DisplayFormat.PERCENTAGE,
