@@ -5,8 +5,12 @@
  * if found. This ensures existing tenants always get BRD-correct formulas.
  *
  * Dependency order follows KPI calculation_order (engine executes ASC):
- *   Inputs (1-11) → GSV (15-16) → Volume (20-21) → TO (25-26) →
+ *   Inputs (1-13) → GSV (15-16) → Volume (20-21) → NIV (22-24) → TO (25-27) →
  *   COGS (30-31) → GP (35-36) → INCR_GP (46) → CPP (47) → ROI (48-49)
+ *
+ * ⚠️ `T-334` / `migration 1818000000000`: `NIV` ve `TO` İKİ AYRI kavramdır
+ * (`Z65 §1`). Bu liste migration'ın hedef hâliyle BİREBİR olmalıdır —
+ * `seedDefaults` (KpiService) ve bu seed AYNI kümeyi yazar.
  */
 import { DataSource, Repository } from 'typeorm';
 import {
@@ -188,6 +192,26 @@ export const KPI_DEFAULTS: KpiSeedRow[] = [
     aggregationMethodFu: AggregationMethod.SUM,
     isActive: true,
   },
+  // ── LEVEL 2.5: ROI paydası — `Q6` / `Z66 §1` / `ADR 0011` F12 ────────
+  // ⛔ `TOTAL_PLANNED_SPEND` (order 9) DOKUNULMADI: bütçe/plan.totalSpend onu
+  // okumaya devam eder (zarf gerçek parayı rezerve eder, LTA dahil). Değişen
+  // tek şey ROI'nin OKUMA ADRESİ — finansal yayılım SIFIR.
+  {
+    kpiCode: 'INCR_PROMO_SPEND',
+    kpiName: 'Incremental Promo Spend',
+    kpiGroup: 'Spend',
+    kpiDescription:
+      'Incremental PROMO spend (LTA HARİÇ): planned promo on+off eksi base promo; context-injected from SpendCalc. ROI paydası — Z66 §1 / ADR 0011 F12',
+    formulaType: FormulaType.EXTERNAL,
+    formulaText: 'INCR_PROMO_SPEND',
+    calculationOrder: 13,
+    calculationLevel: CalculationLevel.SKU,
+    displayFormat: DisplayFormat.CURRENCY,
+    decimalPlaces: 2,
+    showInGrid: false,
+    aggregationMethodFu: AggregationMethod.SUM,
+    isActive: true,
+  },
   // ── LEVEL 3: GSV (BRD: BASE_GSV=BASE_VOL*BPTT ; PLANNED_GSV=PLAN_VOL*BPTT) ──
   {
     kpiCode: 'BASE_GSV',
@@ -276,19 +300,71 @@ export const KPI_DEFAULTS: KpiSeedRow[] = [
     aggregationMethodFu: AggregationMethod.SUM,
     isActive: true,
   },
-  // ── LEVEL 5: Turnover (BRD NIV semantics) ────────────────────────────
-  // Only on-invoice deductions reduce Turnover/NIV (BRD T-008 fix).
-  // Off-invoice spend (lumpsum VIS_LS, price-support-off, LTA_OFF) does NOT
-  // reduce turnover; it is captured in GP via incremental spend.
+  // ── LEVEL 5: NIV ve Turnover — İKİ AYRI KAVRAM (`T-334` / `Z65 §1`) ──
+  //   NIV = GSV − TotalSpendOn          (yalnız on-invoice düşer)
+  //   TO  = GSV − TotalSpend(on + off)  (Excel `BaseTurnover`)
+  // `migration 1781` NIV ihtiyacını TO adının üstüne yazmıştı; `migration
+  // 1818` kavramları ayırdı. Formül metinleri değişmedi — ADLARI değişti.
+  {
+    kpiCode: 'BASE_NIV',
+    kpiName: 'Base NIV',
+    kpiGroup: 'Revenue',
+    kpiDescription:
+      'Base net invoice value: BASE_GSV - BASE_LTA_ON (Excel `BaseNIV` — only on-invoice deductions; T-334/Z65 §1)',
+    formulaType: FormulaType.EXPRESSION,
+    formulaText: 'BASE_GSV - BASE_LTA_ON',
+    dependsOnKpis: ['BASE_GSV', 'BASE_LTA_ON'],
+    calculationOrder: 22,
+    calculationLevel: CalculationLevel.SKU,
+    displayFormat: DisplayFormat.CURRENCY,
+    decimalPlaces: 2,
+    showInGrid: false,
+    aggregationMethodFu: AggregationMethod.SUM,
+    isActive: true,
+  },
+  {
+    kpiCode: 'PLANNED_NIV',
+    kpiName: 'Planned NIV',
+    kpiGroup: 'Revenue',
+    kpiDescription:
+      'Planned net invoice value: PLANNED_GSV - PLANNED_ON_INVOICE_SPEND (Excel `PlannedPromoNIV`; T-334/Z65 §1)',
+    formulaType: FormulaType.EXPRESSION,
+    formulaText: 'PLANNED_GSV - PLANNED_ON_INVOICE_SPEND',
+    dependsOnKpis: ['PLANNED_GSV', 'PLANNED_ON_INVOICE_SPEND'],
+    calculationOrder: 23,
+    calculationLevel: CalculationLevel.SKU,
+    displayFormat: DisplayFormat.CURRENCY,
+    decimalPlaces: 2,
+    showInGrid: false,
+    aggregationMethodFu: AggregationMethod.SUM,
+    isActive: true,
+  },
+  {
+    kpiCode: 'INCR_NIV',
+    kpiName: 'Incremental NIV',
+    kpiGroup: 'Revenue',
+    kpiDescription:
+      'Incremental NIV: PLANNED_NIV - BASE_NIV (Excel `PlannedIncrNIV`; T-334)',
+    formulaType: FormulaType.EXPRESSION,
+    formulaText: 'PLANNED_NIV - BASE_NIV',
+    dependsOnKpis: ['PLANNED_NIV', 'BASE_NIV'],
+    calculationOrder: 24,
+    calculationLevel: CalculationLevel.SKU,
+    displayFormat: DisplayFormat.CURRENCY,
+    decimalPlaces: 2,
+    showInGrid: false,
+    aggregationMethodFu: AggregationMethod.SUM,
+    isActive: true,
+  },
   {
     kpiCode: 'BASE_TO',
     kpiName: 'Base Turnover',
     kpiGroup: 'Revenue',
     kpiDescription:
-      'Base net turnover: BASE_GSV - BASE_LTA_ON (BRD NIV semantics — only on-invoice; T-008)',
+      'Base turnover: BASE_GSV - BASE_TOTAL_SPEND (Excel `BaseTurnover = BaseGSV - BaseTradeSpend`; T-334/Z65 §1)',
     formulaType: FormulaType.EXPRESSION,
-    formulaText: 'BASE_GSV - BASE_LTA_ON',
-    dependsOnKpis: ['BASE_GSV', 'BASE_LTA_ON'],
+    formulaText: 'BASE_GSV - BASE_TOTAL_SPEND',
+    dependsOnKpis: ['BASE_GSV', 'BASE_TOTAL_SPEND'],
     calculationOrder: 25,
     calculationLevel: CalculationLevel.SKU,
     displayFormat: DisplayFormat.CURRENCY,
@@ -302,16 +378,33 @@ export const KPI_DEFAULTS: KpiSeedRow[] = [
     kpiName: 'Planned Turnover',
     kpiGroup: 'Revenue',
     kpiDescription:
-      'Planned net turnover: PLANNED_GSV - PLANNED_ON_INVOICE_SPEND (BRD NIV semantics — only on-invoice deductions; T-008)',
+      'Planned turnover: PLANNED_GSV - TOTAL_PLANNED_SPEND (Excel `PlannedPromoTurnover`; T-334/Z65 §1)',
     formulaType: FormulaType.EXPRESSION,
-    formulaText: 'PLANNED_GSV - PLANNED_ON_INVOICE_SPEND',
-    dependsOnKpis: ['PLANNED_GSV', 'PLANNED_ON_INVOICE_SPEND'],
+    formulaText: 'PLANNED_GSV - TOTAL_PLANNED_SPEND',
+    dependsOnKpis: ['PLANNED_GSV', 'TOTAL_PLANNED_SPEND'],
     calculationOrder: 26,
     calculationLevel: CalculationLevel.SKU,
     displayFormat: DisplayFormat.CURRENCY,
     decimalPlaces: 2,
     showInGrid: true,
     columnOrder: 5,
+    aggregationMethodFu: AggregationMethod.SUM,
+    isActive: true,
+  },
+  {
+    kpiCode: 'INCR_TO',
+    kpiName: 'Incremental Turnover',
+    kpiGroup: 'Revenue',
+    kpiDescription:
+      'Incremental turnover: PLANNED_TO - BASE_TO (Excel `PlannedIncrTO`; T-334) — RAG kadranının iTO ekseni (Z66 §2)',
+    formulaType: FormulaType.EXPRESSION,
+    formulaText: 'PLANNED_TO - BASE_TO',
+    dependsOnKpis: ['PLANNED_TO', 'BASE_TO'],
+    calculationOrder: 27,
+    calculationLevel: CalculationLevel.SKU,
+    displayFormat: DisplayFormat.CURRENCY,
+    decimalPlaces: 2,
+    showInGrid: false,
     aggregationMethodFu: AggregationMethod.SUM,
     isActive: true,
   },

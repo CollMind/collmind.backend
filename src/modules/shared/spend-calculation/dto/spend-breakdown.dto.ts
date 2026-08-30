@@ -102,6 +102,25 @@ export class IncrementalSpendBreakdown {
 
   @ApiProperty({ description: 'Incremental total spend' })
   total!: number;
+
+  /**
+   * `T-334` / `Z66 §1` (`Q6`) — ROI PAYDASI.
+   * *Yalnız promo · LTA HARİÇ · incremental* (`Z62 §6-3`).
+   *
+   * Tabanda promo harcaması **yoktur** (`SpendCalculationService`,
+   * `SEVIYE 4`: `baseTotalOnInv = baseLtaOnInv`) ⇒ bu sayı planlanan promo
+   * toplamına **eşittir**. ⛔ Bir ara sürümde buraya *"tabana bir gün promo
+   * girerse kendiliğinden doğru kalır"* yazılmıştı — **YANLIŞTI** (review
+   * `S2`): türetme, tabanı `lta`'ya sabitleyen satırlardan mekanik olarak
+   * çıkıyordu ve daima `0` veriyordu. Doğrusu: taban promo alırsa
+   * `SEVIYE 4` **ve** bu sayının türetimi **birlikte** değişmek zorundadır.
+   *
+   * ⛔ `total` (LTA dahil) DEĞİŞMEDİ: bütçe/`plan.totalSpend` onu okur.
+   */
+  @ApiProperty({
+    description: 'Incremental PROMO spend (LTA excluded) — ROI denominator',
+  })
+  promoTotal!: number;
 }
 
 export class SpendBreakdown {

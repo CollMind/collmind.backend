@@ -243,6 +243,18 @@ export class LTACalculationService {
 
     // Calculate Planned LTA Off-Invoice
     // (Planned GSV - Planned LTA On-Invoice) * Off-Invoice % = Planned LTA Off-Invoice
+    //
+    // ⛔ BİLİNEN SAPMA — `T-334`/`Q8` BURADA UYGULANAMADI (`§2.4`: DUR).
+    // Excel `§1` kanonu: `PlannedPromoLTAOffInvoice = LTAOffPct ×
+    // PlannedPromoNIV`, yani **promo-on harcaması da düşülür**.
+    // `SpendCalculationService` (motorun okuduğu yol) `1818` turunda
+    // kanona döndürüldü; BU İKİNCİ İMPLEMENTASYON dönmedi, çünkü
+    // metodun imzasında promo-spend bağlamı YOK — düzeltmek mimari bir
+    // değişiklik (`Z66 §6` onaylı task: *"çift LTA implementasyonu"*).
+    // ⚠️ Yol ÖLÜ DEĞİL: `POST /lta-agreements/calculate/planned-spend`
+    // (`lta-agreement.controller.ts`) bunu çağırıyor — bugün tüketicisi
+    // yok (`T-267` ölçümü), ama iki yüzey **iki farklı sayı** üretiyor.
+    // Kayıt: `T-334` raporu, `§7.1` kardeş-yol taraması.
     const plannedLtaOffInvoiceSpend =
       ((plannedGsv - plannedLtaOnInvoiceSpend) *
         ltaContext.finalOffInvoicePct) /

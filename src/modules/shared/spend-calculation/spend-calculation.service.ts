@@ -109,6 +109,33 @@ export function orphanedMechanicCodeError(
   });
 }
 
+/**
+ * `T-334` / `Z65 §1` · Excel `§1` *"TABAN HİYERARŞİSİ"* — **PLANNED NIV'İN
+ * TEK TÜRETME NOKTASI.**
+ *
+ * ```
+ * PlannedPromoNIV = PlannedPromoGSV − PlannedPromoTotalSpendOn
+ *                 = GSV − LTA_On − Σ promo_on
+ * ```
+ * Bu **tek sayı** iki tabanı birden besler ve ikisi de kanonda AYNIDIR:
+ *   `Q8` `PlannedPromoLTAOffInvoice = LTAOffPct × PlannedPromoNIV`
+ *   `Q5` off-invoice %-mekanik tabanı `= PlannedPromoNIV`
+ *
+ * ⛔ Önceden **iki yerde ayrı ayrı** ve **iki farklı şekilde** yazılıydı
+ * (`GSV − LTA_On` ve `GSV − LTA_On − LTA_Off − Σpromo_on`) — `§7`/`§7.1`
+ * (*"aynı yetenek birden çok kez yazıldı"*). Tek nokta o yüzden burada.
+ *
+ * ⚠️ `LTA_Off` bu tabandan **DÜŞÜLMEZ** (`Q5`): NIV tanımı gereği yalnız
+ * **on-invoice** kalemler düşer.
+ */
+export function plannedPromoNiv(
+  plannedGsv: number,
+  plannedLtaOnInvoice: number,
+  totalPromoOnInvoice: number,
+): number {
+  return plannedGsv - plannedLtaOnInvoice - totalPromoOnInvoice;
+}
+
 @Injectable()
 export class SpendCalculationService {
   private readonly logger = new Logger(SpendCalculationService.name);
@@ -194,9 +221,9 @@ export class SpendCalculationService {
 
     const plannedLtaOnInv =
       (plannedGsv * (ltaContext?.finalOnInvoicePct || 0)) / 100;
-    const plannedLtaOffInv =
-      ((plannedGsv - plannedLtaOnInv) * (ltaContext?.finalOffInvoicePct || 0)) /
-      100;
+    // `T-334`/`Q5`: off-invoice tabanı NIV'dir ve `LTA_Off` ondan
+    // DÜŞÜLMEZ ⇒ bu yolda `plannedLtaOffInv` artık HİÇ GEREKMİYOR
+    // (eskiden hesaplanıp `calculateOffInvoiceDiscount`'a veriliyordu).
 
     // Calculate based on mechanic category and type
     switch (mechanic.category) {
@@ -214,7 +241,6 @@ export class SpendCalculationService {
           enteredValue,
           plannedGsv,
           plannedLtaOnInv,
-          plannedLtaOffInv,
           context,
           allOnInvoicePromoSpends || {},
         );
@@ -268,17 +294,22 @@ export class SpendCalculationService {
     enteredValue: number,
     plannedGsv: number,
     plannedLtaOnInv: number,
-    plannedLtaOffInv: number,
     context: CalculationContext,
     allOnInvoicePromoSpends: Record<string, number>,
   ): number {
-    // Off-invoice mekanikler: (PLANNED_GSV - PLANNED_LTA_ON_INV - PLANNED_LTA_OFF_INV - On-Invoice Promos) * PCT / 100
+    // `T-334`/`Q5` (`Z65 §5`) — Excel `PlannedCPPOff = PlannedPromoNIV ×
+    // CPPOffInvoicePCT / 100`. Taban **NIV**'dir; `LTA_Off` DÜŞÜLMEZ.
+    // ⛔ ÖNCE `- plannedLtaOffInv` de vardı ⇒ taban KÜÇÜK ⇒ off-invoice
+    // harcaması küçük ⇒ ROI **iyimser** (`Z65 §6`, üçüncü vaka).
     const totalOnInvoicePromos = Object.values(allOnInvoicePromoSpends).reduce(
       (a, b) => a + b,
       0,
     );
-    const baseAmount =
-      plannedGsv - plannedLtaOnInv - plannedLtaOffInv - totalOnInvoicePromos;
+    const baseAmount = plannedPromoNiv(
+      plannedGsv,
+      plannedLtaOnInv,
+      totalOnInvoicePromos,
+    );
     return (baseAmount * enteredValue) / 100;
   }
 
@@ -507,11 +538,26 @@ export class SpendCalculationService {
     const ltaOffInvoicePct = ltaContext?.finalOffInvoicePct || 0;
 
     const baseLtaOnInv = (baseGsv * ltaOnInvoicePct) / 100;
-    const baseLtaOffInv = ((baseGsv - baseLtaOnInv) * ltaOffInvoicePct) / 100;
+    // Excel `BaseLTASpendOff = LTAOffPct × BaseNIV`. `BaseNIV = BaseGSV −
+    // BaseLTAOn`, çünkü **tabanda promo harcaması yoktur** — `SEVIYE 4`'te
+    // `baseTotalOnInv = baseLtaOnInv` diye YAZILI. `Q8`'in taban vakası bu
+    // yüzden planlanan tarafta doğuyor, tabanda değil.
+    //
+    // ⚠️ Üçüncü argümandaki `0` bir varsayılan DEĞİL, o satırın yazdığı
+    // olgunun BURADAKİ KARŞILIĞIDIR (review `S2`): taban promo toplamı bir
+    // gün sıfırdan farklı olursa `SEVIYE 4` ile bu satır **birlikte**
+    // değişir. Aynı bağ `incrementalPromoSpend`'de de yazılıdır.
+    const baseNiv = plannedPromoNiv(baseGsv, baseLtaOnInv, 0);
+    const baseLtaOffInv = (baseNiv * ltaOffInvoicePct) / 100;
 
     const plannedLtaOnInv = (plannedGsv * ltaOnInvoicePct) / 100;
-    const plannedLtaOffInv =
-      ((plannedGsv - plannedLtaOnInv) * ltaOffInvoicePct) / 100;
+    // ⛔ `plannedLtaOffInv` BURADA HESAPLANAMAZ (`T-334`/`Q8`): kanonik
+    // tabanı `PlannedPromoNIV`'dir, o da on-invoice PROMO toplamını
+    // gerektirir — yani SEVIYE 3'ün birinci geçişinden SONRA. Aşağıda,
+    // `plannedNiv` ile birlikte hesaplanıyor.
+    //
+    // ⚠️ SIRA GÜVENLİ: on-invoice %-mekaniklerin tabanı `GSV − LTA_On`'dur
+    // (Excel `§1`), `LTA_Off`'a BAĞLI DEĞİLDİR ⇒ döngüsel bağımlılık yok.
 
     // SEVIYE 3: Promo Mechanic Spend calculations
     // First pass: Calculate all on-invoice spends
@@ -567,6 +613,20 @@ export class SpendCalculationService {
         totalPromoOnInv += spend;
       }
     }
+
+    // ── `T-334`/`Q8` — PLANNED NIV ve ONA BAĞLI `LTA_Off` ────────────
+    // Excel `§1`: `PlannedPromoLTAOffInvoice = LTAOffPct ×
+    // PlannedPromoNIV / 100`. ⛔ ÖNCE taban `(GSV − LTA_On)` idi, yani
+    // **promo-on düşülmemişti** ⇒ taban BÜYÜK ⇒ `LTA_Off` BÜYÜK ⇒ toplam
+    // harcama büyük ⇒ ROI **kötümser** (`Z66 §3`: `Z65 §6` yön-deseninin
+    // ilk karşı-örneği; paket gerekçesi *"iyimserlik"* değil FORMÜL-KANON,
+    // ve kanon YÖN-AGNOSTİKTİR).
+    const plannedNiv = plannedPromoNiv(
+      plannedGsv,
+      plannedLtaOnInv,
+      totalPromoOnInv,
+    );
+    const plannedLtaOffInv = (plannedNiv * ltaOffInvoicePct) / 100;
 
     // Second pass: Calculate off-invoice spends (needs all on-invoice spends).
     // Off-invoice mechanic categories: OFF_INVOICE_DISCOUNT, PER_UNIT_SUPPORT, LUMPSUM_SPEND.
@@ -634,16 +694,38 @@ export class SpendCalculationService {
 
     // SEVIYE 4: Total Spend calculations
     const totalPlannedOnInv = plannedLtaOnInv + totalPromoOnInv;
-    const totalPlannedOffInv = plannedLtaOffInv + totalPromoOffInv;
-    const totalPlannedSpend = totalPlannedOnInv + totalPlannedOffInv;
 
     const baseTotalOnInv = baseLtaOnInv; // No promo in base
     const baseTotalOffInv = baseLtaOffInv;
     const baseTotalSpend = baseTotalOnInv + baseTotalOffInv;
 
     const incrementalOnInv = totalPlannedOnInv - baseTotalOnInv;
+    const totalPlannedOffInv = plannedLtaOffInv + totalPromoOffInv;
+    const totalPlannedSpend = totalPlannedOnInv + totalPlannedOffInv;
     const incrementalOffInv = totalPlannedOffInv - baseTotalOffInv;
     const incrementalSpend = totalPlannedSpend - baseTotalSpend;
+
+    // `T-334`/`Q6` (`Z66 §1`) — ROI PAYDASI: *yalnız promo · LTA hariç ·
+    // incremental*.
+    //
+    // ⛔ TABANDA PROMO HARCAMASI YOKTUR — ve bu bir varsayım değil, üç
+    // satır YUKARIDA YAZILI olan şeydir: `baseTotalOnInv = baseLtaOnInv`
+    // ve `baseTotalOffInv = baseLtaOffInv`. Yani taban promo harcaması
+    // **cebirsel olarak özdeş sıfırdır.**
+    //
+    // ⚠️ Bu kod bir ara sürümde `baseTotalSpend − baseLtaOn − baseLtaOff`
+    // yazıyordu ve yorumu *"tabana promo girerse kendiliğinden doğru
+    // kalır"* iddia ediyordu. **KALMAZDI** — o ifade yukarıdaki iki
+    // satırdan MEKANİK olarak türer ve daima `0`'dır; bir gerekçe değil,
+    // bir totolojiydi (`DISIPLIN`: *"mekanik olarak türetilmiş bir değer
+    // GEREKÇE değildir"* + *"yorum kirliliği iki yönde birden yanıltır"*).
+    // Review `S2` yakaladı.
+    //
+    // DOĞRU BAĞLANTI ŞUDUR: tabana bir gün promo harcaması eklenirse
+    // `baseTotalOnInv`/`baseTotalOffInv` **VE BURASI BİRLİKTE** değişmek
+    // zorundadır. İkisi aynı olguyu yazar; ayrıştıkları gün bu sayı
+    // sessizce yanlış olur.
+    const incrementalPromoSpend = totalPromoOnInv + totalPromoOffInv;
 
     // Build result
     const breakdown: SpendBreakdown = {
@@ -670,6 +752,7 @@ export class SpendCalculationService {
         onInvoice: incrementalOnInv,
         offInvoice: incrementalOffInv,
         total: incrementalSpend,
+        promoTotal: incrementalPromoSpend,
       },
     };
 
@@ -1018,6 +1101,11 @@ export class SpendCalculationService {
         0,
       ),
       total: skuBreakdowns.reduce((sum, b) => sum + b.incremental.total, 0),
+      // `T-334`/`Q6` — ROI paydası FU seviyesinde de toplanır (SUM).
+      promoTotal: skuBreakdowns.reduce(
+        (sum, b) => sum + b.incremental.promoTotal,
+        0,
+      ),
     };
 
     const duration = Date.now() - startTime;
@@ -1112,15 +1200,21 @@ export class SpendCalculationService {
     };
     niv.incrementalNiv = niv.plannedNiv - niv.baseNiv;
 
-    // T-017: BRD NIV semantics — Turnover is reduced ONLY by on-invoice deductions.
-    // Off-invoice spend (LTA_OFF, lumpsum, per-unit support) does NOT reduce TO;
-    // it enters GP calculation as incremental spend instead.
-    // Aligns with migration 1781 (FixTurnoverOnInvoiceOnly):
-    //   BASE_TO    = BASE_GSV - BASE_LTA_ON       → niv.baseNiv (already GSV - LTA_ON)
-    //   PLANNED_TO = PLANNED_GSV - PLANNED_ON_INVOICE_SPEND → niv.plannedNiv
+    // `T-334` / `Z65 §1` — `TO` ve `NIV` **AYRI KAVRAMLARDIR**; bu metot
+    // `1781` döneminde ikisini ÖZDEŞ sayıyordu (`baseTo = niv.baseNiv`).
+    // Excel `§1`: `BaseTurnover = BaseGSV − BaseTradeSpend`,
+    // `PlannedPromoTurnover = PlannedPromoGSV − PlannedPromoTotalSpend`
+    // ⇒ on **ve** off düşülür; `migration 1818` ile aynı semantik.
+    //
+    // ⚠️ ÜRETİM ÇAĞRI YOLU: bu metodun bugün HTTP/zamanlanmış çağıranı
+    // YOK (`A0' §4-7`; ölçüldü — yalnız `*.spec.ts`). ⛔ Yeni bir yetenek
+    // EKLENMEDİ (`İlke 1` / `CLAUDE.md §4.2`): var olan bir formül
+    // KANONA döndürüldü. Silme/ihya kararı `T-334` kapsamında DEĞİL —
+    // yanlış bir ölü formül bırakmak, onu bir sözleşme gibi korur
+    // (`§7.1` `T-084` emsali).
     const turnover: TurnoverMetrics = {
-      baseTo: niv.baseNiv,
-      plannedTo: niv.plannedNiv,
+      baseTo: baseGsv - spendBreakdown.base.totalSpend,
+      plannedTo: plannedGsv - spendBreakdown.planned.totalSpend,
       incrementalTo: 0, // Will calculate below
     };
     turnover.incrementalTo = turnover.plannedTo - turnover.baseTo;
@@ -1140,15 +1234,20 @@ export class SpendCalculationService {
     };
     profit.incrementalGp = profit.plannedGp - profit.baseGp;
 
-    // SEVIYE 7: ROI and Margin calculations
+    // SEVIYE 7: ROI and Margin calculations.
+    // `T-334`/`Q6` (`Z66 §1`): ROI paydası **tek kalemdir** —
+    // `incremental.promoTotal` (yalnız promo, LTA hariç). Burası eskiden
+    // `incremental.total`'ı okuyordu, yani paydanın **DÖRDÜNCÜ** varyantı
+    // (`A1 §5 Q6`). Kalem bölündü; bu yol da aynı kalemi okur.
+    const roiDenominator = spendBreakdown.incremental.promoTotal;
     const roi: ROIMetrics = {
       gpRoiPct:
-        spendBreakdown.incremental.total > 0
-          ? (profit.incrementalGp / spendBreakdown.incremental.total) * 100
+        roiDenominator > 0
+          ? (profit.incrementalGp / roiDenominator) * 100
           : null,
       toRoiPct:
-        spendBreakdown.incremental.total > 0
-          ? (turnover.incrementalTo / spendBreakdown.incremental.total) * 100
+        roiDenominator > 0
+          ? (turnover.incrementalTo / roiDenominator) * 100
           : null,
     };
 

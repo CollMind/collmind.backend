@@ -13,19 +13,17 @@
  *        ▼
  *   SpendCalculationService  →  BASE_LTA_ON / BASE_LTA_OFF
  *        ▼
- *   BASE_TO = BASE_GSV − BASE_LTA_ON        ← ⚠️ BİLİNEN SAPMA, aşağı bkz.
+ *   BASE_NIV = BASE_GSV − BASE_LTA_ON       ← `T-334` sonrası kendi kodu
+ *   BASE_TO  = BASE_GSV − BASE_TOTAL_SPEND  ← gerçek `TO` (on + off)
  *
- * ⛔ **`BASE_TO`'NUN BUGÜNKÜ FORMÜLÜ BİR SAPMADIR — ve BU TESTTE
- * SÖZLEŞME OLARAK OKUNMAMALIDIR** (`Z65 §1`, ürün sahibi 2026-08-30).
- * Kaynak zincirin üçü de (Excel formül sözlüğü · KPI-Library · BRD)
- * `TO = GSV − TotalSpend(on+off)` diyor; `GSV − Spend_On` aslında
- * **`NIV`**'dir. Migration `1781` `NIV` ihtiyacını `TO` adının üstüne
- * yamamış (`Z65 §0`: derleme-kaybı zinciri).
- * ⇒ [[T-334]] `BASE_TO`'yu gerçek `TO` semantiğine döndürecek ve `NIV`
- * kendi kodlarıyla doğacak. **O TURDA AŞAĞIDAKİ ASSERTION KIRMIZIYA
- * DÖNECEK, ve bu BEKLENEN bir değişimdir — bir regresyon DEĞİL.**
- * Beklenen yeni hâl: `BASE_TO = BASE_GSV − (BASE_LTA_ON + BASE_LTA_OFF)`,
- * ve `BASE_NIV = BASE_GSV − BASE_LTA_ON` (bugün `BASE_TO`'nun ölçtüğü şey).
+ * ✅ **`Z65 §1` SAPMASI KAPANDI — [[T-334]] / `migration 1818` indi**
+ * (2026-08-30). Şerh **silinmedi, GÜNCELLENDİ** (append-only iz):
+ * `1781` `NIV` ihtiyacını `TO` adının üstüne yamamıştı (`Z65 §0`:
+ * derleme-kaybı zinciri); `1818` kavramları ayırdı —
+ * `BASE_TO = BASE_GSV − BASE_TOTAL_SPEND` ve
+ * `BASE_NIV = BASE_GSV − BASE_LTA_ON`.
+ * Aşağıdaki assertion **kırmızıya döndü ve güncellendi**; dönüşüm
+ * ölçümüyle birlikte `4` numaralı adımda kayıtlıdır.
  *
  * 📌 Şerh `CLAUDE.md §7.1` `T-084` emsali yüzünden yazıldı: *"bir hatayı
  * belgelemek, onu KORUMA ALTINA ALIR"* — şerhsiz bırakılsaydı bu satır
@@ -488,19 +486,28 @@ describe('LTA yaşam-döngüsü BAĞI + taban zinciri (T-293)', () => {
         2,
       );
 
-      // 4 · on-invoice mekanik TABANI — ⚠️ BİLİNEN SAPMA, DEĞİŞMESİ BEKLENİYOR
+      // 4 · ✅ [[T-334]] İNDİ — DÖNÜŞÜM YAPILDI (2026-08-30, `migration 1818`)
       //
-      // ⛔ Bu satır BUGÜNKÜ canlı formülü (`BASE_GSV - BASE_LTA_ON`,
-      // migration `1781`) ölçer. `Z65 §1` bunu **SAPMA** ilan etti: gerçek
-      // `TO = GSV − (on + off)`; buradaki formül aslında **`NIV`**'dir.
-      // [[T-334]] kavram-ayrıştırmasını indirdiğinde bu assertion
-      // **KIRMIZIYA DÖNECEK — ve bu BEKLENENDİR, regresyon DEĞİL.**
-      // O turda beklenen hâl:
-      //   BASE_TO  →  baseGsv - (expectedOn + expectedOff)
-      //   BASE_NIV →  baseGsv - expectedOn        (bugün BASE_TO'nun değeri)
-      // Bu dosya `T-334`'ün pin-setinde (Team Lead ekledi). Satırı
-      // "düzeltmek" için burada bir şey değiştirilmez; `T-334` değiştirir.
-      expect(kpis.BASE_TO.value).toBeCloseTo(baseGsv - expectedOn, 2);
+      // ŞERHİN ÖNCEKİ HÂLİ (silinmez, iz olarak kalır): bu satır
+      // `BASE_GSV - BASE_LTA_ON`'u (migration `1781`) ölçüyordu ve
+      // `Z65 §1` onu **SAPMA** ilan etmişti — o formül aslında **`NIV`**.
+      // Şerhte *"`T-334` indiğinde bu assertion KIRMIZIYA DÖNECEK"*
+      // yazıyordu; **döndü** (ölçüldü: beklenen `76139.10`, gelen
+      // `74616.318`, fark `1522.782` = tam olarak `BASE_LTA_OFF`), ve
+      // aşağıdaki iki satır o dönüşümün kaydıdır.
+      //
+      // ⛔ Ve pin artık İKİ KAVRAMI DA okuyor: `TO ≠ NIV` olduğunu
+      // gösteren fark bir assertion'a bağlı (`DISIPLIN`: *"fark taşımak
+      // gerekli, o farkı OKUYAN assertion olmadan yetersiz"*).
+      expect(kpis.BASE_TO.value).toBeCloseTo(
+        baseGsv - (expectedOn + expectedOff),
+        2,
+      );
+      expect(kpis.BASE_NIV.value).toBeCloseTo(baseGsv - expectedOn, 2);
+      expect(kpis.BASE_NIV.value! - kpis.BASE_TO.value!).toBeCloseTo(
+        expectedOff,
+        2,
+      );
     });
   });
 });

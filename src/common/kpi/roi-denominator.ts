@@ -11,32 +11,36 @@
  * turda AÇILMAZ** (tetikleyici: ikinci tenant'ın farklı payda talebi);
  * açılacağı gün değişecek yer **tek** olsun diye kurulmuştur.
  *
- * ── ⛔ AÇIK KARAR — DEĞER BU TURDA DEĞİŞTİRİLMEDİ ────────────────────────
+ * ── ✅ KARAR İNDİ — `Z66 §1` (`Q6`), ürün sahibi 2026-08-30 ────────────
  *
- * Bugün yürürlükteki payda `TOTAL_PLANNED_SPEND`'dir ve **LTA harcamasını
- * İÇERİR** — ölçüldü (`spend-calculation.service.ts`, `SEVIYE 4`):
+ * Çelişki **iki ekseni tek kaleme sıkıştırmaktan** doğuyordu:
+ * `(LTA dahil mi?)` × `(TOTAL mı INCREMENTAL mı?)`. Çözüm bir DEĞER
+ * seçmek değil, **KALEMİ BÖLMEK** oldu:
  *
  * ```
- * totalPlannedSpend = (plannedLtaOnInv + totalPromoOnInv)
- *                   + (plannedLtaOffInv + totalPromoOffInv)
+ * BÜTÇE  TOTAL_PLANNED_SPEND   ← OLDUĞU GİBİ KALIR (LTA DAHİL)
+ *                                zarf GERÇEK PARAYI rezerve eder ⇒ TOTAL doğru
+ *                                `ADR 0011` geri alınmadı, KAPSAMI DARALDI (F12)
+ * ROI    INCR_PROMO_SPEND      ← yalnız promo · LTA HARİÇ · incremental
+ *                                (`Z62 §6-3`)
  * ```
  *
- * `Z62 §6-3` hükmü ise **"yalnız promo-spend (LTA hariç)"** diyor. İkisi
- * **çelişiyor**, ve üçüncü bir kayıt daha var: **`ADR 0011`** paydayı
- * `INCR_SPEND` → `TOTAL_PLANNED_SPEND` olarak **bilinçle** değiştirmiştir
- * (`migration 1801000000000`).
+ * ⇒ **FİNANSAL YAYILIM SIFIR:** `plan.totalSpend` ve bütçe rezervasyonu
+ * yoluna dokunulmadı; değişen tek şey ROI'nin **OKUMA ADRESİ**.
  *
- * ⇒ **`CLAUDE.md §2.4` (belirsizlikte DUR):** üç kayıt arasındaki seçim bir
- * **ürün sahibi kararıdır, ajanın varsayımı değil** — ve `TOTAL_PLANNED_SPEND`
- * aynı zamanda `plan.totalSpend`/bütçe rezervasyonunu besliyor, yani değeri
- * değiştirmek ROI'nin ötesinde **finansal bir yayılım** yaratır. Bu turda
- * **hiçbir sayı değiştirilmedi**; yalnız tanımın **tek yeri** kuruldu.
+ * 📌 Excel'in *"incremental-total-incl-LTA-delta"* tanımı `F12` farkı
+ * olarak kayıtlıdır ve **tenant-konfigür ekseni** yazılıdır: konfigürasyon
+ * yüzeyi açıldığı gün değişecek yer **yine yalnız bu dosyadır**
+ * (`İlke 1`: tetikleyici = ikinci tenant'ın farklı payda talebi).
  *
- * Karar verildiğinde değişecek yer: **yalnız bu dosya**.
+ * ⚠️ `INCR_PROMO_SPEND` bir **`external`** KPI'dır: değeri
+ * `SpendCalculationService` üretir (`incremental.promoTotal`) ve
+ * `PlanService` context'e enjekte eder. Payda `0` olduğunda motor
+ * `null` üretir (sıfıra bölme → `null`, `§2.3`) — **sessiz `0` yok.**
  */
 
-/** Bugün yürürlükteki ROI paydası (KPI kodu). ⚠️ LTA harcamasını İÇERİR. */
-export const ROI_DENOMINATOR_KPI_CODE = 'TOTAL_PLANNED_SPEND' as const;
+/** Yürürlükteki ROI paydası (KPI kodu). ⚠️ LTA harcamasını İÇERMEZ (`Z66 §1`). */
+export const ROI_DENOMINATOR_KPI_CODE = 'INCR_PROMO_SPEND' as const;
 
 /** ROI payının (numerator) KPI kodu. */
 export const ROI_NUMERATOR_KPI_CODE = 'INCR_GP' as const;
@@ -62,7 +66,7 @@ export const GP_ROI_PCT_FORMULA =
  * hem de onu kapatmak için açılan turda. Review yakaladı (`S6`).
  */
 export const GP_ROI_PCT_DESCRIPTION =
-  `Incremental GP ROI %: ${ROI_NUMERATOR_KPI_CODE} / ${ROI_DENOMINATOR_KPI_CODE} * 100 (BRD canonical — ADR 0011)` as const;
+  `Incremental GP ROI %: ${ROI_NUMERATOR_KPI_CODE} / ${ROI_DENOMINATOR_KPI_CODE} * 100 (Z66 §1 — payda BÖLÜNDÜ: bütçe TOTAL okur, ROI INCR-PROMO okur; ADR 0011 F12)` as const;
 
 /** `GP_ROI_PCT`'nin bağımlılık listesi — aynı tek noktadan. */
 export const GP_ROI_PCT_DEPENDS_ON: readonly string[] = [

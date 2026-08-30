@@ -503,13 +503,22 @@ describe('SpendCalculationService', () => {
   });
 
   /**
-   * T-017 / Set A: BRD NIV semantics — Turnover (TO) is reduced ONLY by
-   * on-invoice deductions. Off-invoice spend does NOT affect TO.
-   * Reference: migration 1781 (FixTurnoverOnInvoiceOnly).
+   * T-017 / Set A → ⚠️ **[[T-334]] İLE DÖNÜŞTÜRÜLDÜ (2026-08-30)**.
+   *
+   * ESKİ SÖZLEŞME (iz olarak kalıyor): *"TO yalnız on-invoice ile azalır"*
+   * (migration `1781`). `Z65 §1` bunu SAPMA ilan etti — o formül aslında
+   * **`NIV`**'dir. Kanon (Excel `§1` · `migration 1818`):
+   * ```
+   * TO  = GSV − TotalSpend(on + off)
+   * NIV = GSV − TotalSpendOn
+   * ```
+   * ⇒ aşağıdaki iki test **kırmızıya döndü ve GÜNCELLENDİ**; ikisi de artık
+   * `TO ≠ NIV` farkını OKUYAN bir assertion taşıyor.
    *
    * SKU-A inputs:
    *   plannedVolume=1680, listPrice=10  → PLANNED_GSV=16800
    *   LTA_ON=0%, CPP_ON=10%            → PLANNED_ON_INVOICE_SPEND=1680
+   *   LTA yok ⇒ off-invoice harcama da 0 ⇒ bu ilk vakada TO = NIV
    *   Expected PLANNED_TO = 16800 - 1680 = 15120
    *   COGS=0 → PLANNED_GP = 15120
    */
@@ -558,17 +567,20 @@ describe('SpendCalculationService', () => {
 
       // PLANNED_GSV = 1680 * 10 = 16800
       // PLANNED_ON_INVOICE_SPEND = 16800 * 10% = 1680
-      // PLANNED_TO = 16800 - 1680 = 15120  (off-invoice does NOT reduce TO)
+      // LTA YOK ⇒ off-invoice harcama = 0 ⇒ TO = GSV − (on + 0) = 15120.
+      // ⚠️ Bu vaka `TO`/`NIV` ayrımını AYIRT EDEMEZ (ikisi de 15120) —
+      // ayrımı okuyan vaka bir altta (`LTA off %3`).
       expect(result.turnover.plannedTo).toBeCloseTo(15120, 1);
+      expect(result.niv.plannedNiv).toBeCloseTo(15120, 1);
 
-      // BASE_TO = BASE_GSV - BASE_LTA_ON = 1000*10 - 0 = 10000
+      // BASE_TO = BASE_GSV - BASE_TOTAL_SPEND = 1000*10 - 0 = 10000
       expect(result.turnover.baseTo).toBeCloseTo(10000, 1);
 
       // PLANNED_GP = PLANNED_TO - PLANNED_COGS = 15120 - 0 = 15120
       expect(result.profit.plannedGp).toBeCloseTo(15120, 1);
     });
 
-    it('should NOT reduce baseTo by ltaOffInvoice (T-017)', async () => {
+    it('baseTo ltaOffInvoice ile AZALIR, baseNiv AZALMAZ (T-334: TO ≠ NIV)', async () => {
       const skuContext: SKUContext = {
         skuId: 'sku-b',
         baseVolume: 1000,
@@ -603,9 +615,20 @@ describe('SpendCalculationService', () => {
 
       const baseGsv = 1000 * 10; // 10000
       const baseLtaOn = baseGsv * 0.05; // 500
-      // baseTo must equal baseNiv = baseGsv - baseLtaOn = 9500
-      // (ltaOffInvoice must NOT be subtracted from TO)
-      expect(result.turnover.baseTo).toBeCloseTo(baseGsv - baseLtaOn, 1);
+      const baseNiv = baseGsv - baseLtaOn; // 9500
+      const baseLtaOff = baseNiv * 0.03; // 285  (Excel: LTAOffPct × BaseNIV)
+
+      // `T-334` — TO on+off ile azalır; NIV yalnız on ile.
+      expect(result.niv.baseNiv).toBeCloseTo(baseNiv, 1);
+      expect(result.turnover.baseTo).toBeCloseTo(baseNiv - baseLtaOff, 1);
+
+      // FARKI OKUYAN assertion: iki kavram AYNI SAYI DEĞİL, ve aralarındaki
+      // fark TAM OLARAK off-invoice LTA harcamasıdır.
+      expect(result.turnover.baseTo).not.toBeCloseTo(result.niv.baseNiv, 1);
+      expect(result.niv.baseNiv - result.turnover.baseTo).toBeCloseTo(
+        baseLtaOff,
+        1,
+      );
     });
   });
 

@@ -2424,6 +2424,7 @@ export class PlanService {
         // BRD canonical fields (all must be present for GP_ROI_PCT to resolve):
         //   PLANNED_LTA_ON, PLANNED_LTA_OFF, BASE_LTA_ON, BASE_LTA_OFF,
         //   TOTAL_PLANNED_SPEND, BASE_TOTAL_SPEND, INCR_SPEND,
+        //   INCR_PROMO_SPEND (T-334: ROI paydası — promo-only, LTA hariç),
         //   PLANNED_ON_INVOICE_SPEND (T-008 fix: on-invoice only → used in PLANNED_TO)
         // Also inject tactic percentage codes for CPP_ON_SPEND formula.
         const context: SkuCalculationContext = {
@@ -2443,6 +2444,11 @@ export class PlanService {
           TOTAL_PLANNED_SPEND: totalPlannedSpend,
           BASE_TOTAL_SPEND: baseTotalSpend,
           INCR_SPEND: incrSpend,
+          // `T-334`/`Q6` (`Z66 §1`, `ADR 0011` F12) — ROI paydası AYRI
+          // KALEM: *yalnız promo · LTA hariç · incremental*.
+          // ⛔ `TOTAL_PLANNED_SPEND` (yukarıda) DEĞİŞMEDİ ve `plan.totalSpend`/
+          // bütçe rezervasyonunu beslemeye devam ediyor — finansal yayılım SIFIR.
+          INCR_PROMO_SPEND: spendBreakdown.incremental.promoTotal,
           // T-008: PLANNED_TO uses only on-invoice deductions (BRD NIV semantics)
           PLANNED_ON_INVOICE_SPEND: plannedOnInvoiceSpend,
           // Tactic percentage values (CPP_ON_SPEND formula needs CPP_ON_PCT etc.)

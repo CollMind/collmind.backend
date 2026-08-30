@@ -168,9 +168,22 @@ export class FormulaParserService {
           for (const dep of dependencies) {
             const value = Number(context[dep]);
             if (isNaN(value)) return null;
+            // ⛔ [[T-334]] review `B1`/`B1b` — YERİNE KOYMA **PARANTEZLİDİR**.
+            // Değer NEGATİF olduğunda çıplak yerine koyma `A-B` formülünü
+            // `-1200--1500`'e çeviriyor; JS bunu **postfix `--`** diye
+            // ayrıştırıp `SyntaxError` fırlatıyor ⇒ `catch` ⇒ **sessizce
+            // `null`** (ölçüldü: `INCR_GP` + `GP_ROI_PCT` + RAG birlikte
+            // kayboluyordu). Parantez üç şeyi birden kapatır:
+            //   (a) BOŞLUKTAN BAĞIMSIZ — `A-B` de `A - B` de düzelir
+            //       (ilk düzeltme yalnız boşukluyu kurtarıyordu),
+            //   (b) operatör bitişikliğinden doğan HİÇBİR yeni token
+            //       üretmez (`//` yorum ayrışması dahil),
+            //   (c) beyaz listenin denetlediği dizge ile değerlendirilen
+            //       dizge AYNI kalır (`§2.7`: ölçülen ≠ değerlendirilen
+            //       ayrışması) — ilk düzeltme tam bunu bozmuştu.
             expression = expression.replace(
               new RegExp(`\\b${dep}\\b`, 'g'),
-              String(value),
+              `(${value})`,
             );
           }
 
@@ -210,9 +223,22 @@ export class FormulaParserService {
           for (const dep of dependencies) {
             const value = Number(context[dep]);
             if (isNaN(value)) return null;
+            // ⛔ [[T-334]] review `B1`/`B1b` — YERİNE KOYMA **PARANTEZLİDİR**.
+            // Değer NEGATİF olduğunda çıplak yerine koyma `A-B` formülünü
+            // `-1200--1500`'e çeviriyor; JS bunu **postfix `--`** diye
+            // ayrıştırıp `SyntaxError` fırlatıyor ⇒ `catch` ⇒ **sessizce
+            // `null`** (ölçüldü: `INCR_GP` + `GP_ROI_PCT` + RAG birlikte
+            // kayboluyordu). Parantez üç şeyi birden kapatır:
+            //   (a) BOŞLUKTAN BAĞIMSIZ — `A-B` de `A - B` de düzelir
+            //       (ilk düzeltme yalnız boşukluyu kurtarıyordu),
+            //   (b) operatör bitişikliğinden doğan HİÇBİR yeni token
+            //       üretmez (`//` yorum ayrışması dahil),
+            //   (c) beyaz listenin denetlediği dizge ile değerlendirilen
+            //       dizge AYNI kalır (`§2.7`: ölçülen ≠ değerlendirilen
+            //       ayrışması) — ilk düzeltme tam bunu bozmuştu.
             expression = expression.replace(
               new RegExp(`\\b${dep}\\b`, 'g'),
-              String(value),
+              `(${value})`,
             );
           }
 
@@ -240,6 +266,18 @@ export class FormulaParserService {
         this.logger.warn(`Unsafe expression blocked: ${expression}`);
         return null;
       }
+
+      // ⛔ [[T-334]] review `B1` — DEĞERLENDİRİLEN DİZGE, BEYAZ LİSTENİN
+      // DENETLEDİĞİ DİZGENİN TA KENDİSİDİR (`sanitized`).
+      //
+      // Bir ara sürümde burada `const evaluable = expression` (boşluklu
+      // hâl) vardı ve **ölçülen ile değerlendirilen AYRIŞMIŞTI**. Sonuç
+      // bir güvenlik açığı değil, bir **DOĞRULUK** açığıydı — ölçüldü:
+      //   girdi `"1 // 2\n+ 5"` → beyaz liste `"1//2+5"` görür, GEÇER;
+      //   boşluklu hâl değerlendirilince `//` bir **YORUM** olur ve
+      //   ifadenin yarısı düşer ⇒ `null` yerine **`6`** (kısmi sayı).
+      // Negatif operand sorunu artık yerine koymanın kendisinde
+      // (parantezle) çözüldüğü için bu ayrışmaya hiç gerek yok.
 
       // Division by zero check
       if (

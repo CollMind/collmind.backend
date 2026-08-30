@@ -61,7 +61,14 @@ export class KpiEngineService {
   ) {}
 
   /**
-   * Calculate all KPIs for a single SKU
+   * Calculate all KPIs for a single SKU.
+   *
+   * ⚠️ Bu motor **hangi paydanın** kullanıldığını BİLMEZ ve bilmemelidir:
+   * `GP_ROI_PCT`'nin formülü veri-güdümlüdür (`main.kpis.formula_text`).
+   * Aşağıdaki yorumlar bir dönem paydayı `TOTAL_PLANNED_SPEND` diye
+   * ANLATIYORDU; [[T-334]] / `Z66 §1` paydayı `INCR_PROMO_SPEND`'e
+   * bölünce o anlatım **yanlış** kaldı (davranış değil — metin). Review
+   * `N1`. Paydanın tek kanonik yeri: `src/common/kpi/roi-denominator.ts`.
    */
   async calculateSku(
     tenantId: string,
@@ -132,8 +139,8 @@ export class KpiEngineService {
         // T-177 BLOCKER (2026-08-11): re-deriving it from the
         // already-aggregated `results` map was ITSELF wrong — each
         // dependency in `results` was summed over its OWN non-null subset
-        // of SKUs (INCR_GP over the 4/170 SKUs with COGS, TOTAL_PLANNED_SPEND
-        // over all 170), so the ratio divided two different populations
+        // of SKUs (INCR_GP over the 4/170 SKUs with COGS, the ROI
+        // denominator over all 170), so the ratio divided two populations
         // (measured: 42x too low on production-shaped data). Recompute
         // directly from the raw `skuResults` instead — see
         // recomputeRatioFromChildren doc comment for the intersection rule.
@@ -150,7 +157,7 @@ export class KpiEngineService {
         // RAG among its child SKUs (the "FU RAG: use worst-case from SKUs"
         // rule a few lines below, which is for SUM/AVG-aggregated KPIs).
         // Worst-of-children is meaningless for a ratio: the FU's GP_ROI_PCT
-        // is Σ INCR_GP / Σ TOTAL_PLANNED_SPEND, a single number with its
+        // is Σ numerator / Σ denominator, a single number with its
         // own meaning independent of any one SKU's ratio — a SKU can be
         // RED (low individual ROI, small spend) while the FU as a whole is
         // GREEN (dominated by a large, high-ROI SKU), and that FU value is
@@ -315,7 +322,7 @@ export class KpiEngineService {
         };
       } else if (kpi.aggregationMethodFu === AggregationMethod.WEIGHTED_AVG) {
         // T-177 step 2: same re-derivation as calculateFu's WEIGHTED_AVG
-        // branch, one level up — Σ INCR_GP / Σ TOTAL_PLANNED_SPEND across
+        // branch, one level up — Σ numerator / Σ denominator across
         // FUs (intersection of FUs where both resolved), not
         // mean(FU-level GP_ROI_PCT).
         //
@@ -480,15 +487,15 @@ export class KpiEngineService {
    *
    * Why the first cut was wrong: `results[dep].value` for each dependency
    * was summed over THAT dependency's own non-null subset of children
-   * (e.g. INCR_GP over the 4/170 SKUs with COGS configured,
-   * TOTAL_PLANNED_SPEND over all 170 — both are legitimately SUM-aggregated
+   * (e.g. INCR_GP over the 4/170 SKUs with COGS configured, the ROI
+   * denominator over all 170 — both are legitimately SUM-aggregated
    * on their own). Dividing those two sums produces the ratio of two
    * DIFFERENT populations, not a defined quantity. Measured on
    * production-shaped data (170 SKUs, 4 with COGS): reported 0.588%,
    * honest 4-SKU subset 25% — 42x off, and worse than the mean(ratio) bug
    * this task originally set out to fix.
    *
-   * The product owner's shortcut — "Σ INCR_GP / Σ TOTAL_PLANNED_SPEND
+   * The product owner's shortcut — "Σ INCR_GP / Σ payda
    * (hesaplanabilen SKU'lar üzerinden)" — reads as one subset, applied to
    * both sums: a child counts toward numerator and denominator together or
    * not at all. `coverageRatio = |intersection| / |children|` is then

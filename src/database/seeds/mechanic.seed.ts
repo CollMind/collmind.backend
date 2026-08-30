@@ -154,7 +154,7 @@ const MECHANICS: MechanicDef[] = [
     name: 'CPP Off-Invoice %',
     description:
       'Off-invoice yüzde indirim. ' +
-      'Spend = (PLANNED_GSV - PLANNED_LTA_ON - PLANNED_LTA_OFF - on_inv_promos) * value / 100.',
+      'Spend = PLANNED_NIV * value / 100  (NIV = PLANNED_GSV - PLANNED_LTA_ON - on_inv_promos).',
     tacticCode: 'TAC-OFF-DISCOUNT',
     mechanicType: MechanicType.PERCENT,
     spendingType: SpendingType.OFF_INVOICE,
@@ -166,8 +166,13 @@ const MECHANICS: MechanicDef[] = [
     maxValue: 100,
     gridColumnOrder: 20,
     groupHeader: 'Off-Invoice Discounts',
+    // [[T-334]]/`Q5` (`Z65 §5`) — Excel `PlannedCPPOff = PlannedPromoNIV ×
+    // CPPOffInvoicePCT / 100`. ⛔ ÖNCE burada da `- PLANNED_LTA_OFF` vardı;
+    // motor (`spend-calculation`) kanona döndü, bu METİN de onunla birlikte
+    // döndü. İkisi ayrışırsa konfigürasyon ekranı yanlış tabanı ANLATIR
+    // (`F8` ailesi: aynı kural iki yerde iki farklı).
     calculationFormula:
-      '(PLANNED_GSV - PLANNED_LTA_ON - PLANNED_LTA_OFF - total_on_inv_promos) * entered_value / 100',
+      '(PLANNED_GSV - PLANNED_LTA_ON - total_on_inv_promos) * entered_value / 100',
     // Çıkarım (K-2.13.14f'nin doğrudan örneği değil): off-invoice indirim herhangi bir
     // tek belgede DOĞRUDAN gözlenmez, gerçekleşen ciro üzerinden HESAPLANIR (oran ×
     // tutar) — TÜRETİLEBİLİR'in tanımına ("oran × gerçekleşen hacim/tutar") en yakını.
