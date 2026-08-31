@@ -64,6 +64,11 @@ import { UserRole } from '../../../../database/entities/user.entity';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
 import { ConfigService } from '@nestjs/config';
 import { RecalcTelemetryContext } from '../../../../common/services/recalc-telemetry.service';
+import {
+  RAG_CARRIER_KPI_CODE,
+  parseRagExclusionReason,
+} from '../../../../common/kpi/rag-quadrant';
+import { TARGET_ROI_KPI_CODE } from '../../../../common/kpi/target-roi';
 
 /**
  * T-028b: caller identity for scope-aware reads/decisions. Optional on
@@ -2476,9 +2481,9 @@ export class PlanService {
         const incrementalVolume = planVol - baseVol;
         const plannedTurnover = kpiResults['PLANNED_TO']?.value ?? null;
         const plannedGp = kpiResults['PLANNED_GP']?.value ?? null;
-        const gpRoi = kpiResults['GP_ROI_PCT']?.value ?? null;
+        const gpRoi = kpiResults[RAG_CARRIER_KPI_CODE]?.value ?? null;
         // RAG comes exclusively from kpi engine (config-driven thresholds)
-        const ragStatus = kpiResults['GP_ROI_PCT']?.ragStatus ?? null;
+        const ragStatus = kpiResults[RAG_CARRIER_KPI_CODE]?.ragStatus ?? null;
 
         // T-046a: accumulate FU-level totals here (in-memory), replacing the
         // former post-batch re-read loop (see doc comment on
@@ -2496,6 +2501,12 @@ export class PlanService {
             displayFormat: result.displayFormat,
             decimalPlaces: result.decimalPlaces,
             ragStatus: result.ragStatus,
+            // `T-342` / `Z68 §2` — TANIMLI-YOKLUK. Renk yokken sebebin
+            // KENDİSİ taşınır: "değerlendirme dışı" (`LTA_ONLY`) ile
+            // "değerlendirilemedi" (`null`) aynı boşluk DEĞİLDİR. Şema
+            // değişikliği yok — mevcut JSONB'ye yeni bir anahtar
+            // (`coverageRatio` emsali, `plan.entity.ts`).
+            ragExclusionReason: result.ragExclusionReason ?? null,
             calculatedAt: new Date().toISOString(),
           };
         }
@@ -2551,8 +2562,8 @@ export class PlanService {
       }
 
       // FU GP ROI and RAG come exclusively from engine (config-driven)
-      const fuGpRoi = fuKpiResults['GP_ROI_PCT']?.value ?? null;
-      const fuRagStatus = fuKpiResults['GP_ROI_PCT']?.ragStatus ?? null;
+      const fuGpRoi = fuKpiResults[RAG_CARRIER_KPI_CODE]?.value ?? null;
+      const fuRagStatus = fuKpiResults[RAG_CARRIER_KPI_CODE]?.ragStatus ?? null;
 
       // Convert FU KPI results to JSONB format
       // T-177 S1 (2026-08-11): `coverageRatio` was previously computed by
@@ -2578,6 +2589,8 @@ export class PlanService {
           // JSON.stringify drops the key on `undefined`; the distinction
           // survives the round-trip as "key present" vs "key absent".
           coverageRatio: result.coverageRatio,
+          // `T-342` / `Z68 §2` — bkz. SKU seviyesindeki aynı alan.
+          ragExclusionReason: result.ragExclusionReason ?? null,
           calculatedAt: new Date().toISOString(),
         };
       }
@@ -2634,8 +2647,17 @@ export class PlanService {
     }
 
     // Overall ROI and RAG come exclusively from engine (config-driven, no fallback)
-    const overallRoi = planKpiResults['GP_ROI_PCT']?.value ?? null;
-    const planRagStatus = planKpiResults['GP_ROI_PCT']?.ragStatus ?? null;
+    const overallRoi = planKpiResults[RAG_CARRIER_KPI_CODE]?.value ?? null;
+    const planRagStatus =
+      planKpiResults[RAG_CARRIER_KPI_CODE]?.ragStatus ?? null;
+    // `T-342`/`Z71 §2`: renk yokken SEBEBİ de kalıcılaşır — plan listesi ve
+    // finans raporları *"Red değil"* ile *"değerlendirilmedi"*yi bu alanla
+    // ayırt ediyor. `parseRagExclusionReason` tanınmayan bir değeri `null`'a
+    // düşürür (uydurma sebep, uydurma renk kadar zararlıdır).
+    const planRagExclusionReason =
+      parseRagExclusionReason(
+        planKpiResults[RAG_CARRIER_KPI_CODE]?.ragExclusionReason,
+      ) ?? null;
     // T-218: fraction of FUs that resolved into the value above
     // (recomputeRatioFromChildren's coverageRatio for GP_ROI_PCT —
     // kpi-engine.service.ts). Previously computed by the engine and
@@ -2643,7 +2665,7 @@ export class PlanService {
     // S1's comment a few lines up) — `plans` had no column to persist it
     // into until this migration.
     const planCoverageRatio =
-      planKpiResults['GP_ROI_PCT']?.coverageRatio ?? null;
+      planKpiResults[RAG_CARRIER_KPI_CODE]?.coverageRatio ?? null;
 
     // T-034: deliberate CAS bypass — derived plan-level aggregate, not a
     // user edit (same rationale as updatePlanSkuUnversioned above); also
@@ -2677,6 +2699,9 @@ export class PlanService {
         // value.
         overallRoi,
         ragStatus: planRagStatus,
+        // T-027 ile aynı açık-null disiplini: bir recalc dışlamayı ortadan
+        // kaldırdığında (plana promo mekaniği eklendi) eski sebep KALMAZ.
+        ragExclusionReason: planRagExclusionReason,
         // T-218: same explicit-null discipline as overallRoi/ragStatus
         // above — a recalc that newly loses full FU coverage must clear a
         // stale 1.0 rather than leave it behind.
@@ -2737,6 +2762,12 @@ export class PlanService {
           displayFormat: (stored as any).displayFormat,
           decimalPlaces: (stored as any).decimalPlaces,
           ragStatus: (stored as any).ragStatus,
+          // `T-342`: sebep de geri okunur — yoksa `LTA_ONLY` bu
+          // round-trip'te sessizce kaybolur ve plan seviyesinde yeniden
+          // türetilemez (`T-177 S1`'in aynı deliği, yeni alanda).
+          ragExclusionReason: parseRagExclusionReason(
+            stored.ragExclusionReason,
+          ),
           // T-177 S1: read back what was persisted above — without this,
           // every reconstructed FU result silently lost its coverage
           // metadata on this round-trip.
@@ -2876,12 +2907,26 @@ export class PlanService {
         ? Number(plan.overallRoi)
         : null;
 
-    // B-1: Target ROI from GP_ROI_PCT KPI config (ragGreenThreshold) — NOT hardcoded.
-    const gpRoiKpi = await this.kpiEngine.getKpiConfig(tenantId, 'GP_ROI_PCT');
+    // B-1: Target ROI from the KPI config — NOT hardcoded.
+    // `T-343`: alan `ragGreenThreshold` → `targetRoiThreshold` olarak
+    // yeniden adlandırıldı (migration 1820) ve KPI kodu artık tek noktadan
+    // (`src/common/kpi/target-roi.ts`) okunuyor — bu satır o eksenin İLK
+    // tüketicisiydi ve `Z71 §1` onu bir uyarı/kova yüzeyine büyüttü.
+    const gpRoiKpi = await this.kpiEngine.getKpiConfig(
+      tenantId,
+      TARGET_ROI_KPI_CODE,
+    );
+    // ⚠️ `20.0` fallback'i `T-343` KAPSAMI DIŞINDA bilinçli olarak
+    // KORUNDU: bu üç bantlı `status` alanı (`ABOVE_/ON_/BELOW_TARGET`)
+    // `T-172`den beri var ve kendi sözleşmesi var. YENİ below-target
+    // uyarısı/kovası ise `evaluateTargetRoi` üzerinden gider ve **hiçbir
+    // varsayılan taşımaz** (`§2.5`) — eşik yoksa orada yargı verilmez.
+    // İki davranışın ayrı olması bilinçlidir; birleştirme kararı ürün
+    // sahibinin (Team Lead'e bildirildi).
     const targetRoi =
-      gpRoiKpi?.ragGreenThreshold !== null &&
-      gpRoiKpi?.ragGreenThreshold !== undefined
-        ? Number(gpRoiKpi.ragGreenThreshold)
+      gpRoiKpi?.targetRoiThreshold !== null &&
+      gpRoiKpi?.targetRoiThreshold !== undefined
+        ? Number(gpRoiKpi.targetRoiThreshold)
         : 20.0; // safe fallback only when KPI record is absent
     // T-172 / INV-N-004: `currentRoi === null` means the engine could not
     // compute a value at all (missing dependency, e.g. COGS — §2.3 edge

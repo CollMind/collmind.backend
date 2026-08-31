@@ -35,6 +35,17 @@ import { ApprovalRequestType } from '../../../../database/entities/approval-requ
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
 import { PlanActor } from './plan.service';
 import {
+  RagExclusionReason,
+  parseRagExclusionReason,
+} from '../../../../common/kpi/rag-quadrant';
+import {
+  TARGET_ROI_KPI_CODE,
+  belowTargetRoiMessage,
+  evaluateTargetRoi,
+  isBelowTargetRoi,
+} from '../../../../common/kpi/target-roi';
+import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
+import {
   missingVersionConflict,
   staleVersionConflict,
 } from '../../../shared/persistence/versioned-update.helper';
@@ -51,6 +62,9 @@ export class ApprovalWorkflowService {
     @InjectRepository(PlanApprovalHistory)
     private readonly approvalHistoryRepo: Repository<PlanApprovalHistory>,
     private readonly accessScope: AccessScopeService,
+    // `T-343`/`Z71 §1`: Target-ROI hedefi konfigürasyondan okunur — bu
+    // servis eşiği HİÇBİR YERDE sabitlemez (`§2.3`).
+    private readonly kpiEngine: KpiEngineService,
     // T-034b: this is the SECOND canonical plan-state-transition path (see
     // plan.service.ts submit/approve/reject/returnToDraft — "İki kanonik
     // yol" in the task description). Same real-transaction + FOR UPDATE +
@@ -142,10 +156,75 @@ export class ApprovalWorkflowService {
       }
     }
 
-    // 2. Check RAG status
+    // ── 2. RAG + TARGET-ROI: HİÇBİR DİLİM SESSİZLEŞMEZ ────────────────
+    //
+    // `Z70 §1` + `Z71 §1`. Kadran öncesi burada TEK uyarı vardı çünkü TEK
+    // kötü-durum vardı: `RED`. Kadran (`Z66 §2`) iki farklı kötü-durum
+    // doğurdu ve **büyüklük eksenini** `RED`'in içinden çıkardı; ölçülmüş
+    // geçiş matrisi (`Z71 §1a`, eşikler `green=20 · amber=10`):
+    //
+    //   iTO > 0 dilimi     ÖNCE     SONRA    bu blok olmasaydı
+    //   iGP ≤ 0            RED   →  AMBER    uyarı KAYBOLURDU
+    //   0 < ROI < 10       RED   →  GREEN    uyarı KAYBOLURDU
+    //   10 ≤ ROI < 20      AMBER →  GREEN    (zaten uyarı yoktu, ama artık var)
+    //
+    // ⛔ İkinci ve üçüncü satır en tehlikelisiydi: uyarının yerine SESSİZLİK
+    // değil, **karşı yönde güvence** geçiyordu — ekranda "İYİ".
+    //
+    // ⛔ Üçü de `warnings` (BLOKLAMAZ) — `K-2.2.7c` ailesi: submit DURMAZ,
+    // karar desteği KONUŞUR.
     if (plan.ragStatus === 'RED') {
       warnings.push(
-        'Plan has RED RAG status. Please review before submission.',
+        'Ciro kaybı: plan incremental ciro üretmiyor (RAG kırmızı). ' +
+          'Göndermeden önce gözden geçirin.',
+      );
+    } else if (plan.ragStatus === 'AMBER') {
+      warnings.push(
+        'Kârsız büyüme: satış artıyor ama incremental kâr negatif ' +
+          '(RAG sarı). Göndermeden önce gözden geçirin.',
+      );
+    } else if (plan.ragStatus === null || plan.ragStatus === undefined) {
+      // `S1` / `Z68 §2` — renk yokluğu bir yargı DEĞİL, ve iki sebebi var.
+      // ⛔ Meşru yokluk (`LTA_ONLY`) bir kusur gibi raporlanmaz; ama
+      // "değerlendirilemedi" de sessiz geçilmez — ikisi AYRI cümle.
+      const exclusion = parseRagExclusionReason(plan.ragExclusionReason);
+      if (exclusion === RagExclusionReason.LTA_ONLY) {
+        warnings.push(
+          'Değerlendirme dışı — LTA: bu planda incremental promosyon ' +
+            'harcaması yok, RAG bir promosyon değerlendirmesidir ve ' +
+            'LTA-only planlar için tanımlı değildir.',
+        );
+      } else {
+        warnings.push(
+          'RAG hesaplanamadı: plan KPI kapsaması tam değil. Renk bir ' +
+            'yargı taşımıyor — eksik veriyi tamamlayın.',
+        );
+      }
+    }
+
+    // `Z71 §1` — TARGET-ROI, AYRI EKSEN. `GREEN` bir planın hedefin altında
+    // olması bir çelişki değil: kadran YÖN'ü, bu eksen BÜYÜKLÜĞÜ konuşur.
+    // ⛔ Eşik konfigüre değilse uyarı ÜRETİLMEZ (`evaluateTargetRoi` →
+    // `NOT_EVALUABLE`): uydurulmuş bir hedefe göre yargı vermeyiz (`§2.5`).
+    const targetRoiKpi = await this.kpiEngine.getKpiConfig(
+      plan.tenantId,
+      TARGET_ROI_KPI_CODE,
+    );
+    const targetRoiEval = evaluateTargetRoi(
+      plan.overallRoi ?? null,
+      targetRoiKpi?.targetRoiThreshold ?? null,
+    );
+    // ⛔ `as` CAST KALDIRILDI (`T-343` review `B1`). Eski hâli
+    // `targetRoiEval`'i `{threshold: number}` diye ilan ediyordu ve
+    // **yalanı örtüyordu**: alan gerçekte `pg`'den DİZGE geliyordu ve
+    // `toFixed` çalışma zamanında patlıyordu. Tip daraltması artık
+    // `kind` üzerinden — derleyici gerçeği görüyor.
+    if (
+      targetRoiEval.kind === 'BELOW_TARGET' &&
+      isBelowTargetRoi(plan.ragStatus, targetRoiEval)
+    ) {
+      warnings.push(
+        belowTargetRoiMessage(targetRoiEval.roi, targetRoiEval.threshold),
       );
     }
 
@@ -932,6 +1011,11 @@ export class ApprovalWorkflowService {
         offInvoiceSpend: Number(plan.offInvoiceSpend || 0),
         overallRoi: plan.overallRoi ? Number(plan.overallRoi) : undefined,
         ragStatus: plan.ragStatus ?? undefined,
+        // `T-343` review `S6` — renk yokluğunun SEBEBİ de kuyruğa taşınır.
+        // `parseRagExclusionReason` tanınmayan değeri `null`'a düşürür;
+        // DTO `undefined` bekliyor (opsiyonel alan) — ikisi de "sebep yok".
+        ragExclusionReason:
+          parseRagExclusionReason(plan.ragExclusionReason) ?? undefined,
         submittedAt: plan.submittedAt,
         submittedBy: {
           id: plan.submittedBy?.id || '',

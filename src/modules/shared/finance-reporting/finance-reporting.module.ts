@@ -8,6 +8,7 @@ import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spen
 import { BudgetEnvelope } from '../../../database/entities/budget-envelope.entity';
 import { BudgetModule } from '../budget/budget.module';
 import { AccessScopeModule } from '../access-scope/access-scope.module';
+import { KpiEngineModule } from '../kpi-engine/kpi-engine.module';
 
 @Module({
   imports: [
@@ -25,6 +26,8 @@ import { AccessScopeModule } from '../access-scope/access-scope.module';
     ]),
     BudgetModule,
     AccessScopeModule,
+    // `T-343`/`Z71 §1`: below-target kovası hedefi KPI konfigürasyonundan okur.
+    KpiEngineModule,
   ],
   controllers: [FinanceReportingController],
   providers: [FinanceReportingService],

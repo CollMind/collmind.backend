@@ -23,15 +23,38 @@
  * assertion'ı düşürür. `LTA_Off > 0` **ve** `off-promo > 0` olmadan
  * `Q5`/`Q8` pinleri **KÖR** olurdu (`T-273` ailesi — `A1 §4.2 D-3`).
  *
- * ── `Q7` RAG İKİ-EKSEN KADRANI ───────────────────────────────────────
+ * ── `Q7` RAG İKİ-EKSEN KADRANI — ✅ HÜKÜM İNDİ (`Z68 §1`, `T-342`) ────
  * Excel: `Red: iTO ≤ 0` · `Amber: iTO > 0 ∧ iGP ≤ 0` · `Green: ikisi > 0`.
- * ⛔ **Canlı model TEK EKSENDİR** (`kpi-engine.determineRagStatus`, eşik
- * `GP_ROI_PCT >= 20 / >= 10`) — ölçüldü, ve `T-334` turunda **BİLEREK
- * DEĞİŞTİRİLMEDİ**: model değişimi ürün sahibi hükmü bekliyor
- * (`Z66 §2` ⇒ `eşleşen-sapmalı`). Bu dosya kadranın **dört hücresini**
- * fixture olarak kurar ve **bugünkü tek-eksen rengi ile kanonik kadran
- * rengini AYNI SATIRDA** ölçer; hüküm indiği gün değişecek tek şey
- * `expectedLiveRag` sütunudur.
+ *
+ * `T-334` bu dosyayı **randevu** olarak kurmuştu: canlı model tek-eksendi
+ * (`GP_ROI_PCT >= 20 / >= 10`) ve her hücre bugünkü rengi **literal bir
+ * sabit** olarak taşıyordu, *"hüküm indiği gün BİLEREK kırılır"* şerhiyle.
+ * `T-342` o günü getirdi — ve sabitler **kırıldığı GÖRÜLDÜKTEN sonra**
+ * yenilendi (reprodüksiyon şartı; ölçüm `T-342` raporunda):
+ *
+ * ```
+ * HÜCRE 2   iTO=+2.269 · iGP=-9.731 · ROI=-60,13%   RED  →  AMBER   ⭐ bkz. aşağı
+ * HÜCRE 4   iTO=-11.700 · iGP=+300 · INCR_PROMO=0   null →  null    ama SEBEBİ DEĞİŞTİ
+ * HÜCRE 1/3                                          değişmedi
+ * ```
+ *
+ * ⛔ **ÖNCÜL DÜZELTMESİ (`Z71 §0`) — *"`AMBER` İLK KEZ DOĞUYOR"* YANLIŞTI.**
+ * Ölçüldü (`main.kpis`): `GP_ROI_PCT` `rag_green=20 · rag_amber=10` ⇒ eski
+ * tek-eksen model `10 ≤ ROI < 20` aralığında **`AMBER` ÜRETİYORDU**.
+ * Doğru ifade: **negatif ROI'den `AMBER`** — eşik modelinin ÜRETEMEYECEĞİ
+ * renk. `HÜCRE 2`'de ROI `-%60,13`; hiçbir `>= eşik` kuralı oradan `AMBER`
+ * çıkaramaz. *(`DISIPLIN`: yanlış öncül, doğru taramayı yanlış eksene
+ * kilitler — ve gerçek risk `RED→AMBER` değil **`RED→GREEN`**'di, bkz.
+ * `below-target` pini aşağıda.)*
+ *
+ * ── `S1` TANIMLI-YOKLUK — ve `HÜCRE 4`'ün SESSİZ TUZAĞI ──────────────
+ * `HÜCRE 4` hüküm öncesi de sonrası da `null` renk verir, **ama aynı
+ * sebeple DEĞİL**: önce payda `0` olduğu için `GP_ROI_PCT` `null`'dı ve
+ * renksizlik bir **yan etkiydi**; kadran iki ekseni de dolu okuduğu için
+ * (`-11.700` / `+300`) artık `RED` üretirdi. Ölçüldü: dışlama kapısı
+ * devre dışı bırakıldığında bu hücre `RED` döndü (`T-342` mutasyon kanıtı).
+ * ⇒ Bu yüzden `HÜCRE 4`'ün pini **renge değil, `ragExclusionReason`'a**
+ * bağlanır: aynı `null`, farklı iki mekanizma (`§2.7 #6`).
  */
 
 import request from 'supertest';
@@ -143,7 +166,7 @@ function canon(p: {
     incrGp,
     incrPromoSpend,
     gpRoiPct: incrPromoSpend === 0 ? null : (incrGp / incrPromoSpend) * 100,
-    /** Excel `PlannedOPSOQuadrant` — İKİ EKSEN. */
+    /** Excel `PlannedOPSOQuadrant` — İKİ EKSEN. Artık CANLI model de bu. */
     canonicalRag:
       planTo - baseTo <= 0 ? 'RED' : incrGp <= 0 ? 'AMBER' : 'GREEN',
   };
@@ -342,7 +365,16 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
     cppOn: number;
     cppOff: number;
   }): Promise<{
-    kpis: Record<string, { value: number | null; ragStatus: string | null }>;
+    kpis: Record<
+      string,
+      {
+        value: number | null;
+        ragStatus: string | null;
+        // `T-342`: tanımlı-yokluk sebebi. Anahtar ESKİ JSONB satırlarında
+        // hiç bulunmayabilir ⇒ `?` + okurken `?? null`.
+        ragExclusionReason?: string | null;
+      }
+    >;
     fuVersion: number;
     skuVersion: number;
   }> {
@@ -528,14 +560,21 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
       iGp: 'pos' | 'nonpos';
       canonRag: 'RED' | 'AMBER' | 'GREEN';
       /**
-       * ⛔ BUGÜNKÜ CANLI RENK — **LİTERAL**, hesaplanmış DEĞİL.
+       * ⛔ CANLI RENK — **LİTERAL**, hesaplanmış DEĞİL.
        * Bir ara sürümde burada `roi >= 20 ? 'GREEN' : …` vardı; o
        * `determineRagStatus`'ün **testteki yeniden uygulamasıydı**
        * (`§2.7 #8`) — eşikler kodda kayarsa test de birlikte kayar,
        * yani hiçbir şey ölçmez. Review `S3` yakaladı.
-       * Bu sabitler `Q7` hükmü indiği gün **BİLEREK KIRILIR**.
+       * `T-342`'de bu sabitler **kırıldığı görüldükten sonra** yenilendi.
        */
       liveRag: 'RED' | 'AMBER' | 'GREEN' | null;
+      /**
+       * `S1` (`Z68 §2`): renk yokken **sebebin kendisi**. `null` renk +
+       * `null` sebep = *"değerlendirilemedi"*; `null` renk + `'LTA_ONLY'` =
+       * *"değerlendirme DIŞI"*. Bu sütun olmasaydı `HÜCRE 4` iki farklı
+       * mekanizmayı **aynı** `null` ile geçerdi.
+       */
+      liveExclusionReason: 'LTA_ONLY' | null;
     }> = [
       {
         name: 'HÜCRE 1 — iTO>0 ∧ iGP>0  ⇒ kanon GREEN',
@@ -547,7 +586,9 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
         iTo: 'pos',
         iGp: 'pos',
         canonRag: 'GREEN',
+        // DEĞİŞMEDİ (ölçüldü: ROI %742,31 ⇒ eşik modeli de GREEN diyordu)
         liveRag: 'GREEN',
+        liveExclusionReason: null,
       },
       {
         name: 'HÜCRE 2 — iTO>0 ∧ iGP≤0  ⇒ kanon AMBER ("satış var, kâr yok")',
@@ -558,10 +599,15 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
         cppOff: CPP_OFF_PCT,
         iTo: 'pos',
         iGp: 'nonpos',
-        // ⭐ `Z66 §2`'nin SAPMASI TAM BURADA: kanon `AMBER`
-        //    ("satış var, kâr yok"), canlı tek-eksen `RED`.
+        // ⭐ SAPMA KAPANDI (`Z68 §1`): kanon `AMBER` ("satış var, kâr
+        //    yok"), ve canlı model artık AYNISINI diyor.
+        //    ⛔ ÖLÇÜLDÜ — `RED` → `AMBER`, `AMBER`'ın bu üründe **İLK
+        //    DOĞUŞU**: iGP = -9.730,80 ⇒ ROI = -%60,13. Eşik modeli
+        //    (`>= 10 AMBER`) bu sayıdan `AMBER` **üretemezdi**; renk
+        //    yalnız iki eksenli kadrandan gelebilir.
         canonRag: 'AMBER',
-        liveRag: 'RED',
+        liveRag: 'AMBER',
+        liveExclusionReason: null,
       },
       {
         name: 'HÜCRE 3 — iTO≤0 ∧ iGP≤0  ⇒ kanon RED',
@@ -573,7 +619,9 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
         iTo: 'nonpos',
         iGp: 'nonpos',
         canonRag: 'RED',
+        // DEĞİŞMEDİ (iTO = -21.083,10 ⇒ iki modelde de RED)
         liveRag: 'RED',
+        liveExclusionReason: null,
       },
       {
         name: 'HÜCRE 4 — iTO≤0 ∧ iGP>0  ⇒ kanon RED (iTO ekseni BASKIN)',
@@ -584,12 +632,21 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
         cppOff: 0,
         iTo: 'nonpos',
         iGp: 'pos',
+        // ⚠️ KANON burada bir PROMOSYON yargısı verir (`iTO ≤ 0` ⇒ `RED`)
+        //    — ama bu plan bir promosyon DEĞİL. `S1` tam olarak bu farkı
+        //    kapatır: kadran uygulanmadan ÖNCE kapsam sorulur.
         canonRag: 'RED',
-        // ⚠️ `S1`: promo mekaniği YOK ⇒ ROI paydası (`INCR_PROMO_SPEND`)
-        //    tam `0` ⇒ `GP_ROI_PCT` `null` ⇒ **RAG rengi de `null`**.
-        //    LTA-only planların ekranda RENKSİZ kalması `Q6`'nın
-        //    ürün-görünür sonucudur ve beklenen-değişim listesindedir.
+        // ⛔ `S1` (`Z68 §2`) — TANIMLI-YOKLUK. `INCR_PROMO_SPEND` tam `0`
+        //    ⇒ plan bir promosyon değerlendirmesi değil ⇒ renk YOK, ve
+        //    yokluğun SEBEBİ taşınır.
+        //    ⚠️ Bu `null` `T-334`'teki `null` ile AYNI DEĞİL: orada payda
+        //    sıfır olduğu için `GP_ROI_PCT` çözülemiyordu (yan etki);
+        //    burada iki eksen de dolu (`iTO=-11.700` · `iGP=+300`) ve
+        //    renk BİLİNÇLİ olarak verilmiyor. Fark `liveExclusionReason`
+        //    ile okunuyor — mutasyon kanıtı: kapı kapatıldığında bu hücre
+        //    `RED` döndü (`T-342`).
         liveRag: null,
+        liveExclusionReason: 'LTA_ONLY',
       },
     ];
 
@@ -638,22 +695,33 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
           expect(r.kpis.INCR_TO.value).toBeCloseTo(c.incrTo, 2);
           expect(r.kpis.INCR_GP.value).toBeCloseTo(c.incrGp, 2);
 
-          // ⛔ BUGÜNKÜ CANLI MODEL — TEK EKSEN (eşik), ve MOTORDAN OKUNUR.
-          // Beklenen değer bir SABİTTİR (`cell.liveRag`); testin içinde
-          // yeniden hesaplanmaz. `Q7` hükmü indiği gün bu satır kırılır —
-          // kırılması BEKLENENDİR, çünkü model değişecektir.
+          // ⛔ CANLI MODEL — MOTORDAN OKUNUR, beklenen değer bir SABİTTİR
+          // (`cell.liveRag`); testin içinde yeniden hesaplanmaz.
           expect(r.kpis.GP_ROI_PCT.ragStatus).toBe(cell.liveRag);
+          // ⭐ `S1` — AYNI `null`'ın İKİ SEBEBİNİ AYIRT EDEN SATIR.
+          // Bu assertion olmadan `HÜCRE 4` "payda sıfır olduğu için
+          // renksiz" ile "promosyon olmadığı için değerlendirme dışı"yı
+          // aynı geçişle kabul ederdi (`§2.7 #6`: kapsam var, ayırt etme
+          // gücü yok).
+          expect(r.kpis.GP_ROI_PCT.ragExclusionReason ?? null).toBe(
+            cell.liveExclusionReason,
+          );
+          // ⛔ Renk varken sebep OLAMAZ — taşıyıcı tutarlılığı.
+          if (cell.liveRag !== null) {
+            expect(r.kpis.GP_ROI_PCT.ragExclusionReason ?? null).toBeNull();
+          }
         },
         120000,
       );
     }
 
-    it('⭐ KADRAN ile EŞİK AYNI ŞEY DEĞİLDİR — ve fark MOTORDAN okunur', async () => {
-      // `HÜCRE 2` = `iTO > 0 ∧ iGP ≤ 0`. Kanon `AMBER` ("satış var, kâr
-      // yok"), canlı tek-eksen `RED`. ⛔ Bir ara sürümde bu test yalnız
-      // `canon()`'u kendi kendine karşılaştırıyordu — kendi yardımcısı
-      // hakkında bir TOTOLOJİ, motordan tek bir değer okumadan (review
-      // `S3`). Şimdi hücre yeniden kuruluyor ve renk MOTORDAN geliyor.
+    it('⭐ KADRAN İNDİ: `AMBER` bir EŞİKTEN gelemezdi — motor iki eksenden okuyor', async () => {
+      // `HÜCRE 2` = `iTO > 0 ∧ iGP ≤ 0`. `T-334`'te kanon `AMBER`, canlı
+      // tek-eksen `RED` idi; `Z68 §1` ile ikisi YAKINSADI.
+      // ⛔ Bir ara sürümde bu test yalnız `canon()`'u kendi kendine
+      // karşılaştırıyordu — kendi yardımcısı hakkında bir TOTOLOJİ,
+      // motordan tek bir değer okumadan (review `S3`). Şimdi hücre yeniden
+      // kuruluyor ve renk MOTORDAN geliyor.
       const baseVol = 1000;
       const planVol = 1200;
       const r = await runCell({
@@ -682,13 +750,126 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
       // Kadranın iki ekseni de MOTORDAN — ve işaretleri `AMBER` hücresi.
       expect(r.kpis.INCR_TO.value!).toBeGreaterThan(0);
       expect(r.kpis.INCR_GP.value!).toBeLessThanOrEqual(0);
-      expect(c.canonicalRag).toBe('AMBER');
 
-      // Canlı renk MOTORDAN, ve LİTERAL bir sabitle karşılaştırılıyor.
-      expect(r.kpis.GP_ROI_PCT.ragStatus).toBe('RED');
+      // ── `N1` (review) — İKİ İDDİA AYRIŞTIRILDI ────────────────────────
+      // ⛔ Aşağıdaki satır YALNIZ `canon()` yardımcısının kendi pinidir
+      // (*"bu fixture gerçekten AMBER hücresi mi"*), motor hakkında HİÇBİR
+      // ŞEY söylemez. Motor iddiası bir satır aşağıda ve **literal**.
+      // İkisini tek `expect` zincirinde okumak `§2.7 #8` ailesidir: testin
+      // kendi kadran uygulaması ile üretimin uygulaması aynı ifadede
+      // karşılaşırsa, ikisi BİRLİKTE kayabilir.
+      expect(c.canonicalRag).toBe('AMBER'); // ← FIXTURE pini
 
-      // ⇒ AYRIŞMA: aynı hücrede kanon `AMBER`, canlı `RED`.
-      expect(r.kpis.GP_ROI_PCT.ragStatus).not.toBe(c.canonicalRag);
+      // ← MOTOR iddiası: LİTERAL bir sabit, `canon()` DEĞİL.
+      expect(r.kpis.GP_ROI_PCT.ragStatus).toBe('AMBER');
+
+      // ⭐ VE BU RENK BİR EŞİKTEN GELEMEZDİ — testin AYIRT EDİCİ yarısı.
+      // Eşik modeli `AMBER`'ı yalnız `GP_ROI_PCT >= ragAmberThreshold`
+      // (seed: `10`) iken üretebilir. Burada ROI **negatif** ⇒ eşik
+      // modelinin tek olası cevabı `RED`'di. Yani yeşil bir sonuç
+      // "kadran uygulandı"nın kanıtıdır, "sabit tuttu"nun değil.
+      expect(r.kpis.GP_ROI_PCT.value).not.toBeNull();
+      expect(r.kpis.GP_ROI_PCT.value!).toBeLessThan(0);
+      expect(r.kpis.GP_ROI_PCT.value!).toBeCloseTo(c.gpRoiPct!, 4);
+
+      // Renk varken dışlama sebebi OLAMAZ.
+      expect(r.kpis.GP_ROI_PCT.ragExclusionReason ?? null).toBeNull();
+    }, 120000);
+
+    // ══════════════════════════════════════════════════════════════════
+    // `Z71 §1a` — BELOW-TARGET DİLİMİ: kadranın SESSİZLEŞTİRECEĞİ yer
+    // ══════════════════════════════════════════════════════════════════
+    /**
+     * ⛔ **GERÇEK RİSK `RED→AMBER` DEĞİL, `RED→GREEN`'Dİ.**
+     *
+     * `T-342`'nin ilk turu *"AMBER ilk kez doğuyor"* öncülüyle tarandı ve o
+     * öncül yanlıştı (`Z71 §0`). Doğru eksen bu: kadran, `iTO > 0 ∧ iGP > 0`
+     * olan ama **hedefin çok altında** getiri üreten planları `GREEN` yapar.
+     * Ölçülmüş geçiş matrisi (`green=20 · amber=10`):
+     * ```
+     * 0 < ROI < 10     ÖNCE RED    → SONRA GREEN
+     * 10 ≤ ROI < 20    ÖNCE AMBER  → SONRA GREEN
+     * ```
+     * Uyarının yerine **sessizlik değil, karşı yönde güvence** geçerdi:
+     * ekranda **"İYİ"**.
+     *
+     * ⚠️ **`T-273` şartı — fixture bu dilimi GERÇEKTEN üretiyor mu?**
+     * Aşağıdaki assertion'lar önce dilimin varlığını **motordan** ölçüyor
+     * (`0 < ROI < 20` ∧ `iGP > 0` ∧ `iTO > 0`); dilim üretilmeseydi
+     * *"below-target yolu koşmuyor"* sonucu bir kanıt DEĞİL, koşmamış bir
+     * yol olurdu.
+     */
+    it('⭐ `Z71 §1a` — `0 < ROI < 20 ∧ iGP > 0` dilimi: kadran GREEN diyor, ve ONU SÖYLEYEN TEK ŞEY kalmıyor', async () => {
+      // `10 ≤ ROI < 20` dilimi (eski model: `AMBER`) — parametreler
+      // ampirik taramayla seçildi, tahminle değil.
+      const baseVol = 1000;
+      const planVol = 1150;
+      const cppOn = 1;
+      const cppOff = 3;
+
+      const r = await runCell({
+        planId: planA,
+        fuVersion: fuVersionA,
+        skuVersion: skuVersionA,
+        baseVol,
+        planVol,
+        cppOn,
+        cppOff,
+      });
+      fuVersionA = r.fuVersion;
+      skuVersionA = r.skuVersion;
+
+      const c = canon({
+        price,
+        cogs,
+        baseVol,
+        planVol,
+        ltaOnPct: LTA_ON_PCT,
+        ltaOffPct: LTA_OFF_PCT,
+        cppOnPct: cppOn,
+        cppOffPct: cppOff,
+      });
+
+      // ── 1 · DİLİM GERÇEKTEN ÜRETİLDİ Mİ (`T-273`) ────────────────────
+      // Üçü de MOTORDAN okunuyor; `canon()` yalnız sayısal yakınlık için.
+      expect(r.kpis.INCR_TO.value!).toBeGreaterThan(0);
+      expect(r.kpis.INCR_GP.value!).toBeGreaterThan(0);
+      expect(r.kpis.GP_ROI_PCT.value!).toBeGreaterThan(0);
+      expect(r.kpis.GP_ROI_PCT.value!).toBeLessThan(20);
+      expect(r.kpis.GP_ROI_PCT.value).toBeCloseTo(c.gpRoiPct!, 4);
+
+      // ⛔ Ve dilimin HANGİ YARISI olduğu da pinleniyor: `10 ≤ ROI < 20`,
+      // yani ESKİ tek-eksen modelin `AMBER` dediği aralık. Bu satır
+      // olmadan test `0 < ROI < 10` yarısına kayabilir ve *"AMBER→GREEN"*
+      // iddiası ölçülmemiş kalırdı.
+      expect(r.kpis.GP_ROI_PCT.value!).toBeGreaterThanOrEqual(10);
+
+      // ── 2 · KADRAN GREEN DİYOR — ve bu DOĞRU ─────────────────────────
+      // Plan gerçekten incremental ciro VE incremental kâr üretiyor.
+      expect(r.kpis.GP_ROI_PCT.ragStatus).toBe('GREEN');
+      expect(r.kpis.GP_ROI_PCT.ragExclusionReason ?? null).toBeNull();
+
+      // ── 3 · ⛔ AMA "İYİ" TEK BAŞINA YANILTICI ────────────────────────
+      // `GP_ROI_PCT = %10,5` ve kataloğa göre hedef `%20`. Yani bu plan
+      // kadrana göre sağlıklı, Target-ROI eksenine göre **hedefin altında**.
+      // İki eksenin AYRI konuşması `Z71 §1`'in hükmü; aşağıdaki satır
+      // hedefin gerçekten bu planın ÜSTÜNDE olduğunu ölçüyor ki
+      // below-target yolunun tetikleyicisi bir varsayım olmasın.
+      const admin = await loginAs(app, 'ADMIN');
+      const kpiList = await request(app.getHttpServer())
+        .get('/master-data/kpis')
+        .set(admin.authHeader())
+        .expect(200);
+      const rows: Array<{ kpiCode: string; targetRoiThreshold?: number }> =
+        Array.isArray(kpiList.body) ? kpiList.body : kpiList.body.data;
+      const gpRoiKpi = rows.find((k) => k.kpiCode === 'GP_ROI_PCT');
+      expect(gpRoiKpi).toBeDefined();
+      // ⛔ Alan ADI da pinleniyor: `T-343` `rag_green_threshold`'u
+      // `target_roi_threshold` yaptı. Eski ad dönerse bu satır kırılır.
+      expect(gpRoiKpi!.targetRoiThreshold).toBeDefined();
+      expect(Number(gpRoiKpi!.targetRoiThreshold)).toBeGreaterThan(
+        r.kpis.GP_ROI_PCT.value!,
+      );
     }, 120000);
   });
 });

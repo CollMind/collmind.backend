@@ -184,12 +184,23 @@ describe('KPI/formula config — optimistic locking (T-039, E2E)', () => {
       expect(firstWrite.body.formulaText).toBe('PLAN_VOL * 2');
 
       // Replay the SAME (now stale) version=1 — a second Admin editing the
-      // RAG threshold concurrently must not silently clobber the formula
-      // change above.
+      // Target-ROI threshold concurrently must not silently clobber the
+      // formula change above.
+      //
+      // ⛔ `T-343` — ALAN ADI DEĞİŞTİ: `ragGreenThreshold` →
+      // `targetRoiThreshold` (migration `1820`, `Z71 §3`). Bu test **eski
+      // adı kullanıyordu ve TAM E2E'DE KIRILDI** (`400`, DTO beyaz listesi
+      // reddetti — beklenen `409 STALE_VERSION`).
+      //
+      // 📌 Ders (`§7.1`): **bir yeniden adlandırmanın tüketici evreni
+      // TESTLERİ de içerir** — ve bu satır taramada görünmedi çünkü testin
+      // KONUSU optimistic locking; eşik alanı yalnızca bir **TAŞIYICIYDI**.
+      // Bir alanı kendi konusu için değil, taşıyıcı olarak kullanan kod
+      // "bu alanın tüketicisi" diye aranırken bulunmaz.
       const staleReplay = await request(app.getHttpServer())
         .patch(`/master-data/kpis/${kpi.id}`)
         .set(admin.authHeader())
-        .send({ ragGreenThreshold: 50, version: 1 });
+        .send({ targetRoiThreshold: 50, version: 1 });
 
       expect(staleReplay.status).toBe(409);
       expect(staleReplay.body.code).toBe('STALE_VERSION');

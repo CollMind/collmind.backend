@@ -1313,6 +1313,12 @@ export class AgreementService {
     for (const [key, result] of Object.entries(kpiResults)) {
       simplifiedResults[key] = {
         value: result.value,
+        // ⚠️ `T-342` `N3` — BU EŞLEME `ragExclusionReason`'I DÜŞÜRÜYOR.
+        // Bugün etkisiz (ölçüldü: bu yol taşıyıcı KPI'ı bu şekilde
+        // sunmuyor, tüketicisi rengin yokluk SEBEBİNİ okumuyor), ama alan
+        // burada **sessizce kayboluyor** — bir gün bu çıktı bir rozet
+        // besleyecek olursa *"değerlendirilmedi"* ile *"değerlendirme
+        // dışı"* yine karışır. Adı konuldu ki sessiz kalmasın.
         rag: result.ragStatus,
       };
     }

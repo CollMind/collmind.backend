@@ -72,6 +72,26 @@ export class PlanPerformanceRow {
   @IsEnum(['RED', 'AMBER', 'GREEN'])
   ragStatus!: string | null;
 
+  /**
+   * `T-342` / `Z68 §2` — TANIMLI-YOKLUK. `ragStatus === null` iki ayrı
+   * gerçeği anlatır ve bu alan onları ayırır:
+   * ```
+   * null        "değerlendirilemedi"  → eksik/kısmi veri (bkz. coverageRatio)
+   * 'LTA_ONLY'  "değerlendirme DIŞI"  → plan bir promosyon değerlendirmesi değil
+   * ```
+   * ⛔ `Z71 §2`: bu ayrımı yalnız grid'in göstermesi YARIM bir iniş olurdu —
+   * raporlar da tanır.
+   */
+  @ApiProperty({
+    description:
+      'Reason a RAG colour is legitimately absent. null = not excluded (either coloured, or unevaluable — see coverageRatio).',
+    enum: ['LTA_ONLY'],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsEnum(['LTA_ONLY'])
+  ragExclusionReason!: string | null;
+
   // T-216b / INV-N-004 / K-2.4.22c: the fraction of FUs that resolved into
   // `gpRoi` (plans.coverage_ratio — T-218). `null` = engine reported no
   // ratio (no FUs to aggregate). This is what lets a client render the

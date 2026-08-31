@@ -31,6 +31,30 @@ export class RiskPlan {
   @IsEnum(['RED', 'AMBER', 'GREEN'])
   ragStatus!: string | null;
 
+  /**
+   * `T-342` / `Z68 §2` — TANIMLI-YOKLUK. `ragStatus === null` iki ayrı
+   * gerçeği anlatır ve bu alan onları ayırır:
+   * ```
+   * null        "değerlendirilemedi"  → eksik/kısmi veri (bkz. coverageRatio)
+   * 'LTA_ONLY'  "değerlendirme DIŞI"  → plan bir promosyon değerlendirmesi değil
+   * ```
+   * ⛔ **BU UÇTA BUGÜN YAPISAL OLARAK `null`** (`T-343` review `S2`):
+   * `getBudgetAtRisk` planları `ragStatus IN ('RED','AMBER','GREEN')` ile
+   * çekiyor ve **SQL `IN` `NULL`'ı DIŞLAR** ⇒ dışlanmış bir plan bu
+   * rapora giremez. Alan doldurulmaya devam ediyor (filtre değişirse
+   * kendiliğinden canlanır) ama *"okuyucu bu alanla ayırt eder"* iddiası
+   * **bu uç için doğru değildi**. Ayrım `PlanPerformanceRow`'da CANLI.
+   */
+  @ApiProperty({
+    description:
+      'Reason a RAG colour is legitimately absent. NOTE: structurally null on this endpoint today — the RAG filter excludes NULL-status plans (see field docs). Live on /plan-performance.',
+    enum: ['LTA_ONLY'],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsEnum(['LTA_ONLY'])
+  ragExclusionReason!: string | null;
+
   // T-216b / INV-N-004 / K-2.4.22c: same field/rationale as
   // PlanPerformanceRow.coverageRatio (plan-performance.dto.ts) — plans.
   // coverage_ratio (T-218), null = nothing to aggregate.
@@ -52,9 +76,31 @@ export class RiskPlan {
   // T-172: `null` = hesaplanamadı. `0` DEĞİL — sıfır bir iş yargısıdır.
   gpRoi!: number | null;
 
+  /**
+   * ⚠️ **HAM DİZGE, KULLANICI METNİ DEĞİL** (`T-343` review nit).
+   * `BudgetAtRiskWidget` ve `export.ts` bu alanı olduğu gibi basıyor ⇒
+   * kullanıcı bugün ekranda **`BELOW_TARGET`** görür. `HIGH`/`MEDIUM` de
+   * aynı sınıftaydı (pre-existing) ama yeni üye yeni bir dize getiriyor.
+   * ⛔ Sunum metnine çevirme kararı **bu turun kapsamı değil** — kayıt
+   * `T-343` kapanış raporunda, Team Lead'e bildirildi.
+   */
   @ApiProperty({ description: 'Risk level' })
   @IsString()
-  riskLevel!: string; // 'HIGH', 'MEDIUM', 'LOW'
+  riskLevel!: string; // 'HIGH', 'MEDIUM', 'BELOW_TARGET'
+
+  /**
+   * `Z71 §1` — TARGET-ROI ekseni. `GREEN` bir plan **hedefin altında**
+   * olabilir; bu bir çelişki değil, **iki eksenin ayrı konuşmasıdır**.
+   * `null` = bu eksende yargı yok (ROI ya da hedef okunamadı).
+   */
+  @ApiPropertyOptional({
+    description:
+      'Configured Target-ROI threshold this plan was compared against. null = not evaluable.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsNumber()
+  targetRoiThreshold!: number | null;
 }
 
 export class RiskReport {
@@ -65,6 +111,22 @@ export class RiskReport {
   @ApiProperty({ description: 'AMBER status plans spend total' })
   @IsNumber()
   amberPlansSpend!: number;
+
+  /**
+   * `Z71 §1a` — **KADRAN İNİŞİNİN SESSİZLEŞTİRECEĞİ İKİ DİLİM.**
+   * Ölçülmüş geçiş matrisi (`green=20 · amber=10`):
+   * ```
+   * 0 < ROI < 10    ÖNCE RED    → SONRA GREEN    ⇒ risk raporundan DÜŞERDİ
+   * 10 ≤ ROI < 20   ÖNCE AMBER  → SONRA GREEN    ⇒ risk raporundan DÜŞERDİ
+   * ```
+   * ⇒ Finance'ın evreni **küçülmedi, daha doğru adlandı**.
+   */
+  @ApiProperty({
+    description:
+      'Spend total of GREEN plans whose GP ROI is below the configured Target-ROI threshold (Z71 §1).',
+  })
+  @IsNumber()
+  belowTargetRoiPlansSpend!: number;
 
   @ApiProperty({ description: 'Total at-risk spend' })
   @IsNumber()
@@ -81,6 +143,15 @@ export class RiskReport {
   @ApiProperty({ description: 'AMBER status plans', type: [RiskPlan] })
   @IsArray()
   amberPlans!: RiskPlan[];
+
+  /** `Z71 §1` — `GREEN` ama hedefin altında. Bkz. `belowTargetRoiPlansSpend`. */
+  @ApiProperty({
+    description:
+      'GREEN plans below the configured Target-ROI threshold (Z71 §1)',
+    type: [RiskPlan],
+  })
+  @IsArray()
+  belowTargetRoiPlans!: RiskPlan[];
 
   @ApiPropertyOptional({ description: 'Recommendations', type: [String] })
   @IsArray()

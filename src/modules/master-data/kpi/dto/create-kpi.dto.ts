@@ -86,15 +86,16 @@ export class CreateKpiDto {
   @IsOptional()
   aggregationMethodFu?: AggregationMethod;
 
+  /**
+   * `T-343` / `Z71 §3` — eski adı `ragGreenThreshold`. Tüketicisi **RAG
+   * DEĞİL**: Target-ROI ekseni (`src/common/kpi/target-roi.ts`).
+   * ⛔ `ragAmberThreshold` bu sürümle **kaldırıldı** (migration 1820):
+   * kadran (`Z66 §2`) RAG'ı işaret-tabanlı yaptı, eşik girdisiz kaldı.
+   */
   @ApiPropertyOptional({ example: 20 })
   @IsNumber()
   @IsOptional()
-  ragGreenThreshold?: number;
-
-  @ApiPropertyOptional({ example: 10 })
-  @IsNumber()
-  @IsOptional()
-  ragAmberThreshold?: number;
+  targetRoiThreshold?: number;
 
   @ApiPropertyOptional({ example: true })
   @IsBoolean()

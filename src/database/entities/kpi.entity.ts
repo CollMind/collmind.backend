@@ -97,30 +97,33 @@ export class Kpi extends BaseEntity {
   })
   aggregationMethodFu?: AggregationMethod;
 
-  // RAG Configuration (for KPIs that use thresholds)
+  // TARGET-ROI KONFİGÜRASYONU
+  //
+  // ⛔ `T-343` / `Z70 §2` + `Z71 §3` — ESKİ ADLARI `rag_green_threshold` ve
+  // `rag_amber_threshold` idi. Migration `1820000000000`:
+  //   `rag_amber_threshold`  ÖLDÜ    — kadran (`Z66 §2`) onu girdisiz bıraktı;
+  //                                    RAG'ın tanımı artık EŞİK değil İŞARET
+  //                                    tabanlı (`iTO`/`iGP` sıfır çizgileri)
+  //   `rag_green_threshold`  → `target_roi_threshold`  (veri TAŞINDI, RENAME)
+  //
+  // ⚠️ Yeniden adlandırma kozmetik DEĞİL: bu alanın tüketicisi RAG değil,
+  // **Target-ROI ekseni** (`src/common/kpi/target-roi.ts`). `rag` önekiyle
+  // yaşaması, `ragAmber`'ın öldüğü bir dünyada okuyucuyu *"RAG konfigüre
+  // edilebilir"* yanılgısına götürürdü — ve o yanılgı kadranı geri-eşiğe
+  // çevirmenin ilk adımıdır.
   //
   // ⛔ Transformer YOK — DUR (T-197/T-221 ikinci yarı, Team Lead'e bildirildi).
-  // Para mı birim fiyat mı oran mı belirsiz: `displayFormat` NUMBER/CURRENCY/
-  // PERCENTAGE olabilir (yukarıdaki `DisplayFormat` enum), yani eşiğin
-  // semantiği KPI'ya göre değişir — Karar 4'ün polimorfizmiyle aynı sınıf.
+  // Eşiğin semantiği KPI'ya göre değişir (`displayFormat` NUMBER/CURRENCY/
+  // PERCENTAGE olabilir) — Karar 4'ün polimorfizmiyle aynı sınıf.
   // Ürün sahibi kararı bekleniyor, seçilmedi.
   @Column({
-    name: 'rag_green_threshold',
+    name: 'target_roi_threshold',
     type: 'decimal',
     precision: 18,
     scale: 4,
     nullable: true,
   })
-  ragGreenThreshold?: number;
-
-  @Column({
-    name: 'rag_amber_threshold',
-    type: 'decimal',
-    precision: 18,
-    scale: 4,
-    nullable: true,
-  })
-  ragAmberThreshold?: number;
+  targetRoiThreshold?: number;
 
   // Status
   @Column({ name: 'is_active', type: 'boolean', default: true })

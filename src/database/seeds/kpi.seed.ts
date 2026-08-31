@@ -534,8 +534,10 @@ export const KPI_DEFAULTS: KpiSeedRow[] = [
     showInGrid: true,
     columnOrder: 8,
     aggregationMethodFu: AggregationMethod.WEIGHTED_AVG,
-    ragGreenThreshold: 20,
-    ragAmberThreshold: 10,
+    // `T-343`: Target-ROI hedefi (eski adı `ragGreenThreshold`).
+    // ⚠️ RAG'ı BELİRLEMEZ — RAG kadrandan gelir (`Z71 §1`); bu alan
+    // "hedefin altında" uyarısının ve Finance kovasının okuduğu kalemdir.
+    targetRoiThreshold: 20,
     isActive: true,
   },
   {

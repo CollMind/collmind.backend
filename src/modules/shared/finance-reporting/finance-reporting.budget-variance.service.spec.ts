@@ -19,6 +19,7 @@ import {
 } from '../budget/budget-threshold.service';
 import { UtilizationStatus } from './dto/budget-utilization.dto';
 import { AccessScopeService } from '../access-scope/access-scope.service';
+import { KpiEngineService } from '../kpi-engine/kpi-engine.service';
 import { BudgetSummaryView } from '../../../database/entities/budget-summary.view-entity';
 
 const TENANT = 'tenant-1';
@@ -118,6 +119,12 @@ describe('FinanceReportingService — getBudgetVarianceReport (T-023)', () => {
         { provide: BudgetThresholdService, useValue: budgetThresholdService },
         { provide: BudgetRepository, useValue: budgetRepository },
         { provide: AccessScopeService, useValue: accessScopeService },
+        {
+          // `T-343`/`Z71 §1`: Target-ROI hedefi konfigürasyondan.
+          // Mock `null` döner ⇒ below-target yolu hiçbir planı işaretlemez.
+          provide: KpiEngineService,
+          useValue: { getKpiConfig: jest.fn().mockResolvedValue(null) },
+        },
       ],
     }).compile();
 

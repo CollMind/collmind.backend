@@ -13,6 +13,7 @@ import { MechanicCategory } from '../../../database/entities/mechanic.entity';
 import { BudgetRepository } from '../budget/budget.repository';
 import { BudgetThresholdService } from '../budget/budget-threshold.service';
 import { AccessScopeService } from '../access-scope/access-scope.service';
+import { KpiEngineService } from '../kpi-engine/kpi-engine.service';
 import { ReportGranularity } from './dto/report-filters.dto';
 import { ComparisonType } from './dto/variance-report.dto';
 
@@ -179,6 +180,15 @@ describe('getSpendTrend — MONTHLY kova sözleşmesi (takvim ayı, Z63/T-329)',
           useValue: { getAllBudgetSummaries: jest.fn().mockResolvedValue([]) },
         },
         { provide: AccessScopeService, useValue: {} },
+        {
+          // `T-343`/`Z71 §1`: Target-ROI hedefi konfigürasyondan okunuyor.
+          // ⛔ Mock `null` DÖNER: eşik okunamadığında below-target yolu
+          // hiçbir plan işaretlememeli (`§2.5` — uydurulmuş hedefe yargı
+          // yok). Bu, testlerin mevcut beklentilerini DEĞİŞTİRMEZ ve
+          // varsayılan davranışın "sessiz eşik" OLMADIĞINI de pinler.
+          provide: KpiEngineService,
+          useValue: { getKpiConfig: jest.fn().mockResolvedValue(null) },
+        },
       ],
     }).compile();
 

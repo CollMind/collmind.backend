@@ -97,8 +97,11 @@ export class KpiRepository {
           kpiCode: current.kpiCode,
           formulaText: current.formulaText,
           calculationOrder: current.calculationOrder,
-          ragGreenThreshold: current.ragGreenThreshold,
-          ragAmberThreshold: current.ragAmberThreshold,
+          // `T-343`: `ragGreenThreshold` → `targetRoiThreshold` (RENAME,
+          // migration 1820). `ragAmberThreshold` ÖLDÜ — kadran onu girdisiz
+          // bıraktı (`Z70 §2`), çakışma yükünde artık gösterilecek bir
+          // değeri yok.
+          targetRoiThreshold: current.targetRoiThreshold,
           isActive: current.isActive,
           updatedBy: current.updatedBy,
           updatedAt: current.updatedAt,

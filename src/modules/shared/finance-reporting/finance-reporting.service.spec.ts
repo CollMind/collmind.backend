@@ -17,6 +17,7 @@ import {
 } from '../budget/budget-threshold.service';
 import { UtilizationStatus } from './dto/budget-utilization.dto';
 import { AccessScopeService } from '../access-scope/access-scope.service';
+import { KpiEngineService } from '../kpi-engine/kpi-engine.service';
 import { ReportGranularity } from './dto/report-filters.dto';
 
 /**
@@ -124,6 +125,7 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
   let budgetEnvelopeQueryBuilder: ReturnType<typeof buildQueryBuilder>;
   let budgetEnvelopeRepository: { createQueryBuilder: jest.Mock };
   let budgetRepository: { getAllBudgetSummaries: jest.Mock };
+  let kpiEngine: { getKpiConfig: jest.Mock };
   let budgetThresholdService: {
     getThresholds: jest.Mock;
     toStatus: jest.Mock;
@@ -141,6 +143,7 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
     budgetRepository = {
       getAllBudgetSummaries: jest.fn().mockResolvedValue([]),
     };
+    kpiEngine = { getKpiConfig: jest.fn().mockResolvedValue(null) };
     budgetThresholdService = {
       getThresholds: jest.fn().mockResolvedValue(THRESHOLDS),
       toStatus: jest.fn((percent: number, t: BudgetThresholds) => {
@@ -164,6 +167,15 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
         { provide: BudgetThresholdService, useValue: budgetThresholdService },
         { provide: BudgetRepository, useValue: budgetRepository },
         { provide: AccessScopeService, useValue: {} },
+        {
+          // `T-343`/`Z71 §1`: Target-ROI hedefi konfigürasyondan okunuyor.
+          // ⛔ Mock `null` DÖNER: eşik okunamadığında below-target yolu
+          // hiçbir plan işaretlememeli (`§2.5` — uydurulmuş hedefe yargı
+          // yok). Bu, testlerin mevcut beklentilerini DEĞİŞTİRMEZ ve
+          // varsayılan davranışın "sessiz eşik" OLMADIĞINI de pinler.
+          provide: KpiEngineService,
+          useValue: kpiEngine,
+        },
       ],
     }).compile();
 
@@ -261,6 +273,125 @@ describe('FinanceReportingService — T-093 spend accumulator regression coverag
       expect(typeof report.redPlansSpend).toBe('number');
       expect(report.redPlansSpend).toBe(150);
       expect(report.totalAtRisk).toBe(150);
+    });
+
+    /**
+     * ⛔ `T-343` review `S5` — **BU BLOK BİR DENGESİZLİĞİ DÜZELTİYOR.**
+     *
+     * `belowTargetRoiPlans` kovası bu turun **TEK CANLI yeni davranışıydı**
+     * ve **sıfır testi vardı**: ne unit ne e2e. e2e yalnız *dilimin
+     * ÜRETİLDİĞİNİ* ölçüyordu, **kovanın DOLDUĞUNU** hiç ölçmüyordu.
+     * > *"Ulaşılabilir olan yarı test edilmemiş, ulaşılamaz olan yarı yedi
+     * > testle kaplı — dengesizlik TERSİNE."*
+     *
+     * Kova `Z71 §1a`'nın ölçülmüş geçiş matrisinin iki satırını taşıyor:
+     * ```
+     * 0 < ROI < 10     ÖNCE RED    → SONRA GREEN
+     * 10 ≤ ROI < 20    ÖNCE AMBER  → SONRA GREEN
+     * ```
+     */
+    describe('`Z71 §1a` — `belowTargetRoi` kovası', () => {
+      function mockOnePlan(plan: Plan, spend = 150) {
+        planRepository.createQueryBuilder.mockReturnValue(
+          buildQueryBuilder({ getMany: jest.fn().mockResolvedValue([plan]) }),
+        );
+        planFuRepository.find.mockResolvedValue([
+          buildPlanFu([buildPmv(spend, MechanicCategory.ON_INVOICE_DISCOUNT)]),
+        ]);
+      }
+
+      it("⭐ `GREEN` ∧ ROI < hedef ⇒ kova DOLAR ve `totalAtRisk`'e GİRER", async () => {
+        // `10 ≤ ROI < 20`: eski tek-eksen model `AMBER` derdi; kadran
+        // `GREEN` diyor. Bu kova olmasaydı plan rapordan DÜŞERDİ.
+        kpiEngine.getKpiConfig.mockResolvedValue({
+          targetRoiThreshold: 20,
+        } as never);
+        mockOnePlan(
+          buildPlan({ id: 'p-below', ragStatus: 'GREEN', overallRoi: 10.5 }),
+        );
+
+        const report = await service.getBudgetAtRisk(TENANT, {});
+
+        expect(report.belowTargetRoiPlans).toHaveLength(1);
+        expect(report.belowTargetRoiPlansSpend).toBe(150);
+        expect(report.totalAtRisk).toBe(150);
+        // ⛔ AYIRT EDİCİ: `RED`/`AMBER` kovalarına DÜŞMEDİ — iki eksen ayrı.
+        expect(report.redPlans).toHaveLength(0);
+        expect(report.amberPlans).toHaveLength(0);
+        expect(report.belowTargetRoiPlans[0].riskLevel).toBe('BELOW_TARGET');
+        expect(report.belowTargetRoiPlans[0].targetRoiThreshold).toBe(20);
+        expect(
+          report.recommendations?.some((r) =>
+            r.includes('below the Target-ROI'),
+          ),
+        ).toBe(true);
+      });
+
+      it("⛔ `B1` — eşik `pg`'den DİZGE gelse de kova DOLAR", async () => {
+        // Üretimin gerçek şekli (`numeric` → `"20.0000"`). Normalizasyon
+        // olmasaydı DTO alanı dizge sızdırır, `<` tesadüfen çalışırdı.
+        kpiEngine.getKpiConfig.mockResolvedValue({
+          targetRoiThreshold: '20.0000',
+        } as never);
+        mockOnePlan(
+          buildPlan({
+            id: 'p-below-str',
+            ragStatus: 'GREEN',
+            overallRoi: 10.5,
+          }),
+        );
+
+        const report = await service.getBudgetAtRisk(TENANT, {});
+
+        expect(report.belowTargetRoiPlans).toHaveLength(1);
+        // ⛔ DTO alanı SAYI olmalı — aynı dosyada iki farklı muamele vardı
+        // (`Number()` DTO için, ham dizge karşılaştırma için); birleştirildi.
+        expect(report.belowTargetRoiPlans[0].targetRoiThreshold).toBe(20);
+        expect(typeof report.belowTargetRoiPlans[0].targetRoiThreshold).toBe(
+          'number',
+        );
+      });
+
+      it('`GREEN` ∧ ROI ≥ hedef ⇒ HİÇBİR kovaya girmez', async () => {
+        kpiEngine.getKpiConfig.mockResolvedValue({
+          targetRoiThreshold: 20,
+        } as never);
+        mockOnePlan(
+          buildPlan({ id: 'p-ok', ragStatus: 'GREEN', overallRoi: 25 }),
+        );
+
+        const report = await service.getBudgetAtRisk(TENANT, {});
+
+        expect(report.belowTargetRoiPlans).toHaveLength(0);
+        expect(report.totalAtRisk).toBe(0);
+      });
+
+      it('⛔ hedef KONFİGÜRE DEĞİLSE kova BOŞ kalır (`§2.5`)', async () => {
+        // `getKpiConfig` varsayılan mock'u `null` döndürüyor.
+        mockOnePlan(
+          buildPlan({ id: 'p-nothr', ragStatus: 'GREEN', overallRoi: 1 }),
+        );
+
+        const report = await service.getBudgetAtRisk(TENANT, {});
+
+        expect(report.belowTargetRoiPlans).toHaveLength(0);
+        expect(report.totalAtRisk).toBe(0);
+      });
+
+      it('`AMBER` bir plan hedefin altında olsa bile `AMBER` kovasında kalır — İKİ KEZ SAYILMAZ', async () => {
+        kpiEngine.getKpiConfig.mockResolvedValue({
+          targetRoiThreshold: 20,
+        } as never);
+        mockOnePlan(
+          buildPlan({ id: 'p-amber', ragStatus: 'AMBER', overallRoi: -60 }),
+        );
+
+        const report = await service.getBudgetAtRisk(TENANT, {});
+
+        expect(report.amberPlans).toHaveLength(1);
+        expect(report.belowTargetRoiPlans).toHaveLength(0);
+        expect(report.totalAtRisk).toBe(150);
+      });
     });
   });
 

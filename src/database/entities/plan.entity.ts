@@ -193,6 +193,31 @@ export class Plan extends BaseEntity {
   @Column({ name: 'rag_status', type: 'varchar', length: 10, nullable: true })
   ragStatus?: string | null; // 'RED' | 'AMBER' | 'GREEN' | null
 
+  /**
+   * `T-342` / `Z68 §2` + `Z71 §2` — TANIMLI-YOKLUK, **plan seviyesinde**.
+   *
+   * `ragStatus === null` iki ayrı gerçeği anlatır ve ikisi karıştırılamaz:
+   * ```
+   * null        "değerlendirilemedi" — eksik/kısmi veri (taşıyıcısı coverageRatio)
+   * 'LTA_ONLY'  "değerlendirme DIŞI" — plan bir promosyon değerlendirmesi değil
+   * ```
+   * Sınıf: `src/common/kpi/rag-quadrant.ts#RagExclusionReason`.
+   *
+   * ⛔ Kolon (migration `1819000000000`) ŞART ÇIKTI: sebep bir süre yalnız
+   * `plan_fus`/`plan_skus`'ın JSONB'sinde yaşadı ve **plan listesi ile
+   * finans raporları ayrımı gösteremedi**. Çıkarım yolu ölçüldü ve kapalı:
+   * `ragStatus === null && coverageRatio === 1` bileşimi *"eksenlerden biri
+   * kısmi kapsamalı"* durumuyla da eşleşiyor ⇒ kolonsuz ayrım **sessiz bir
+   * tahmin** olurdu.
+   */
+  @Column({
+    name: 'rag_exclusion_reason',
+    type: 'varchar',
+    length: 32,
+    nullable: true,
+  })
+  ragExclusionReason?: string | null;
+
   // T-218: fraction of FUs that resolved into `overallRoi`'s GP_ROI_PCT
   // value (KpiEngineService.calculatePlan -> recomputeRatioFromChildren's
   // coverageRatio for that KPI). `null` = engine reported no ratio (no FUs
@@ -329,6 +354,14 @@ export class PlanFu extends BaseEntity {
       displayFormat: string;
       decimalPlaces: number;
       ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
+      /**
+       * `T-342` / `Z68 §2` — TANIMLI-YOKLUK. `ragStatus === null` iken
+       * *"değerlendirme DIŞI"* (`'LTA_ONLY'`) ile *"değerlendirilemedi"*
+       * (`null`) ayrımını taşır. Şema değişikliği yok: mevcut JSONB'ye
+       * yeni anahtar (`coverageRatio` emsali). Sınıf tanımı:
+       * `src/common/kpi/rag-quadrant.ts#RagExclusionReason`.
+       */
+      ragExclusionReason?: string | null;
       calculatedAt?: string;
       // T-177 S1 (2026-08-11): fraction of this KPI's children (SKUs, for
       // an FU-level rollup) that resolved and contributed to `value`. Only
@@ -462,6 +495,14 @@ export class PlanSku extends BaseEntity {
       displayFormat: string;
       decimalPlaces: number;
       ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
+      /**
+       * `T-342` / `Z68 §2` — TANIMLI-YOKLUK. `ragStatus === null` iken
+       * *"değerlendirme DIŞI"* (`'LTA_ONLY'`) ile *"değerlendirilemedi"*
+       * (`null`) ayrımını taşır. Şema değişikliği yok: mevcut JSONB'ye
+       * yeni anahtar (`coverageRatio` emsali). Sınıf tanımı:
+       * `src/common/kpi/rag-quadrant.ts#RagExclusionReason`.
+       */
+      ragExclusionReason?: string | null;
       calculatedAt?: string;
     }
   >;

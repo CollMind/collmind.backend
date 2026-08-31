@@ -7,6 +7,16 @@ import {
   AggregationMethod,
 } from '../../../database/entities/kpi.entity';
 import { FormulaParserService, ParsedFormula } from './formula-parser.service';
+import {
+  RAG_CARRIER_KPI_CODE,
+  RAG_EXCLUSION_SCOPE_KPI_CODE,
+  RAG_NOT_APPLICABLE,
+  RAG_QUADRANT_PROFIT_AXIS_KPI_CODE,
+  RAG_QUADRANT_TURNOVER_AXIS_KPI_CODE,
+  RagExclusionReason,
+  RagQuadrantOutcome,
+  resolveRagQuadrant,
+} from '../../../common/kpi/rag-quadrant';
 
 export interface SkuCalculationContext {
   // User inputs & master data.
@@ -33,6 +43,20 @@ export interface CalculationResult {
   displayFormat: string;
   decimalPlaces: number;
   ragStatus?: 'RED' | 'AMBER' | 'GREEN' | null;
+  /**
+   * `T-342` / `Z68 §2` — **TANIMLI-YOKLUK.** `ragStatus === null` iki ayrı
+   * gerçeği anlatabilir ve ikisi karıştırılmamalıdır:
+   *
+   * ```
+   * ragExclusionReason = null        "değerlendirilemedi" — eksik/kısmi veri
+   *                                  (taşıyıcısı `value === null` + `coverageRatio`)
+   * ragExclusionReason = 'LTA_ONLY'  "değerlendirme DIŞI" — meşru yokluk,
+   *                                  plan bir promosyon değerlendirmesi değil
+   * ```
+   *
+   * ⛔ `ragStatus` dolu iken bu alan **her zaman** `null`'dır.
+   */
+  ragExclusionReason?: RagExclusionReason | null;
   /**
    * T-177: only set on results produced by rolling up a set of children
    * (SKU→FU, FU→Plan) — fraction of those children whose value was
@@ -90,26 +114,16 @@ export class KpiEngineService {
       // Store in context for dependent KPIs
       contextMap[kpi.kpiCode] = value;
 
-      // Determine RAG status if thresholds defined
-      let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-      if (
-        kpi.ragGreenThreshold !== undefined &&
-        kpi.ragGreenThreshold !== null &&
-        value !== null
-      ) {
-        ragStatus = this.determineRagStatus(
-          value,
-          kpi.ragGreenThreshold,
-          kpi.ragAmberThreshold,
-        );
-      }
+      // RAG: taşıyıcı KPI **kadrandan** (`Z66 §2`), diğerleri eşikten.
+      const rag = this.resolveRagFor(kpi, results);
 
       results[kpi.kpiCode] = {
         kpiCode: kpi.kpiCode,
         value,
         displayFormat: kpi.displayFormat,
         decimalPlaces: kpi.decimalPlaces,
-        ragStatus,
+        ragStatus: rag.ragStatus,
+        ragExclusionReason: rag.ragExclusionReason,
       };
     }
 
@@ -162,26 +176,22 @@ export class KpiEngineService {
         // RED (low individual ROI, small spend) while the FU as a whole is
         // GREEN (dominated by a large, high-ROI SKU), and that FU value is
         // the correct one to grade, not the worst input into it.
-        let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (
-          coverageRatio === 1 &&
-          value !== null &&
-          kpi.ragGreenThreshold !== undefined &&
-          kpi.ragGreenThreshold !== null
-        ) {
-          ragStatus = this.determineRagStatus(
-            value,
-            kpi.ragGreenThreshold,
-            kpi.ragAmberThreshold,
-          );
-        }
+        //
+        // ⛔ `T-342`: taşıyıcı KPI için `coverageRatio === 1 && value !== null`
+        // kapısı **artık doğru kapı değil.** Kadran `GP_ROI_PCT`'nin DEĞERİNE
+        // bakmaz; `iTO`/`iGP`'ye bakar — ve payda `0` iken değer meşru olarak
+        // `null`'dır (`HÜCRE 4`, ölçüldü). Kapsama kapısı **eksen bazına**
+        // taşındı (`resolveCarrierRag`), yani gevşemedi: her eksen için
+        // ayrı ayrı `coverageRatio === 1` aranıyor.
+        const rag = this.resolveRagFor(kpi, results);
 
         results[kpi.kpiCode] = {
           kpiCode: kpi.kpiCode,
           value,
           displayFormat: kpi.displayFormat,
           decimalPlaces: kpi.decimalPlaces,
-          ragStatus,
+          ragStatus: rag.ragStatus,
+          ragExclusionReason: rag.ragExclusionReason,
           coverageRatio,
         };
       } else if (kpi.calculationLevel === CalculationLevel.SKU) {
@@ -198,7 +208,8 @@ export class KpiEngineService {
           .filter((v): v is number => v !== null && v !== undefined);
         const coverageRatio =
           totalSkuCount === 0 ? null : values.length / totalSkuCount;
-        const fullCoverage = coverageRatio === 1;
+        // `T-343`: eski `fullCoverage` kapısı KALKTI — RAG yalnız
+        // taşıyıcıda doğuyor (`Z71 §1`), bu daldaki KPI'lar renk taşımıyor.
 
         const aggregated = this.aggregate(
           values,
@@ -211,29 +222,24 @@ export class KpiEngineService {
         // color — a color implies a judgement over the whole set, and a
         // judgement over 3% of SKUs (docs/analysis/0016: 4/170 have COGS)
         // is not a judgement over the FU.
-        let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (
-          fullCoverage &&
-          kpi.ragGreenThreshold !== undefined &&
-          kpi.ragGreenThreshold !== null &&
-          aggregated !== null
-        ) {
-          // FU RAG: use worst-case from SKUs
-          const skuRags = skuResults
-            .map((sr) => sr[kpi.kpiCode]?.ragStatus)
-            .filter(Boolean) as string[];
-
-          if (skuRags.includes('RED')) ragStatus = 'RED';
-          else if (skuRags.includes('AMBER')) ragStatus = 'AMBER';
-          else if (skuRags.length > 0) ragStatus = 'GREEN';
-        }
+        // `T-343`/`Z71 §1`: RAG **yalnız taşıyıcıda** doğar. Buradaki eski
+        // *"çocukların en kötüsü"* yayılımı eşik-RAG'a bağlıydı ve o model
+        // öldü — taşıyıcı bugün `WEIGHTED_AVG` olduğu için bu dala düşmez,
+        // yine de kadran burada da uygulanır ki `aggregationMethodFu`
+        // konfigürasyonla değişirse renk modeli **sessizce başka bir şeye
+        // dönmesin** (`§2.7`: iki dal aynı soruyu farklı cevaplamasın).
+        const rag: RagQuadrantOutcome =
+          kpi.kpiCode === RAG_CARRIER_KPI_CODE
+            ? this.resolveCarrierRag(results)
+            : RAG_NOT_APPLICABLE;
 
         results[kpi.kpiCode] = {
           kpiCode: kpi.kpiCode,
           value: aggregated,
           displayFormat: kpi.displayFormat,
           decimalPlaces: kpi.decimalPlaces,
-          ragStatus,
+          ragStatus: rag.ragStatus,
+          ragExclusionReason: rag.ragExclusionReason,
           coverageRatio,
         };
       } else if (kpi.calculationLevel === CalculationLevel.FU) {
@@ -248,25 +254,15 @@ export class KpiEngineService {
         const formula = this.getOrParseFormula(kpi);
         const value = formula.execute(contextMap);
 
-        let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (
-          kpi.ragGreenThreshold !== undefined &&
-          kpi.ragGreenThreshold !== null &&
-          value !== null
-        ) {
-          ragStatus = this.determineRagStatus(
-            value,
-            kpi.ragGreenThreshold,
-            kpi.ragAmberThreshold,
-          );
-        }
+        const rag = this.resolveRagFor(kpi, results);
 
         results[kpi.kpiCode] = {
           kpiCode: kpi.kpiCode,
           value,
           displayFormat: kpi.displayFormat,
           decimalPlaces: kpi.decimalPlaces,
-          ragStatus,
+          ragStatus: rag.ragStatus,
+          ragExclusionReason: rag.ragExclusionReason,
         };
       }
     }
@@ -300,25 +296,15 @@ export class KpiEngineService {
         const formula = this.getOrParseFormula(kpi);
         const value = formula.execute(contextMap);
 
-        let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (
-          kpi.ragGreenThreshold !== undefined &&
-          kpi.ragGreenThreshold !== null &&
-          value !== null
-        ) {
-          ragStatus = this.determineRagStatus(
-            value,
-            kpi.ragGreenThreshold,
-            kpi.ragAmberThreshold,
-          );
-        }
+        const rag = this.resolveRagFor(kpi, results);
 
         results[kpi.kpiCode] = {
           kpiCode: kpi.kpiCode,
           value,
           displayFormat: kpi.displayFormat,
           decimalPlaces: kpi.decimalPlaces,
-          ragStatus,
+          ragStatus: rag.ragStatus,
+          ragExclusionReason: rag.ragExclusionReason,
         };
       } else if (kpi.aggregationMethodFu === AggregationMethod.WEIGHTED_AVG) {
         // T-177 step 2: same re-derivation as calculateFu's WEIGHTED_AVG
@@ -347,26 +333,19 @@ export class KpiEngineService {
         // T-177 S4: same rationale as calculateFu's WEIGHTED_AVG branch —
         // the plan's RAG for a ratio KPI grades the plan's own recomputed
         // value, not the worst RAG among its FUs (see comment there).
-        let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (
-          coverageRatio === 1 &&
-          value !== null &&
-          kpi.ragGreenThreshold !== undefined &&
-          kpi.ragGreenThreshold !== null
-        ) {
-          ragStatus = this.determineRagStatus(
-            value,
-            kpi.ragGreenThreshold,
-            kpi.ragAmberThreshold,
-          );
-        }
+        // `T-342`: taşıyıcı için kapı artık **eksen kapsaması** (bkz.
+        // `resolveCarrierRag`) — plan seviyesindeki `INCR_TO`/`INCR_GP`/
+        // `INCR_PROMO_SPEND` bu noktada zaten toplanmıştır
+        // (`calculationOrder` ASC: 27 · 46 · 13 < 48).
+        const rag = this.resolveRagFor(kpi, results);
 
         results[kpi.kpiCode] = {
           kpiCode: kpi.kpiCode,
           value,
           displayFormat: kpi.displayFormat,
           decimalPlaces: kpi.decimalPlaces,
-          ragStatus,
+          ragStatus: rag.ragStatus,
+          ragExclusionReason: rag.ragExclusionReason,
           coverageRatio,
         };
       } else {
@@ -378,25 +357,20 @@ export class KpiEngineService {
           .filter((v): v is number => v !== null && v !== undefined);
         const coverageRatio =
           totalFuCount === 0 ? null : values.length / totalFuCount;
-        const fullCoverage = coverageRatio === 1;
+        // `T-343`: eski `fullCoverage` kapısı KALKTI — RAG yalnız
+        // taşıyıcıda doğuyor (`Z71 §1`), bu daldaki KPI'lar renk taşımıyor.
 
         const aggregated = this.aggregate(
           values,
           kpi.aggregationMethodFu || AggregationMethod.SUM,
         );
 
-        // Plan RAG: aggregate from FU RAGs — only on full coverage (T-177,
-        // product owner 2026-08-11; see calculateFu for the rationale).
-        let ragStatus: 'RED' | 'AMBER' | 'GREEN' | null = null;
-        if (fullCoverage) {
-          const fuRags = fuResults
-            .map((fr) => fr[kpi.kpiCode]?.ragStatus)
-            .filter(Boolean) as string[];
-
-          if (fuRags.includes('RED')) ragStatus = 'RED';
-          else if (fuRags.includes('AMBER')) ragStatus = 'AMBER';
-          else if (fuRags.length > 0) ragStatus = 'GREEN';
-        }
+        // `T-343`/`Z71 §1`: bkz. `calculateFu`'nun aynı dalındaki not —
+        // RAG yalnız taşıyıcıda doğar, FU renklerinin yayılımı yok.
+        const rag: RagQuadrantOutcome =
+          kpi.kpiCode === RAG_CARRIER_KPI_CODE
+            ? this.resolveCarrierRag(results)
+            : RAG_NOT_APPLICABLE;
 
         results[kpi.kpiCode] = {
           kpiCode: kpi.kpiCode,
@@ -404,7 +378,8 @@ export class KpiEngineService {
           coverageRatio,
           displayFormat: kpi.displayFormat,
           decimalPlaces: kpi.decimalPlaces,
-          ragStatus,
+          ragStatus: rag.ragStatus,
+          ragExclusionReason: rag.ragExclusionReason,
         };
       }
     }
@@ -413,28 +388,77 @@ export class KpiEngineService {
   }
 
   /**
-   * Determine RAG status based on configurable thresholds
+   * Bir KPI'nın RAG'ını çözer — **TEK KARAR NOKTASI** (`T-342`/`T-343`).
+   *
+   * ```
+   * taşıyıcı KPI (GP_ROI_PCT)  → İKİ EKSENLİ KADRAN     (Z66 §2 / Z68 §1)
+   * diğer her KPI              → RAG YOK
+   * ```
+   *
+   * ⛔ **`Z71 §1`: KADRAN TEK OTORİTEDİR.** Eşik tabanlı RAG yolu
+   * (`determineRagStatus` + FU/plan seviyesindeki *"çocukların en kötüsü"*
+   * yayılımı) `T-343` ile **kaldırıldı**. Gerekçe iki katmanlı:
+   *
+   * ```
+   * 1  ragAmberThreshold ÖLDÜ (Z70 §2) ⇒ üç bantlı eşik iki banda düşerdi
+   * 2  kalan alan artık `targetRoiThreshold` — semantiği RAG değil HEDEF.
+   *    Onunla rastgele bir KPI'yı RED/GREEN boyamak KAVRAM HATASI olurdu.
+   * ```
+   *
+   * ⚠️ **Ve bu bir yetenek kaybı değil, ölü kod kaldırma** — ölçüldü
+   * (`T-342` kapanış turu, `rg`): taşıyıcı DIŞINDA bir KPI'nın `ragStatus`'unu
+   * okuyan **sıfır** tüketici var; FE'nin dört `RAGCell` çağrısının dördü de
+   * `calculatedKpis['GP_ROI_PCT']` okuyor. Kataloğda eşiği olan tek KPI da
+   * zaten taşıyıcıydı.
    */
-  private determineRagStatus(
-    value: number,
-    greenThreshold?: number,
-    amberThreshold?: number,
-  ): 'RED' | 'AMBER' | 'GREEN' {
-    if (
-      greenThreshold !== undefined &&
-      greenThreshold !== null &&
-      value >= Number(greenThreshold)
-    ) {
-      return 'GREEN';
+  private resolveRagFor(
+    kpi: Kpi,
+    results: Record<string, CalculationResult>,
+  ): RagQuadrantOutcome {
+    if (kpi.kpiCode === RAG_CARRIER_KPI_CODE) {
+      return this.resolveCarrierRag(results);
     }
-    if (
-      amberThreshold !== undefined &&
-      amberThreshold !== null &&
-      value >= Number(amberThreshold)
-    ) {
-      return 'AMBER';
+    return RAG_NOT_APPLICABLE;
+  }
+
+  /**
+   * Taşıyıcı KPI'nın RAG'ı — **kadran** + **tanımlı-yokluk**.
+   *
+   * Eksenler (`INCR_TO` · `INCR_GP`) ve kapsam kalemi (`INCR_PROMO_SPEND`)
+   * `results`'tan okunur; üçünün de `calculationOrder`'ı taşıyıcınınkinden
+   * küçüktür (27 · 46 · 13 < 48, `kpi.seed.ts`), yani `getActiveKpis`'in
+   * ASC sıralaması bu noktada üçünün de hesaplanmış olmasını **garanti eder**.
+   *
+   * ⛔ Bir eksen kataloğda yoksa/pasifse renk **üretilmez** (`§2.5`: eksik
+   * girdi sessizce bir renge çökmez). Aynı şekilde kısmi kapsamada da renk
+   * yoktur — ve o durumda **dışlama sebebi de yazılmaz**: kısmi veriyle
+   * *"değerlendirme dışı"* demek, *"değerlendirilemedi"*yi meşru bir
+   * yoklukmuş gibi göstermek olurdu.
+   */
+  private resolveCarrierRag(
+    results: Record<string, CalculationResult>,
+  ): RagQuadrantOutcome {
+    const to = results[RAG_QUADRANT_TURNOVER_AXIS_KPI_CODE];
+    const gp = results[RAG_QUADRANT_PROFIT_AXIS_KPI_CODE];
+    const promo = results[RAG_EXCLUSION_SCOPE_KPI_CODE];
+
+    if (!to || !gp || !promo) {
+      this.logger.warn(
+        `RAG kadranı uygulanamadı: eksen/kapsam KPI'ı sonuçlarda yok ` +
+          `(${RAG_QUADRANT_TURNOVER_AXIS_KPI_CODE}=${!!to}, ` +
+          `${RAG_QUADRANT_PROFIT_AXIS_KPI_CODE}=${!!gp}, ` +
+          `${RAG_EXCLUSION_SCOPE_KPI_CODE}=${!!promo}) — renk üretilmedi.`,
+      );
+      return RAG_NOT_APPLICABLE;
     }
-    return 'RED';
+
+    for (const axis of [to, gp, promo]) {
+      if (axis.coverageRatio !== undefined && axis.coverageRatio !== 1) {
+        return RAG_NOT_APPLICABLE;
+      }
+    }
+
+    return resolveRagQuadrant(to.value, gp.value, promo.value);
   }
 
   /**

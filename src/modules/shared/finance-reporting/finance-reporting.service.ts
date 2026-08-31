@@ -61,6 +61,13 @@ import {
   moneyToMajorUnits,
 } from '../../../common/numeric/money';
 import { addMonthsClamped } from '../../../common/date/add-months';
+import { parseRagExclusionReason } from '../../../common/kpi/rag-quadrant';
+import {
+  TARGET_ROI_KPI_CODE,
+  evaluateTargetRoi,
+  isBelowTargetRoi,
+} from '../../../common/kpi/target-roi';
+import { KpiEngineService } from '../kpi-engine/kpi-engine.service';
 
 /**
  * A `numeric(18,2)` column value as a number in TRY — T-093.
@@ -159,6 +166,8 @@ export class FinanceReportingService {
     private readonly budgetThresholdService: BudgetThresholdService,
     private readonly budgetRepository: BudgetRepository,
     private readonly accessScopeService: AccessScopeService,
+    // `T-343`/`Z71 §1`: Target-ROI hedefi konfigürasyondan — sabitlenmez.
+    private readonly kpiEngine: KpiEngineService,
   ) {}
 
   /**
@@ -835,6 +844,8 @@ export class FinanceReportingService {
           // one. The carrier stays `null`; no `GRAY` value is introduced
           // (K-2.4.22a1 — meaning is read from coverage ratio, not the enum).
           ragStatus: plan.ragStatus ?? null,
+          // `T-342`/`Z71 §2`: aynı ayrım burada da — bkz. `getBudgetAtRisk`.
+          ragExclusionReason: parseRagExclusionReason(plan.ragExclusionReason),
           // T-216b / INV-N-004 / K-2.4.22c: plans.coverage_ratio (T-218) —
           // explicit-null discipline, same reasoning as ragStatus above.
           // Domain B here (shared/finance-reporting, money-float-domain-a.txt),
@@ -867,15 +878,38 @@ export class FinanceReportingService {
     tenantId: string,
     filters: ReportFilters,
   ): Promise<RiskReport> {
+    // ⛔ `Z71 §1` — FİLTRE `GREEN`'İ DE ÇEKİYOR, ve bu bir genişletme değil
+    // bir ONARIM. Ölçülmüş geçiş matrisi (`GP_ROI_PCT green=20 · amber=10`):
+    //
+    //   iTO > 0 dilimi     ÖNCE     SONRA    eski filtreyle sonuç
+    //   iGP ≤ 0            RED   →  AMBER    raporda kalır
+    //   0 < ROI < 10       RED   →  GREEN    ⛔ RAPORDAN DÜŞERDİ
+    //   10 ≤ ROI < 20      AMBER →  GREEN    ⛔ RAPORDAN DÜŞERDİ
+    //
+    // Kadran YÖN eksenini aldı; BÜYÜKLÜK ekseni ayrı ve adı Target-ROI.
+    // `GREEN` çekilmezse o iki dilim yalnız sessizleşmez — **karşı yönde
+    // güvence** verir ("İYİ"). Rapor onları `belowTargetRoiPlans` kovasında
+    // AYRI adla taşır ⇒ Finance'ın evreni küçülmez, DAHA DOĞRU ADLANIR.
     const plans = await this.getFilteredPlans(tenantId, {
       ...filters,
-      ragStatuses: ['RED', 'AMBER'],
+      ragStatuses: ['RED', 'AMBER', 'GREEN'],
     });
+
+    // `Z71 §1`: hedef KONFİGÜRASYONDAN okunur, burada sabitlenmez (`§2.3`).
+    // Okunamazsa `evaluateTargetRoi` `NOT_EVALUABLE` döner ve hiçbir plan
+    // bu kovaya girmez — uydurulmuş bir hedefe göre kova doldurulmaz.
+    const targetRoiKpi = await this.kpiEngine.getKpiConfig(
+      tenantId,
+      TARGET_ROI_KPI_CODE,
+    );
+    const targetRoiThreshold = targetRoiKpi?.targetRoiThreshold ?? null;
 
     const redPlans: RiskPlan[] = [];
     const amberPlans: RiskPlan[] = [];
+    const belowTargetRoiPlans: RiskPlan[] = [];
     let redPlansSpend = 0;
     let amberPlansSpend = 0;
+    let belowTargetRoiPlansSpend = 0;
 
     for (const plan of plans) {
       const planFus = await this.planFuRepository.find({
@@ -890,6 +924,13 @@ export class FinanceReportingService {
         }
       }
 
+      // Plan başına TEK değerlendirme — hem kova kararı hem DTO alanı
+      // buradan beslenir (`B1`: iki ayrı muamele bir kusur üretmişti).
+      const targetRoiEval = evaluateTargetRoi(
+        plan.overallRoi ?? null,
+        targetRoiThreshold,
+      );
+
       const riskPlan: RiskPlan = {
         planId: plan.id,
         planName: plan.planName,
@@ -901,6 +942,23 @@ export class FinanceReportingService {
         // falsification does not silently return if that filter is ever
         // loosened.
         ragStatus: plan.ragStatus ?? null,
+        // ⛔ `T-343` review `S2` — BU RAPORDA ALAN YAPISAL OLARAK `null`.
+        // Yukarıdaki filtre `ragStatuses: ['RED','AMBER','GREEN']` ve
+        // `getFilteredPlans` onu `plan.ragStatus IN (...)` diye uyguluyor;
+        // **SQL `IN`, `NULL`'ı DIŞLAR** ⇒ `LTA_ONLY` bir plan bu sorguya
+        // hiç giremez. Yani *"okuyucu bu alanla ayırt eder"* cümlesi BU
+        // uçta DOĞRU DEĞİLDİ — düzeltildi.
+        //
+        // ✅ Alan `getPlanPerformance`'ta CANLI (orada RAG filtresi yok,
+        // `LTA_ONLY` planlar rapora girer) — dekoratif değil, uca göre.
+        //
+        // ⚠️ AÇIK ÜRÜN SORUSU (Team Lead'e bildirildi): dışlanmış planlar
+        // bu rapora GİRMELİ Mİ? Girerlerse hangi kovaya düşecekleri ve
+        // `totalAtRisk`'in ne anlama geleceği bir hüküm gerektirir —
+        // ve `totalAtRisk` anlam değişimi bu turun KAPSAMI DIŞI (`S9`).
+        // Alan doldurulmaya devam ediyor: filtre değiştiği gün canlanır,
+        // ama bugün ne olduğu artık YAZILI.
+        ragExclusionReason: parseRagExclusionReason(plan.ragExclusionReason),
         // T-216b / INV-N-004 / K-2.4.22c: same field/rationale as
         // getPlanPerformance above.
         coverageRatio:
@@ -911,7 +969,21 @@ export class FinanceReportingService {
         // T-172: `null` ROI bir İŞ YARGISINA çökmez. `|| 0` "hesaplanamadı"yı
         // "%0, hedefin altında" diye gösteriyordu — INV-N-004 ailesi.
         gpRoi: plan.overallRoi ?? null,
-        riskLevel: plan.ragStatus === 'RED' ? 'HIGH' : 'MEDIUM',
+        riskLevel:
+          plan.ragStatus === 'RED'
+            ? 'HIGH'
+            : plan.ragStatus === 'AMBER'
+              ? 'MEDIUM'
+              : 'BELOW_TARGET',
+        // ⛔ `T-343` review `B1` — AYNI DOSYADA İKİ FARKLI MUAMELE VARDI:
+        // DTO için `Number(...)` yapılıyordu, KARŞILAŞTIRMA için ham dizge
+        // geçiliyordu. Karşılaştırma JS zorlaması sayesinde **tesadüfen**
+        // doğruydu. Artık tek kaynak: `evaluateTargetRoi` girdiyi kendisi
+        // normalize ediyor ve normalize edilmiş eşiği GERİ VERİYOR.
+        targetRoiThreshold:
+          targetRoiEval.kind === 'NOT_EVALUABLE'
+            ? null
+            : targetRoiEval.threshold,
       };
 
       if (plan.ragStatus === 'RED') {
@@ -920,10 +992,19 @@ export class FinanceReportingService {
       } else if (plan.ragStatus === 'AMBER') {
         amberPlans.push(riskPlan);
         amberPlansSpend += totalSpend;
+      } else if (isBelowTargetRoi(plan.ragStatus, targetRoiEval)) {
+        // `GREEN` ∧ ROI < hedef — kadranın konuşmadığı, ama sessizleşmemesi
+        // gereken dilim (`Z71 §1a`).
+        belowTargetRoiPlans.push(riskPlan);
+        belowTargetRoiPlansSpend += totalSpend;
       }
+      // ⛔ `else` BİLEREK BOŞ DEĞİL, AÇIKÇA YOK: hedefte/üstünde olan bir
+      // `GREEN` plan bu raporun konusu değildir. (`§2.5` "if yazıp else
+      // bırakmamak" yasağı, gerekçesi YAZILI olduğunda karşılanır.)
     }
 
-    const totalAtRisk = redPlansSpend + amberPlansSpend;
+    const totalAtRisk =
+      redPlansSpend + amberPlansSpend + belowTargetRoiPlansSpend;
 
     // Get total budget for risk percentage. T-270/Z21: calls the
     // non-throwing `computeBudgetUtilization` directly (not the public
@@ -949,13 +1030,20 @@ export class FinanceReportingService {
     }
     if (amberPlans.length > 0) {
       recommendations.push(
-        `${amberPlans.length} AMBER status plans should be monitored closely`,
+        `${amberPlans.length} AMBER status plans (kârsız büyüme) should be monitored closely`,
+      );
+    }
+    if (belowTargetRoiPlans.length > 0) {
+      recommendations.push(
+        `${belowTargetRoiPlans.length} plans are profitable but below the Target-ROI threshold`,
       );
     }
 
     return {
       redPlansSpend,
       amberPlansSpend,
+      belowTargetRoiPlansSpend,
+      belowTargetRoiPlans,
       totalAtRisk,
       riskPercentage,
       redPlans,

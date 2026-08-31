@@ -9,6 +9,8 @@ import {
 import { ApprovalWorkflowService } from './approval-workflow.service';
 import { PlanRepository } from './plan.repository';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
+import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
+import { Kpi } from '../../../../database/entities/kpi.entity';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
@@ -29,6 +31,7 @@ describe('ApprovalWorkflowService', () => {
   let budgetService: jest.Mocked<BudgetService>;
   let spendCalc: jest.Mocked<SpendCalculationService>;
   let approvalHistoryRepo: jest.Mocked<Repository<PlanApprovalHistory>>;
+  let kpiEngine: { getKpiConfig: jest.Mock };
   // T-034b — see plan.service.spec.ts's identical field comment.
   let queryRunnerManager: { count: jest.Mock; getRepository: jest.Mock };
   let queryRunner: {
@@ -164,10 +167,21 @@ describe('ApprovalWorkflowService', () => {
             applyToQueryBuilder: jest.fn(),
           },
         },
+        {
+          // `T-343`/`Z71 §1`: Target-ROI hedefi konfigürasyondan okunuyor.
+          // ⛔ Mock `null` DÖNER: eşik okunamadığında below-target yolu
+          // hiçbir plan işaretlememeli (`§2.5` — uydurulmuş hedefe yargı
+          // yok). Bu, testlerin mevcut beklentilerini DEĞİŞTİRMEZ ve
+          // varsayılan davranışın "sessiz eşik" OLMADIĞINI de pinler.
+          provide: KpiEngineService,
+          useValue: { getKpiConfig: jest.fn().mockResolvedValue(null) },
+        },
       ],
     }).compile();
 
     service = module.get<ApprovalWorkflowService>(ApprovalWorkflowService);
+
+    kpiEngine = module.get(KpiEngineService);
     planRepo = module.get(PlanRepository);
     approvalService = module.get(ApprovalService);
     budgetService = module.get(BudgetService);
@@ -817,97 +831,232 @@ describe('ApprovalWorkflowService', () => {
       expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
     });
 
-    it('should add warning for RED RAG status', async () => {
-      const mockEnvelope = {
-        id: 'envelope-1',
-        allocatedAmount: 200000,
-      };
+    /**
+     * `Z70 §1` + `Z71 §1` — UYARI KATMANI KADRAN DİLİNE ÇEVRİLDİ.
+     *
+     * ⛔ Bu blok eskiden **tek** bir testti (*"should add warning for RED RAG
+     * status"*) çünkü **tek bir kötü-durum** vardı. Kadran (`Z66 §2`) o tek
+     * durumu üçe böldü ve `T-342`'nin ilk turu uyarı katmanını **hiç
+     * güncellemedi** — ölçülmüş sonuç (geçiş matrisi, `green=20 · amber=10`):
+     *
+     * ```
+     * iTO > 0 dilimi     ÖNCE     SONRA    uyarı
+     * iGP ≤ 0            RED   →  AMBER    KAYBOLUYORDU
+     * 0 < ROI < 10       RED   →  GREEN    KAYBOLUYORDU  ⛔ ve yerine "İYİ"
+     * 10 ≤ ROI < 20      AMBER →  GREEN    KAYBOLUYORDU  ⛔ ve yerine "İYİ"
+     * ```
+     *
+     * ⚠️ İkinci ve üçüncü satır bir sessizleşme DEĞİL, **karşı yönde
+     * güvence**ydi — `DISIPLIN`: *"beklenen yöne yanılan hata, ters yöne
+     * yanılandan tehlikelidir."*
+     */
+    describe('RAG + Target-ROI uyarıları (Z70 §1 · Z71 §1)', () => {
+      /**
+       * ⛔ `T-343` review `B1` — **MOCK ÜRETİMİN ŞEKLİNE BAĞLANDI.**
+       * Eşik parametresi eskiden `number | null`'dı; üretimde `pg` sürücüsü
+       * `numeric` kolonu **DİZGE** döndürüyor (`"20.0000"`, canlı DB'de
+       * ölçüldü) çünkü `Kpi` entity'sinde transformer YOK. Mock sayı
+       * verdiği için testler **doğru olan mock'u** ölçüyordu ve üretimdeki
+       * `toFixed` çökmesini göremiyordu (`§2.7`: *"bir mock, taklit ettiği
+       * şeyin TİPİNE bağlanmalı"*). Artık iki şekil de veriliyor.
+       */
+      async function submitWithPlanState(
+        planOverrides: Partial<Plan>,
+        targetRoiThreshold: number | string | null = null,
+      ) {
+        const mockEnvelope = {
+          id: 'envelope-1',
+          allocatedAmount: 200000,
+        };
 
-      const mockBudgetStatus = {
-        totalAllocation: 200000,
-        available: 150000,
-        reserved: 30000,
-        consumed: 20000,
-        planned: 0,
-        status: UtilizationStatus.GREEN,
-      };
+        const mockBudgetStatus = {
+          totalAllocation: 200000,
+          available: 150000,
+          reserved: 30000,
+          consumed: 20000,
+          planned: 0,
+          status: UtilizationStatus.GREEN,
+        };
 
-      const mockApprovalRequest = {
-        id: mockApprovalRequestId,
-        requestType: ApprovalRequestType.PLAN,
-      };
+        const mockApprovalRequest = {
+          id: mockApprovalRequestId,
+          requestType: ApprovalRequestType.PLAN,
+        };
 
-      planRepo.findById.mockResolvedValue({
-        ...mockPlan,
-        ragStatus: 'RED',
-      } as Plan);
-      spendCalc.calculateAllSpendsForFU.mockResolvedValue({
-        fuId: 'plan-fu-1',
-        skuBreakdowns: [],
-        aggregatedBase: {
-          ltaOnInvoice: 0,
-          ltaOffInvoice: 0,
-          totalOnInvoice: 0,
-          totalOffInvoice: 0,
-          totalSpend: 0,
-        },
-        aggregatedPlanned: {
-          ltaOnInvoice: 0,
-          ltaOffInvoice: 0,
-          promoOnInvoice: {},
-          promoOffInvoice: {},
-          totalPromoOnInvoice: 10000,
-          totalPromoOffInvoice: 5000,
-          totalOnInvoice: 10000,
-          totalOffInvoice: 5000,
-          totalSpend: 15000,
-        },
-        aggregatedIncremental: {
-          onInvoice: 10000,
-          offInvoice: 5000,
-          total: 15000,
-        },
-      } as any);
-      budgetService.findEnvelopeByDimensions.mockResolvedValue(
-        mockEnvelope as any,
-      );
-      budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
-      // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
-      // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
-      // checkBudgetAvailability's combined-pool branch calls
-      // checkEnvelopeAvailability ONCE with (on+off).
-      budgetService.checkEnvelopeAvailability.mockImplementation(
-        (_tenantId: string, _envelopeId: string, amount: number) =>
-          Promise.resolve({
-            available: mockBudgetStatus.available,
-            sufficient: amount <= mockBudgetStatus.available,
-          }),
-      );
-      approvalService.createRequest.mockResolvedValue(
-        mockApprovalRequest as any,
-      );
-      planRepo.findByIdForUpdate.mockResolvedValue({
-        ...mockPlan,
-        status: PlanStatus.DRAFT,
-        version: 1,
-      } as Plan);
-      planRepo.updateStatusCas.mockResolvedValue(1);
-      budgetService.reserveTypedForPlan.mockResolvedValue([{} as any]);
-      approvalHistoryRepo.create.mockReturnValue({} as any);
-      approvalHistoryRepo.save.mockResolvedValue({} as any);
+        planRepo.findById.mockResolvedValue({
+          ...mockPlan,
+          ...planOverrides,
+        } as Plan);
+        spendCalc.calculateAllSpendsForFU.mockResolvedValue({
+          fuId: 'plan-fu-1',
+          skuBreakdowns: [],
+          aggregatedBase: {
+            ltaOnInvoice: 0,
+            ltaOffInvoice: 0,
+            totalOnInvoice: 0,
+            totalOffInvoice: 0,
+            totalSpend: 0,
+          },
+          aggregatedPlanned: {
+            ltaOnInvoice: 0,
+            ltaOffInvoice: 0,
+            promoOnInvoice: {},
+            promoOffInvoice: {},
+            totalPromoOnInvoice: 10000,
+            totalPromoOffInvoice: 5000,
+            totalOnInvoice: 10000,
+            totalOffInvoice: 5000,
+            totalSpend: 15000,
+          },
+          aggregatedIncremental: {
+            onInvoice: 10000,
+            offInvoice: 5000,
+            total: 15000,
+          },
+        } as any);
+        budgetService.findEnvelopeByDimensions.mockResolvedValue(
+          mockEnvelope as any,
+        );
+        budgetService.getBudgetStatus.mockResolvedValue(mockBudgetStatus);
+        // T-019b: findEnvelopeByDimensions resolves the SAME mockEnvelope for
+        // both ON_INVOICE and OFF_INVOICE (unsplit/legacy fixture) —
+        // checkBudgetAvailability's combined-pool branch calls
+        // checkEnvelopeAvailability ONCE with (on+off).
+        budgetService.checkEnvelopeAvailability.mockImplementation(
+          (_tenantId: string, _envelopeId: string, amount: number) =>
+            Promise.resolve({
+              available: mockBudgetStatus.available,
+              sufficient: amount <= mockBudgetStatus.available,
+            }),
+        );
+        approvalService.createRequest.mockResolvedValue(
+          mockApprovalRequest as any,
+        );
+        planRepo.findByIdForUpdate.mockResolvedValue({
+          ...mockPlan,
+          status: PlanStatus.DRAFT,
+          version: 1,
+        } as Plan);
+        planRepo.updateStatusCas.mockResolvedValue(1);
+        budgetService.reserveTypedForPlan.mockResolvedValue([{} as any]);
+        approvalHistoryRepo.create.mockReturnValue({} as any);
+        approvalHistoryRepo.save.mockResolvedValue({} as any);
 
-      const result = await service.submitForApproval(
-        mockPlanId,
-        mockTenantId,
-        mockUserId,
-        submitDto,
-      );
+        kpiEngine.getKpiConfig.mockResolvedValue(
+          targetRoiThreshold === null
+            ? null
+            : ({ targetRoiThreshold } as unknown as Kpi),
+        );
 
-      expect(result.success).toBe(true);
-      expect(result.budgetCheck.warnings).toBeDefined();
-      expect(
-        result.budgetCheck.warnings?.some((w) => w.includes('RED RAG status')),
-      ).toBe(true);
+        const result = await service.submitForApproval(
+          mockPlanId,
+          mockTenantId,
+          mockUserId,
+          submitDto,
+        );
+        expect(result.success).toBe(true);
+        return result.budgetCheck.warnings ?? [];
+      }
+
+      it('`RED` ⇒ "ciro kaybı" — kadran dilinde, eski genel cümle DEĞİL', async () => {
+        const warnings = await submitWithPlanState({ ragStatus: 'RED' });
+        expect(warnings.some((w) => w.includes('Ciro kaybı'))).toBe(true);
+        // ⛔ AYIRT EDİCİ: `RED` uyarısı `AMBER` cümlesini TAŞIMAZ.
+        expect(warnings.some((w) => w.includes('Kârsız büyüme'))).toBe(false);
+      });
+
+      it('⭐ `AMBER` ⇒ "kârsız büyüme" — kadranın DOĞURDUĞU uyarı', async () => {
+        // Bu satır `T-342`'nin ilk turunda YOKTU: `AMBER` doğdu, uyarı
+        // yüzeyinden düştü. `Z70 §1` onu tam amaçlandığı yere koyuyor.
+        const warnings = await submitWithPlanState({ ragStatus: 'AMBER' });
+        expect(warnings.some((w) => w.includes('Kârsız büyüme'))).toBe(true);
+        expect(warnings.some((w) => w.includes('Ciro kaybı'))).toBe(false);
+      });
+
+      it("⛔ `B1` — eşik `pg`'den DİZGE gelse de uyarı ÜRETİLİR, ÇÖKMEZ", async () => {
+        // ⛔ Üretimin GERÇEK şekli: `"20.0000"`. Normalizasyon
+        // `evaluateTargetRoi`'de olmasaydı bu test bir `TypeError` ile
+        // düşerdi (`threshold.toFixed is not a function`) — reprodüksiyon
+        // koşuldu ve çökme GÖRÜLDÜ (`T-343` kapanış raporu).
+        const warnings = await submitWithPlanState(
+          { ragStatus: 'GREEN', overallRoi: 10.5 },
+          '20.0000',
+        );
+        expect(warnings.some((w) => w.includes('Hedefin altında'))).toBe(true);
+        // Ve mesaj SAYISAL biçimlenmiş olmalı — dizge sızarsa "%20.0000"
+        // ya da bir çökme görürdük.
+        expect(warnings.some((w) => w.includes('%20.0'))).toBe(true);
+      });
+
+      it("⛔ `B1` — ÇÖZÜLEMEYEN dizge eşik ⇒ uyarı YOK (`0`'a çökmez)", async () => {
+        const warnings = await submitWithPlanState(
+          { ragStatus: 'GREEN', overallRoi: 1 },
+          'yirmi',
+        );
+        expect(warnings.some((w) => w.includes('Hedefin altında'))).toBe(false);
+      });
+
+      it('⭐ `GREEN` ∧ ROI < hedef ⇒ "hedefin altında" — SESSİZLEŞMEYEN dilim', async () => {
+        // `10 ≤ ROI < 20`: eski model `AMBER` derdi, kadran `GREEN` diyor.
+        // Bu uyarı olmasaydı ekranda YALNIZCA "İYİ" kalırdı.
+        const warnings = await submitWithPlanState(
+          { ragStatus: 'GREEN', overallRoi: 10.5 },
+          20,
+        );
+        expect(warnings.some((w) => w.includes('Hedefin altında'))).toBe(true);
+        // ⛔ Ve kadran uyarılarından HİÇBİRİ eşlik etmez — iki eksen AYRI.
+        expect(warnings.some((w) => w.includes('Ciro kaybı'))).toBe(false);
+        expect(warnings.some((w) => w.includes('Kârsız büyüme'))).toBe(false);
+      });
+
+      it('`GREEN` ∧ ROI ≥ hedef ⇒ HİÇBİR uyarı yok (yanlış alarm üretilmez)', async () => {
+        const warnings = await submitWithPlanState(
+          { ragStatus: 'GREEN', overallRoi: 25 },
+          20,
+        );
+        expect(warnings.some((w) => w.includes('Hedefin altında'))).toBe(false);
+      });
+
+      it('⛔ hedef KONFİGÜRE DEĞİLSE below-target uyarısı ÜRETİLMEZ (`§2.5`)', async () => {
+        // Uydurulmuş bir hedefe göre yargı vermek, sessiz varsayılanın
+        // uyarı katmanındaki hâli olurdu.
+        const warnings = await submitWithPlanState(
+          { ragStatus: 'GREEN', overallRoi: 1 },
+          null,
+        );
+        expect(warnings.some((w) => w.includes('Hedefin altında'))).toBe(false);
+      });
+
+      it('⭐ `S1` — renk yok + `LTA_ONLY` ⇒ "değerlendirme dışı", KUSUR DEĞİL', async () => {
+        const warnings = await submitWithPlanState({
+          ragStatus: null,
+          ragExclusionReason: 'LTA_ONLY',
+        });
+        expect(warnings.some((w) => w.includes('Değerlendirme dışı'))).toBe(
+          true,
+        );
+        // ⛔ AYIRT EDİCİ: meşru yokluk "hesaplanamadı" diye raporlanmaz.
+        expect(warnings.some((w) => w.includes('hesaplanamadı'))).toBe(false);
+      });
+
+      it('renk yok + sebep yok ⇒ "RAG hesaplanamadı" — ve bu AYRI bir cümle', async () => {
+        const warnings = await submitWithPlanState({
+          ragStatus: null,
+          ragExclusionReason: null,
+        });
+        expect(warnings.some((w) => w.includes('hesaplanamadı'))).toBe(true);
+        expect(warnings.some((w) => w.includes('Değerlendirme dışı'))).toBe(
+          false,
+        );
+      });
+
+      it('tanınmayan bir dışlama sebebi MEŞRU YOKLUK sayılmaz', async () => {
+        const warnings = await submitWithPlanState({
+          ragStatus: null,
+          ragExclusionReason: 'SOMETHING_NEW',
+        });
+        expect(warnings.some((w) => w.includes('hesaplanamadı'))).toBe(true);
+      });
     });
 
     // -----------------------------------------------------------------

@@ -57,8 +57,6 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
     kpiCode: 'INCR_GP',
     calculationOrder: 1,
     aggregationMethodFu: AggregationMethod.SUM,
-    ragGreenThreshold: 1000,
-    ragAmberThreshold: 500,
   });
 
   const TOTAL_PLANNED_SPEND = makeKpi({
@@ -68,13 +66,48 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
     // Gerçek KPI'da olduğu gibi eşik yok — harcamanın kendi rengi olmaz.
   });
 
+  // `T-342` / `Z66 §2` — RAG artık İKİ EKSENLİ KADRAN. Taşıyıcı
+  // (`GP_ROI_PCT`) rengini KENDİ DEĞERİNDEN değil, `INCR_TO`/`INCR_GP`'den
+  // alır; `INCR_PROMO_SPEND` ise "bu bir promosyon değerlendirmesi mi"
+  // kapısıdır (`S1`). Bu üçlü olmadan motor renk ÜRETMEZ — ve bu
+  // fixture'ın `T-342` öncesi hâli tam olarak öyleydi (üç test `null` renk
+  // aldı; §2.5: eksik girdi sessizce bir renge çökmez).
+  const INCR_TO = makeKpi({
+    kpiCode: 'INCR_TO',
+    calculationOrder: 0,
+    aggregationMethodFu: AggregationMethod.SUM,
+  });
+
+  const INCR_PROMO_SPEND = makeKpi({
+    kpiCode: 'INCR_PROMO_SPEND',
+    calculationOrder: 0,
+    aggregationMethodFu: AggregationMethod.SUM,
+  });
+
   const GP_ROI_PCT = makeKpi({
     kpiCode: 'GP_ROI_PCT',
     calculationOrder: 3,
     aggregationMethodFu: AggregationMethod.WEIGHTED_AVG,
     formulaText: 'INCR_GP / TOTAL_PLANNED_SPEND * 100',
-    ragGreenThreshold: 5,
-    ragAmberThreshold: 1,
+    // `T-343`: eşik alanları ÖLDÜ / YENİDEN ADLANDI. Taşıyıcının rengi artık
+    // yalnız KADRANDAN gelir; bu fixture'da eşik vermek hiçbir şeyi
+    // değiştirmezdi — kaldırıldı ki test model değişimini YANSITSIN.
+  });
+
+  /**
+   * `T-342`: bir fixture satırına kadran eksenlerini ekler.
+   * Değerler AÇIKÇA verilir (varsayılan yok) — bir eksenin sessizce `0`
+   * gelmesi `INCR_PROMO_SPEND === 0` kapısını tetikler ve testi
+   * *"değerlendirme dışı"* moduna sokardı.
+   */
+  const withAxes = (
+    row: Record<string, CalculationResult>,
+    incrTo: number | null,
+    incrPromoSpend: number | null,
+  ): Record<string, CalculationResult> => ({
+    ...row,
+    INCR_TO: skuResult(incrTo, null),
+    INCR_PROMO_SPEND: skuResult(incrPromoSpend, null),
   });
 
   const skuResult = (
@@ -92,41 +125,68 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
   //   SKU_A: INCR_GP=500,  SPEND=10000 -> per-SKU oran = 500/10000*100   =  5%
   //   SKU_B: INCR_GP=600,  SPEND=90000 -> per-SKU oran = 600/90000*100  =  0.6666666666666666%
   //   SKU_C: INCR_GP=1000, SPEND=5000  -> per-SKU oran = 1000/5000*100  = 20%
+  // `T-342`: kadran eksenleri — `iTO` üçünde de pozitif (Σ=3000) ve
+  // `iGP` toplamı pozitif (Σ=2100) ⇒ FU rengi `GREEN`. Promo harcaması
+  // sıfırdan FARKLI (Σ=300) ⇒ `LTA_ONLY` kapısı KAPALI.
   const fullCoverageSkuResults: Array<Record<string, CalculationResult>> = [
-    {
-      INCR_GP: skuResult(500, 'AMBER'),
-      TOTAL_PLANNED_SPEND: skuResult(10000, null),
-      GP_ROI_PCT: skuResult(5, null),
-    },
-    {
-      INCR_GP: skuResult(600, 'AMBER'),
-      TOTAL_PLANNED_SPEND: skuResult(90000, null),
-      GP_ROI_PCT: skuResult(0.6666666666666666, null),
-    },
-    {
-      INCR_GP: skuResult(1000, 'GREEN'),
-      TOTAL_PLANNED_SPEND: skuResult(5000, null),
-      GP_ROI_PCT: skuResult(20, null),
-    },
+    withAxes(
+      {
+        INCR_GP: skuResult(500, 'AMBER'),
+        TOTAL_PLANNED_SPEND: skuResult(10000, null),
+        GP_ROI_PCT: skuResult(5, null),
+      },
+      1000,
+      100,
+    ),
+    withAxes(
+      {
+        INCR_GP: skuResult(600, 'AMBER'),
+        TOTAL_PLANNED_SPEND: skuResult(90000, null),
+        GP_ROI_PCT: skuResult(0.6666666666666666, null),
+      },
+      1000,
+      100,
+    ),
+    withAxes(
+      {
+        INCR_GP: skuResult(1000, 'GREEN'),
+        TOTAL_PLANNED_SPEND: skuResult(5000, null),
+        GP_ROI_PCT: skuResult(20, null),
+      },
+      1000,
+      100,
+    ),
   ];
 
   // --- Kısmi kapsama (2/3 SKU) — SKU_C'nin COGS'u eksik (INCR_GP null) ---
   const partialCoverageSkuResults: Array<Record<string, CalculationResult>> = [
-    {
-      INCR_GP: skuResult(500, 'AMBER'),
-      TOTAL_PLANNED_SPEND: skuResult(10000, null),
-      GP_ROI_PCT: skuResult(5, null),
-    },
-    {
-      INCR_GP: skuResult(600, 'AMBER'),
-      TOTAL_PLANNED_SPEND: skuResult(90000, null),
-      GP_ROI_PCT: skuResult(0.6666666666666666, null),
-    },
-    {
-      INCR_GP: skuResult(null, null), // eksik COGS -> SKU-level null
-      TOTAL_PLANNED_SPEND: skuResult(5000, null),
-      GP_ROI_PCT: skuResult(null, null),
-    },
+    withAxes(
+      {
+        INCR_GP: skuResult(500, 'AMBER'),
+        TOTAL_PLANNED_SPEND: skuResult(10000, null),
+        GP_ROI_PCT: skuResult(5, null),
+      },
+      1000,
+      100,
+    ),
+    withAxes(
+      {
+        INCR_GP: skuResult(600, 'AMBER'),
+        TOTAL_PLANNED_SPEND: skuResult(90000, null),
+        GP_ROI_PCT: skuResult(0.6666666666666666, null),
+      },
+      1000,
+      100,
+    ),
+    withAxes(
+      {
+        INCR_GP: skuResult(null, null), // eksik COGS -> SKU-level null
+        TOTAL_PLANNED_SPEND: skuResult(5000, null),
+        GP_ROI_PCT: skuResult(null, null),
+      },
+      1000,
+      100,
+    ),
   ];
 
   beforeEach(async () => {
@@ -153,13 +213,17 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
   describe('calculateFu — tam kapsama (3/3 SKU)', () => {
     beforeEach(() => {
       kpiRepo.find.mockResolvedValue([
+        // Eksenler ÖNCE: `getActiveKpis` repo sırasını korur ve taşıyıcı
+        // işlenirken `results`'ta hazır olmaları gerekir (`T-342`).
+        INCR_TO,
+        INCR_PROMO_SPEND,
         INCR_GP,
         TOTAL_PLANNED_SPEND,
         GP_ROI_PCT,
       ]);
     });
 
-    it("INCR_GP (SUM): coverageRatio 1, ragStatus SKU'ların worst-case'i", async () => {
+    it('INCR_GP (SUM): coverageRatio 1 — ve RAG TAŞIMAZ (taşıyıcı değil)', async () => {
       const result = await service.calculateFu(
         'tenant-1',
         fullCoverageSkuResults,
@@ -169,8 +233,19 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
       // elle: 500 + 600 + 1000
       expect(result.INCR_GP.value).toBe(2100);
       expect(result.INCR_GP.coverageRatio).toBe(1);
-      // skuRags = [AMBER, AMBER, GREEN] -> RED yok, AMBER var -> worst-case AMBER
-      expect(result.INCR_GP.ragStatus).toBe('AMBER');
+      // ⛔ `T-343` / `Z71 §1` — **KADRAN TEK OTORİTE.** Eski beklenti
+      // `AMBER` idi ve *"çocukların en kötüsü"* yayılımından geliyordu; o
+      // yayılım eşik-RAG'a bağlıydı ve eşik-RAG öldü.
+      //
+      // ⚠️ Bu bir yetenek kaybı DEĞİL, ölü kod kaldırma: ölçüldü (`rg`,
+      // `T-342` kapanış turu) — taşıyıcı DIŞINDA bir KPI'nın `ragStatus`'unu
+      // okuyan SIFIR tüketici var (FE'nin dört `RAGCell` çağrısının dördü de
+      // `calculatedKpis['GP_ROI_PCT']`). `INCR_GP`'nin rengi hiçbir ekrana
+      // ulaşmıyordu.
+      expect(result.INCR_GP.ragStatus).toBeNull();
+      // Fixture'ın SKU'ları hâlâ renk taşıyor — yani `null` sonuç
+      // "girdi yoktu"dan değil, "yayılım KALDIRILDI"dan geliyor.
+      expect(fullCoverageSkuResults[0].INCR_GP.ragStatus).toBe('AMBER');
 
       // elle: 10000 + 90000 + 5000
       expect(result.TOTAL_PLANNED_SPEND.value).toBe(105000);
@@ -187,8 +262,12 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
       // elle: Σ INCR_GP=2100, Σ SPEND=105000 -> 2100/105000*100 = 2 (tam)
       expect(result.GP_ROI_PCT.value).toBeCloseTo(2, 9);
       expect(result.GP_ROI_PCT.coverageRatio).toBe(1);
-      // green=5, amber=1 -> 2 < green, >= amber -> AMBER
-      expect(result.GP_ROI_PCT.ragStatus).toBe('AMBER');
+      // ⛔ `T-342` — RAG MODELİ DEĞİŞTİ. Eski beklenti `AMBER` idi ve
+      // taşıyıcının KENDİ değerinden (`2` ∈ [amber=1, green=5)) geliyordu.
+      // Artık renk eksenlerden okunur: Σ iTO=3000 > 0 ∧ Σ iGP=2100 > 0
+      // ⇒ `GREEN`. Değerin (`2`) rengin girdisi OLMADIĞINI okuyan satır:
+      expect(result.GP_ROI_PCT.ragStatus).toBe('GREEN');
+      expect(result.GP_ROI_PCT.ragExclusionReason ?? null).toBeNull();
     });
 
     it("KONTROL GRUBU: eski ağırlıksız mean(oran) AYNI fixture'de FARKLI bir sayı üretir", () => {
@@ -209,6 +288,10 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
   describe('calculateFu — kısmi kapsama (2/3 SKU, SKU_C eksik COGS)', () => {
     beforeEach(() => {
       kpiRepo.find.mockResolvedValue([
+        // Eksenler ÖNCE: `getActiveKpis` repo sırasını korur ve taşıyıcı
+        // işlenirken `results`'ta hazır olmaları gerekir (`T-342`).
+        INCR_TO,
+        INCR_PROMO_SPEND,
         INCR_GP,
         TOTAL_PLANNED_SPEND,
         GP_ROI_PCT,
@@ -297,6 +380,10 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
   describe('iki seviye: SKU→FU→Plan', () => {
     it('FU_X (kısmi) + FU_Y (tam) plan seviyesinde birleşiyor — kapsama ÇARPIMSAL değil (şartname)', async () => {
       kpiRepo.find.mockResolvedValue([
+        // Eksenler ÖNCE: `getActiveKpis` repo sırasını korur ve taşıyıcı
+        // işlenirken `results`'ta hazır olmaları gerekir (`T-342`).
+        INCR_TO,
+        INCR_PROMO_SPEND,
         INCR_GP,
         TOTAL_PLANNED_SPEND,
         GP_ROI_PCT,
@@ -322,9 +409,9 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
       // T-177 notu). Bilinen sınır, bilinçli — pinleniyor, "düzeltilmiyor".
       expect(plan.INCR_GP.value).toBe(3200); // 1100 + 2100
       expect(plan.INCR_GP.coverageRatio).toBe(1);
-      // fuRags: FU_X.INCR_GP.ragStatus=null (filtrelenir), FU_Y.INCR_GP.ragStatus='AMBER'
-      // -> worst-case AMBER
-      expect(plan.INCR_GP.ragStatus).toBe('AMBER');
+      // `T-343`: FU renklerinin plana yayılımı da kaldırıldı — bkz.
+      // `calculateFu`'daki aynı beklenti.
+      expect(plan.INCR_GP.ragStatus).toBeNull();
 
       expect(plan.TOTAL_PLANNED_SPEND.value).toBe(210000); // 105000 + 105000
       expect(plan.TOTAL_PLANNED_SPEND.coverageRatio).toBe(1);
@@ -350,8 +437,10 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
       // ⚠️ Aynı sebeple kapsama da 1 görünüyor: FU_X bir değer ürettiği için
       // "çözüldü" sayılıyor, kendi iç kısmi kapsaması (0.667) taşınmıyor.
       expect(plan.GP_ROI_PCT.coverageRatio).toBe(1);
-      // 1.52 -> < green(5), >= amber(1) -> AMBER
-      expect(plan.GP_ROI_PCT.ragStatus).toBe('AMBER');
+      // `T-342`: plan rengi de kadrandan — Σ iTO (2 FU × 3000) > 0 ∧
+      // Σ iGP (1100 + 2100) > 0 ⇒ `GREEN`. Eski eşik beklentisi `AMBER`di
+      // (`1.52` ∈ [1, 5)) ve taşıyıcının kendi değerine bakıyordu.
+      expect(plan.GP_ROI_PCT.ragStatus).toBe('GREEN');
     });
   });
 
@@ -372,25 +461,41 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
     const denominatorNarrowingSkuResults: Array<
       Record<string, CalculationResult>
     > = [
-      {
-        INCR_GP: skuResult(null, null),
-        TOTAL_PLANNED_SPEND: skuResult(1000, null),
-        GP_ROI_PCT: skuResult(null, null),
-      },
-      {
-        INCR_GP: skuResult(200, null),
-        TOTAL_PLANNED_SPEND: skuResult(null, null),
-        GP_ROI_PCT: skuResult(null, null),
-      },
-      {
-        INCR_GP: skuResult(300, 'GREEN'),
-        TOTAL_PLANNED_SPEND: skuResult(2000, null),
-        GP_ROI_PCT: skuResult(15, 'GREEN'),
-      },
+      withAxes(
+        {
+          INCR_GP: skuResult(null, null),
+          TOTAL_PLANNED_SPEND: skuResult(1000, null),
+          GP_ROI_PCT: skuResult(null, null),
+        },
+        1000,
+        100,
+      ),
+      withAxes(
+        {
+          INCR_GP: skuResult(200, null),
+          TOTAL_PLANNED_SPEND: skuResult(null, null),
+          GP_ROI_PCT: skuResult(null, null),
+        },
+        1000,
+        100,
+      ),
+      withAxes(
+        {
+          INCR_GP: skuResult(300, 'GREEN'),
+          TOTAL_PLANNED_SPEND: skuResult(2000, null),
+          GP_ROI_PCT: skuResult(15, 'GREEN'),
+        },
+        1000,
+        100,
+      ),
     ];
 
     beforeEach(() => {
       kpiRepo.find.mockResolvedValue([
+        // Eksenler ÖNCE: `getActiveKpis` repo sırasını korur ve taşıyıcı
+        // işlenirken `results`'ta hazır olmaları gerekir (`T-342`).
+        INCR_TO,
+        INCR_PROMO_SPEND,
         INCR_GP,
         TOTAL_PLANNED_SPEND,
         GP_ROI_PCT,
@@ -434,25 +539,41 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
     // RED baskın çıkardı.
     const oneSkuRedFuGreenSkuResults: Array<Record<string, CalculationResult>> =
       [
-        {
-          INCR_GP: skuResult(10, null),
-          TOTAL_PLANNED_SPEND: skuResult(100000, null),
-          GP_ROI_PCT: skuResult(0.01, 'RED'),
-        },
-        {
-          INCR_GP: skuResult(6000, null),
-          TOTAL_PLANNED_SPEND: skuResult(10000, null),
-          GP_ROI_PCT: skuResult(60, 'GREEN'),
-        },
-        {
-          INCR_GP: skuResult(6000, null),
-          TOTAL_PLANNED_SPEND: skuResult(10000, null),
-          GP_ROI_PCT: skuResult(60, 'GREEN'),
-        },
+        withAxes(
+          {
+            INCR_GP: skuResult(10, null),
+            TOTAL_PLANNED_SPEND: skuResult(100000, null),
+            GP_ROI_PCT: skuResult(0.01, 'RED'),
+          },
+          1000,
+          100,
+        ),
+        withAxes(
+          {
+            INCR_GP: skuResult(6000, null),
+            TOTAL_PLANNED_SPEND: skuResult(10000, null),
+            GP_ROI_PCT: skuResult(60, 'GREEN'),
+          },
+          1000,
+          100,
+        ),
+        withAxes(
+          {
+            INCR_GP: skuResult(6000, null),
+            TOTAL_PLANNED_SPEND: skuResult(10000, null),
+            GP_ROI_PCT: skuResult(60, 'GREEN'),
+          },
+          1000,
+          100,
+        ),
       ];
 
     beforeEach(() => {
       kpiRepo.find.mockResolvedValue([
+        // Eksenler ÖNCE: `getActiveKpis` repo sırasını korur ve taşıyıcı
+        // işlenirken `results`'ta hazır olmaları gerekir (`T-342`).
+        INCR_TO,
+        INCR_PROMO_SPEND,
         INCR_GP,
         TOTAL_PLANNED_SPEND,
         GP_ROI_PCT,
@@ -470,8 +591,10 @@ describe('KpiEngineService — T-177 coverageRatio + ratio aggregation', () => {
       // -> 12010/120000*100 = 10.008333333333334 (tam kapsama, 3/3)
       expect(result.GP_ROI_PCT.coverageRatio).toBe(1);
       expect(result.GP_ROI_PCT.value).toBeCloseTo(10.008333333, 8);
-      // green(5) eşiğinin üstünde -> GREEN — SKU_A'nın RED'i sonuca
-      // GİRMEDİ (worst-of-children olsaydı RED çıkardı).
+      // `S4` AYRIMI KORUNUYOR — yalnız gerekçesi değişti: renk artık
+      // eşikten değil KADRANDAN geliyor (Σ iTO=3000 > 0 ∧ Σ iGP=12010 > 0
+      // ⇒ GREEN), ama SKU_A'nın `RED`'i yine SONUCA GİRMİYOR.
+      // worst-of-children olsaydı `RED` çıkardı — ayırt edici assertion budur.
       expect(result.GP_ROI_PCT.ragStatus).toBe('GREEN');
     });
   });
