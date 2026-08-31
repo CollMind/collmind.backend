@@ -37,7 +37,18 @@ import { AvailabilityResult } from '../budget/dto/budget-check-context.dto';
 export class SpendValidationService {
   private readonly logger = new Logger(SpendValidationService.name);
 
-  // Configurable thresholds
+  // ⛔ `Z75 §7a` — BU SABİTLER **KONFİGÜRE EDİLEBİLİR DEĞİL**.
+  // Eski yorum "Configurable thresholds" diyordu ve **kendi kodunun tersini
+  // söylüyordu**: dördü de `private readonly` sabit, hiçbir konfigürasyon
+  // yüzeyinden okunmuyor (ölçüldü 2026-08-31).
+  //
+  // ⛔ `CLAUDE.md §2.3` İHLALİ — *"hesaplamalar asla hardcode edilmez"* /
+  // *"RAG: hardcoded threshold YASAK"*. Ve [[T-138]] ölçtü: `50` ve `60`'ın
+  // BRD'de **dayanağı yok**.
+  //
+  // Kapatma işi `B'` borç dalgasında ([[T-074]] · [[T-138]] · [[T-139]]).
+  // Yorum BUGÜN düzeltildi çünkü **yanlış bir yorum `T-084` KORUMASI ÜRETİR**:
+  // "configurable" yazan bir satırı okuyan, ihlali GÖRMEZ.
   private readonly MAX_ON_INVOICE_DISCOUNT = 50; // Warning threshold
   private readonly MAX_OFF_INVOICE_DISCOUNT = 30; // Warning threshold
   private readonly MAX_COMBINED_DISCOUNT = 60; // Hard limit
