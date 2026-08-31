@@ -6,7 +6,6 @@ export * from './delete-plan.dto';
 export * from './submit-plan.dto';
 export * from './update-fu-tactic.dto';
 export * from './update-sku-volume.dto';
-export * from './submit-for-approval.dto';
 export * from './review-plan.dto';
 export * from './approval-queue.dto';
 export * from './budget-request.dto';

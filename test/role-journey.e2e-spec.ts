@@ -645,10 +645,10 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(res.status).toBe(200);
     });
 
-    it('A8. PLANNER → POST /plans/:id/submit-for-approval', async () => {
+    it('A8. PLANNER → POST /plans/:id/submit', async () => {
       const planner = await loginAs(app, 'PLANNER');
 
-      // T-034b (code-review fix): submit-for-approval now validates
+      // T-034b (code-review fix): submit now validates
       // plans.version too (K5 exception, same as PlanService#submit) —
       // fetch the current version rather than assuming it.
       const currentPlan = await request(app.getHttpServer())
@@ -657,7 +657,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .expect(200);
 
       const res = await request(app.getHttpServer())
-        .post(`/plans/${planId}/submit-for-approval`)
+        .post(`/plans/${planId}/submit`)
         .set(planner.authHeader())
         .send({
           submissionNotes: 'E2E role-journey submission',
@@ -667,7 +667,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       record({
         step: 'A8',
         role: 'PLANNER',
-        endpoint: 'POST /plans/:id/submit-for-approval',
+        endpoint: 'POST /plans/:id/submit',
         expected: 200,
         actual: res.status,
         note: `status=${res.body.status}, budgetCheck.overallSufficient=${res.body.budgetCheck?.overallSufficient}`,
@@ -691,12 +691,12 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         endpoint: 'GET /plans/:id (DB gerçek durum kontrolü)',
         expected: 'PENDING_APPROVAL',
         actual: planCheck.body.status,
-        note: 'submit-for-approval başarılı; plan durumu ve approval history tutarlı şekilde ilerledi',
+        note: 'submit başarılı; plan durumu ve approval history tutarlı şekilde ilerledi',
       });
       expect(planCheck.body.status).toBe('PENDING_APPROVAL');
     });
 
-    it('A8c. T-048 FIX PROOF — submit-for-approval writes TWO separate RESERVE rows (ON_INVOICE + OFF_INVOICE), off-invoice is genuinely encumbered', async () => {
+    it('A8c. T-048 FIX PROOF — submit writes TWO separate RESERVE rows (ON_INVOICE + OFF_INVOICE), off-invoice is genuinely encumbered', async () => {
       // Self-contained plan (NOT the shared golden-path `planId`).
       //
       // T-052 FIX: this fixture used to INSERT directly into
@@ -758,7 +758,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // (`PlanService#updateFuTactic`) instead of seeding
       // `plan_mechanic_values` directly. MEC-DISCOUNT (on_invoice_discount,
       // PERCENT, 10%) and CPP_OFF_PCT (off_invoice_discount, PERCENT, 5%) —
-      // both on the SAME FU/envelope, so submit-for-approval's TWO
+      // both on the SAME FU/envelope, so submit's TWO
       // reserveBudgetForPlan calls (ON then OFF) land on the same UNSPLIT
       // (Faz 1) envelope, which is exactly the T-048 bug's trigger
       // condition. The tactics PATCH body is keyed by mechanic CODE, not id
@@ -783,29 +783,37 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .expect(200);
 
       const submitRes = await request(app.getHttpServer())
-        .post(`/plans/${t048PlanId}/submit-for-approval`)
+        .post(`/plans/${t048PlanId}/submit`)
         .set(planner.authHeader())
         .send({
           submissionNotes: 'E2E T-048 proof',
           version: preSubmitRes.body.version,
         });
 
-      // T-056 adım 7 (ADR 0005 K1, deprecation faz 1): /submit-for-approval
-      // hâlâ çalışıyor ama HTTP Deprecation başlığı taşımalı — çağıranı
-      // /submit'e yönlendiren sözleşme sinyali.
+      // ⛔ T-344 / [[T-058]] / `Z73 §1` — DEPRECATION FAZ 2 İNDİ.
+      // `POST /plans/:id/submit-for-approval` ARTIK YOK. Bu blok eskiden
+      // `Deprecation: true` başlığını doğruluyordu; şimdi rotanın gerçekten
+      // ÖLDÜĞÜNÜ doğruluyor. ⚠️ Bir grep "referans kalmadı" der; bunu ancak
+      // KOŞAN bir istek kanıtlar (`DISIPLIN`: *"grep bir RAPOR, tam suite
+      // bir KAPIDIR"*).
+      const deadRouteRes = await request(app.getHttpServer())
+        .post(`/plans/${t048PlanId}/submit-for-approval`)
+        .set(planner.authHeader())
+        .send({ version: preSubmitRes.body.version });
       record({
-        step: 'A8c-deprecation',
+        step: 'A8c-route-death',
         role: '-',
-        endpoint: 'HTTP header: Deprecation (submit-for-approval yanıtı)',
-        expected: 'true',
-        actual: `${submitRes.headers['deprecation']}`,
-        note: 'T-056 adım 7: endpoint yaşıyor (davranış aynı), yalnız deprecation sinyali eklendi — kaldırma T-058.',
+        endpoint: 'POST /plans/:id/submit-for-approval (KALDIRILDI)',
+        expected: 404,
+        actual: deadRouteRes.status,
+        note: 'T-344/T-058: ADR 0005 K1 faz 2 — tek submit yolu kaldı (Z73 §1).',
       });
-      expect(submitRes.headers['deprecation']).toBe('true');
+      expect(deadRouteRes.status).toBe(404);
+      expect(submitRes.headers['deprecation']).toBeUndefined();
 
       // MEC-DISCOUNT (on-invoice %) + CPP_OFF_PCT (off-invoice %) on this
       // plan's FU → SpendCalculationService computes non-zero on AND off
-      // spend, so submit-for-approval (ApprovalWorkflowService
+      // spend, so submit (ApprovalWorkflowService
       // #submitForApproval, the SECOND canonical submit path) reserves BOTH.
       // Pre-T-048-fix, the OFF_INVOICE call silently no-op'd (kova-farkındalı
       // olmayan idempotency, docs/analysis/0008 §2.4) and this query would
@@ -820,8 +828,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       record({
         step: 'A8c',
         role: '-',
-        endpoint:
-          'DB: main.budget_transactions (submit-for-approval sonrası, T-048 kanıtı)',
+        endpoint: 'DB: main.budget_transactions (submit sonrası, T-048 kanıtı)',
         expected: '2 RESERVE satırı (ON_INVOICE + OFF_INVOICE)',
         actual: `submitStatus=${submitRes.status}, onInvoice=${submitRes.body?.budgetCheck?.onInvoice?.requested}, offInvoice=${submitRes.body?.budgetCheck?.offInvoice?.requested}, tx=${JSON.stringify(budgetTxAfterSubmit)}`,
         note: "T-048 FIX: reserveBudgetForPlan/reserveForPlan artık kova-farkındalı (bucket-aware) — ikinci (OFF_INVOICE) çağrı ilk (ON_INVOICE) çağrının net'ini görüp erken dönmüyor.",
@@ -862,7 +869,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         endpoint: 'İki kanonik yol karşılaştırması (T-052)',
         expected:
           'path1TotalSpend === path2TotalSpend (aynı plan, aynı mekanik girişleri)',
-        actual: `path1(plan.service#submit → plan.totalSpend)=${path1TotalSpend}, path2(approval-workflow#submitForApproval → on+off)=${path2TotalSpend}`,
+        actual: `path1(plan.service#submit → plan.totalSpend)=${path1TotalSpend}, path2(tipli ON/OFF kova → on+off)=${path2TotalSpend}`,
         note: 'T-052 FIX: her iki yol da SpendCalculationService#buildMechanicValues üzerinden aynı mechanicValues haritasını türetiyor.',
       });
 
@@ -873,7 +880,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     it("A8c′. T-056 adım 7 — A8c'nin canlı-rota ikizi: POST /plans/:id/submit de İKİ tipli RESERVE satırı yazar (ON_INVOICE + OFF_INVOICE), SQL kanıtı", async () => {
       // ADR 0005 K1 (docs/decisions/0005-*, §4.6 D6): T-056 adım 5'ten beri
       // canlı `/submit` yolu da `reserveTypedForPlan` üzerinden aynı
-      // rezervasyon motorunu kullanıyor — A8c bunu `/submit-for-approval`
+      // rezervasyon motorunu kullanıyor — A8c bunu `/submit`
       // ucunda kanıtlıyordu, bu test AYNI korumayı frontend'in gerçekten
       // çağırdığı `/submit` ucunda kilitliyor. `createT029TestPlan` A14/A16
       // ile aynı kanıtlı kombinasyonu (MEC-DISCOUNT on-invoice + CPP_OFF_PCT
@@ -887,8 +894,9 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .set(planner.authHeader())
         .send({ version: a8cPrimeVersion });
 
-      // T-056 adım 7 kontrast kanıtı: yalnız `/submit-for-approval`
-      // deprecate edildi — canlı `/submit` bu başlığı taşımamalı.
+      // T-056 adım 7 kontrast kanıtı, `T-344` sonrası hâlâ geçerli:
+      // canlı `/submit` bir deprecation başlığı TAŞIMAZ. (Kardeş rota
+      // artık deprecate değil, KALDIRILMIŞ durumda — A8c'ye bakınız.)
       expect(submitRes.headers['deprecation']).toBeUndefined();
 
       const planAfterSubmit = await request(app.getHttpServer())
@@ -1186,7 +1194,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
     // ────────────────────────────────────────────────────────────────────
     // T-029: audit ihlali + reserve/commit semantiği fix'lerinin kanıtı.
-    // A1-A13 PLANNER→submit-for-approval / review akışını (ApprovalWorkflowService)
+    // A1-A13 PLANNER→submit / review akışını (ApprovalWorkflowService)
     // kullanır; burada frontend'in fiilen çağırdığı ve BRD state machine'inin
     // kanonik yolu olan `/plans/:id/submit` + `/approve` + `/reject`
     // (PlanService) doğrudan test edilir — SQL kanıtı ile.
@@ -1747,11 +1755,11 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(finalPlanRow[0].approved_by).toBe(manager.userId);
     });
 
-    it('A17. T-053 — submit-for-approval (tipli kova) → reject → resubmit tam döngüsü YENİ RESERVE yazmalı (SQL kanıtı)', async () => {
+    it('A17. T-053 — submit (tipli kova) → reject → resubmit tam döngüsü YENİ RESERVE yazmalı (SQL kanıtı)', async () => {
       // A16'nın tipsiz ('TOTAL' bucket, PlanService#submit) ikizi — burada
       // TİPLİ ('ON_INVOICE'/'OFF_INVOICE' bucket, ApprovalWorkflowService
       // #submitForApproval) uçtan aynı reject→resubmit döngüsü kanıtlanıyor.
-      // A8c'deki gibi hem on- hem off-invoice mekanik girip submit-for-approval'ın
+      // A8c'deki gibi hem on- hem off-invoice mekanik girip submit'ın
       // İKİ RESERVE satırı yazmasını sağlıyoruz, sonra A16'daki gibi
       // reject→return-to-draft→resubmit yapıyoruz. T-053 teşhisi: reject'in
       // yazdığı RELEASE satırı spend_type=NULL (untyped) olduğu için,
@@ -1800,7 +1808,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .expect(200);
 
       // MEC-DISCOUNT (on_invoice_discount) + CPP_OFF_PCT (off_invoice_discount)
-      // — aynı A8c'deki gibi, submit-for-approval'ın İKİ reserveBudgetForPlan
+      // — aynı A8c'deki gibi, submit'ın İKİ reserveBudgetForPlan
       // çağrısının (ON sonra OFF) ikisinin de non-zero olmasını garanti eder.
       await request(app.getHttpServer())
         .patch(`/plans/${t053PlanId}/fus/${FU_WELLA_HC_500ML}/tactics`)
@@ -1815,7 +1823,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .expect(200);
 
       const submit1 = await request(app.getHttpServer())
-        .post(`/plans/${t053PlanId}/submit-for-approval`)
+        .post(`/plans/${t053PlanId}/submit`)
         .set(planner.authHeader())
         .send({
           submissionNotes: 'T-053 e2e: ilk submit',
@@ -1833,8 +1841,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       record({
         step: 'A17a',
         role: '-',
-        endpoint:
-          'DB: main.budget_transactions (ilk submit-for-approval sonrası)',
+        endpoint: 'DB: main.budget_transactions (ilk submit sonrası)',
         expected: '2 RESERVE satırı (ON_INVOICE + OFF_INVOICE)',
         actual: JSON.stringify(reserveAfterSubmit1),
         note: 'A8c ile aynı ön koşul — tipli kova RESERVE ikisi de yazılmış olmalı.',
@@ -1893,7 +1900,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .expect(200);
 
       const submit2 = await request(app.getHttpServer())
-        .post(`/plans/${t053PlanId}/submit-for-approval`)
+        .post(`/plans/${t053PlanId}/submit`)
         .set(planner.authHeader())
         .send({
           submissionNotes: 'T-053 e2e: resubmit (reject sonrası)',
@@ -1903,8 +1910,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       record({
         step: 'A17c',
         role: 'PLANNER',
-        endpoint:
-          'POST /plans/:id/submit-for-approval (resubmit, reject sonrası)',
+        endpoint: 'POST /plans/:id/submit (resubmit, reject sonrası)',
         expected: 200,
         actual: submit2.status,
         note: `status=${submit2.body?.status}`,
@@ -1969,7 +1975,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
     });
 
     it("A17′. T-056 adım 7 — A17'nin canlı-rota ikizi: POST /plans/:id/submit ile reject → resubmit döngüsü TİPLİ RELEASE + YENİ (jenerasyon sonekli) RESERVE yazmalı (SQL kanıtı, T-053 korumasının yeni yolda geçerliliği)", async () => {
-      // ADR 0005 K1: A17, T-053'ün korumasını `/submit-for-approval`
+      // ADR 0005 K1: A17, T-053'ün korumasını `/submit`
       // ucunda kanıtlıyordu. T-056 adım 5'ten beri para yolu ortak
       // (reserveTypedForPlan + kova-farkındalı releaseNetReservation), bu
       // test AYNI korumayı frontend'in gerçekten çağırdığı `/submit`
@@ -2148,7 +2154,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       expect(netContributionPrime).toBeGreaterThan(0);
     });
 
-    it('A18. T-056 F1 — çapraz yol (TOTAL /submit → reject → return-to-draft → tipli /submit-for-approval → approve) TOTAL kovada hayalet COMMIT üretmemeli (SQL kanıtı)', async () => {
+    it('A18. T-056 F1 — çapraz yol (TOTAL /submit → reject → return-to-draft → tipli /submit → approve) TOTAL kovada hayalet COMMIT üretmemeli (SQL kanıtı)', async () => {
       // 0009 §2.3 F1 teşhisi: commitAllReservedForPlan'ın kova keşfi HAM
       // POSTED RESERVE satırı varlığına bakıyor (net'e değil) — bir planın
       // ilk (TOTAL) submit'i reddedilip TAMAMEN release edildikten sonra
@@ -2165,7 +2171,7 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // A17'deki gibi MEC-DISCOUNT (on_invoice_discount) + CPP_OFF_PCT
       // (off_invoice_discount) — createT029TestPlan'ın CPP_ON_PCT+VIS_LS
       // kombinasyonundan FARKLI: VIS_LS lumpsum, calculateAllSpendsForFU
-      // (submit-for-approval'ın kullandığı yol) lumpsum'u 0 döndürüyor
+      // (submit'ın kullandığı yol) lumpsum'u 0 döndürüyor
       // (`spend-calculation.service.ts:165-167`, distributeSpendToSKUs ayrı
       // bir çağrı zinciri) — o kombinasyon adım 4'te offAmount=0 üretir ve
       // testin ön koşulunu (her iki kova da POSTED RESERVE > 0) bozar. Bu
@@ -2306,14 +2312,14 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         .expect(200);
       expect(returnRes.body.status).toBe('DRAFT');
 
-      // ── 4) RESUBMIT — ÇAPRAZ UÇ, tipli /submit-for-approval (ON+OFF) ────
+      // ── 4) RESUBMIT — ÇAPRAZ UÇ, tipli /submit (ON+OFF) ────
       const preSubmit2 = await request(app.getHttpServer())
         .get(`/plans/${f1PlanId}`)
         .set(planner.authHeader())
         .expect(200);
 
       const submit2 = await request(app.getHttpServer())
-        .post(`/plans/${f1PlanId}/submit-for-approval`)
+        .post(`/plans/${f1PlanId}/submit`)
         .set(planner.authHeader())
         .send({
           submissionNotes: 'T-056 F1 e2e: resubmit çapraz uçtan (tipli)',

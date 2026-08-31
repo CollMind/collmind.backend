@@ -68,8 +68,24 @@ export type TargetRoiEvaluation =
  *
  * ⚠️ Bu bir sessiz varsayılan DEĞİL: çözülemeyen bir girdi `0` olmaz,
  * `null` olur ve çağıran `NOT_EVALUABLE` görür.
+ *
+ * ── ⛔ NEDEN `EXPORT`, VE NEDEN BU DOSYADA (`T-344`) ────────────────────
+ * İkinci bir çağıranı doğdu: `submission-checks.ts#resolvePlanSpendBreakdown`
+ * (`ADR 0005 K3` kapısı) da `plans.total_spend`/`on_invoice_spend`/
+ * `off_invoice_spend` `decimal` kolonlarını **aynı dürüstlükle** okumak
+ * zorunda. Kendi kopyasını yazmak `F8` ailesiydi — *"her çağıran kendi
+ * `Number()`'ını yazar, biri unutur, kusur YALNIZ o yolda yaşar"* — ve o
+ * aile bu kod tabanında bir kez **canlı** yakalandı (`T-343 B1`).
+ *
+ * 📌 Konumu `src/common/kpi/` ve bu **bilinçli**: `src/common/numeric/`
+ * `money-float` guard'ının Alan A listesindedir ve orada doğacak her yeni
+ * `Number()` *"new code must be born exact"* (ADR 0007 Karar 8.2) kapısına
+ * takılır. Bu fonksiyon o kapının **kovaladığı şey değil** — kayan noktalı
+ * para aritmetiği değil, `pg`'nin dizge olarak verdiği bir kolonun
+ * **dürüst okuyucusu** (okunamayan → `null`, asla `0`). Kapıyı gevşetmek
+ * yerine tek kopya buraya konuldu.
  */
-function toFiniteNumber(value: unknown): number | null {
+export function toFiniteDecimal(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'string') {
@@ -101,11 +117,11 @@ export function evaluateTargetRoi(
   // ⛔ Normalizasyon BURADA, çağıranlarda DEĞİL. Her çağıranın kendi
   // `Number(...)`'ını yazması `F8` ailesidir: bir çağıran unutur ve
   // kusur yalnız O yolda yaşar (tam olarak bu oldu).
-  const roiNum = toFiniteNumber(roi);
+  const roiNum = toFiniteDecimal(roi);
   if (roiNum === null) {
     return { kind: 'NOT_EVALUABLE', reason: 'ROI_NULL' };
   }
-  const thresholdNum = toFiniteNumber(threshold);
+  const thresholdNum = toFiniteDecimal(threshold);
   if (thresholdNum === null) {
     return { kind: 'NOT_EVALUABLE', reason: 'THRESHOLD_NOT_CONFIGURED' };
   }

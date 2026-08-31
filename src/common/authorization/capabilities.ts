@@ -464,6 +464,9 @@ import { UserRole } from '../../database/entities/user.entity';
  * `MODES_APPROVE`'un `13` route'u tek sınıf değildi (yukarıda `0072`'nin
  * ölçtüğü ayrım): `5`'i **gönderim/geri-çekme** (`submit`/`cancel`/
  * `submit-for-approval`/`return-to-draft`), `8`'i **onay kararı**
+ * *(⚠️ `F12`, `T-344`: `submit-for-approval` o günden bu yana **KALDIRILDI**
+ * — `Z73 §1`. Sayı `5` bu kaydın YAZILDIĞI ANIN ölçümüdür, bugünün değil;
+ * `MODES_SUBMIT`'in gerekçesi değişmedi.)*
  * (`approve`/`reject`/`escalate`/`reviewPlan`). Gönderim `5` route'un
  * `@Roles` kümesi TEKTİR (`{ADMIN,PLANNER}`, dal 1, genişleme yok) — bu bir
  * union değil, bir ROL TANIMI: `K-2.6.4` (`L2_03:406`) *"PLANLAMACI — …,

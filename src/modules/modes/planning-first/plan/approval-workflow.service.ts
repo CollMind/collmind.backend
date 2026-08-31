@@ -1,9 +1,7 @@
-import { hasEnteredValue } from '../../../../common/numeric/mechanic-input';
 import {
   Injectable,
   BadRequestException,
   ConflictException,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
   ForbiddenException,
@@ -19,36 +17,16 @@ import {
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { BudgetService } from '../../../shared/budget/budget.service';
 import { PlanReservationReleaseReason } from '../../../shared/budget/budget-reservation.service';
-import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
 import { PlanRepository } from './plan.repository';
-import {
-  SubmitForApprovalDto,
-  SubmissionResult,
-} from './dto/submit-for-approval.dto';
 import {
   ReviewPlanDto,
   ReviewDecision,
   ReviewResult,
 } from './dto/review-plan.dto';
 import { ApprovalFilters, PendingPlan } from './dto/approval-queue.dto';
-import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { AccessScopeService } from '../../../shared/access-scope/access-scope.service';
 import { PlanActor } from './plan.service';
-import {
-  RagExclusionReason,
-  parseRagExclusionReason,
-} from '../../../../common/kpi/rag-quadrant';
-import {
-  TARGET_ROI_KPI_CODE,
-  belowTargetRoiMessage,
-  evaluateTargetRoi,
-  isBelowTargetRoi,
-} from '../../../../common/kpi/target-roi';
-import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
-import {
-  missingVersionConflict,
-  staleVersionConflict,
-} from '../../../shared/persistence/versioned-update.helper';
+import { parseRagExclusionReason } from '../../../../common/kpi/rag-quadrant';
 
 @Injectable()
 export class ApprovalWorkflowService {
@@ -58,13 +36,9 @@ export class ApprovalWorkflowService {
     private readonly planRepo: PlanRepository,
     private readonly approvalService: ApprovalService,
     private readonly budgetService: BudgetService,
-    private readonly spendCalc: SpendCalculationService,
     @InjectRepository(PlanApprovalHistory)
     private readonly approvalHistoryRepo: Repository<PlanApprovalHistory>,
     private readonly accessScope: AccessScopeService,
-    // `T-343`/`Z71 §1`: Target-ROI hedefi konfigürasyondan okunur — bu
-    // servis eşiği HİÇBİR YERDE sabitlemez (`§2.3`).
-    private readonly kpiEngine: KpiEngineService,
     // T-034b: this is the SECOND canonical plan-state-transition path (see
     // plan.service.ts submit/approve/reject/returnToDraft — "İki kanonik
     // yol" in the task description). Same real-transaction + FOR UPDATE +
@@ -72,337 +46,6 @@ export class ApprovalWorkflowService {
     // mechanism.
     private readonly dataSource: DataSource,
   ) {}
-
-  /**
-   * Pre-submission validation and submission
-   */
-  async submitForApproval(
-    planId: string,
-    tenantId: string,
-    userId: string,
-    dto: SubmitForApprovalDto,
-    actor?: PlanActor,
-  ): Promise<SubmissionResult> {
-    // T-056 adım 7 (ADR 0005 K1 — deprecation faz 1): bu uç hâlâ yaşıyor
-    // (davranış/sözleşme değişmedi), ama tek para yolu artık POST
-    // /plans/:id/submit üzerinden akıyor (PlanService#submit, T-056 adım 5).
-    // Çağıranı /submit'e yönlendiren gürültülü sinyal — endpoint kaldırma
-    // faz 2'de ([[T-058]]).
-    this.logger.warn(
-      `POST /plans/${planId}/submit-for-approval is deprecated — use POST /plans/${planId}/submit instead (T-056/ADR 0005 K1)`,
-    );
-    const plan = await this.planRepo.findById(planId, tenantId);
-    if (!plan) {
-      throw new NotFoundException(`Plan with ID ${planId} not found`);
-    }
-
-    // T-028c: this is a PLANNER-only route (@Roles(ADMIN, PLANNER)) that
-    // resolves the plan directly via planRepo (bypassing PlanService's
-    // scope-aware findById) — an out-of-scope PLANNER could otherwise
-    // submit-for-approval a plan outside their assigned CPL+Category.
-    // Out-of-scope -> 404 (varlık sızdırma yok, same as PlanService#findById).
-    if (actor) {
-      const scope = await this.accessScope.resolveScope(
-        tenantId,
-        actor.userId,
-        actor.role,
-      );
-      if (
-        !this.accessScope.isInScope(scope, {
-          cplId: plan.cplId,
-          categoryId: plan.categoryId,
-        })
-      ) {
-        throw new NotFoundException({
-          statusCode: 404,
-          message: `Plan with ID ${planId} not found`,
-          code: 'OUT_OF_SCOPE',
-        });
-      }
-    }
-
-    if (plan.status !== PlanStatus.DRAFT) {
-      throw new BadRequestException('Only DRAFT plans can be submitted');
-    }
-
-    // Pre-submission validations
-    const validationErrors: string[] = [];
-    const warnings: string[] = [];
-
-    // 1. Check required mechanics/tactics.
-    // T-052: SpendCalculationService now reads BOTH sources (planMechanicValues
-    // AND plan_fus.tactics, merged via SpendCalculationService#buildMechanicValues
-    // — see its doc comment for why both exist and which wins on collision).
-    // Validation must use the same two sources to stay consistent: if neither is
-    // populated for a FU, SpendCalc will return zero spend for it — an invalid plan.
-    // We accept either planMechanicValues with at least one enteredValue, OR a non-empty
-    // tactics JSONB (the ONLY UI-reachable entry point today, PATCH .../tactics)
-    // so that both are covered.
-    if (!plan.planFus || plan.planFus.length === 0) {
-      validationErrors.push('Plan must have at least one FU');
-    } else {
-      for (const planFu of plan.planFus) {
-        const hasMechanicValues =
-          planFu.planMechanicValues &&
-          planFu.planMechanicValues.some((pmv: any) => hasEnteredValue(pmv));
-        const hasTactics =
-          planFu.tactics && Object.keys(planFu.tactics).length > 0;
-
-        if (!hasMechanicValues && !hasTactics) {
-          validationErrors.push(
-            `FU ${planFu.fu?.code || planFu.fuId} has no mechanic values or tactics defined`,
-          );
-        }
-      }
-    }
-
-    // ── 2. RAG + TARGET-ROI: HİÇBİR DİLİM SESSİZLEŞMEZ ────────────────
-    //
-    // `Z70 §1` + `Z71 §1`. Kadran öncesi burada TEK uyarı vardı çünkü TEK
-    // kötü-durum vardı: `RED`. Kadran (`Z66 §2`) iki farklı kötü-durum
-    // doğurdu ve **büyüklük eksenini** `RED`'in içinden çıkardı; ölçülmüş
-    // geçiş matrisi (`Z71 §1a`, eşikler `green=20 · amber=10`):
-    //
-    //   iTO > 0 dilimi     ÖNCE     SONRA    bu blok olmasaydı
-    //   iGP ≤ 0            RED   →  AMBER    uyarı KAYBOLURDU
-    //   0 < ROI < 10       RED   →  GREEN    uyarı KAYBOLURDU
-    //   10 ≤ ROI < 20      AMBER →  GREEN    (zaten uyarı yoktu, ama artık var)
-    //
-    // ⛔ İkinci ve üçüncü satır en tehlikelisiydi: uyarının yerine SESSİZLİK
-    // değil, **karşı yönde güvence** geçiyordu — ekranda "İYİ".
-    //
-    // ⛔ Üçü de `warnings` (BLOKLAMAZ) — `K-2.2.7c` ailesi: submit DURMAZ,
-    // karar desteği KONUŞUR.
-    if (plan.ragStatus === 'RED') {
-      warnings.push(
-        'Ciro kaybı: plan incremental ciro üretmiyor (RAG kırmızı). ' +
-          'Göndermeden önce gözden geçirin.',
-      );
-    } else if (plan.ragStatus === 'AMBER') {
-      warnings.push(
-        'Kârsız büyüme: satış artıyor ama incremental kâr negatif ' +
-          '(RAG sarı). Göndermeden önce gözden geçirin.',
-      );
-    } else if (plan.ragStatus === null || plan.ragStatus === undefined) {
-      // `S1` / `Z68 §2` — renk yokluğu bir yargı DEĞİL, ve iki sebebi var.
-      // ⛔ Meşru yokluk (`LTA_ONLY`) bir kusur gibi raporlanmaz; ama
-      // "değerlendirilemedi" de sessiz geçilmez — ikisi AYRI cümle.
-      const exclusion = parseRagExclusionReason(plan.ragExclusionReason);
-      if (exclusion === RagExclusionReason.LTA_ONLY) {
-        warnings.push(
-          'Değerlendirme dışı — LTA: bu planda incremental promosyon ' +
-            'harcaması yok, RAG bir promosyon değerlendirmesidir ve ' +
-            'LTA-only planlar için tanımlı değildir.',
-        );
-      } else {
-        warnings.push(
-          'RAG hesaplanamadı: plan KPI kapsaması tam değil. Renk bir ' +
-            'yargı taşımıyor — eksik veriyi tamamlayın.',
-        );
-      }
-    }
-
-    // `Z71 §1` — TARGET-ROI, AYRI EKSEN. `GREEN` bir planın hedefin altında
-    // olması bir çelişki değil: kadran YÖN'ü, bu eksen BÜYÜKLÜĞÜ konuşur.
-    // ⛔ Eşik konfigüre değilse uyarı ÜRETİLMEZ (`evaluateTargetRoi` →
-    // `NOT_EVALUABLE`): uydurulmuş bir hedefe göre yargı vermeyiz (`§2.5`).
-    const targetRoiKpi = await this.kpiEngine.getKpiConfig(
-      plan.tenantId,
-      TARGET_ROI_KPI_CODE,
-    );
-    const targetRoiEval = evaluateTargetRoi(
-      plan.overallRoi ?? null,
-      targetRoiKpi?.targetRoiThreshold ?? null,
-    );
-    // ⛔ `as` CAST KALDIRILDI (`T-343` review `B1`). Eski hâli
-    // `targetRoiEval`'i `{threshold: number}` diye ilan ediyordu ve
-    // **yalanı örtüyordu**: alan gerçekte `pg`'den DİZGE geliyordu ve
-    // `toFixed` çalışma zamanında patlıyordu. Tip daraltması artık
-    // `kind` üzerinden — derleyici gerçeği görüyor.
-    if (
-      targetRoiEval.kind === 'BELOW_TARGET' &&
-      isBelowTargetRoi(plan.ragStatus, targetRoiEval)
-    ) {
-      warnings.push(
-        belowTargetRoiMessage(targetRoiEval.roi, targetRoiEval.threshold),
-      );
-    }
-
-    // 3. Calculate On-Invoice/Off-Invoice spend breakdown
-    const spendBreakdown = await this.calculateSpendBreakdown(plan, tenantId);
-    plan.onInvoiceSpend = spendBreakdown.onInvoice;
-    plan.offInvoiceSpend = spendBreakdown.offInvoice;
-
-    // 4. Budget availability check
-    // T-056 adım 2 (docs/analysis/0009 §3.1/§3.2): saf taşıma —
-    // önceden bu sınıfın private `checkBudgetAvailability` metoduydu, şimdi
-    // `shared/budget`'a yükseltildi (`BudgetService#checkPlanBudgetAvailability`,
-    // mantık BİREBİR aynı). Gerekçe: adım 3'te `PlanService#submit` de aynı
-    // kontrolü kullanacak; iki mode-servisi birbirinin private metodunu
-    // paylaşamaz.
-    const channelCode = plan.channel?.code || '';
-    const budgetCheck = await this.budgetService.checkPlanBudgetAvailability(
-      tenantId,
-      channelCode,
-      plan.periodMonth,
-      spendBreakdown.onInvoice,
-      spendBreakdown.offInvoice,
-    );
-
-    if (!budgetCheck.overallSufficient) {
-      validationErrors.push(
-        `Insufficient budget. On-Invoice: ${budgetCheck.onInvoice.available} available, ${budgetCheck.onInvoice.requested} requested. ` +
-          `Off-Invoice: ${budgetCheck.offInvoice.available} available, ${budgetCheck.offInvoice.requested} requested.`,
-      );
-    }
-
-    if (validationErrors.length > 0) {
-      return {
-        success: false,
-        planId: plan.id,
-        status: plan.status,
-        budgetCheck,
-        validationErrors,
-      } as SubmissionResult;
-    }
-
-    // T-034b (docs/analysis/0005 §4): real transaction + `FOR UPDATE` +
-    // status-CAS, replacing the old compensate-on-failure pattern. The
-    // validation/spend-calc work above is read-only and pre-transaction
-    // (heavy KPI/SpendCalc calls do not belong inside a locked write
-    // transaction — see T-034c's advisory-lock scope note in the design
-    // doc for the same "don't widen the lock window" concern); only the
-    // state transition + its budget/audit side effects need to be atomic.
-    let approvalRequestId = '';
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      const locked = await this.planRepo.findByIdForUpdate(
-        planId,
-        tenantId,
-        queryRunner.manager,
-      );
-      if (!locked) {
-        throw new NotFoundException(`Plan with ID ${planId} not found`);
-      }
-      if (locked.status !== PlanStatus.DRAFT) {
-        throw new BadRequestException('Only DRAFT plans can be submitted');
-      }
-
-      // T-034b (code-review fix): K5 exception — submitForApproval() is the
-      // SAME transition as PlanService#submit and must validate
-      // plans.version identically (see SubmitForApprovalDto#version).
-      if (dto.version === undefined || dto.version === null) {
-        throw missingVersionConflict({ entity: 'PLAN', entityId: planId });
-      }
-      if (locked.version !== dto.version) {
-        throw staleVersionConflict({
-          entity: 'PLAN',
-          entityId: planId,
-          expectedVersion: dto.version,
-          currentVersion: locked.version,
-          current: {
-            totalSpend: Number(locked.totalSpend),
-            updatedBy: locked.updatedBy,
-            updatedAt: locked.updatedAt,
-          },
-        });
-      }
-
-      const approvalRequest = await this.approvalService.createRequest(
-        {
-          requestType: ApprovalRequestType.PLAN,
-          entityType: 'PLAN',
-          entityId: plan.id,
-        },
-        tenantId,
-        userId,
-        queryRunner.manager,
-      );
-      approvalRequestId = approvalRequest.id;
-
-      // Reserve budget (soft reservation - will be committed on approval).
-      // T-056 adım 3 (docs/analysis/0009 §3.2, §6 adım 3): tek motor —
-      // `reserveTypedForPlan` (shared/budget) bu sınıfın bugünkü iki ayrı
-      // `reserveBudgetForPlan` çağrısının YERİNE geçer (kapı + deterministik
-      // ON→OFF yazım tek yerde). Davranış birebir aynı: yalnız amount>0
-      // olan tipler yazılır — kapı zaten satır ~159'da bir kez geçilmişti;
-      // buradaki tekrar F2 (0009 §2.4) nedeniyle TEK koruma katmanı olarak
-      // bilinçli kabul edildi, submitForApproval'ın dış sözleşmesini
-      // değiştirmez (aynı validationErrors/success:false yolu, aynı satır
-      // sayısı ve idempotency key uzayı).
-      await this.budgetService.reserveTypedForPlan(
-        planId,
-        {
-          onInvoice: spendBreakdown.onInvoice,
-          offInvoice: spendBreakdown.offInvoice,
-        },
-        channelCode,
-        plan.periodMonth,
-        'TRY',
-        tenantId,
-        userId,
-        queryRunner.manager,
-      );
-
-      const affected = await this.planRepo.updateStatusCas(
-        queryRunner.manager,
-        planId,
-        tenantId,
-        PlanStatus.DRAFT,
-        {
-          status: PlanStatus.PENDING_APPROVAL,
-          approvalRequestId: approvalRequest.id,
-          submissionNotes: dto.submissionNotes,
-          submittedAt: new Date(),
-          submittedById: userId,
-          onInvoiceSpend: spendBreakdown.onInvoice,
-          offInvoiceSpend: spendBreakdown.offInvoice,
-          updatedBy: userId,
-          version: () => '"version" + 1',
-        } as any,
-      );
-      if (affected === 0) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'INVALID_STATE_TRANSITION',
-          message: 'Plan status changed concurrently; retry.',
-        });
-      }
-
-      await this.createHistoryEntry(
-        planId,
-        tenantId,
-        userId,
-        ApprovalHistoryAction.SUBMITTED,
-        dto.submissionNotes,
-        undefined,
-        undefined,
-        undefined,
-        queryRunner.manager,
-      );
-
-      await queryRunner.commitTransaction();
-    } catch (err) {
-      await queryRunner.rollbackTransaction();
-      throw err;
-    } finally {
-      await queryRunner.release();
-    }
-
-    return {
-      success: true,
-      planId: plan.id,
-      status: PlanStatus.PENDING_APPROVAL,
-      budgetCheck: {
-        ...budgetCheck,
-        warnings: warnings.length > 0 ? warnings : undefined,
-      },
-      approvalRequestId,
-    };
-  }
 
   /**
    * Review plan (Category Manager or Finance Manager)
@@ -1074,57 +717,19 @@ export class ApprovalWorkflowService {
 
   // Private helper methods
 
-  /**
-   * T-017: Delegates on/off-invoice spend breakdown to SpendCalculationService.
-   * Eliminates `tacticCode.includes(...)` string-hack (BRD violation).
-   * Classification is now driven by Mechanic.category (ON_INVOICE_DISCOUNT /
-   * OFF_INVOICE_DISCOUNT / PER_UNIT_SUPPORT / LUMPSUM_SPEND) via SpendCalc.
-   *
-   * FUs with no mechanics/tactics will return zero spend from SpendCalc
-   * (planMechanicValues empty → all enteredValues = 0 → no spend calculated).
-   */
-  private async calculateSpendBreakdown(
-    plan: Plan,
-    tenantId: string,
-  ): Promise<{ onInvoice: number; offInvoice: number }> {
-    let onInvoice = 0;
-    let offInvoice = 0;
-
-    for (const planFu of plan.planFus || []) {
-      try {
-        const fuBreakdown = await this.spendCalc.calculateAllSpendsForFU(
-          tenantId,
-          planFu.id,
-        );
-        onInvoice += fuBreakdown?.aggregatedPlanned?.totalOnInvoice ?? 0;
-        offInvoice += fuBreakdown?.aggregatedPlanned?.totalOffInvoice ?? 0;
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(
-          `calculateSpendBreakdown failed for FU [fuId=${planFu.id}, planId=${plan.id}]: ${message}`,
-        );
-        throw new InternalServerErrorException(
-          `Spend calculation failed for FU ${planFu.id}: ${message}`,
-        );
-      }
-    }
-
-    return { onInvoice, offInvoice };
-  }
-
   // T-056 adım 2 (docs/analysis/0009 §3.1/§3.2): budget-domain availability
   // check (zarf çözümü + UNSPLIT birleşik kural + ADR 0004 Karar 2 eki)
   // `shared/budget`'a yükseltildi — bkz. `BudgetService#checkPlanBudgetAvailability`.
-  // Bu sınıf artık kendi kopyasını tutmaz, `submitForApproval` yukarıda
-  // doğrudan `this.budgetService.checkPlanBudgetAvailability(...)`'i çağırır.
+  // ⛔ `T-344`: o çağıran (`submitForApproval`) ÖLDÜ. Bugünkü tek çağıran
+  // `PlanService#submit` — tek submit yolu (`Z73 §1`).
 
   // T-056 adım 3 (docs/analysis/0009 §3.2, §6 adım 3): the two-call
   // ON_INVOICE/OFF_INVOICE reservation orchestration that used to live here
   // (`reserveBudgetForPlan`, T-048 fix) moved to `shared/budget`
-  // (`BudgetService#reserveTypedForPlan`) — single engine, `submitForApproval`
-  // now calls it directly. See that method's JSDoc for the full contract
-  // (gate-before-write, ON→OFF order, only actually-spent types).
+  // (`BudgetService#reserveTypedForPlan`) — single engine. ⛔ `T-344`:
+  // `submitForApproval` öldü; bugünkü tek çağıran `PlanService#submit`.
+  // See that method's JSDoc for the full contract (gate-before-write,
+  // ON→OFF order, only actually-spent types).
 
   private async commitAllBudgetForPlan(
     planId: string,

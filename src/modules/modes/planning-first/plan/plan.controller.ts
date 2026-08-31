@@ -32,7 +32,6 @@ import {
   UpdateFuTacticDto,
   UpdateSkuVolumeDto,
   SubmitPlanDto,
-  SubmitForApprovalDto,
   ReviewPlanDto,
   ApprovalFilters,
 } from './dto';
@@ -317,14 +316,33 @@ export class PlanController {
     );
   }
 
+  /**
+   * `T-344` / `Z73 §1` — **TEK SUBMIT YOLU.**
+   *
+   * `POST /plans/:id/submit-for-approval` bu sürümle **kaldırıldı**
+   * (`ADR 0005 K1` faz 2 = [[T-058]]). Ölen rota davranışça bir **üst
+   * kümeydi** (ön doğrulamalar + `Q13` uyarı katmanı) ve frontend'in **hiç
+   * çağırmadığı** uçtu; davranış buraya taşındı, `ad` kullanıcıdan alındı.
+   *
+   * ⛔ **Dönüş tipi değişti:** `Plan` → `SubmissionResult`. `Q13` uyarıları
+   * (`RED` · `AMBER` · `LTA_ONLY` · hedef-altı) canlı kullanıcı yüzeyine
+   * **bu gövde üzerinden** ulaşır — `budgetCheck.warnings`.
+   */
   @Post(':id/submit')
   @RequireCapability(CAPABILITIES.MODES_SUBMIT)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Submit plan for approval (legacy)' })
+  @ApiOperation({
+    summary: 'Submit plan for approval (pre-submission checks + warnings)',
+    description:
+      'Returns a SubmissionResult. `validationErrors` BLOCK the submission ' +
+      '(200 with success:false, plan stays DRAFT); `budgetCheck.warnings` do ' +
+      'NOT block (submission succeeded, decision support only) — ADR 0005 K2 (F12), Z73.',
+  })
   @ApiResponse({ status: 200, description: 'Plan submitted successfully' })
   @ApiResponse({
     status: 400,
-    description: 'Only DRAFT plans can be submitted',
+    description:
+      'Only DRAFT plans can be submitted, or spend breakdown is stale',
   })
   submit(
     @Param('id', ParseUUIDPipe) id: string,
@@ -338,43 +356,7 @@ export class PlanController {
       user.id,
       { userId: user.id, role: user.role },
       dto?.version,
-    );
-  }
-
-  @Post(':id/submit-for-approval')
-  @RequireCapability(CAPABILITIES.MODES_SUBMIT)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Submit plan for approval with pre-submission checks',
-    deprecated: true,
-    description:
-      // T-056 adım 7 (ADR 0005 K1, deprecation faz 1): para yolu artık
-      // POST /plans/:id/submit ile ortak (aynı reserveTypedForPlan motoru).
-      // Bu uç yaşamaya devam eder (davranış/sözleşme değişmedi); kaldırma
-      // faz 2'dir ([[T-058]]).
-      'DEPRECATED — use POST /plans/:id/submit instead. This endpoint remains functional (behavior unchanged) but will be removed in a future release (T-056/ADR 0005, phase 2 tracked as T-058).',
-  })
-  @ApiResponse({ status: 200, description: 'Plan submitted successfully' })
-  @ApiResponse({
-    status: 400,
-    description: 'Validation failed or insufficient budget',
-  })
-  submitForApproval(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: SubmitForApprovalDto,
-    @TenantId() tenantId: string,
-    @CurrentUser() user: { id: string; role: UserRole },
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    // T-056 adım 7: HTTP Deprecation sinyali (ADR 0005 K1). Endpoint hâlâ
-    // yaşıyor — yalnız uyarı, davranış değişmiyor.
-    res.setHeader('Deprecation', 'true');
-    return this.approvalWorkflowService.submitForApproval(
-      id,
-      tenantId,
-      user.id,
-      dto,
-      { userId: user.id, role: user.role },
+      dto?.submissionNotes,
     );
   }
 

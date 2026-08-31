@@ -929,6 +929,12 @@ export class BudgetService {
    * submitted via one route and approved via the OTHER (proven live by the
    * role-journey e2e's golden path: A8 submits via submit-for-approval,
    * A12 approves via the plain PlanController#approve). A single
+   * ⚠️ **`F12` (`T-344`, `Z73 §1`): `#submitForApproval` ARTIK YOK** — tek
+   * submit yolu `plan.service.ts#submit` ve o da tipli kovalara yazıyor.
+   * Aşağıdaki gerekçe **yine de geçerli**, çünkü ESKİ planlar hâlâ `TOTAL`
+   * kovada RESERVE satırları taşıyor (`ADR 0005` geriye-uyum kısıtı) ve
+   * approve tarafı iki kanonik rotalı KALDI.
+   *
    * bucket-blind `commitReservedForPlan(bucket)` call on the approve side
    * would either (a) miss buckets it doesn't know to ask for — leaving them
    * stuck in RESERVE forever — or worse (b) not find ITS bucket, fall

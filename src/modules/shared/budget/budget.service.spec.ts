@@ -694,7 +694,7 @@ describe('BudgetService — T-019 Faz 1 / T-048', () => {
   });
 
   describe('commitAllReservedForPlan — cross-path fix (submit via one route, approve via the OTHER)', () => {
-    it('commits BOTH ON_INVOICE and OFF_INVOICE buckets when the plan was submitted via submitForApproval but approved via the TOTAL-blind PlanService#approve route', async () => {
+    it('commits BOTH ON_INVOICE and OFF_INVOICE buckets when the plan was submitted via the typed ON/OFF path but approved via the TOTAL-blind PlanService#approve route (T-344: o yol artik PlanService#submit)', async () => {
       // Plan was submitted via approval-workflow.service.ts#submitForApproval
       // (two typed RESERVE rows), never a TOTAL-bucket RESERVE. A bucket-blind
       // commitReservedForPlan(planId, ..., 'TOTAL') call from plan.service.ts

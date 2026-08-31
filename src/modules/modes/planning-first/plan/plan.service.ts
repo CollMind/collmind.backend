@@ -14,6 +14,7 @@ import {
 } from '../../../../common/numeric/mechanic-input';
 import {
   CreatePlanDto,
+  SubmissionResult,
   UpdatePlanDto,
   AddFuDto,
   RemoveFuDto,
@@ -68,7 +69,18 @@ import {
   RAG_CARRIER_KPI_CODE,
   parseRagExclusionReason,
 } from '../../../../common/kpi/rag-quadrant';
-import { TARGET_ROI_KPI_CODE } from '../../../../common/kpi/target-roi';
+import {
+  TARGET_ROI_KPI_CODE,
+  toFiniteDecimal,
+} from '../../../../common/kpi/target-roi';
+import {
+  PLAN_MUST_HAVE_FU_MESSAGE,
+  collectPlanStructureWarnings,
+  collectPlanSubmissionValidationErrors,
+  collectPlanSubmissionWarnings,
+  planSpendBreakdownError,
+  resolvePlanSpendBreakdown,
+} from '../../../../common/plan-submission/submission-checks';
 
 /**
  * T-028b: caller identity for scope-aware reads/decisions. Optional on
@@ -898,7 +910,8 @@ export class PlanService {
     userId: string,
     actor?: PlanActor,
     expectedVersion?: number,
-  ): Promise<Plan> {
+    submissionNotes?: string,
+  ): Promise<SubmissionResult> {
     // Cheap pre-transaction read: 404/OUT_OF_SCOPE (PlanActor scope) and the
     // channel code (channel does not participate in the money/status race
     // this task closes — it is effectively immutable once a plan exists in
@@ -908,6 +921,142 @@ export class PlanService {
     const initial = await this.findById(id, tenantId, actor);
     const channelCode = initial.channel?.code || '';
 
+    // ── T-344 / `Z73 §1`: ÖN-DOĞRULAMA + UYARI KATMANI ────────────────
+    //
+    // Ölen `POST /plans/:id/submit-for-approval`'ın **üst kümesi** buraya
+    // taşındı (`ADR 0005 K2` `F12` — hüküm geri alınmadı, KOŞULU DOLDU).
+    // Mantık kopyalanmadı: `submission-checks.ts` tek türetim noktası.
+    //
+    // ⛔ Pre-transaction, ve bu bilinçli: KPI/eşik okuması ve bütçe
+    // sorgusu kilit penceresini genişletmemeli (T-034b/T-034c'nin
+    // "don't widen the lock window" notu). Buradaki her şey SALT OKUR;
+    // yarış duyarlı olan tek şey durum geçişi ve para yazımı, onlar
+    // aşağıda kilidin altında.
+    // ⛔ DURUM KAPISI ÖN-DOĞRULAMADAN ÖNCE. Ölen rota da bu sırayı
+    // kullanıyordu ve sıra davranışsaldır: DRAFT olmayan bir plan
+    // "doğrulama başarısız" (200 + success:false) değil, "geçersiz geçiş"
+    // (400) döndürmelidir. Ters sırada bir PENDING_APPROVAL planı
+    // validationErrors ile 200 alırdı — sessiz bir sözleşme kaybı.
+    if (initial.status !== PlanStatus.DRAFT) {
+      throw new BadRequestException('Only DRAFT plans can be submitted');
+    }
+
+    // ⛔ `🟡-2` — SÜRÜM KAPISI DOĞRULAMA KAPILARINDAN **ÖNCE**.
+    //
+    // Ölçülmüş sözleşme kaybı: doğrulama/bütçe kapıları öne alınınca
+    // FU'suz ya da bütçesi yetmeyen bir planda **bayat sürümlü** bir submit
+    // `409` yerine `200 + success:false` alıyordu — ve frontend'in
+    // `useVersionConflict` reload diyaloğu o planlar için **hiç
+    // açılmıyordu**. Kullanıcı "FU ekle" der, ekler, gönderir; aradaki
+    // başkasının düzenlemesini **hiç görmez**.
+    //
+    // ⚠️ Bu kontrol `initial` (KİLİTSİZ) okumaya bakar ve bu **yeterlidir**:
+    // `version` monoton artar, yani burada bir uyuşmazlık varsa kilit
+    // altında da vardır. Otorite hâlâ aşağıdaki kilit-altı ikizi
+    // (`T-034b`); buradaki erken kapı onun yerine GEÇMEZ, önüne düşer.
+    if (expectedVersion === undefined || expectedVersion === null) {
+      throw missingVersionConflict({ entity: 'PLAN', entityId: id });
+    }
+    if (initial.version !== expectedVersion) {
+      throw staleVersionConflict({
+        entity: 'PLAN',
+        entityId: id,
+        expectedVersion,
+        currentVersion: initial.version,
+        current: {
+          // ⛔ `Number()` DEĞİL. `money-float` ratchet'i bu satırı
+          // yakaladı (`32 -> 33`) ve HAKLIYDI: bu bir para yolu, ve bu
+          // kod tabanının tek dürüst `decimal` okuyucusu
+          // `toFiniteDecimal` — okunamayan girdi `0` değil `null` döner.
+          // (Kilit-altı ikizi `Number()` taşıyor ve baseline'da SAYILI;
+          // yeni kod `born exact` doğar — ADR 0007 Karar 8.2.)
+          totalSpend: toFiniteDecimal(initial.totalSpend),
+          updatedBy: initial.updatedBy,
+          updatedAt: initial.updatedAt,
+        },
+      });
+    }
+
+    const validationErrors = collectPlanSubmissionValidationErrors(initial);
+
+    const targetRoiKpi = await this.kpiEngine.getKpiConfig(
+      tenantId,
+      TARGET_ROI_KPI_CODE,
+    );
+    const warnings = [
+      // ⛔ SIRA ANLAMLI: yapısal bulgu ("bu FU boş") kullanıcının ÖNCE
+      // düzelteceği şeydir; KPI yargıları ("hedefin altında") ondan sonra
+      // gelir — boş bir FU zaten KPI'ları çürütür.
+      ...collectPlanStructureWarnings(initial),
+      ...collectPlanSubmissionWarnings(
+        initial,
+        targetRoiKpi?.targetRoiThreshold ?? null,
+      ),
+    ];
+
+    // Rezerve edilecek tutarlar: `plan.on/offInvoiceSpend` KOLONLARI
+    // (recalc'in yazdığı), submit anında YENİDEN HESAPLAMA YOK — 0009 §4.2
+    // karar B / `ADR 0005 K3`. Ölen rota burada `calculateSpendBreakdown`
+    // çağırıyordu; o davranış BİLEREK taşınmadı, çünkü `K3` onu açıkça
+    // reddetmişti (T-046a'nın 1746 ms'lik yüzeyini canlı submit'e taşır ve
+    // rezerve edilen tutarı kullanıcının ekranda gördüğünden ayırır).
+    // ⛔ `ADR 0005 K3` kapısı KİLİTTEN ÖNCE de koşar. Sebep bir tercih
+    // değil, bir zorunluluk: aşağıdaki bütçe sorgusu bir tutar ister ve
+    // okunamayan bir kolonu sessizce `0` sayarsak kullanıcı "bütçe
+    // yeterli" görür, sonra kilidin altında `400` yer. Karar tek yerde
+    // (`resolvePlanSpendBreakdown`), iki çağıranda değil.
+    const declared = resolvePlanSpendBreakdown(
+      initial.totalSpend,
+      initial.onInvoiceSpend,
+      initial.offInvoiceSpend,
+    );
+    const declaredError = planSpendBreakdownError(id, declared);
+    if (declaredError) {
+      throw new BadRequestException(declaredError);
+    }
+    const declaredOnInvoice =
+      declared.kind === 'USABLE' ? declared.onInvoice : 0;
+    const declaredOffInvoice =
+      declared.kind === 'USABLE' ? declared.offInvoice : 0;
+
+    // Bütçe yeterliliği: ölen rotanın `validationErrors` sözleşmesi
+    // (200 + `success:false`) buraya taşındı. ⚠️ Bu, `/submit`'in eski
+    // 400'ünün YERİNE geçmiyor — `reserveTypedForPlan`'ın kapısı aşağıda
+    // hâlâ duruyor ve bir yarış durumunda (bu okuma ile kilit arasında
+    // zarf tükenirse) fırlatmaya devam eder. İki katman, biri sözleşme
+    // biri yarış koruması.
+    const budgetCheck = await this.budgetService.checkPlanBudgetAvailability(
+      tenantId,
+      channelCode,
+      initial.periodMonth,
+      declaredOnInvoice,
+      declaredOffInvoice,
+    );
+    if (!budgetCheck.overallSufficient) {
+      validationErrors.push(
+        `Insufficient budget. On-Invoice: ${budgetCheck.onInvoice.available} available, ${budgetCheck.onInvoice.requested} requested. ` +
+          `Off-Invoice: ${budgetCheck.offInvoice.available} available, ${budgetCheck.offInvoice.requested} requested.`,
+      );
+    }
+
+    if (validationErrors.length > 0) {
+      // ⛔ Uyarılar burada da taşınır. Bir plan hem BLOKLANIP hem hedefin
+      // altında olabilir; ikinci bilgiyi düşürmek, kullanıcıyı iki turluk
+      // bir düzeltme döngüsüne sokar.
+      return {
+        success: false,
+        planId: initial.id,
+        status: initial.status,
+        budgetCheck: {
+          ...budgetCheck,
+          warnings: warnings.length > 0 ? warnings : undefined,
+        },
+        validationErrors,
+        approvalRequestId: '',
+      };
+    }
+
+    let approvalRequestId = '';
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -946,13 +1095,27 @@ export class PlanService {
         });
       }
 
+      // ⛔ `🟡-1` — BU BİR TEKRAR DEĞİL, BİR **YARIŞ KORUMASIDIR**.
+      //
+      // "En az bir FU" kuralının doğruluk kaynağı yukarıdaki
+      // `collectPlanSubmissionValidationErrors` (kilitsiz okuma,
+      // `200 + success:false`). Buradaki kontrol o kararı yeniden
+      // uygulamaz; **kilitsiz okuma ile kilit arasında** son FU'nun
+      // silinmesi ihtimalini kapatır — ve o pencerede doğru cevap bir
+      // doğrulama listesi değil, `400`'dür: istek geçerliyken başladı,
+      // koşullar altından çekildi.
+      //
+      // ⚠️ Mesaj kasten AYNI metni taşır (`§7` tek-doğruluk-kaynağı:
+      // kullanıcı iki farklı cümleyle aynı eksikliği okumamalı).
       const fuCount = await queryRunner.manager.count(PlanFu, {
         where: { planId: id, tenantId },
       });
       if (fuCount === 0) {
-        throw new BadRequestException(
-          'Plan must have at least one FU before submission',
-        );
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'PLAN_FU_REMOVED_CONCURRENTLY',
+          message: PLAN_MUST_HAVE_FU_MESSAGE,
+        });
       }
 
       // T-034b step 3: side effects, inside the same transaction.
@@ -966,6 +1129,7 @@ export class PlanService {
         userId,
         queryRunner.manager,
       );
+      approvalRequestId = approvalRequest.id;
 
       // T-056 adım 5 (docs/analysis/0009 §4.1-§4.2, §6 adım 5): canlı submit
       // yolu artık TOTAL kovaya değil, adım 3'ün `reserveTypedForPlan` tek
@@ -976,49 +1140,28 @@ export class PlanService {
       // submit'e taşımamak ve rezerve edilen tutarı kullanıcının ekranda
       // gördüğünden (`plan.totalSpend`, T-034f version CAS'ın koruduğu değer)
       // ayırmamak için — 0009 §4.2 karar B).
-      if (Number(plan.totalSpend) > 0) {
-        const totalSpend = Number(plan.totalSpend);
-        const onInvoice = Number(plan.onInvoiceSpend) || 0;
-        const offInvoice = Number(plan.offInvoiceSpend) || 0;
-
-        // ADR 0005 K3 — bayat 0/0 → GÜRÜLTÜLÜ RED (sessiz onarım DEĞİL,
-        // 0009 §4.2'nin ilk taslağının aksine): kolonlar yalnız recalc
-        // koştuğunda yazılır (adım 4); hiç recalc edilmemiş/eski bir plan
-        // `0/0` taşır. Sessizce 0 rezerve etmek bütçeyi eksik düşürür — bu
-        // oturumda tekrar eden "sessiz sıfır" hata sınıfı (T-033/T-052/T-053).
-        if (onInvoice === 0 && offInvoice === 0) {
-          throw new BadRequestException({
-            statusCode: 400,
-            code: 'PLAN_SPEND_BREAKDOWN_STALE',
-            message:
-              `Plan ${id} has totalSpend=${totalSpend} but no on/off-invoice ` +
-              `spend breakdown recorded (0/0). Recalculate the plan (POST ` +
-              `/plans/${id}/recalculate) before submitting.`,
-          });
-        }
-
-        // Özdeşlik kapısı: `on + off === totalSpend` adım 4'ün inşaat gereği
-        // garanti ettiği bir değişmezdir (0009 §4.2/§2.5, tek türetim
-        // noktası — `buildMechanicValues`). Tutmuyorsa kolonlar bayat/bozuk
-        // demektir; sessizce farklı bir tutar rezerve etmek yerine reddet.
-        if (Math.abs(onInvoice + offInvoice - totalSpend) > 0.01) {
-          throw new BadRequestException({
-            statusCode: 400,
-            code: 'PLAN_SPEND_BREAKDOWN_INCONSISTENT',
-            message:
-              `Plan ${id} on/off-invoice breakdown (${onInvoice} + ` +
-              `${offInvoice} = ${onInvoice + offInvoice}) does not match ` +
-              `totalSpend (${totalSpend}). Recalculate the plan (POST ` +
-              `/plans/${id}/recalculate) before submitting.`,
-          });
-        }
-
+      // ADR 0005 K3 — bayat 0/0 → GÜRÜLTÜLÜ RED (sessiz onarım DEĞİL,
+      // 0009 §4.2'nin ilk taslağının aksine). ⛔ `T-344`: karar artık
+      // `resolvePlanSpendBreakdown`'da, İKİ kopyada değil — ve BURADAKİ
+      // koşum bir tekrar değil, bir YARIŞ KORUMASI: yukarıdaki ön-kontrol
+      // kilitsiz okunan satıra bakar, bu ise `FOR UPDATE` ile kilitlenmiş
+      // satıra. Arada bir recalc kolonları değiştirmiş olabilir.
+      const locked = resolvePlanSpendBreakdown(
+        plan.totalSpend,
+        plan.onInvoiceSpend,
+        plan.offInvoiceSpend,
+      );
+      const lockedError = planSpendBreakdownError(id, locked);
+      if (lockedError) {
+        throw new BadRequestException(lockedError);
+      }
+      if (locked.kind === 'USABLE') {
         // T-019/T-048/T-053 machinery, now reachable from the live UI route:
         // gate-before-write (ADR 0004 Karar 2), only actually-spent types,
         // deterministic ON→OFF order — all delegated to the single motor.
         await this.budgetService.reserveTypedForPlan(
           id,
-          { onInvoice, offInvoice },
+          { onInvoice: locked.onInvoice, offInvoice: locked.offInvoice },
           channelCode,
           plan.periodMonth,
           'TRY',
@@ -1043,6 +1186,8 @@ export class PlanService {
           // relies on it.
           submittedById: userId,
           submittedAt: new Date(),
+          // T-344: ölen rotanın `submissionNotes` yeteneği düşürülmedi.
+          submissionNotes,
           updatedBy: userId,
           version: () => '"version" + 1',
         } as any,
@@ -1061,7 +1206,7 @@ export class PlanService {
         tenantId,
         userId,
         ApprovalHistoryAction.SUBMITTED,
-        undefined,
+        submissionNotes,
         undefined,
         queryRunner.manager,
       );
@@ -1074,7 +1219,16 @@ export class PlanService {
       await queryRunner.release();
     }
 
-    return (await this.planRepo.findById(id, tenantId)) as Plan;
+    return {
+      success: true,
+      planId: id,
+      status: PlanStatus.PENDING_APPROVAL,
+      budgetCheck: {
+        ...budgetCheck,
+        warnings: warnings.length > 0 ? warnings : undefined,
+      },
+      approvalRequestId,
+    };
   }
 
   /**

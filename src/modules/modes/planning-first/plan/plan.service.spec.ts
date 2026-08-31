@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { Kpi } from '../../../../database/entities/kpi.entity';
 import { ConfigService } from '@nestjs/config';
 import { PlanService } from './plan.service';
 import { RecalcTelemetryContext } from '../../../../common/services/recalc-telemetry.service';
@@ -24,7 +25,10 @@ import { UserRole } from '../../../../database/entities/user.entity';
 import { ForecastingUnit } from '../../../../database/entities/forecasting-unit.entity';
 import { Sku } from '../../../../database/entities/sku.entity';
 import { Tactic } from '../../../../database/entities/tactic.entity';
-import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
+import {
+  ApprovalRequest,
+  ApprovalRequestType,
+} from '../../../../database/entities/approval-request.entity';
 import { UtilizationStatus } from '../../../shared/finance-reporting/dto/budget-utilization.dto';
 import {
   PlanApprovalHistory,
@@ -69,6 +73,12 @@ describe('PlanService', () => {
 
   const mockPlan: Partial<Plan> = {
     id: mockPlanId,
+    // ⛔ `T-344` `🟡-2`: submit'in sürüm kapısı artık doğrulama/bütçe
+    // kapılarından ÖNCE ve KİLİTSİZ okumaya bakıyor (`useVersionConflict`
+    // diyaloğu FU'suz/bütçesiz planlarda da açılabilsin diye). Fixture'ın
+    // ön-okuması bu yüzden GERÇEK bir `version` taşımalı — üretimde
+    // `findById` her zaman taşır.
+    version: 1,
     planCode: 'PLAN-2026-Q1-001',
     planName: 'Test Plan',
     status: PlanStatus.DRAFT,
@@ -136,6 +146,9 @@ describe('PlanService', () => {
             releaseForPlan: jest.fn(),
             // T-056 adım 6: approve() auto-create-on-approve path.
             createEnvelope: jest.fn(),
+            // T-344: `/submit` ölen rotanın bütçe-yeterlilik ÖN kontrolünü
+            // devraldı (`validationErrors` sözleşmesi, `Z73 §1`).
+            checkPlanBudgetAvailability: jest.fn(),
           },
         },
         {
@@ -159,6 +172,8 @@ describe('PlanService', () => {
             calculateSku: jest.fn(),
             calculateFu: jest.fn(),
             calculatePlan: jest.fn(),
+            // T-344/`Z71 §1`: submit'in Target-ROI eşiğini okuduğu yer.
+            getKpiConfig: jest.fn(),
           },
         },
         {
@@ -273,6 +288,18 @@ describe('PlanService', () => {
     };
     dataSource = module.get(DataSource);
     dataSource.createQueryRunner.mockReturnValue(queryRunner);
+
+    // T-344 (`Z73 §1`): `/submit` ölen `submit-for-approval` rotasının ön
+    // doğrulama + uyarı katmanını devraldı. Varsayılanlar NÖTR seçildi —
+    // eşik yok (⇒ below-target uyarısı üretilmez, `§2.5`) ve bütçe bol
+    // (⇒ `validationErrors` boş) — böylece aşağıdaki testler kendi
+    // konularını ölçer, bu iki yeni bağımlılığı değil.
+    kpiEngine.getKpiConfig.mockResolvedValue(null);
+    budgetService.checkPlanBudgetAvailability.mockResolvedValue({
+      onInvoice: { available: 1_000_000, requested: 0, sufficient: true },
+      offInvoice: { available: 1_000_000, requested: 0, sufficient: true },
+      overallSufficient: true,
+    });
   });
 
   afterEach(() => {
@@ -290,7 +317,10 @@ describe('PlanService', () => {
           {
             id: 'plan-fu-1',
             fuId: 'fu-1',
-          } as PlanFu,
+            // T-344: submit artık FU'da mekanik/taktik ARAR (ölen rotadan
+            // taşınan bloklayan doğrulama).
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
         ],
       } as Plan;
       const lockedPlan = { ...planWithFus, version: 1 } as Plan;
@@ -313,8 +343,14 @@ describe('PlanService', () => {
         mockApprovalRequest as any,
       );
       planRepo.updateStatusCas.mockResolvedValue(1);
-      // No envelope yet for this channel/period → reservation is skipped
-      // (best-effort; submission itself must not be blocked).
+      // ⚠️ BAYAT ÖNCÜL, DÜZELTİLDİ (`T-344`): bu satırın eski yorumu
+      // *"zarf yoksa rezervasyon ATLANIR, submit bloklanmaz"* diyordu ve
+      // YANLIŞTI — `reserveTypedForPlan` kendi içinde
+      // `checkPlanBudgetAvailability`'i çağırır ve zarf yokken
+      // `sufficient:false` ⇒ `400` fırlatır (`budget.service.ts`,
+      // ölçüldü). Yorum üretimi değil, MOCK'U anlatıyordu: burada
+      // `reserveTypedForPlan` bir jest mock'u olduğu için gerçek kapı hiç
+      // koşmuyor. `§2.7`: *"yorum kirliliği iki yönde birden yanıltır."*
       budgetService.findEnvelopeByDimensions.mockResolvedValue(null);
 
       const result = await service.submit(
@@ -374,7 +410,13 @@ describe('PlanService', () => {
       const planWithFus = {
         ...mockPlan,
         totalSpend: 100000,
-        planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
+        planFus: [
+          {
+            id: 'plan-fu-1',
+            fuId: 'fu-1',
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
+        ],
       } as Plan;
       const lockedPlan = { ...planWithFus, version: 1 } as Plan;
 
@@ -424,7 +466,13 @@ describe('PlanService', () => {
       const planWithFus = {
         ...mockPlan,
         totalSpend: 100000,
-        planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
+        planFus: [
+          {
+            id: 'plan-fu-1',
+            fuId: 'fu-1',
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
+        ],
       } as Plan;
       const lockedPlan = { ...planWithFus, version: 1 } as Plan;
 
@@ -459,7 +507,13 @@ describe('PlanService', () => {
         totalSpend: 100000,
         onInvoiceSpend: 0,
         offInvoiceSpend: 0,
-        planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
+        planFus: [
+          {
+            id: 'plan-fu-1',
+            fuId: 'fu-1',
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
+        ],
       } as Plan;
       const lockedPlan = { ...staleplan, version: 1 } as Plan;
 
@@ -488,7 +542,8 @@ describe('PlanService', () => {
       expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
       expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
       expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
-      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      // T-344: kapı artık kilitten ÖNCE de koşuyor (aynı tek karar
+      // noktası, `resolvePlanSpendBreakdown`) — işlem hiç açılmıyor.
       expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
     });
 
@@ -502,7 +557,13 @@ describe('PlanService', () => {
         totalSpend: 100000,
         onInvoiceSpend: 60000,
         offInvoiceSpend: 30000, // 60000 + 30000 = 90000 != 100000
-        planFus: [{ id: 'plan-fu-1', fuId: 'fu-1' } as PlanFu],
+        planFus: [
+          {
+            id: 'plan-fu-1',
+            fuId: 'fu-1',
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
+        ],
       } as Plan;
       const lockedPlan = { ...inconsistentPlan, version: 1 } as Plan;
 
@@ -526,7 +587,6 @@ describe('PlanService', () => {
       expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
       expect(budgetService.reserveForPlan).not.toHaveBeenCalled();
       expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
-      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
       expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
     });
 
@@ -544,28 +604,180 @@ describe('PlanService', () => {
       await expect(
         service.submit(mockPlanId, mockTenantId, mockUserId, undefined, 1),
       ).rejects.toThrow(BadRequestException);
-      // T-034b: real transaction — a failed precondition rolls back (no-op
-      // rollback since nothing was written), not a partial write.
-      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      // T-344: DRAFT kapısı artık ön-doğrulamadan da ÖNCE, işlem hiç
+      // açılmadan koşar (`Z73 §1` — DRAFT olmayan bir plan "doğrulama
+      // başarısız" değil, "geçersiz geçiş"tir). Kilit altındaki ikizi
+      // yarış koruması olarak yerinde duruyor.
+      expect(dataSource.createQueryRunner).not.toHaveBeenCalled();
       expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
     });
 
-    it('should fail if plan has no FUs', async () => {
+    it('T-344: FU olmayan plan BLOKLANIR — 400 değil, `success:false` + validationErrors', async () => {
+      // ⚠️ SÖZLEŞME DEĞİŞİMİ, ve bilinçli (`Z73 §1`): ölen rotanın
+      // `validationErrors` sözleşmesi kazandı. Eskiden bu bir
+      // `BadRequestException`'dı; şimdi 200 + `success:false`, çünkü
+      // kullanıcıya TEK bir hata mesajı değil, düzeltilecek kalemlerin
+      // LİSTESİ dönüyor. Kilit altındaki `fuCount === 0` kapısı yarış
+      // koruması olarak yerinde.
       planRepo.findById.mockResolvedValue(mockPlan as Plan);
-      planRepo.findByIdForUpdate.mockResolvedValue({
+
+      const result = await service.submit(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        undefined,
+        1,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.validationErrors).toContain(
+        'Plan must have at least one FU',
+      );
+      // ⛔ Ve plan DRAFT kaldı — bloklayan katman gerçekten BLOKLUYOR.
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
+      expect(budgetService.reserveTypedForPlan).not.toHaveBeenCalled();
+    });
+
+    it('T-344: yetersiz bütçe BLOKLAR (`success:false`), ve uyarılar YİNE taşınır', async () => {
+      const planWithFus = {
         ...mockPlan,
-        status: PlanStatus.DRAFT,
+        ragStatus: 'RED',
+        planFus: [
+          {
+            id: 'plan-fu-1',
+            fuId: 'fu-1',
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
+        ],
+      } as Plan;
+      planRepo.findById.mockResolvedValue(planWithFus);
+      budgetService.checkPlanBudgetAvailability.mockResolvedValue({
+        onInvoice: { available: 10, requested: 60000, sufficient: false },
+        offInvoice: { available: 10, requested: 40000, sufficient: true },
+        overallSufficient: false,
+      });
+
+      const result = await service.submit(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        undefined,
+        1,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.validationErrors?.[0]).toContain('Insufficient budget');
+      // ⛔ Bloklanan bir plan da uyarılarını GÖRÜR: ikisini birden alan
+      // kullanıcı tek turda düzeltir, iki turda değil.
+      expect(
+        result.budgetCheck.warnings?.some((w) => w.includes('Ciro kaybı')),
+      ).toBe(true);
+      expect(planRepo.updateStatusCas).not.toHaveBeenCalled();
+    });
+
+    it('⭐ T-344 — `Q13` UYARILARI SubmissionResult ÜZERİNDEN CANLI YÜZEYE ÇIKAR', async () => {
+      // ⛔ BU DALGANIN VAR-OLUŞ CÜMLESİ: "uyarı kullanıcıya ULAŞIR."
+      // Uyarı katmanı 2026-08-02'den beri VARDI ama frontend'in hiç
+      // çağırmadığı bir rotanın içinde yaşıyordu (`ADR 0005` ölçümü).
+      // Bu test, uyarının submit'in DÖNÜŞ GÖVDESİNDE olduğunu pinler —
+      // ve submit'in BLOKLANMADIĞINI (`K-2.2.7c`).
+      const planWithFus = {
+        ...mockPlan,
+        ragStatus: 'GREEN',
+        overallRoi: 10.5,
+        planFus: [
+          {
+            id: 'plan-fu-1',
+            fuId: 'fu-1',
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
+        ],
+      } as Plan;
+      planRepo.findById.mockResolvedValue(planWithFus);
+      planRepo.findByIdForUpdate.mockResolvedValue({
+        ...planWithFus,
         version: 1,
       } as Plan);
-      queryRunnerManager.count.mockResolvedValue(0);
+      queryRunnerManager.count.mockResolvedValue(1);
+      approvalService.createRequest.mockResolvedValue({
+        id: 'approval-request-1',
+      } as ApprovalRequest);
+      planRepo.updateStatusCas.mockResolvedValue(1);
+      budgetService.reserveTypedForPlan.mockResolvedValue([]);
+      // `pg`'nin gerçek şekli: `numeric` ⇒ DİZGE (`§2.7` "mock, taklit
+      // ettiği şeyin TİPİNE bağlanmalı").
+      // ⛔ `as unknown as Kpi` ve bu bir kaçamak DEĞİL, bir ÖLÇÜM:
+      // `Kpi` entity'si bu alanı `number` ilan ediyor ama `pg`
+      // `numeric` kolonu **DİZGE** döndürüyor (transformer YOK — canlı
+      // DB'de ölçüldü, `T-343 B1`). Mock ÜRETİMİN şekline bağlanmalı,
+      // tipin İDDİASINA değil (`§2.7`).
+      kpiEngine.getKpiConfig.mockResolvedValue({
+        targetRoiThreshold: '20.0000',
+      } as unknown as Kpi);
+
+      const result = await service.submit(
+        mockPlanId,
+        mockTenantId,
+        mockUserId,
+        undefined,
+        1,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe(PlanStatus.PENDING_APPROVAL);
+      expect(
+        result.budgetCheck.warnings?.some((w) => w.includes('Hedefin altında')),
+      ).toBe(true);
+      // ⛔ UYARI BLOKLAMAZ — plan gerçekten gönderildi.
+      expect(planRepo.updateStatusCas).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
+    });
+
+    it("⛔ `🟡-2` AYIRT EDİCİ — FU'suz plan + BAYAT sürüm ⇒ `409`, `200+success:false` DEĞİL", async () => {
+      // Sözleşme kaybı buradaydı: doğrulama kapıları öne alınınca bu plan
+      // `200 + validationErrors` alıyordu ve frontend'in
+      // `useVersionConflict` reload diyaloğu HİÇ AÇILMIYORDU — kullanıcı
+      // başkasının düzenlemesini göremeden "FU ekle"yip yeniden gönderiyordu.
+      //
+      // ⛔ Fixture BİLEREK iki kusuru birden taşıyor (FU yok + sürüm bayat):
+      // tek kusurlu bir fixture iki sıralamayı AYIRT EDEMEZDİ (`§2.7 #6`).
+      planRepo.findById.mockResolvedValue({
+        ...mockPlan,
+        version: 7,
+        planFus: [],
+      } as Plan);
 
       await expect(
         service.submit(mockPlanId, mockTenantId, mockUserId, undefined, 1),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ConflictException);
+      // Ve doğrulama/bütçe yolu hiç koşmadı.
+      expect(budgetService.checkPlanBudgetAvailability).not.toHaveBeenCalled();
+    });
+
+    it("⛔ `🟡-2` AYIRT EDİCİ — FU'suz plan + EKSİK sürüm ⇒ `409 MISSING_VERSION`", async () => {
+      planRepo.findById.mockResolvedValue({
+        ...mockPlan,
+        planFus: [],
+      } as Plan);
+
+      await expect(
+        service.submit(mockPlanId, mockTenantId, mockUserId),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('rejects with 409 MISSING_VERSION when version is omitted (K5 exception)', async () => {
-      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      // T-344: ön doğrulamayı GEÇMESİ gerekiyor, yoksa test kendi konusunu
+      // (version CAS) değil, validationErrors kısa devresini ölçerdi.
+      planRepo.findById.mockResolvedValue({
+        ...mockPlan,
+        planFus: [
+          {
+            id: 'plan-fu-1',
+            fuId: 'fu-1',
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
+        ],
+      } as Plan);
       planRepo.findByIdForUpdate.mockResolvedValue({
         ...mockPlan,
         status: PlanStatus.DRAFT,
@@ -579,7 +791,16 @@ describe('PlanService', () => {
     });
 
     it('rejects with 409 STALE_VERSION when the client version does not match', async () => {
-      planRepo.findById.mockResolvedValue(mockPlan as Plan);
+      planRepo.findById.mockResolvedValue({
+        ...mockPlan,
+        planFus: [
+          {
+            id: 'plan-fu-1',
+            fuId: 'fu-1',
+            tactics: { TPR: 10 },
+          } as unknown as PlanFu,
+        ],
+      } as Plan);
       planRepo.findByIdForUpdate.mockResolvedValue({
         ...mockPlan,
         status: PlanStatus.DRAFT,
