@@ -9,6 +9,10 @@ import {
   isBelowTargetRoi,
   toFiniteDecimal,
 } from '../kpi/target-roi';
+import {
+  countPlannedSkus,
+  SpendInputResolution,
+} from '../../modules/shared/spend-calculation/sku-spend-inputs';
 
 /**
  * SUBMIT ÖN-DOĞRULAMA + UYARI KATMANI — **TEK NOKTA** (`Z73 §1`, `T-344`).
@@ -147,6 +151,63 @@ export function collectPlanStructureWarnings(plan: {
     }
   }
   return warnings;
+}
+
+/**
+ * `Q20` (ürün sahibi, 2026-08-31) — **PLAN DÜZEYİ** *"boş plan"* uyarısı.
+ * **BLOKLAMAZ** (`Q16` ailesiyle aynı sınıf: bloklayan olan yalnız FU
+ * yokluğu ve yetersiz bütçe — bkz. dosya başı sınır notu).
+ *
+ * `collectPlanStructureWarnings`'in KARDEŞİ ama AYNI OLGU DEĞİL:
+ * ```
+ * collectPlanStructureWarnings   FU düzeyi   "mekanik/taktik yok"
+ * collectPlanSpendRowWarnings    SKU-satırı  "hiçbir satıra hacim girilmedi"
+ * ```
+ * Bir FU'nun taktiği/mekaniği olabilir ama SKU satırlarının hiçbirine
+ * hacim girilmemiş olabilir (ya da tersi) — ikisi bağımsız gözlemdir,
+ * birleştirilmez.
+ *
+ * ⛔ Sayının TEK türetimi `countPlannedSkus` (`sku-spend-inputs.ts`) —
+ * ikinci bir "dolu satır" tanımı burada YAZILMAZ (`§7`/`F8` ailesi).
+ */
+export function collectPlanSpendRowWarnings(
+  spendInputResolutions: readonly SpendInputResolution[],
+): string[] {
+  if (countPlannedSkus(spendInputResolutions) > 0) return [];
+
+  // `R1` (Team Lead, 2026-08-31) — ⛔ ERKEN DÖNÜŞ SİLİNDİ. Eski kod
+  // `spendInputResolutions.length === 0` iken uyarı ÜRETMİYORDU. Bu bir
+  // "resolutions henüz hesaplanmadı" durumu DEĞİL — `addFu`
+  // `skuRepo.findBy({ fuId, tenantId, isActive: true })` ile SKU'ları
+  // otomatik ekler; bir FU'nun AKTİF SKU'su YOKSA `planSkus = []` ⇒
+  // `resolutions = []` ⇒ bu da *"dolu-satır-sayısı 0"*'ın bir hâlidir
+  // (`Q20`'nin hükmü satır SAYISINA değil DOLULUĞUNA bakar — sıfır satır,
+  // sıfır dolu satırdır). `skus.is_active` MUTABLE bir bayrak olduğu için
+  // bu yol bugün seed'de tanıksız olsa da (ölçüldü: aktif-SKU'suz FU
+  // sayısı `0`) YARIN açılabilir — `DISIPLIN`: "veriye dayalı erteleme,
+  // verinin değiştiği gün yeniden ölçülür". Kapı bugün kapatılır.
+  //
+  // ⛔ AMA İKİ OLGU AYNI CÜMLE DEĞİL (`Z70`): `resolutions.length === 0`
+  // *"planda hiç SKU satırı yok"* der (FU var, satır YOK — `addFu` FU'nun
+  // aktif SKU'su bulamadı); `> 0` ise *"satır var, hiçbirine hacim
+  // girilmedi"* der (satırlar var, hepsi `UNTOUCHED`). Kullanıcının
+  // düzeltme eylemi FARKLI: birincisinde master-data'ya SKU eklemesi
+  // gerekir, ikincisinde grid'i doldurması. FU'suz plan zaten
+  // `PLAN_MUST_HAVE_FU_MESSAGE` ile bloklanır (bu fonksiyonun çağrıldığı
+  // an itibarıyla en az bir FU vardır) — yani `length === 0` burada
+  // "FU var, hiç SKU satırı yok" anlamına gelir, yanlış alarm değildir.
+  if (spendInputResolutions.length === 0) {
+    return [
+      "Plan boş: planda hiç SKU satırı yok (FU'ların aktif SKU'su " +
+        'bulunamadı). Plan gönderilebilir, ancak hiçbir satır bütçe ' +
+        'rezervasyonuna katkı vermeyecek.',
+    ];
+  }
+  return [
+    'Plan boş: hiçbir SKU satırına hacim girilmedi (BASE_VOL/PLAN_VOL). ' +
+      'Plan gönderilebilir, ancak hiçbir satır bütçe rezervasyonuna ' +
+      'katkı vermeyecek.',
+  ];
 }
 
 /**
@@ -333,4 +394,93 @@ export function planSpendBreakdownError(
     default:
       return null;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// `T-337` / `Z77 §1` — GİRDİ-EKSİKLİĞİ: SUBMIT DURMAZ, REZERVASYON REDDEDER
+// ─────────────────────────────────────────────────────────────────────────
+//
+// ```
+// SUBMIT       DURMAZ  — NOT_EVALUABLE + GÖRÜNÜR UYARI, ALAN ADIYLA
+// REZERVASYON  REDDEDER — RESERVATION_INPUT_INCOMPLETE
+// ```
+// > **`NOT_EVALUABLE` BİR ZARFA `0` YAZMAZ — YAZMAYI REDDEDER.**
+//
+// ⛔ **İKİ RED SINIFI AYRI ADLANIR** (`Z77 §1a`). Bu, `T-321`'in
+// `%100`-BLOCKED **eşik** reddi (`BUDGET_BLOCK_THRESHOLD_EXCEEDED`,
+// `409 Conflict`, *"zarf doldu"*) **DEĞİLDİR**; bu **girdi** reddidir
+// (`400 Bad Request`, *"tutar hesaplanamıyor"*). İkisi aynı yüzeyden
+// dönerse ilk okuyucu karıştırır — kod, HTTP durumu ve mesaj ayrı.
+//
+// ⚠️ NEDEN `warnings`, `validationErrors` DEĞİL: `ADR 0005 K2`'nin ikinci
+// gerekçesi (*"kullanıcının bugün submit edebildiği plan yarın da
+// edebilmeli"*) doğrulama katmanında **korunur**. Reddi para katmanı
+// verir, ve orası zaten bugün de reddeden bir katmandır
+// (`PLAN_SPEND_BREAKDOWN_STALE` emsali).
+//
+// ⛔ ALAN ADLARI KPI SÖZLÜĞÜNÜN KODLARIDIR (`BASE_VOL`/`PLAN_VOL`/`BPTT`/
+// `COGS`, `kpi-engine.service.ts#SkuCalculationContext`) — yeni bir dil
+// icat edilmedi.
+
+/** Alan başına *"kaç SKU'da eksik"*. Üreteci `summarizeNotEvaluableSkus`. */
+export type NotEvaluableSpendInputCounts = Readonly<Record<string, number>>;
+
+/** ⛔ Alan adı → kullanıcıya görünen ad. TEK metin kaynağı. */
+const SPEND_INPUT_LABELS: Readonly<Record<string, string>> = {
+  PLAN_VOL: 'PLAN_VOL (planlanan hacim)',
+  BPTT: 'BPTT (SKU birim fiyatı)',
+};
+
+function describeMissingSpendInputs(
+  counts: NotEvaluableSpendInputCounts,
+): string[] {
+  // ⛔ `Object.keys` sırası girdiye bağlıdır ⇒ mesaj deterministik olsun
+  // diye SIRALANIR (pin edilebilirlik, `T-332`).
+  return Object.keys(counts)
+    .sort()
+    .map(
+      (field) =>
+        `${SPEND_INPUT_LABELS[field] ?? field} eksik: ` +
+        `${counts[field]} SKU'da spend hesaplanamadı`,
+    );
+}
+
+/**
+ * BLOKLAMAYAN uyarı (`Z77 §1` üst satır). Boş sayaç ⇒ boş dizi.
+ */
+export function collectSpendInputWarnings(
+  counts: NotEvaluableSpendInputCounts,
+): string[] {
+  const described = describeMissingSpendInputs(counts);
+  if (described.length === 0) return [];
+  return described.map(
+    (line) =>
+      `${line}. Plan gönderilebilir, ancak bütçe rezervasyonu bu eksiklik ` +
+      `giderilmeden yapılamaz.`,
+  );
+}
+
+/**
+ * ⛔ REZERVASYONU REDDEDEN kapı (`Z77 §1` alt satır). `null` = engel yok.
+ *
+ * Çağıran `BadRequestException` ile fırlatır — `planSpendBreakdownError`
+ * ile aynı şekil, bilerek: iki para kapısı aynı sözleşmeyi konuşur.
+ */
+export function reservationInputIncompleteError(
+  planId: string,
+  counts: NotEvaluableSpendInputCounts,
+): { statusCode: 400; code: string; message: string } | null {
+  const described = describeMissingSpendInputs(counts);
+  if (described.length === 0) return null;
+  return {
+    statusCode: 400,
+    code: 'RESERVATION_INPUT_INCOMPLETE',
+    message:
+      `Plan ${planId}: bütçe rezervasyonu yapılamaz — harcama tutarı ` +
+      `hesaplanamıyor. ${described.join('; ')}. Eksik alanları ` +
+      // ⛔ "doldurup" DEĞİL: pin `/doldu/` ile eşleşiyor ve kullanıcıyı
+      // *"zarf doldu"* (T-321 eşik reddi) sanısına götürebilir. İki red
+      // sınıfı METİN ekseninde de ayrışmalı (`Z77 §1a`).
+      `tamamlayıp planı yeniden hesaplayın (POST /plans/${planId}/recalculate).`,
+  };
 }

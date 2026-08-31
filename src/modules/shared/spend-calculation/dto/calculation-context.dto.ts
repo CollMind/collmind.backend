@@ -1,21 +1,73 @@
 import { MechanicInput } from '../../../../common/numeric/mechanic-input';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+/**
+ * ⛔ MARKA — `export EDİLMEZ` ve `declare const`'tir (çalışma zamanında
+ * KARŞILIĞI YOKTUR). Başka hiçbir dosya bu özelliği adlandıramaz ⇒
+ * `const x: SKUContext = { ... }` **derlenmez**. Tek üretici
+ * `sku-spend-inputs.ts#resolveSkuSpendInputs` (`Z77 §2`).
+ */
+declare const SKU_CONTEXT_BRAND: unique symbol;
+
+/**
+ * ⛔ **NESNE LİTERALİYLE İNŞA EDİLEMEZ** — `Z77 §2` / `T-337`.
+ *
+ * > *"Bir çağıran unutuldu ⇒ DERLEME HATASI olur, BÜTÇE SAPMASI değil."*
+ *
+ * `listPrice` **her zaman sonlu sayıdır** (eksikse resolver bu tipi hiç
+ * üretmez). `baseVolume`/`plannedVolume`/`cogsPerUnit` `null` olabilir ve
+ * bu **bir varsayılan değil, taşınan bir olgudur** (`CLAUDE.md §2.5`) —
+ * her biri AYRI bir kovayı düşürür, hepsini birden değil.
+ *
+ * Ölçüm ve gerekçe: `docs/research/K1_SESSIZ_SIFIR_OLCUM_TABLOSU.md`.
+ */
 export class SKUContext {
+  /**
+   * Yalnız derleyici için. Çalışma zamanında bu alan YOKTUR ve hiçbir kod
+   * onu okumaz — `resolveSkuSpendInputs`'un tek `as unknown as SKUContext`
+   * dönüşümü onu atlar.
+   */
+  readonly [SKU_CONTEXT_BRAND]!: true;
+
   @ApiProperty({ description: 'SKU ID' })
   skuId!: string;
 
-  @ApiProperty({ description: 'Base volume' })
-  baseVolume!: number;
+  /**
+   * `plan_skus.base_volume` — **NULLABLE** kolon (`K1 §3`). `null` =
+   * *"taban hacmi girilmemiş"*, `0` ile aynı şey DEĞİLDİR:
+   * `null` ⇒ `SpendBreakdown.base.*` ve `incremental.{onInvoice,offInvoice,
+   * total}` `null` döner (eskiden `INCR_SPEND` **şişkin bir sayı** olarak
+   * KPI motoruna gidiyordu — `K1 §1b:2532`).
+   */
+  @ApiPropertyOptional({ description: 'Base volume (null = not entered)' })
+  baseVolume!: number | null;
 
-  @ApiProperty({ description: 'Planned volume' })
-  plannedVolume!: number;
+  /**
+   * `plan_skus.planned_volume` — **NULLABLE** kolon. `null` = *"planlanan
+   * hacim girilmemiş"* ⇒ **planlanan** harcama hesaplanamaz
+   * (`SpendBreakdown.planned = null`), ama **taban ETKİLENMEZ**: taban
+   * `BASE_VOL × BPTT`'dir ve `PLAN_VOL`'e bağlı değildir.
+   */
+  @ApiPropertyOptional({ description: 'Planned volume (null = not entered)' })
+  plannedVolume!: number | null;
 
-  @ApiProperty({ description: 'List price (BPTT)' })
+  /**
+   * `skus.unit_price` (BPTT) — master data. ⛔ Resolver'ın garantisiyle
+   * **daima sonlu sayıdır**: eksikse hiçbir kova hesaplanamaz, o yüzden
+   * resolver bu tipi HİÇ üretmez (`NOT_EVALUABLE` + `ctx: null`).
+   */
+  @ApiProperty({
+    description: 'List price (BPTT) — resolver guarantees finite',
+  })
   listPrice!: number;
 
-  @ApiProperty({ description: 'COGS per unit' })
-  cogsPerUnit!: number;
+  /**
+   * `skus.cogs` — **NULLABLE**; bugün `166/170` satırda `NULL` ve
+   * `cogs = 0` olan satır **SIFIR** (`Z77 §3b`: *"`0` meşru bir değer
+   * olsaydı, veride en az bir tane olurdu"*).
+   */
+  @ApiPropertyOptional({ description: 'COGS per unit (null = not configured)' })
+  cogsPerUnit!: number | null;
 
   @ApiPropertyOptional({ description: 'Channel code' })
   channelCode?: string;

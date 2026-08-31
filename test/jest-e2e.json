@@ -15,6 +15,7 @@
     "^@/config/(.*)$": "<rootDir>/../src/config/$1",
     "^@/database/(.*)$": "<rootDir>/../src/database/$1"
   },
+  "maxWorkers": 1,
   "testTimeout": 60000
 }
 

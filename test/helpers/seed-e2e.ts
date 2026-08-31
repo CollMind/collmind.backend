@@ -738,9 +738,36 @@ export async function createOffInvoiceTransaction(
  *
  * ⚠️ Ad öneki `E2E-` — `cleanupTestAgreements` bu ön eke bakıyor.
  * ⚠️ LTA süre kuralı: `agreement.service.ts` `> 30 gün` şartı koyuyor.
- * ⚠️ Kayıt `DRAFT` kalır; submit/approve akışı bu fixture'ın işi değil
- * (LTA oran şartları yaşam döngüsü DURUMUNA değil, kaydın VARLIĞINA bağlı
- * doğar — durum kapısı ayrı bir karar kalemidir, `T-293` raporu).
+ *
+ * ── [[T-335]] — ESKİ ŞERH DÜŞTÜ (append-only iz, `F12` deseni) ──────────
+ * Burada şu yazıyordu:
+ *
+ *   *"Kayıt `DRAFT` kalır; submit/approve akışı bu fixture'ın işi değil
+ *   (LTA oran şartları yaşam döngüsü DURUMUNA değil, kaydın VARLIĞINA
+ *   bağlı doğar — durum kapısı ayrı bir karar kalemidir, `T-293`
+ *   raporu)."*
+ *
+ * ⛔ O cümlenin parantez içi bir KABULDÜ, bir kural değil — ve
+ * `DISIPLIN`'in *"bilinen eksiklik TODO ile değil TASK ile kaydedilir"*
+ * maddesinin ihlaliydi: ürünün en kritik finansal kapılarından biri bir
+ * TEST YORUMUNDA yaşıyordu. `T-335` o kaydın kendisidir ve kabulü ölçtü:
+ * `DRAFT` bir ebeveynin oran kademesi harcama motoruna GERÇEKTEN
+ * iniyordu (e2e reprodüksiyon, `lta-parent-lifecycle-status-gate`).
+ *
+ * ⇒ `findActiveForCPL` artık ebeveynin `IN_FORCE_AGREEMENT_STATES`
+ * (`{APPROVED, ACTIVE}`) içinde olmasını şart koşuyor. Bu yüzden bu
+ * fixture, motoru besleyen testler için ebeveyni **`APPROVED`**'a taşır.
+ *
+ * @param lifecycleStatus  `'APPROVED'` (varsayılan) — oran kademesi motora
+ *   inebilsin diye. `'DRAFT'` istendiğinde kayıt onaya HİÇ SUNULMAZ; yalnız
+ *   durum kapısını SINAYAN testler bunu ister.
+ *   ⚠️ `'APPROVED'` geçişi ADMIN `DataSource`'u ile DOĞRUDAN yazılır,
+ *   `submit`+`approve` uçlarından DEĞİL. Sebep ölçüldü: `approve` bütçe
+ *   rezervasyonu yapıyor ve zarflar yalnız `2026-01`/`2026-02` dönemleri
+ *   için var — bu fixture'ın tarihleri ise BUGÜNden türüyor. Kısayol
+ *   meşru çünkü bu fixture'ın konusu ONAY AKIŞI DEĞİL; onay akışının
+ *   kapıyı GERÇEKTEN açtığı `lta-parent-lifecycle-status-gate.e2e-spec.ts`
+ *   içinde ÜRETİM UÇLARIYLA (`submit`+`approve`, SoD'lu) kanıtlanıyor.
  */
 export async function createLifecycleLtaAgreement(
   app: INestApplication,
@@ -754,6 +781,7 @@ export async function createLifecycleLtaAgreement(
     namePrefix?: string;
     startDate?: string;
     endDate?: string;
+    lifecycleStatus?: 'DRAFT' | 'APPROVED';
   },
 ): Promise<string> {
   const admin = await loginAs(app, 'ADMIN');
@@ -783,7 +811,37 @@ export async function createLifecycleLtaAgreement(
       `createLifecycleLtaAgreement başarısız (${res.status}): ${JSON.stringify(res.body)}`,
     );
   }
-  return res.body.id;
+  const lifecycleId: string = res.body.id;
+
+  // [[T-335]] — durum kapısı. Varsayılan `APPROVED` (yukarıdaki şerh).
+  const targetStatus = input.lifecycleStatus ?? 'APPROVED';
+  if (targetStatus === 'APPROVED') {
+    const adminDs = await getAdminDataSource();
+    await adminDs.query(
+      `UPDATE main.agreements SET status = 'APPROVED'
+        WHERE id = $1 AND status = 'DRAFT'`,
+      [lifecycleId],
+    );
+    // ⚠️ Yazma BAĞIMSIZ BİR OKUMAYLA doğrulanır, `query()`'nin dönüş
+    // değeriyle DEĞİL (`DISIPLIN`: *"bir yazma işleminin dönüş değeri,
+    // yazdığının kanıtı değildir"*). Ve bu bir tercih değil bir DERS:
+    // ilk yazımı `RETURNING id` + `updated.length === 1` idi ve DÜŞTÜ —
+    // node-pg/TypeORM `UPDATE ... RETURNING`'i `[rows, rowCount]` TUPLE'ı
+    // olarak döndürüyor, yani `length` HER ZAMAN `2`. Doğru görünen,
+    // sürücü şekline bağlı ve YANLIŞ bir ölçümdü.
+    const check = await adminDs.query(
+      `SELECT status FROM main.agreements WHERE id = $1`,
+      [lifecycleId],
+    );
+    if (check.length !== 1 || check[0].status !== 'APPROVED') {
+      throw new Error(
+        `createLifecycleLtaAgreement: ebeveyn ${lifecycleId} APPROVED'a ` +
+          `taşınamadı (okunan: ${JSON.stringify(check)}).`,
+      );
+    }
+  }
+
+  return lifecycleId;
 }
 
 /** `YYYY-MM-DD`, bugünden `days` gün sonrası (yerel takvim). */

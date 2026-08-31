@@ -172,9 +172,24 @@ describe('LTA yaşam-döngüsü BAĞI + taban zinciri (T-293)', () => {
 
   beforeEach(() => clearTokenCache());
 
-  /** Kullanıcı formunun yazdığı yer: `main.agreements` (yaşam döngüsü). */
+  /**
+   * Kullanıcı formunun yazdığı yer: `main.agreements` (yaşam döngüsü).
+   *
+   * [[T-335]] — `inForce` ebeveyni `APPROVED`'a taşır. Gerekmesinin sebebi:
+   * `findActiveForCPL` artık ebeveynin `IN_FORCE_AGREEMENT_STATES`
+   * (`{APPROVED, ACTIVE}`) içinde olmasını şart koşuyor; `DRAFT` bir
+   * ebeveynin oranı motora İNMEZ. Bu suite'in TABAN ZİNCİRİ bloğu oranın
+   * indiğini ölçtüğü için ebeveyn yürürlükte OLMALI.
+   * ⚠️ BAĞ bloğu (`inForce=false`) bilerek `DRAFT` bırakır — orada ölçülen
+   * şey bağın KURULMASI, oranın inmesi değil.
+   * ⚠️ Kısayolun gerekçesi `seed-e2e.ts createLifecycleLtaAgreement`
+   * şerhinde (bütçe zarfı dönemleri); onay akışının kapıyı GERÇEKTEN
+   * açtığı ise `lta-parent-lifecycle-status-gate.e2e-spec.ts`'te üretim
+   * uçlarıyla kanıtlı.
+   */
   async function createLifecycleAgreement(
     type: 'LTA' | 'STA',
+    inForce = false,
   ): Promise<string> {
     const admin = await loginAs(app, 'ADMIN');
     // STA ≤ 30 gün, LTA > 30 gün (agreement.service.ts:100-111)
@@ -202,6 +217,24 @@ describe('LTA yaşam-döngüsü BAĞI + taban zinciri (T-293)', () => {
       })
       .expect(201);
     createdLifecycleAgreementIds.push(res.body.id);
+
+    if (inForce) {
+      const admin2 = await getAdminDataSource();
+      await admin2.query(
+        `UPDATE main.agreements SET status = 'APPROVED'
+          WHERE id = $1 AND status = 'DRAFT'`,
+        [res.body.id],
+      );
+      // Yazma BAĞIMSIZ BİR OKUMAYLA doğrulanır — `query()`'nin dönüşü
+      // `UPDATE ... RETURNING` için `[rows, rowCount]` tuple'ıdır ve
+      // `length` her zaman `2`'dir (ölçüldü, [[T-335]]).
+      const check = await admin2.query(
+        `SELECT status FROM main.agreements WHERE id = $1`,
+        [res.body.id],
+      );
+      expect(check[0].status).toBe('APPROVED');
+    }
+
     return res.body.id;
   }
 
@@ -385,7 +418,8 @@ describe('LTA yaşam-döngüsü BAĞI + taban zinciri (T-293)', () => {
     let listPrice: number;
 
     beforeAll(async () => {
-      const parentId = await createLifecycleAgreement('LTA');
+      // [[T-335]] — ebeveyn YÜRÜRLÜKTE olmalı, yoksa oran motora inmez.
+      const parentId = await createLifecycleAgreement('LTA', true);
       const admin = await loginAs(app, 'ADMIN');
 
       // Oran şartları — GERÇEK üretim ucundan (admin SQL'i DEĞİL).

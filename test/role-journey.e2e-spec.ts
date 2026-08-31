@@ -702,19 +702,28 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
       // T-052 FIX: this fixture used to INSERT directly into
       // `plan_mechanic_values` (bypassing the real UI flow entirely) to
       // work around a genuine bug — `SpendCalculationService
-      // #calculateAllSpendsForFU` (used by `ApprovalWorkflowService
-      // #submitForApproval`'s `calculateSpendBreakdown`) read ONLY
+      // #calculateAllSpendsForFU` read ONLY
       // `plan_mechanic_values.enteredValue`, never `plan_fus.tactics`
       // (written by the ONLY UI-reachable entry point,
       // `PATCH .../fus/:fuId/tactics` -> `PlanService#updateFuTactic`). A
-      // plan built the real way therefore computed on=0/off=0 through THIS
+      // plan built the real way therefore computed on=0/off=0 through THAT
       // path even though `plan.totalSpend` was correctly non-zero through
-      // the OTHER canonical path (`PlanService#submit`). Fixed by
+      // `PlanService#submit`. Fixed by
       // `SpendCalculationService#buildMechanicValues`, now the single
-      // shared derivation point both canonical paths call — see its doc
-      // comment. This test now drives the mechanic values through the REAL
+      // shared derivation point both paths call — see its doc comment.
+      // This test now drives the mechanic values through the REAL
       // tactics-PATCH flow (no direct table seeding) to prove the fix
       // against the actual UI-reachable path, not a fixture shortcut.
+      //
+      // ⛔ `F12` — ÖNCÜL DÜZELTİLDİ (`T-337`, 2026-08-31; ölçüm `K1 §0`).
+      // Bu yorum `calculateAllSpendsForFU`'yu *"`ApprovalWorkflowService
+      // #submitForApproval`'ın `calculateSpendBreakdown`'ı tarafından
+      // kullanılıyor"* diye tanıtıyordu. **YANLIŞ:**
+      // `approval-workflow.service.ts` `SpendCalculationService`'i enjekte
+      // bile etmiyor ve `calculateSpendBreakdown` diye bir üyesi yok;
+      // `calculateAllSpendsForFU`'nun bugün **sıfır üretim çağıranı** var
+      // (`Z77 §3c`). Yorum SİLİNMEDİ, DÜZELTİLDİ — `T-084`: yanlış bir
+      // canlılık iddiası, ölü bir yolu koruma altına alır.
       const planner = await loginAs(app, 'PLANNER');
 
       const createRes = await request(app.getHttpServer())
@@ -845,32 +854,41 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
         budgetTxAfterSubmit.every((r: any) => r.tx_status === 'POSTED'),
       ).toBe(true);
 
-      // ── T-052 acceptance criterion: the TWO canonical spend-derivation
-      // paths must agree numerically for the SAME plan.
-      //   Path 1 (`PlanService#submit`): `plan.totalSpend`, computed by
-      //     `recalculatePlanWithKpiEngineLocked` — already fresh here
-      //     because the tactics PATCH above triggered a recalc, and
-      //     `preSubmitRes` re-reads the plan afterwards.
-      //   Path 2 (`ApprovalWorkflowService#submitForApproval`):
-      //     `spendBreakdown.onInvoice + spendBreakdown.offInvoice`, computed
-      //     by `calculateSpendBreakdown` -> `SpendCalculationService
-      //     #calculateAllSpendsForFU` — exactly what was just reserved
-      //     above (`bySpendType.ON_INVOICE + bySpendType.OFF_INVOICE`).
-      // Before T-052, Path 2 was 0 for a tactics-only plan while Path 1 was
-      // correctly non-zero — this assertion is the numeric proof they now
-      // match (both derive `mechanicValues` from the same
-      // `SpendCalculationService#buildMechanicValues`).
+      // ── T-052 acceptance criterion, `F12` ile YENİDEN ADLANDIRILDI
+      // (`T-337`, 2026-08-31 — ölçüm `K1 §0`).
+      //
+      // ⛔ ESKİ METİN İKİ *"kanonik yol"*dan söz ediyordu ve Path 2'yi
+      // `ApprovalWorkflowService#submitForApproval` ->
+      // `calculateSpendBreakdown` -> `calculateAllSpendsForFU` diye
+      // tanıtıyordu. **YANLIŞTI:** `approval-workflow.service.ts`
+      // `SpendCalculationService`'i enjekte bile etmiyor ve
+      // `calculateSpendBreakdown` diye bir üyesi yok.
+      //
+      // ⚠️ AMA TEST KENDİSİ DOĞRU VE HÂLÂ DEĞERLİ — çünkü gerçekte
+      // ölçtüğü şey o yol değildi:
+      //   Path 1: `plan.totalSpend` — `recalculatePlanWithKpiEngineLocked`
+      //     (spend'in TEK canlı türetimi). Tactics PATCH bir recalc
+      //     tetikledi, `preSubmitRes` sonrasında yeniden okuyor.
+      //   Path 2: `budget_transactions`'a FİİLEN yazılan tipli tutarlar
+      //     (`bySpendType.ON_INVOICE + OFF_INVOICE`) — yani
+      //     `PlanService#submit`'in `reserveTypedForPlan` çağrısının
+      //     PARA TARAFINDAKİ sonucu.
+      // ⇒ Karşılaştırma *"iki hesap motoru"* değil, **"hesaplanan tutar =
+      //   rezerve edilen tutar"** invaryantıdır. `T-337`'den sonra bu daha
+      //   da anlamlı: eksik girdili bir plan artık rezerve EDİLEMİYOR
+      //   (`RESERVATION_INPUT_INCOMPLETE`), yani eşitlik sağlanıyorsa
+      //   tutarın gerçekten hesaplanmış olduğu da kanıtlanıyor.
       const path1TotalSpend = Number(preSubmitRes.body.totalSpend);
       const path2TotalSpend = bySpendType.ON_INVOICE + bySpendType.OFF_INVOICE;
 
       record({
         step: 'A8c-T052',
         role: '-',
-        endpoint: 'İki kanonik yol karşılaştırması (T-052)',
+        endpoint: 'Hesaplanan tutar = rezerve edilen tutar (T-052 / T-337 F12)',
         expected:
           'path1TotalSpend === path2TotalSpend (aynı plan, aynı mekanik girişleri)',
         actual: `path1(plan.service#submit → plan.totalSpend)=${path1TotalSpend}, path2(tipli ON/OFF kova → on+off)=${path2TotalSpend}`,
-        note: 'T-052 FIX: her iki yol da SpendCalculationService#buildMechanicValues üzerinden aynı mechanicValues haritasını türetiyor.',
+        note: 'T-052 FIX: hesaplanan tutar (plan.totalSpend) ile rezerve edilen tipli tutarlar eşit. T-337 F12: eski not bunu "iki kanonik motor" diye tanıtıyordu — calculateAllSpendsForFU bu yolda HİÇ koşmuyor.',
       });
 
       expect(path1TotalSpend).toBeGreaterThan(0);

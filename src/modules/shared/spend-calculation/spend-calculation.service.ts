@@ -29,6 +29,7 @@ import {
   PromoOffInvoiceSpend,
 } from './dto/spend-breakdown.dto';
 import { CalculationContext, SKUContext } from './dto/calculation-context.dto';
+import { resolveSkuSpendInputs } from './sku-spend-inputs';
 import {
   CompleteSKUFinancialMetrics,
   NIVMetrics,
@@ -202,8 +203,23 @@ export class SpendCalculationService {
       return 0;
     }
 
-    // Get base values
-    const plannedGsv = skuContext.plannedVolume * skuContext.listPrice;
+    // Get base values.
+    // ⛔ `T-337`: `plannedVolume === null` ⇒ planlanan harcama TANIMSIZ.
+    // Bu metot tek bir mekaniğin TUTARINI döner ve `null` taşıyamaz;
+    // `calculateAllSpendsForSKU` bu dala HİÇ gelmez (planlanan tarafı
+    // baştan atlar). Doğrudan/tekil bir çağıran için sessiz `0` yerine
+    // AÇIK HATA (`§2.5`) — uydurulmuş bir tutar bütçeye girmemeli.
+    if (skuContext.plannedVolume === null) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'MECHANIC_SPEND_INPUT_INCOMPLETE',
+        message:
+          `SKU ${skuContext.skuId}: mechanic ${mechanicCode} spend requires ` +
+          `PLAN_VOL, which is not entered.`,
+      });
+    }
+    const plannedVolume = skuContext.plannedVolume;
+    const plannedGsv = plannedVolume * skuContext.listPrice;
 
     // Get LTA values (already calculated)
     const ltaContext =
@@ -249,7 +265,7 @@ export class SpendCalculationService {
         return this.calculatePerUnitSupport(
           mechanic,
           enteredValue,
-          skuContext.plannedVolume,
+          plannedVolume,
         );
 
       case MechanicCategory.LUMPSUM_SPEND:
@@ -513,9 +529,22 @@ export class SpendCalculationService {
   ): Promise<SpendBreakdown> {
     const startTime = Date.now();
 
-    // SEVIYE 1: Base values
-    const baseGsv = skuContext.baseVolume * skuContext.listPrice;
-    const plannedGsv = skuContext.plannedVolume * skuContext.listPrice;
+    // SEVIYE 1: Base values.
+    // `T-337`/`Z77 §2`: `baseVolume` **`null` olabilir** ve bu bir eksik
+    // veri olgusudur, bir `0` değil (`plan_skus.base_volume` NULLABLE,
+    // `K1 §3`). Eskiden `?? 0` düşürülüyordu ⇒ `baseTotalSpend = 0` ⇒
+    // `INCR_SPEND = planned − 0` **ŞİŞKİN** çıkıyordu. `plannedVolume` ve
+    // `listPrice` ise resolver'ın garantisiyle daima sonlu sayıdır.
+    const baseGsv =
+      skuContext.baseVolume === null
+        ? null
+        : skuContext.baseVolume * skuContext.listPrice;
+    // `T-337`: `plannedVolume` de **`null` olabilir** — ve bu TABANI
+    // ETKİLEMEZ. İki eksen bağımsız (`SpendBreakdown` doc'undaki matris).
+    const plannedGsv =
+      skuContext.plannedVolume === null
+        ? null
+        : skuContext.plannedVolume * skuContext.listPrice;
 
     // SEVIYE 2: LTA calculations. T-046a: reuse the caller's pre-resolved
     // context when provided instead of re-querying (docs/analysis/0007 §2.3 —
@@ -537,7 +566,8 @@ export class SpendCalculationService {
     const ltaOnInvoicePct = ltaContext?.finalOnInvoicePct || 0;
     const ltaOffInvoicePct = ltaContext?.finalOffInvoicePct || 0;
 
-    const baseLtaOnInv = (baseGsv * ltaOnInvoicePct) / 100;
+    const baseLtaOnInv =
+      baseGsv === null ? null : (baseGsv * ltaOnInvoicePct) / 100;
     // Excel `BaseLTASpendOff = LTAOffPct × BaseNIV`. `BaseNIV = BaseGSV −
     // BaseLTAOn`, çünkü **tabanda promo harcaması yoktur** — `SEVIYE 4`'te
     // `baseTotalOnInv = baseLtaOnInv` diye YAZILI. `Q8`'in taban vakası bu
@@ -547,8 +577,36 @@ export class SpendCalculationService {
     // olgunun BURADAKİ KARŞILIĞIDIR (review `S2`): taban promo toplamı bir
     // gün sıfırdan farklı olursa `SEVIYE 4` ile bu satır **birlikte**
     // değişir. Aynı bağ `incrementalPromoSpend`'de de yazılıdır.
-    const baseNiv = plannedPromoNiv(baseGsv, baseLtaOnInv, 0);
-    const baseLtaOffInv = (baseNiv * ltaOffInvoicePct) / 100;
+    const baseNiv =
+      baseGsv === null || baseLtaOnInv === null
+        ? null
+        : plannedPromoNiv(baseGsv, baseLtaOnInv, 0);
+    const baseLtaOffInv =
+      baseNiv === null ? null : (baseNiv * ltaOffInvoicePct) / 100;
+
+    // ⛔ `T-337` — PLANLANAN TARAF HESAPLANAMIYORSA BURADA DURULUR, AMA
+    // TABAN TESLİM EDİLİR. `PLAN_VOL` yokluğu planlanan harcamayı
+    // tanımsız kılar; `BASE_LTA_ON/OFF` ve `BASE_TO` zinciri ise yalnız
+    // `BASE_VOL × BPTT`'ye bağlıdır ve KOŞMAYA DEVAM ETMELİDİR.
+    // (Ölçüldü: ilk uygulama burada erken `null` breakdown dönüyordu ve
+    // `lta-lifecycle-bond-and-base-chain` e2e'sinde `BASE_LTA_ON` düştü.)
+    if (plannedGsv === null) {
+      return {
+        skuId: skuContext.skuId,
+        base:
+          baseLtaOnInv === null || baseLtaOffInv === null
+            ? null
+            : {
+                ltaOnInvoice: baseLtaOnInv,
+                ltaOffInvoice: baseLtaOffInv,
+                totalOnInvoice: baseLtaOnInv,
+                totalOffInvoice: baseLtaOffInv,
+                totalSpend: baseLtaOnInv + baseLtaOffInv,
+              },
+        planned: null,
+        incremental: null,
+      };
+    }
 
     const plannedLtaOnInv = (plannedGsv * ltaOnInvoicePct) / 100;
     // ⛔ `plannedLtaOffInv` BURADA HESAPLANAMAZ (`T-334`/`Q8`): kanonik
@@ -697,13 +755,28 @@ export class SpendCalculationService {
 
     const baseTotalOnInv = baseLtaOnInv; // No promo in base
     const baseTotalOffInv = baseLtaOffInv;
-    const baseTotalSpend = baseTotalOnInv + baseTotalOffInv;
+    // `T-337`: taban ya BÜTÜNÜYLE hesaplanır ya HİÇ — tek girdisi
+    // `BASE_VOL × BPTT` olduğu için alanları bağımsız düşemez. Sessizce
+    // `0` sayılmaz (`CLAUDE.md §2.5`).
+    const base =
+      baseTotalOnInv === null || baseTotalOffInv === null
+        ? null
+        : {
+            ltaOnInvoice: baseTotalOnInv,
+            ltaOffInvoice: baseTotalOffInv,
+            totalOnInvoice: baseTotalOnInv,
+            totalOffInvoice: baseTotalOffInv,
+            totalSpend: baseTotalOnInv + baseTotalOffInv,
+          };
 
-    const incrementalOnInv = totalPlannedOnInv - baseTotalOnInv;
+    const incrementalOnInv =
+      base === null ? null : totalPlannedOnInv - base.totalOnInvoice;
     const totalPlannedOffInv = plannedLtaOffInv + totalPromoOffInv;
     const totalPlannedSpend = totalPlannedOnInv + totalPlannedOffInv;
-    const incrementalOffInv = totalPlannedOffInv - baseTotalOffInv;
-    const incrementalSpend = totalPlannedSpend - baseTotalSpend;
+    const incrementalOffInv =
+      base === null ? null : totalPlannedOffInv - base.totalOffInvoice;
+    const incrementalSpend =
+      base === null ? null : totalPlannedSpend - base.totalSpend;
 
     // `T-334`/`Q6` (`Z66 §1`) — ROI PAYDASI: *yalnız promo · LTA hariç ·
     // incremental*.
@@ -730,13 +803,7 @@ export class SpendCalculationService {
     // Build result
     const breakdown: SpendBreakdown = {
       skuId: skuContext.skuId,
-      base: {
-        ltaOnInvoice: baseLtaOnInv,
-        ltaOffInvoice: baseLtaOffInv,
-        totalOnInvoice: baseTotalOnInv,
-        totalOffInvoice: baseTotalOffInv,
-        totalSpend: baseTotalSpend,
-      },
+      base,
       planned: {
         ltaOnInvoice: plannedLtaOnInv,
         ltaOffInvoice: plannedLtaOffInv,
@@ -776,16 +843,25 @@ export class SpendCalculationService {
    *      point today, `PATCH /plans/:id/fus/:fuId/tactics` ->
    *      `PlanService#updateFuTactic`.
    * Before T-052, `calculateAllSpendsForFU` read ONLY (1), so a plan built
-   * through the real (tactics-PATCH) UI flow computed 0/0 spend when it went
-   * through `ApprovalWorkflowService#submitForApproval`, even though the
-   * OTHER canonical path (`PlanService#submit`, via
+   * through the real (tactics-PATCH) UI flow computed 0/0 spend through that
+   * path, even though the OTHER path (`PlanService#submit`, via
    * `recalculatePlanWithKpiEngineLocked`) already merged both sources and
    * got a correct non-zero `plan.totalSpend`.
    *
-   * Both canonical callers (`recalculatePlanWithKpiEngineLocked` here and
-   * `calculateAllSpendsForFU` below) now call this ONE method instead of
-   * each re-implementing the merge — T-049 postmortem: two independent
-   * derivations of the same fact WILL drift apart over time.
+   * ⛔ **`F12` — ÖNCÜL DÜZELTİLDİ (`T-337`, 2026-08-31; ölçüm `K1 §0`).**
+   * Bu yorum *"`calculateAllSpendsForFU` … `ApprovalWorkflowService#
+   * submitForApproval` tarafından kullanılıyor"* diyordu. **YANLIŞ:**
+   * `approval-workflow.service.ts` `SpendCalculationService`'i **enjekte
+   * bile etmiyor**; `src/` genelindeki tek üretim enjeksiyonu
+   * `plan.service.ts:157`. ⇒ `calculateAllSpendsForFU`'nun bugün **SIFIR
+   * üretim çağıranı** var (`Z75 §4`'ün dokuzuncu ölü-uç adayı, `Z77 §3c`).
+   * Yorum SİLİNMEDİ, DÜZELTİLDİ: bir yanlış canlılık iddiası okuyucuya
+   * *"bu yol korunuyor"* dedirtir (`T-084`: yanlış yorum KORUMA üretir).
+   *
+   * Both callers (`recalculatePlanWithKpiEngineLocked` — the only LIVE one —
+   * and `calculateAllSpendsForFU` below, today consumer-less) call this ONE
+   * method instead of each re-implementing the merge — T-049 postmortem: two
+   * independent derivations of the same fact WILL drift apart over time.
    *
    * Precedence on key collision (same mechanic code present in both
    * sources): `tactics` wins, matching the pre-existing behaviour of
@@ -995,17 +1071,53 @@ export class SpendCalculationService {
       lumpsumSharesBySku,
     };
 
+    // `T-337`/`Z77 §2`: `SKUContext` artık MARKALI bir tiptir ve nesne
+    // literaliyle inşa EDİLEMEZ — tek üreteci `resolveSkuSpendInputs`.
+    // Buradaki eski dört `|| 0` (`K1 §1a:1001-1004`) `plan.service`'in
+    // dört kardeşiyle AYNI kusurdu; ikisi ayrı ayrı düzeltilseydi
+    // `T-049` postmortem'i tekrarlanırdı (*"aynı olgunun iki türetimi
+    // ayrışır"*). Tek resolver bunu derleme zamanında imkânsız kılar.
+    const notEvaluableSkus: Array<{
+      skuId: string;
+      missing: readonly string[];
+    }> = [];
+
     for (const planSku of planFu.planSkus || []) {
-      const skuContext: SKUContext = {
+      const resolution = resolveSkuSpendInputs({
         skuId: planSku.skuId,
-        baseVolume: Number(planSku.baseVolume) || 0,
-        plannedVolume: Number(planSku.plannedVolume) || 0,
-        listPrice: Number(planSku.sku?.unitPrice) || 0,
-        cogsPerUnit: Number(planSku.sku?.cogs) || 0,
+        baseVolume: planSku.baseVolume,
+        plannedVolume: planSku.plannedVolume,
+        listPrice: planSku.sku?.unitPrice,
+        cogsPerUnit: planSku.sku?.cogs,
         channelCode: planFu.plan?.channel?.code,
         categoryCode: planFu.plan?.category?.code,
         cplId: planFu.plan?.cplId,
-      };
+      });
+
+      if (resolution.kind === 'UNTOUCHED') {
+        // `Q20`: dokunulmamış satır bir eksiklik DEĞİL — "planlanmadı".
+        // Sessizce dışlanır (para tarafında `NOT_EVALUABLE` ile AYNI
+        // davranış: toplamlara katkı yok), ama `notEvaluableSkus`'a
+        // GİRMEZ ve `logger.warn` ÜRETMEZ (bu ikisi "eksiklik" anlatır,
+        // burada eksiklik yok).
+        continue;
+      }
+
+      if (resolution.kind === 'NOT_EVALUABLE') {
+        // ⛔ SESSİZCE `0` KATKI YOK (`§2.5`). SKU toplamlardan DIŞLANIR ve
+        // eksikliği eksik alan ADIYLA döner (`Z77 §1`).
+        notEvaluableSkus.push({
+          skuId: resolution.skuId,
+          missing: resolution.missing,
+        });
+        this.logger.warn(
+          `SKU ${resolution.skuId} spend NOT_EVALUABLE in FU ${fuId}: ` +
+            `missing ${resolution.missing.join(', ')}`,
+        );
+        continue;
+      }
+
+      const skuContext = resolution.ctx;
 
       const breakdown = await this.calculateAllSpendsForSKU(
         tenantId,
@@ -1017,56 +1129,74 @@ export class SpendCalculationService {
       skuBreakdowns.push(breakdown);
     }
 
-    // Aggregate to FU level
-    const aggregatedBase: BaseSpendBreakdown = {
-      ltaOnInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.base.ltaOnInvoice,
+    // Aggregate to FU level.
+    // `T-337`: taban kalemleri `number | null`. Bir SKU'nun tabanı
+    // hesaplanamadıysa FU tabanı da **hesaplanamaz** — `null` bir toplama
+    // sessizce `0` olarak giremez (`§2.5`). `sumOrNull` bu kuralı TEK
+    // yerde taşır; her `reduce`'ün kendi `?? 0`'ını yazması `F8` ailesidir.
+    const sumOrNull = (values: Array<number | null>): number | null =>
+      values.some((v) => v === null)
+        ? null
+        : values.reduce<number>((sum, v) => sum + (v as number), 0);
+
+    const sumBases = (field: keyof BaseSpendBreakdown): number =>
+      skuBreakdowns.reduce(
+        (sum, b) => sum + (b.base as BaseSpendBreakdown)[field],
         0,
-      ),
-      ltaOffInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.base.ltaOffInvoice,
-        0,
-      ),
-      totalOnInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.base.totalOnInvoice,
-        0,
-      ),
-      totalOffInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.base.totalOffInvoice,
-        0,
-      ),
-      totalSpend: skuBreakdowns.reduce((sum, b) => sum + b.base.totalSpend, 0),
-    };
+      );
+
+    // ⛔ `skuBreakdowns` YALNIZ `EVALUABLE` SKU'ları taşır (NOT_EVALUABLE
+    // olanlar `notEvaluableSkus`'a ayrıldı ve `continue` edildi) ⇒ hepsinin
+    // `planned`/`incremental`'ı non-null. Tip bunu göremez; daraltma TEK
+    // noktada, her `reduce`'ün içinde ayrı ayrı değil (`F8`).
+    const plannedOf = (b: SpendBreakdown): PlannedSpendBreakdown =>
+      b.planned as PlannedSpendBreakdown;
+    const incrementalOf = (b: SpendBreakdown): IncrementalSpendBreakdown =>
+      b.incremental as IncrementalSpendBreakdown;
+
+    // ⛔ Taban toplamı, SKU'lardan biri bile TABANSIZSA tanımsızdır —
+    // `null`'ı `0` sayarak toplamak `§2.5` ihlalidir.
+    const aggregatedBase: BaseSpendBreakdown | null = skuBreakdowns.some(
+      (b) => b.base === null,
+    )
+      ? null
+      : {
+          ltaOnInvoice: sumBases('ltaOnInvoice'),
+          ltaOffInvoice: sumBases('ltaOffInvoice'),
+          totalOnInvoice: sumBases('totalOnInvoice'),
+          totalOffInvoice: sumBases('totalOffInvoice'),
+          totalSpend: sumBases('totalSpend'),
+        };
 
     const aggregatedPlanned: PlannedSpendBreakdown = {
       ltaOnInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.planned.ltaOnInvoice,
+        (sum, b) => sum + plannedOf(b).ltaOnInvoice,
         0,
       ),
       ltaOffInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.planned.ltaOffInvoice,
+        (sum, b) => sum + plannedOf(b).ltaOffInvoice,
         0,
       ),
       promoOnInvoice: {},
       promoOffInvoice: {},
       totalPromoOnInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.planned.totalPromoOnInvoice,
+        (sum, b) => sum + plannedOf(b).totalPromoOnInvoice,
         0,
       ),
       totalPromoOffInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.planned.totalPromoOffInvoice,
+        (sum, b) => sum + plannedOf(b).totalPromoOffInvoice,
         0,
       ),
       totalOnInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.planned.totalOnInvoice,
+        (sum, b) => sum + plannedOf(b).totalOnInvoice,
         0,
       ),
       totalOffInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.planned.totalOffInvoice,
+        (sum, b) => sum + plannedOf(b).totalOffInvoice,
         0,
       ),
       totalSpend: skuBreakdowns.reduce(
-        (sum, b) => sum + b.planned.totalSpend,
+        (sum, b) => sum + plannedOf(b).totalSpend,
         0,
       ),
     };
@@ -1074,7 +1204,7 @@ export class SpendCalculationService {
     // Aggregate mechanic spends
     for (const breakdown of skuBreakdowns) {
       for (const [code, value] of Object.entries(
-        breakdown.planned.promoOnInvoice,
+        plannedOf(breakdown).promoOnInvoice,
       )) {
         if (value) {
           aggregatedPlanned.promoOnInvoice[code] =
@@ -1082,7 +1212,7 @@ export class SpendCalculationService {
         }
       }
       for (const [code, value] of Object.entries(
-        breakdown.planned.promoOffInvoice,
+        plannedOf(breakdown).promoOffInvoice,
       )) {
         if (value) {
           aggregatedPlanned.promoOffInvoice[code] =
@@ -1092,18 +1222,18 @@ export class SpendCalculationService {
     }
 
     const aggregatedIncremental: IncrementalSpendBreakdown = {
-      onInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.incremental.onInvoice,
-        0,
+      onInvoice: sumOrNull(
+        skuBreakdowns.map((b) => incrementalOf(b).onInvoice),
       ),
-      offInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + b.incremental.offInvoice,
-        0,
+      offInvoice: sumOrNull(
+        skuBreakdowns.map((b) => incrementalOf(b).offInvoice),
       ),
-      total: skuBreakdowns.reduce((sum, b) => sum + b.incremental.total, 0),
+      total: sumOrNull(skuBreakdowns.map((b) => incrementalOf(b).total)),
       // `T-334`/`Q6` — ROI paydası FU seviyesinde de toplanır (SUM).
+      // ⚠️ `T-337`: bu kalem `null` OLAMAZ (tabana bağlı değil) — üç
+      // kardeşinden bilerek ayrı, `IncrementalSpendBreakdown` doc'una bak.
       promoTotal: skuBreakdowns.reduce(
-        (sum, b) => sum + b.incremental.promoTotal,
+        (sum, b) => sum + incrementalOf(b).promoTotal,
         0,
       ),
     };
@@ -1121,6 +1251,7 @@ export class SpendCalculationService {
       aggregatedBase,
       aggregatedPlanned,
       aggregatedIncremental,
+      notEvaluableSkus,
     };
   }
 
@@ -1189,13 +1320,58 @@ export class SpendCalculationService {
       context,
     );
 
+    // ⛔ `T-337` — BU METODUN `NOT_EVALUABLE` KANALI YOK.
+    //
+    // `SEVIYE 5-7`'nin tamamı tabana ve `COGS`'a bağlıdır ve dönüş tipi
+    // (`CompleteSKUFinancialMetrics`) `null` taşıyamaz. `§2.5`'in kuralı
+    // burada net: eksik girdi ⇒ **açık hata**, sessiz `0` değil. Bir
+    // varsayılan koymak `INCR_GP`/`ROI`'yi uydurmak olurdu.
+    //
+    // ⚠️ Bu bir DAVRANIŞ DEĞİŞİKLİĞİ ve etkisi ölçüldü: bu metodun bugün
+    // **sıfır üretim çağıranı** var (`K1 §0`; tek çağıranlar `*.spec.ts`),
+    // yani canlı bir yol `500` almıyor. Bir tüketici kazandığı gün
+    // (`Z75 §4` iki-yol kuralı) bu dal bir `NOT_EVALUABLE` kanalına
+    // çevrilmelidir — `SpendBreakdown`'ın kazandığı şekle.
+    const { baseVolume, plannedVolume, cogsPerUnit } = skuContext;
+    if (baseVolume === null || plannedVolume === null || cogsPerUnit === null) {
+      const missing = [
+        ...(baseVolume === null ? ['BASE_VOL'] : []),
+        ...(plannedVolume === null ? ['PLAN_VOL'] : []),
+        ...(cogsPerUnit === null ? ['COGS'] : []),
+      ];
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'SKU_FINANCIAL_METRICS_INPUT_INCOMPLETE',
+        message:
+          `SKU ${skuContext.skuId}: complete financial metrics require ` +
+          `${missing.join(', ')}, which are not set.`,
+      });
+    }
+    /* istanbul ignore next -- yukarıdaki üç `!== null` kontrolü
+       `base`/`planned`/`incremental`'ı da garanti eder (aynı olgular,
+       `calculateAllSpendsForSKU`); derleyici bu bağı göremez. */
+    if (
+      spendBreakdown.base === null ||
+      spendBreakdown.planned === null ||
+      spendBreakdown.incremental === null
+    ) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'SKU_FINANCIAL_METRICS_INPUT_INCOMPLETE',
+        message: `SKU ${skuContext.skuId}: spend could not be evaluated.`,
+      });
+    }
+    const base = spendBreakdown.base;
+    const planned = spendBreakdown.planned;
+    const incremental = spendBreakdown.incremental;
+
     // SEVIYE 5: NIV and Turnover calculations
-    const baseGsv = skuContext.baseVolume * skuContext.listPrice;
-    const plannedGsv = skuContext.plannedVolume * skuContext.listPrice;
+    const baseGsv = baseVolume * skuContext.listPrice;
+    const plannedGsv = plannedVolume * skuContext.listPrice;
 
     const niv: NIVMetrics = {
-      baseNiv: baseGsv - spendBreakdown.base.ltaOnInvoice,
-      plannedNiv: plannedGsv - spendBreakdown.planned.totalOnInvoice,
+      baseNiv: baseGsv - base.ltaOnInvoice,
+      plannedNiv: plannedGsv - planned.totalOnInvoice,
       incrementalNiv: 0, // Will calculate below
     };
     niv.incrementalNiv = niv.plannedNiv - niv.baseNiv;
@@ -1213,16 +1389,16 @@ export class SpendCalculationService {
     // yanlış bir ölü formül bırakmak, onu bir sözleşme gibi korur
     // (`§7.1` `T-084` emsali).
     const turnover: TurnoverMetrics = {
-      baseTo: baseGsv - spendBreakdown.base.totalSpend,
-      plannedTo: plannedGsv - spendBreakdown.planned.totalSpend,
+      baseTo: baseGsv - base.totalSpend,
+      plannedTo: plannedGsv - planned.totalSpend,
       incrementalTo: 0, // Will calculate below
     };
     turnover.incrementalTo = turnover.plannedTo - turnover.baseTo;
 
     // SEVIYE 6: Profit calculations
     const cogs: COGSMetrics = {
-      baseCogs: skuContext.baseVolume * skuContext.cogsPerUnit,
-      plannedCogs: skuContext.plannedVolume * skuContext.cogsPerUnit,
+      baseCogs: baseVolume * cogsPerUnit,
+      plannedCogs: plannedVolume * cogsPerUnit,
       incrementalCogs: 0, // Will calculate below
     };
     cogs.incrementalCogs = cogs.plannedCogs - cogs.baseCogs;
@@ -1239,7 +1415,7 @@ export class SpendCalculationService {
     // `incremental.promoTotal` (yalnız promo, LTA hariç). Burası eskiden
     // `incremental.total`'ı okuyordu, yani paydanın **DÖRDÜNCÜ** varyantı
     // (`A1 §5 Q6`). Kalem bölündü; bu yol da aynı kalemi okur.
-    const roiDenominator = spendBreakdown.incremental.promoTotal;
+    const roiDenominator = incremental.promoTotal;
     const roi: ROIMetrics = {
       gpRoiPct:
         roiDenominator > 0

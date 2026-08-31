@@ -14,6 +14,31 @@ import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-valu
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
 import { LTAAgreementService } from '../lta/lta-agreement.service';
 import { CalculationContext, SKUContext } from './dto/calculation-context.dto';
+import { RawSkuSpendInputs, resolveSkuSpendInputs } from './sku-spend-inputs';
+
+/**
+ * `T-337` / `Z77 §2` — `SKUContext` MARKALI bir tiptir ve nesne
+ * literaliyle inşa **edilemez**; testler de üretim yolunun geçtiği
+ * kapıdan geçer. ⛔ Bu bir kolaylık sarmalayıcısı DEĞİL: bir fixture'ın
+ * resolver'ı ATLAYABİLMESİ, resolver'ın kapı olmadığı anlamına gelirdi
+ * (`§2.7 #8`: bir kontrolü sınayan test o kontrolü YENİDEN UYGULAMAMALI).
+ */
+function evaluableSkuContext(raw: RawSkuSpendInputs): SKUContext {
+  const resolution = resolveSkuSpendInputs(raw);
+  if (resolution.kind === 'UNTOUCHED') {
+    throw new Error(
+      `fixture is UNTOUCHED (baseVolume and plannedVolume both absent) — ` +
+        `use resolveSkuSpendInputs directly if that is the intent (Q20)`,
+    );
+  }
+  if (resolution.kind !== 'EVALUABLE') {
+    throw new Error(
+      `fixture is NOT_EVALUABLE (missing ${resolution.missing.join(', ')}) — ` +
+        `use resolveSkuSpendInputs directly if that is the intent`,
+    );
+  }
+  return resolution.ctx;
+}
 import { SpendBreakdown } from './dto/spend-breakdown.dto';
 
 // F2/C2a: mechanicValues now carries the scale in the type. These builders keep
@@ -125,14 +150,14 @@ describe('SpendCalculationService', () => {
         isActive: true,
       };
 
-      const skuContext: SKUContext = {
+      const skuContext = evaluableSkuContext({
         skuId: mockSkuId,
         baseVolume: 1000,
         plannedVolume: 1200,
         listPrice: 10,
         cogsPerUnit: 6,
         cplId: 'cpl-1',
-      };
+      });
 
       const context: CalculationContext = {
         planId: mockPlanId,
@@ -171,13 +196,13 @@ describe('SpendCalculationService', () => {
         isActive: true,
       };
 
-      const skuContext: SKUContext = {
+      const skuContext = evaluableSkuContext({
         skuId: mockSkuId,
         baseVolume: 1000,
         plannedVolume: 1200,
         listPrice: 10,
         cogsPerUnit: 6,
-      };
+      });
 
       const context: CalculationContext = {
         planId: mockPlanId,
@@ -202,7 +227,7 @@ describe('SpendCalculationService', () => {
 
   describe('calculateAllSpendsForSKU', () => {
     it('should calculate complete spend breakdown for SKU', async () => {
-      const skuContext: SKUContext = {
+      const skuContext = evaluableSkuContext({
         skuId: mockSkuId,
         baseVolume: 1000,
         plannedVolume: 1200,
@@ -211,7 +236,7 @@ describe('SpendCalculationService', () => {
         cplId: 'cpl-1',
         channelCode: 'NKA',
         categoryCode: 'Dairy',
-      };
+      });
 
       const context: CalculationContext = {
         planId: mockPlanId,
@@ -266,11 +291,11 @@ describe('SpendCalculationService', () => {
       );
 
       expect(breakdown.skuId).toBe(mockSkuId);
-      expect(breakdown.base.ltaOnInvoice).toBeGreaterThan(0);
-      expect(breakdown.planned.ltaOnInvoice).toBeGreaterThan(0);
-      expect(breakdown.planned.totalPromoOnInvoice).toBeGreaterThan(0);
-      expect(breakdown.planned.totalPromoOffInvoice).toBeGreaterThan(0);
-      expect(breakdown.incremental.total).toBeGreaterThan(0);
+      expect(breakdown.base!.ltaOnInvoice).toBeGreaterThan(0);
+      expect(breakdown.planned!.ltaOnInvoice).toBeGreaterThan(0);
+      expect(breakdown.planned!.totalPromoOnInvoice).toBeGreaterThan(0);
+      expect(breakdown.planned!.totalPromoOffInvoice).toBeGreaterThan(0);
+      expect(breakdown.incremental!.total).toBeGreaterThan(0);
     });
   });
 
@@ -386,14 +411,14 @@ describe('SpendCalculationService', () => {
       // Base-volume proportional: sku-a (100/300) -> 100, sku-b (200/300) -> 200.
       const skuA = result.skuBreakdowns.find((b) => b.skuId === 'sku-a')!;
       const skuB = result.skuBreakdowns.find((b) => b.skuId === 'sku-b')!;
-      expect(skuA.planned.promoOffInvoice['VIS_LS']).toBeCloseTo(100, 2);
-      expect(skuB.planned.promoOffInvoice['VIS_LS']).toBeCloseTo(200, 2);
+      expect(skuA.planned!.promoOffInvoice['VIS_LS']).toBeCloseTo(100, 2);
+      expect(skuB.planned!.promoOffInvoice['VIS_LS']).toBeCloseTo(200, 2);
 
       // Rounding invariant: distributed shares must sum EXACTLY to the FU
       // lumpsum total (no penny loss/gain).
       const distributedSum =
-        (skuA.planned.promoOffInvoice['VIS_LS'] || 0) +
-        (skuB.planned.promoOffInvoice['VIS_LS'] || 0);
+        (skuA.planned!.promoOffInvoice['VIS_LS'] || 0) +
+        (skuB.planned!.promoOffInvoice['VIS_LS'] || 0);
       expect(distributedSum).toBe(300);
     });
 
@@ -447,16 +472,16 @@ describe('SpendCalculationService', () => {
       const sku1 = result.skuBreakdowns.find((b) => b.skuId === 'sku-1')!;
       const sku2 = result.skuBreakdowns.find((b) => b.skuId === 'sku-2')!;
 
-      expect(newProduct.planned.promoOffInvoice['VIS_LS'] || 0).toBe(0);
+      expect(newProduct.planned!.promoOffInvoice['VIS_LS'] || 0).toBe(0);
       // sku-1:sku-2 base ratio 1:2 -> 33.33/66.67 (non-terminating decimal —
       // exercises the rounding-remainder path, not a coincidentally exact split).
-      expect(sku1.planned.promoOffInvoice['VIS_LS']).toBeCloseTo(33.33, 2);
-      expect(sku2.planned.promoOffInvoice['VIS_LS']).toBeCloseTo(66.67, 2);
+      expect(sku1.planned!.promoOffInvoice['VIS_LS']).toBeCloseTo(33.33, 2);
+      expect(sku2.planned!.promoOffInvoice['VIS_LS']).toBeCloseTo(66.67, 2);
 
       const distributedSum =
-        (newProduct.planned.promoOffInvoice['VIS_LS'] || 0) +
-        (sku1.planned.promoOffInvoice['VIS_LS'] || 0) +
-        (sku2.planned.promoOffInvoice['VIS_LS'] || 0);
+        (newProduct.planned!.promoOffInvoice['VIS_LS'] || 0) +
+        (sku1.planned!.promoOffInvoice['VIS_LS'] || 0) +
+        (sku2.planned!.promoOffInvoice['VIS_LS'] || 0);
       expect(distributedSum).toBe(100);
     });
 
@@ -503,6 +528,197 @@ describe('SpendCalculationService', () => {
   });
 
   /**
+   * `T-337` / `Z77 §2` — **`BASE_VOL` YOKLUĞU: TABAN `null`, PLANLANAN SAĞLAM.**
+   *
+   * ⛔ Bu, `K1 §1b:2532`'nin canlı vakasının pinidir. `plan_skus.base_volume`
+   * NULLABLE bir kolondur; `T-027` onu `?? 0` ile çöktürüyordu ⇒
+   * `baseTotalSpend = 0` ⇒ `INCR_SPEND = planned − 0` **ŞİŞKİN** bir SAYI
+   * olarak KPI motoruna gidiyordu (motor `null` görmediği için
+   * null-propagation devreye GİRMİYORDU).
+   *
+   * ⚠️ AYIRT EDİCİ ŞEKİL (`T-332`): iki fixture **yalnız `baseVolume`'de**
+   * farklı (`0` ↔ `null`) ve assertion **farkı okuyor**. `baseVolume: 0`
+   * meşru bir taban (harcama gerçekten 0) — o vaka `0` üretmeye DEVAM
+   * etmeli, yoksa düzeltme meşru bir sıfırı yok ederdi.
+   */
+  describe('BASE_VOL yokluğu — taban null, planlanan etkilenmez', () => {
+    const buildContext = (): CalculationContext => ({
+      planId: mockPlanId,
+      fuId: mockFuId,
+      skuContexts: [],
+      mechanicValues: { CPP_ON: rateIn('CPP_ON', 10) },
+    });
+
+    const onInvoiceMechanic: Partial<Mechanic> = {
+      id: 'mech-1',
+      code: 'CPP_ON',
+      category: MechanicCategory.ON_INVOICE_DISCOUNT,
+      mechanicType: MechanicType.PERCENT,
+      spendingType: SpendingType.ON_INVOICE,
+      isActive: true,
+    };
+
+    beforeEach(() => {
+      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
+      mechanicRepo.find.mockResolvedValue([onInvoiceMechanic] as Mechanic[]);
+      mechanicRepo.findOne.mockResolvedValue(onInvoiceMechanic as Mechanic);
+    });
+
+    it('baseVolume=null ⇒ base.* ve incremental.{on,off,total} NULL', async () => {
+      const result = await service.calculateAllSpendsForSKU(
+        mockTenantId,
+        evaluableSkuContext({
+          skuId: 'sku-nobase',
+          baseVolume: null,
+          plannedVolume: 1680,
+          listPrice: 10,
+          cogsPerUnit: 6,
+          cplId: 'cpl-1',
+        }),
+        buildContext(),
+      );
+
+      // ⛔ NESNE düşer, alanları değil: taban tek girdiden türer
+      // (`BASE_VOL × BPTT`), o yüzden ya bütünüyle vardır ya hiç yoktur.
+      expect(result.base).toBeNull();
+      expect(result.incremental!.total).toBeNull();
+      expect(result.incremental!.onInvoice).toBeNull();
+      expect(result.incremental!.offInvoice).toBeNull();
+
+      // ⛔ PLANLANAN TARAF ETKİLENMEZ — ayrım alan başına, gövde başına değil.
+      // PLANNED_GSV = 1680*10 = 16800, CPP_ON %10 ⇒ 1680.
+      expect(result.planned!.totalSpend).toBeCloseTo(1680, 1);
+      // ...ve ROI paydası da sağlam (tabana bağlı DEĞİL, ADR 0011 Q6).
+      expect(result.incremental!.promoTotal).toBeCloseTo(1680, 1);
+    });
+
+    it('baseVolume=0 MEŞRU bir tabandır ⇒ 0 üretir, null DEĞİL', async () => {
+      const result = await service.calculateAllSpendsForSKU(
+        mockTenantId,
+        evaluableSkuContext({
+          skuId: 'sku-zerobase',
+          baseVolume: 0,
+          plannedVolume: 1680,
+          listPrice: 10,
+          cogsPerUnit: 6,
+          cplId: 'cpl-1',
+        }),
+        buildContext(),
+      );
+
+      // ⛔ AYIRT EDİCİ ASSERTION: yukarıdaki vakayla AYNI DEĞİLDİR.
+      expect(result.base).not.toBeNull();
+      expect(result.base!.totalSpend).toBe(0);
+      expect(result.incremental!.total).toBeCloseTo(1680, 1);
+    });
+
+    /**
+     * ⛔ **İKİ EKSEN BAĞIMSIZ — ve bu ölçümle bulundu, tasarımla değil.**
+     *
+     * İlk uygulama `PLAN_VOL` yokluğunu *"breakdown yok"* diye ele aldı ve
+     * **taban zincirini de** öldürdü. `lta-lifecycle-bond-and-base-chain
+     * .e2e-spec.ts` (`T-293`) yakaladı: yalnız `baseVolume` girilmiş bir
+     * SKU'da `BASE_LTA_ON` `null`'a düştü — oysa taban `BASE_VOL × BPTT`'dir
+     * ve `PLAN_VOL`'e BAĞLI DEĞİLDİR (`§7.1`: tüketicileri saymamıştım).
+     *
+     * Bu pin o regresyonun geri gelmesini yakalar.
+     */
+    it('PLAN_VOL yokluğu TABAN zincirini ÖLDÜRMEZ (LTA taban kalemleri sağlam)', async () => {
+      const resolution = resolveSkuSpendInputs({
+        skuId: 'sku-baseonly',
+        baseVolume: 1000,
+        plannedVolume: null,
+        listPrice: 10,
+        cogsPerUnit: 6,
+        cplId: 'cpl-1',
+      });
+      expect(resolution.kind).toBe('NOT_EVALUABLE');
+      if (resolution.kind !== 'NOT_EVALUABLE') throw new Error('unreachable');
+      // ⛔ ...ama `ctx` VAR: taban hâlâ hesaplanabilir.
+      expect(resolution.ctx).not.toBeNull();
+
+      ltaAgreementService.getLTAForPlanContext.mockResolvedValue({
+        agreement: {} as never,
+        rate: {} as never,
+        finalOnInvoicePct: 7,
+        finalOffInvoicePct: 2,
+      } as never);
+
+      const result = await service.calculateAllSpendsForSKU(
+        mockTenantId,
+        resolution.ctx!,
+        buildContext(),
+      );
+
+      // TABAN KOŞTU: BASE_GSV = 1000*10 = 10000, %7 ⇒ 700
+      expect(result.base).not.toBeNull();
+      expect(result.base!.ltaOnInvoice).toBeCloseTo(700, 2);
+      // BaseNIV = 10000 - 700 = 9300, %2 ⇒ 186
+      expect(result.base!.ltaOffInvoice).toBeCloseTo(186, 2);
+      expect(result.base!.totalSpend).toBeCloseTo(886, 2);
+
+      // ⛔ PLANLANAN TARAF hesaplanmadı — ve `0` DEĞİL, `null`.
+      expect(result.planned).toBeNull();
+      expect(result.incremental).toBeNull();
+    });
+
+    it('BPTT yoksa HİÇBİR kova hesaplanamaz — resolver ctx bile üretmez', () => {
+      const resolution = resolveSkuSpendInputs({
+        skuId: 'sku-nobptt',
+        baseVolume: 1000,
+        plannedVolume: 1680,
+        listPrice: null,
+        cogsPerUnit: 6,
+      });
+      expect(resolution.kind).toBe('NOT_EVALUABLE');
+      if (resolution.kind !== 'NOT_EVALUABLE') throw new Error('unreachable');
+      // ⛔ AYIRT EDİCİ: PLAN_VOL vakasıyla AYNI DEĞİL — orada ctx vardı.
+      expect(resolution.ctx).toBeNull();
+      expect(resolution.baseEvaluable).toBe(false);
+    });
+
+    it('eksik girdili SKU FU toplamına GİRMEZ, adıyla raporlanır', async () => {
+      planFuRepo.findOne.mockResolvedValue({
+        id: mockFuId,
+        tenantId: mockTenantId,
+        planId: mockPlanId,
+        plan: {
+          cplId: 'cpl-1',
+          channel: { code: 'NKA' },
+          category: { code: 'Hair' },
+        },
+        planMechanicValues: [],
+        tactics: { CPP_ON: 10 },
+        planSkus: [
+          {
+            skuId: 'sku-ok',
+            baseVolume: 1000,
+            plannedVolume: 1680,
+            sku: { unitPrice: 10, cogs: 6 },
+          },
+          {
+            // ⛔ PLAN_VOL YOK — eskiden `Number(null) || 0` ile `0` olur,
+            // `0` harcama üretir ve toplama SESSİZCE girerdi.
+            skuId: 'sku-missing-planvol',
+            baseVolume: 1000,
+            plannedVolume: null,
+            sku: { unitPrice: 10, cogs: 6 },
+          },
+        ],
+      } as never);
+
+      const fu = await service.calculateAllSpendsForFU(mockTenantId, mockFuId);
+
+      expect(fu.notEvaluableSkus).toEqual([
+        { skuId: 'sku-missing-planvol', missing: ['PLAN_VOL'] },
+      ]);
+      // Yalnız değerlendirilebilen SKU toplamda:
+      expect(fu.skuBreakdowns).toHaveLength(1);
+      expect(fu.aggregatedPlanned.totalSpend).toBeCloseTo(1680, 1);
+    });
+  });
+
+  /**
    * T-017 / Set A → ⚠️ **[[T-334]] İLE DÖNÜŞTÜRÜLDÜ (2026-08-30)**.
    *
    * ESKİ SÖZLEŞME (iz olarak kalıyor): *"TO yalnız on-invoice ile azalır"*
@@ -524,7 +740,7 @@ describe('SpendCalculationService', () => {
    */
   describe('calculateCompleteSKUFinancialMetrics – TO/GP (Set A)', () => {
     it('should compute PLANNED_TO using only on-invoice spend (T-017)', async () => {
-      const skuContext: SKUContext = {
+      const skuContext = evaluableSkuContext({
         skuId: 'sku-a',
         baseVolume: 1000,
         plannedVolume: 1680,
@@ -533,7 +749,7 @@ describe('SpendCalculationService', () => {
         cplId: 'cpl-1',
         channelCode: 'NKA',
         categoryCode: 'Dairy',
-      };
+      });
 
       const context: CalculationContext = {
         planId: mockPlanId,
@@ -581,14 +797,14 @@ describe('SpendCalculationService', () => {
     });
 
     it('baseTo ltaOffInvoice ile AZALIR, baseNiv AZALMAZ (T-334: TO ≠ NIV)', async () => {
-      const skuContext: SKUContext = {
+      const skuContext = evaluableSkuContext({
         skuId: 'sku-b',
         baseVolume: 1000,
         plannedVolume: 1000,
         listPrice: 10,
         cogsPerUnit: 4,
         cplId: 'cpl-1',
-      };
+      });
 
       const context: CalculationContext = {
         planId: mockPlanId,
@@ -867,14 +1083,14 @@ describe('SpendCalculationService', () => {
    */
   describe('calculateAllSpendsForSKU – SpendingType.BOTH (S-2)', () => {
     it('should NOT double-count BOTH mechanic with unrecognised category', async () => {
-      const skuContext: SKUContext = {
+      const skuContext = evaluableSkuContext({
         skuId: mockSkuId,
         baseVolume: 1000,
         plannedVolume: 1000,
         listPrice: 10,
         cogsPerUnit: 5,
         cplId: 'cpl-1',
-      };
+      });
 
       const context: CalculationContext = {
         planId: mockPlanId,
@@ -903,19 +1119,19 @@ describe('SpendCalculationService', () => {
       );
 
       // BOTH with no category must NOT add to on-invoice OR off-invoice promos
-      expect(breakdown.planned.totalPromoOnInvoice).toBe(0);
-      expect(breakdown.planned.totalPromoOffInvoice).toBe(0);
+      expect(breakdown.planned!.totalPromoOnInvoice).toBe(0);
+      expect(breakdown.planned!.totalPromoOffInvoice).toBe(0);
     });
 
     it('should route BOTH mechanic with ON_INVOICE_DISCOUNT category to on-invoice only', async () => {
-      const skuContext: SKUContext = {
+      const skuContext = evaluableSkuContext({
         skuId: mockSkuId,
         baseVolume: 1000,
         plannedVolume: 1000,
         listPrice: 10,
         cogsPerUnit: 5,
         cplId: 'cpl-1',
-      };
+      });
 
       const context: CalculationContext = {
         planId: mockPlanId,
@@ -947,8 +1163,8 @@ describe('SpendCalculationService', () => {
       );
 
       // Must appear only in on-invoice, NOT duplicated in off-invoice
-      expect(breakdown.planned.totalPromoOnInvoice).toBeGreaterThan(0);
-      expect(breakdown.planned.totalPromoOffInvoice).toBe(0);
+      expect(breakdown.planned!.totalPromoOnInvoice).toBeGreaterThan(0);
+      expect(breakdown.planned!.totalPromoOffInvoice).toBe(0);
     });
   });
 

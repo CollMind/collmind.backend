@@ -58,7 +58,20 @@ import { CloseSettlementDto } from './dto';
  * yanlışlıkla 500 döner. Alarm hatası yutulur, yalnızca ERROR loglanır.
  */
 
-/** Close yalnızca APPROVED veya ACTIVE anlaşmalar için geçerlidir. */
+/**
+ * Close yalnızca APPROVED veya ACTIVE anlaşmalar için geçerlidir.
+ *
+ * [[T-335]] `Q21` — bu küme kod tabanında BEŞ yerde ayrı ayrı yazılı; kaynak
+ * (Section_04:603, tam alıntı `agreement.entity.ts` `IN_FORCE_AGREEMENT_STATES`
+ * yorumunda) BİR KEZ yazılıdır, buraya TEKRAR EDİLMEZ. Bu kopyanın sorduğu
+ * soru: **"kapatılabilir mi?"** Kardeşleri (aynı DEĞER, FARKLI soru —
+ * bilerek birleştirilmedi):
+ *   reversal.service.ts#REVERSIBLE_AGREEMENT_STATES          "ters kayıt atılabilir mi"
+ *   off-invoice-validation.service.ts#validateRow          "harcama girilebilir mi"
+ *   agreement.service.ts#cancel (durum kontrolü)                     "iptal edilebilir mi"
+ *   agreement.entity.ts IN_FORCE_AGREEMENT_STATES              "oran kademesi harcama motoruna iner mi"
+ * Biri değişirse diğer DÖRDÜ OTOMATİK değişmez — ayrı soru, ayrı karar.
+ */
 const SETTLEABLE_STATES: AgreementStatus[] = [
   AgreementStatus.APPROVED,
   AgreementStatus.ACTIVE,

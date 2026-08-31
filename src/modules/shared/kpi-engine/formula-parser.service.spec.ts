@@ -200,18 +200,171 @@ describe('FormulaParserService — GP_ROI_PCT payda ayrımı (ADR 0011 + Z66 §1
       ).toBe(1);
     });
 
-    it('⚠️ BİLİNEN AÇIK — ÜSTEL gösterim beyaz listeden düşüyor (SESSİZ `null`)', () => {
-      // ÖLÇÜLDÜ: `String(1e-7) === '1e-7'`; beyaz liste `e` harfini
-      // kabul etmiyor ⇒ `null`. Yani yeterince KÜÇÜK (ya da yeterince
-      // BÜYÜK, `1e21`) bir ara değer KPI'ı sessizce düşürür.
-      // ⛔ Bu `T-334` kapsamında DEĞİL, ve DÜZELTİLMEDİ — bir sonraki
-      // turun task'ı olarak bildirildi. Bu test o davranışı BUGÜNKÜ hâliyle
-      // PINLER ki düzeltildiği gün bilerek kırılsın.
-      expect(String(1e-7)).toBe('1e-7');
+    it('T-341 · ÜSTEL ara değer artık SESSİZ `null` DEĞİL — eşiğin İKİ YANI da pinli', () => {
+      // ⛔ RANDEVU-PİNİ KIRILDI (T-334 → T-341). Bu testin eski hâli
+      // BUGÜNKÜ KUSURU pinliyordu (`0.0000001` → `null`) ki düzeltildiği gün
+      // bilerek kırılsın. Kırıldı: `Expected null / Received 1e-7`.
+      //
+      // ÖLÇÜM: `String(1e-7) === '1e-7'`, beyaz liste `/^[0-9+\-*\/().]+$/`
+      // `e` harfini kabul etmiyordu ⇒ hesaplanabilir bir ara değer KPI'ı
+      // sessizce düşürüyordu (`§2.5`). Düzeltme beyaz listeyi GENİŞLETMEDİ;
+      // yerine koyma SABİT GÖSTERİM üretiyor (`toFixedNotation`).
+      expect(String(1e-7)).toBe('1e-7'); // kusurun ön koşulu — hâlâ doğru
       const f = parser.parseFormula('PLANNED_GP - BASE_GP', 'expression');
-      expect(f.execute({ PLANNED_GP: 0.0000001, BASE_GP: 0 })).toBeNull();
-      // Ayırt edici: aynı büyüklük üstel OLMAYAN yazımla ÇALIŞIYOR.
-      expect(f.execute({ PLANNED_GP: 0.000001, BASE_GP: 0 })).toBe(0.000001);
+
+      // KÜÇÜK taraf — eşiğin İKİ YANI (T-341 AC)
+      expect(f.execute({ PLANNED_GP: 0.000001, BASE_GP: 0 })).toBe(1e-6); // hep çalışıyordu
+      expect(f.execute({ PLANNED_GP: 0.0000001, BASE_GP: 0 })).toBe(1e-7); // ⛔ eskiden null
+      expect(f.execute({ PLANNED_GP: 5e-324, BASE_GP: 0 })).toBe(5e-324); // en küçük subnormal
+
+      // BÜYÜK taraf — eşiğin İKİ YANI
+      expect(f.execute({ PLANNED_GP: 1e20, BASE_GP: 0 })).toBe(1e20); // hep çalışıyordu
+      expect(f.execute({ PLANNED_GP: 1e21, BASE_GP: 0 })).toBe(1e21); // ⛔ eskiden null
+      expect(f.execute({ PLANNED_GP: 1e21, BASE_GP: 1e21 })).toBe(0);
+
+      // NEGATİF üstel — T-334'ün parantez dersiyle BİRLİKTE çalışmalı
+      expect(f.execute({ PLANNED_GP: -1e-7, BASE_GP: -2e-7 })).toBe(1e-7);
+      expect(f.execute({ PLANNED_GP: 0, BASE_GP: 1e21 })).toBe(-1e21);
+    });
+
+    it('T-341 · `toFixedNotation` KAYIPSIZ ve beyaz listeyi GENİŞLETMEZ', () => {
+      // ⛔ Bu testin şekli: iki rakip adayı AYIRT ETMELİ (`§2.7 #6`).
+      //   (a) beyaz listeye `e` eklemek → `1e-400` GEÇER ve sessizce `0`
+      //   (b) `toFixed`               → `(5e-324).toFixed(20)` = sessiz `0`
+      //                                 ve `(1e21).toFixed(2)` = `'1e+21'`
+      // Yürürlükteki şekil ikisini de yapmaz. Aşağısı bunu ÖLÇER.
+      const conv = (
+        parser as unknown as { toFixedNotation(v: number): string }
+      ).toFixedNotation.bind(parser);
+
+      // Kayıpsızlık — `toFixed`'in battığı iki nokta dahil
+      for (const v of [
+        1e-7,
+        5e-324,
+        1e21,
+        1e22,
+        1.7976931348623157e308,
+        -1e-7,
+        -1e21,
+        0,
+        0.1,
+        123.456,
+        1 / 3,
+        Number.EPSILON,
+      ]) {
+        const text = conv(v);
+        expect(Number(text)).toBe(v); // round-trip
+        expect(text).toMatch(/^-?[0-9]+(\.[0-9]+)?$/); // charset: [-.0-9] SADECE
+        expect(text).not.toMatch(/[eE]/);
+      }
+
+      // ⛔ Beyaz liste DEĞİŞMEDİ: üstel gösterimli bir formül METNİ hâlâ
+      // reddedilir (dürüst `null`), çünkü aday (a) uygulanmadı. `1e-400`'ün
+      // sessizce `0` olduğu yol bu sayede AÇILMADI.
+      const evalOf = (e: string) =>
+        (parser as unknown as { safeEval(x: string): number | null }).safeEval(
+          e,
+        );
+      expect(evalOf('1e-400')).toBeNull();
+      expect(evalOf('1e400')).toBeNull();
+      expect(evalOf('(5)*(1e-400)')).toBeNull();
+    });
+
+    it('T-099 · SONLULUK girdide denetleniyor — girdi/çıktı asimetrisi kapandı', () => {
+      // `Number.isNaN(Infinity) === false`: eski `isNaN(value)` kapısı
+      // `Infinity`'yi GEÇİRİYORDU; `null` dönmesini sağlayan şey beyaz
+      // listeydi — doğru sonuç TESADÜFEN, ikinci bir kapıdan geliyordu.
+      // Davranış (dönüş `null`) DEĞİŞMEDİ; gerekçe artık girdide.
+      const f = parser.parseFormula('PLANNED_GP - BASE_GP', 'expression');
+      expect(f.execute({ PLANNED_GP: 1, BASE_GP: 'Infinity' })).toBeNull();
+      expect(f.execute({ PLANNED_GP: 1, BASE_GP: '-Infinity' })).toBeNull();
+      expect(f.execute({ PLANNED_GP: 1, BASE_GP: 'NaN' })).toBeNull();
+      expect(f.execute({ PLANNED_GP: 1, BASE_GP: '1e400' })).toBeNull();
+      // ⛔ Ve T-097'nin `to` tuzağı: `null`/`undefined` DAHA ÖNCEKİ dalda
+      // (eksik veri = BRD'nin kural-`null`'ı) eleniyor, `Number.isFinite`'e
+      // hiç ulaşmıyor — davranış aynı kaldı.
+      expect(f.execute({ PLANNED_GP: 1, BASE_GP: null })).toBeNull();
+      expect(f.execute({ PLANNED_GP: 1, BASE_GP: undefined })).toBeNull();
+      // Pozitif kontrol — sinyal SABİT DEĞİL (`§2.7`).
+      expect(f.execute({ PLANNED_GP: 1, BASE_GP: 0.5 })).toBe(0.5);
+    });
+
+    it('⛔ `evaluateCondition` SESSİZ `false` üretmiyor — YANLIŞ DAL kapandı', () => {
+      // T-334 bunu ADLANDIRDI, bu tur KAPATTI. Ölçülmüş üç vaka — üçünde de
+      // eski kod `2`yi (else dalını) KESİN bir sonuç gibi döndürüyordu.
+      const run = (formula: string, ctx: Record<string, unknown>) =>
+        parser.parseFormula(formula, 'conditional').execute(ctx);
+
+      // (1) beyaz listenin reddettiği koşul (`ABS` FUNCTION_NAMES'te —
+      //     bağımlılık sayılmıyor, yerine de konmuyor, harf kalıyor)
+      expect(run('IF(ABS(A_VAL) > 0, 1, 2)', { A_VAL: 5 })).toBeNull();
+      // (2) karşılaştırmasız (truthy) dal — eskiden `!!null === false`
+      expect(run('IF(ABS(A_VAL), 1, 2)', { A_VAL: 5 })).toBeNull();
+      // (3) ⛔ EN AĞIRI — sıfıra bölme BRD'nin KURAL-`null`'ıdır ve kesin
+      //     bir DAL KARARINA dönüşüyordu.
+      expect(run('IF(A_VAL / 0 > 0, 1, 2)', { A_VAL: 5 })).toBeNull();
+
+      // Pozitif kontrol: sağlıklı koşullar İKİ DALI DA seçebiliyor —
+      // "her şeyi null yap" ile geçilemez (`§2.7`: sinyal sabitse sinyal değil).
+      expect(run('IF(A_VAL > B_VAL, 1, 2)', { A_VAL: 5, B_VAL: 1 })).toBe(1);
+      expect(run('IF(A_VAL > B_VAL, 1, 2)', { A_VAL: 1, B_VAL: 5 })).toBe(2);
+    });
+
+    it('⛔ ÇÖZÜLMEMİŞ `IF` bir DİZGE olarak dışarı sızmıyor', () => {
+      // `maxIterations = 10`. Bütçe biterse eskiden ham metin dönüyordu ve
+      // `CalculationResult.value` (`number | null`) alanına bir DİZGE
+      // sızıyordu — `null`'dan DAHA SESSİZ bir yanlış (sayı alanında metin).
+      const nest = (depth: number) => {
+        let f = '1';
+        for (let i = 0; i < depth; i++) f = `IF(A_VAL > 0, ${f}, 0)`;
+        return parser.parseFormula(f, 'conditional').execute({ A_VAL: 5 });
+      };
+      expect(nest(12)).toBeNull(); // bütçe aşıldı ⇒ dizge DEĞİL, null
+      // Pozitif kontrol: bütçe içinde kalan iç içe IF hâlâ çözülüyor.
+      expect(nest(3)).toBe(1);
+    });
+
+    it("T-102 tohumu · HATA-`null` ile KURAL-`null` LOG'da ayrışıyor", () => {
+      // ⛔ ÖLÇÜLDÜ: `Number.isFinite` ↔ `isNaN` değişimi DÖNÜŞ DEĞERİNDE
+      // gözlenemez — `Infinity` her iki hâlde de `null` verir, çünkü beyaz
+      // liste ikinci bir kapı olarak devrededir (mutasyon `M2` sağ kaldı).
+      // Gözlenebilen tek fark TEŞHİStir, ve fark önemlidir: eski kod bir
+      // VERİ sorununu `"Unsafe expression blocked"` diye, yani bir GÜVENLİK
+      // olayı gibi raporluyordu. [[T-102]]'nin ayrımı bugün yalnız burada
+      // yaşıyor; `execute()`'un dönüşünde HÂLÂ yaşamıyor.
+      const warn = jest
+        .spyOn(
+          (parser as unknown as { logger: { warn: (m: string) => void } })
+            .logger,
+          'warn',
+        )
+        .mockImplementation(() => undefined);
+      try {
+        const f = parser.parseFormula('PLANNED_GP - BASE_GP', 'expression');
+
+        // HATA-null: sonlu olmayan bağımlılık ⇒ teşhis GÜVENLİK değil VERİ
+        warn.mockClear();
+        expect(f.execute({ PLANNED_GP: 1, BASE_GP: 'Infinity' })).toBeNull();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain('not a finite number');
+        expect(warn.mock.calls[0][0]).not.toContain('Unsafe expression');
+
+        // KURAL-null: eksik veri (BRD) ⇒ HİÇ uyarı yok, bu bir hata değil
+        warn.mockClear();
+        expect(f.execute({ PLANNED_GP: 1, BASE_GP: null })).toBeNull();
+        expect(warn).not.toHaveBeenCalled();
+
+        // KURAL-null: sıfıra bölme (BRD) ⇒ HİÇ uyarı yok
+        warn.mockClear();
+        expect(
+          parser
+            .parseFormula('INCR_GP / INCR_PROMO_SPEND * 100', 'expression')
+            .execute({ INCR_GP: 10, INCR_PROMO_SPEND: 0 }),
+        ).toBeNull();
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 });

@@ -302,6 +302,32 @@ describe('FORMÜL-KANON: TO ≠ NIV, taban hiyerarşisi, RAG kadranı (T-334)', 
       .expect(201);
     createdLifecycleAgreementIds.push(parent.body.id);
 
+    // ── [[T-335]] — EBEVEYN DURUM KAPISI ────────────────────────────────
+    // `findActiveForCPL` artık ebeveynin `IN_FORCE_AGREEMENT_STATES`
+    // (`{APPROVED, ACTIVE}`) içinde olmasını şart koşuyor; `DRAFT` bir
+    // ebeveynin oranı motora İNMEZ. Bu suite `BASE_LTA_ON`'un GERÇEKTEN
+    // indiğini ölçtüğü için ebeveyn YÜRÜRLÜKTE olmalı — yoksa poz. kontrol
+    // (`BASE_LTA_ON = 7000`) `0` okur (ölçüldü, düzeltme turunda).
+    // ⚠️ Kısayolun gerekçesi `seed-e2e.ts createLifecycleLtaAgreement`
+    // şerhinde (bütçe zarfı dönemleri: `approve` rezervasyon yapıyor, bu
+    // fixture'ın tarihleri ise BUGÜNden türüyor). Onay akışının kapıyı
+    // GERÇEKTEN açtığı `lta-parent-lifecycle-status-gate.e2e-spec.ts`'te
+    // ÜRETİM UÇLARIYLA (`submit`+`approve`, SoD'lu) kanıtlanıyor.
+    const adminDs = await getAdminDataSource();
+    await adminDs.query(
+      `UPDATE main.agreements SET status = 'APPROVED'
+        WHERE id = $1 AND status = 'DRAFT'`,
+      [parent.body.id],
+    );
+    // Yazma BAĞIMSIZ BİR OKUMAYLA doğrulanır (`query()`'nin `UPDATE …
+    // RETURNING` dönüşü `[rows, rowCount]` tuple'ıdır — `length` her zaman
+    // `2`; ölçüldü, [[T-335]]).
+    const parentCheck = await adminDs.query(
+      `SELECT status FROM main.agreements WHERE id = $1`,
+      [parent.body.id],
+    );
+    expect(parentCheck[0].status).toBe('APPROVED');
+
     const lta = await request(app.getHttpServer())
       .post('/lta-agreements')
       .set(admin.authHeader())

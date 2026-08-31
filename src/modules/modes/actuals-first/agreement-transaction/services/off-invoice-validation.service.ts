@@ -129,6 +129,17 @@ export class OffInvoiceValidationService {
     }
 
     // 3. Agreement durumu kontrolü
+    //
+    // [[T-335]] `Q21` — bu küme kod tabanında BEŞ yerde ayrı ayrı yazılı;
+    // kaynak (Section_04:603, tam alıntı `agreement.entity.ts`
+    // `IN_FORCE_AGREEMENT_STATES` yorumunda) BİR KEZ yazılıdır, buraya
+    // TEKRAR EDİLMEZ. Bu kopyanın sorduğu soru: **"harcama girilebilir mi?"**
+    // Kardeşleri (aynı DEĞER, FARKLI soru — bilerek birleştirilmedi):
+    //   reversal.service.ts#REVERSIBLE_AGREEMENT_STATES         "ters kayıt atılabilir mi"
+    //   settlement-close.service.ts#SETTLEABLE_STATES          "kapatılabilir mi"
+    //   agreement.service.ts#cancel (durum kontrolü)                    "iptal edilebilir mi"
+    //   agreement.entity.ts IN_FORCE_AGREEMENT_STATES             "oran kademesi harcama motoruna iner mi"
+    // Biri değişirse diğer DÖRDÜ OTOMATİK değişmez — ayrı soru, ayrı karar.
     if (
       ![AgreementStatus.APPROVED, AgreementStatus.ACTIVE].includes(
         agreement.status,

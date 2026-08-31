@@ -5,6 +5,10 @@ import {
   LTAAgreement,
   LTAAgreementStatus,
 } from '../../../database/entities/lta-agreement.entity';
+import {
+  AgreementStatus,
+  IN_FORCE_AGREEMENT_STATES,
+} from '../../../database/entities/agreement.entity';
 
 @Injectable()
 export class LTAAgreementRepository {
@@ -17,8 +21,16 @@ export class LTAAgreementRepository {
     tenantId: string,
     agreementCode: string,
   ): Promise<LTAAgreement | null> {
+    // [[T-336]] `Q22` — "BİR EBEVEYN = BİR BAŞLIK, ÖMÜR BOYU": DB tarafı
+    // (`@Index(['tenantId','agreementCode'], { unique: true })`,
+    // migration `1817000000000`) KISMİ DEĞİL — `deleted_at` predicate'i
+    // YOK, yani soft-delete edilmiş bir satır kodu İŞGAL ETMEYE devam
+    // eder. `withDeleted: true` OLMADAN bu kontrol soft-delete edilmiş bir
+    // çakışmayı GÖRMEZ ve `save()` ham `QueryFailedError`'a (23505) düşüp
+    // `500` döner — kullanıcıya NEDEN çarptığını söylemeyen bir hata.
     return this.repository.findOne({
       where: { tenantId, agreementCode },
+      withDeleted: true,
       relations: [
         'cpl',
         'rates',
@@ -67,6 +79,36 @@ export class LTAAgreementRepository {
         .where('lta.tenantId = :tenantId', { tenantId })
         .andWhere('lta.cplId = :cplId', { cplId })
         .andWhere('lta.status = :status', { status: LTAAgreementStatus.ACTIVE })
+        // ── [[T-335]] · `Z38 §3(a)` — EBEVEYN DURUM KAPISI ────────────────
+        // `Z38 §3(a)` bağa şunu yüklemişti: *"`agreements` = onay · audit ·
+        // SoD · defter bağının KANONİK YERİ"*. Bağ `1817` ile kuruldu, ama
+        // o kaydın ONAY DURUMUNU okuyan HİÇBİR YOL yoktu: bu sorgu yalnız
+        // `lta.status='active'` filtreliyordu ve `agreements`'a JOIN'i
+        // YOKTU. Sonuç, canlı olarak ölçüldü (e2e reprodüksiyon,
+        // `lta-parent-lifecycle-status-gate.e2e-spec.ts`, düzeltmeden
+        // ÖNCE): HİÇ ONAYA SUNULMAMIŞ (`DRAFT`) bir yaşam döngüsü kaydının
+        // %9'luk oran kademesi `BASE_LTA_ON`'a iniyordu (`7368.30`,
+        // beklenen `0`) — yani onaysız bir indirim planlama motorunda
+        // uygulanıyordu. *"Mekanizma var, ona giden yol yok"* sınıfının
+        // OKUMA tarafı.
+        //
+        // Küme gerekçesi ve DÖRT kardeş implementasyonun neden
+        // birleştirilmediği: `IN_FORCE_AGREEMENT_STATES` (agreement.entity.ts).
+        //
+        // ⚠️ `innerJoin` BİLEREK (`leftJoin` değil): `agreement_id` `NOT NULL`
+        // + FK `RESTRICT` (`1817`) ⇒ ebeveynsiz satır YAPISAL OLARAK
+        // imkânsız, ve ebeveyn bir şekilde okunamıyorsa sorgu FAIL-CLOSED
+        // olmalı (oran inmez), fail-open değil (`§2.5`).
+        .innerJoin('lta.agreement', 'parentAgreement')
+        .andWhere('parentAgreement.tenantId = :tenantId', { tenantId })
+        // ⚠️ `deletedAt` AÇIKÇA yazılıyor — TypeORM'un `innerJoin`'e
+        // soft-delete şartını kendiliğinden eklediğine GÜVENİLMİYOR
+        // (ölçülmedi ⇒ varsayılmaz). Silinmiş bir yaşam döngüsü kaydının
+        // oranı da inmemeli; `if` yazıp `else` bırakmama disiplini.
+        .andWhere('parentAgreement.deletedAt IS NULL')
+        .andWhere('parentAgreement.status IN (:...inForceStatuses)', {
+          inForceStatuses: IN_FORCE_AGREEMENT_STATES as AgreementStatus[],
+        })
         .andWhere('lta.effectiveDate <= :date', { date })
         .andWhere('(lta.expiryDate IS NULL OR lta.expiryDate >= :date)', {
           date,

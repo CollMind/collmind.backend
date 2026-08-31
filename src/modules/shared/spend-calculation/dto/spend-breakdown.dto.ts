@@ -4,6 +4,16 @@ export interface MechanicSpendMap {
   [mechanicCode: string]: number | undefined;
 }
 
+/**
+ * ⛔ **BU NESNENİN KENDİSİ `null` OLABİLİR** (`SpendBreakdown.base`) —
+ * `T-337` / `Z77 §2`. Alanları değil, **nesne** düşer: taban ya bütünüyle
+ * hesaplanır ya hiç hesaplanmaz, çünkü tek girdisi `BASE_VOL × BPTT`'dir.
+ *
+ * `plan_skus.base_volume` **NULLABLE** bir kolondur (`K1 §3`) ve `null`
+ * girilen bir `0` ile aynı şey değildir. Eskiden `?? 0` düşürülüyordu ⇒
+ * `baseTotalSpend = 0` ⇒ `INCR_SPEND = planned − 0` **ŞİŞKİN** bir sayı
+ * olarak KPI motoruna gidiyordu (`K1 §1b:2532`).
+ */
 export class BaseSpendBreakdown {
   @ApiProperty({ description: 'Base LTA on-invoice spend' })
   ltaOnInvoice!: number;
@@ -93,15 +103,24 @@ export class PlannedSpendBreakdown {
   totalSpend!: number;
 }
 
+/**
+ * ⛔ **NESNE `null` OLABİLİR** (`PLAN_VOL` yoksa: planlanan taraf hiç
+ * hesaplanmaz), **VE** nesne varken üç alanı ayrıca `null` olabilir
+ * (`BASE_VOL` yoksa: taban çıkarılamaz). İki eksen, iki ayrı olgu.
+ */
 export class IncrementalSpendBreakdown {
-  @ApiProperty({ description: 'Incremental on-invoice spend' })
-  onInvoice!: number;
+  /**
+   * ⛔ `null` OLABİLİR — taban çıkarılarak türer (`planned − base`), yani
+   * `BASE_VOL` yoksa TANIMSIZDIR. Bkz. `BaseSpendBreakdown` doc.
+   */
+  @ApiPropertyOptional({ description: 'Incremental on-invoice spend' })
+  onInvoice!: number | null;
 
-  @ApiProperty({ description: 'Incremental off-invoice spend' })
-  offInvoice!: number;
+  @ApiPropertyOptional({ description: 'Incremental off-invoice spend' })
+  offInvoice!: number | null;
 
-  @ApiProperty({ description: 'Incremental total spend' })
-  total!: number;
+  @ApiPropertyOptional({ description: 'Incremental total spend' })
+  total!: number | null;
 
   /**
    * `T-334` / `Z66 §1` (`Q6`) — ROI PAYDASI.
@@ -115,7 +134,12 @@ export class IncrementalSpendBreakdown {
    * çıkıyordu ve daima `0` veriyordu. Doğrusu: taban promo alırsa
    * `SEVIYE 4` **ve** bu sayının türetimi **birlikte** değişmek zorundadır.
    *
-   * ⛔ `total` (LTA dahil) DEĞİŞMEDİ: bütçe/`plan.totalSpend` onu okur.
+   * ⛔ `total` (LTA dahil) bütçe/`plan.totalSpend` tarafını besler.
+   *
+   * ⚠️ `T-337`: `total` artık `number | null` (taban yoksa tanımsız), ama
+   * **`promoTotal` DEĞİL** — tabana bağlı değildir (`baseTotalOnInv =
+   * baseLtaOnInv` ⇒ taban promo cebirsel olarak `0`), yani `BASE_VOL`
+   * eksikken de tanımlıdır. İkisinin nullability'si bilerek AYRIŞIYOR.
    */
   @ApiProperty({
     description: 'Incremental PROMO spend (LTA excluded) — ROI denominator',
@@ -123,27 +147,44 @@ export class IncrementalSpendBreakdown {
   promoTotal!: number;
 }
 
+/**
+ * ⛔ ÜÇ KOVA, **İKİ BAĞIMSIZ EKSEN** — `T-337` / `Z77 §2`.
+ *
+ * ```
+ * BASE_VOL yok   ⇒ base = null · incremental.{on,off,total} = null
+ *                  planned SAĞLAM  (planlanan taraf tabana bağlı DEĞİL)
+ * PLAN_VOL yok   ⇒ planned = null · incremental = null
+ *                  base SAĞLAM     (taban = BASE_VOL × BPTT, PLAN_VOL'e bağlı DEĞİL)
+ * BPTT yok       ⇒ hiçbiri hesaplanamaz — resolver `ctx` bile üretmez
+ * ```
+ * ⚠️ **İKİ EKSENİN AYRI OLMASI ÖLÇÜLDÜ, TASARLANMADI.** İlk uygulama
+ * `PLAN_VOL` yokluğunu *"hiç breakdown yok"* diye ele aldı ve **taban
+ * zincirini de öldürdü**; `lta-lifecycle-bond-and-base-chain.e2e-spec.ts`
+ * (`T-293`) bunu yakaladı: yalnız `baseVolume` girilmiş bir SKU'da
+ * `BASE_LTA_ON` `null`'a düştü. `§7.1` — *"düzeltmeden önce say"*: taban
+ * alanlarının tüketicisi planlanan taraftan BAĞIMSIZ.
+ */
 export class SpendBreakdown {
   @ApiProperty({ description: 'SKU ID' })
   skuId!: string;
 
-  @ApiProperty({
-    description: 'Base spend breakdown',
+  @ApiPropertyOptional({
+    description: 'Base spend breakdown — null when BASE_VOL is not entered',
     type: BaseSpendBreakdown,
   })
-  base!: BaseSpendBreakdown;
+  base!: BaseSpendBreakdown | null;
 
-  @ApiProperty({
-    description: 'Planned spend breakdown',
+  @ApiPropertyOptional({
+    description: 'Planned spend breakdown — null when PLAN_VOL is not entered',
     type: PlannedSpendBreakdown,
   })
-  planned!: PlannedSpendBreakdown;
+  planned!: PlannedSpendBreakdown | null;
 
-  @ApiProperty({
-    description: 'Incremental spend breakdown',
+  @ApiPropertyOptional({
+    description: 'Incremental spend breakdown — null when planned is null',
     type: IncrementalSpendBreakdown,
   })
-  incremental!: IncrementalSpendBreakdown;
+  incremental!: IncrementalSpendBreakdown | null;
 }
 
 export class FUSpendBreakdown {
@@ -153,11 +194,12 @@ export class FUSpendBreakdown {
   @ApiProperty({ description: 'SKU spend breakdowns', type: [SpendBreakdown] })
   skuBreakdowns!: SpendBreakdown[];
 
-  @ApiProperty({
-    description: 'Aggregated base spend breakdown',
+  @ApiPropertyOptional({
+    description:
+      'Aggregated base spend breakdown (null if any SKU lacks BASE_VOL)',
     type: BaseSpendBreakdown,
   })
-  aggregatedBase!: BaseSpendBreakdown;
+  aggregatedBase!: BaseSpendBreakdown | null;
 
   @ApiProperty({
     description: 'Aggregated planned spend breakdown',
@@ -170,6 +212,18 @@ export class FUSpendBreakdown {
     type: IncrementalSpendBreakdown,
   })
   aggregatedIncremental!: IncrementalSpendBreakdown;
+
+  /**
+   * `T-337` / `Z77 §1` — harcaması **hesaplanamayan** SKU'lar, eksik alan
+   * ADIYLA. Bu SKU'lar yukarıdaki toplamlara **girmez**; eskiden `0`
+   * katkısıyla giriyor ve toplam *"tam"* görünüyordu.
+   *
+   * ⛔ Boş dizi ≠ alan yok: boş dizi *"hepsi hesaplandı"* demektir.
+   */
+  @ApiProperty({
+    description: 'SKUs whose spend could not be evaluated (missing inputs)',
+  })
+  notEvaluableSkus!: Array<{ skuId: string; missing: readonly string[] }>;
 }
 
 export class SKUSpendDistribution {

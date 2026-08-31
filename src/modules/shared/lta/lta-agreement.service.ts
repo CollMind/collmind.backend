@@ -74,26 +74,45 @@ export class LTAAgreementService {
           `düzeltilmez (§2.5) — aynı olgunun iki temsili ayrışamaz.`,
       );
     }
+    // [[T-336]] `Q22` — "BİR EBEVEYN = BİR BAŞLIK, ÖMÜR BOYU": DB tarafı
+    // (`UQ_lta_agreements_agreement_id`) KISMİ DEĞİL — `deleted_at`
+    // predicate'i YOK, yani sonlandırılmış (soft-delete edilmiş) bir oran
+    // başlığı ebeveynin yerini İŞGAL ETMEYE devam eder. `withDeleted: true`
+    // OLMADAN bu kontrol o satırı GÖRMEZ, `save()` ham `QueryFailedError`
+    // (23505) ile `500` döner. Mesaj `findByCode`'un kod-çakışması
+    // mesajıyla AYNI CÜMLE DEĞİL (`Z70` emsali): burası EBEVEYN-BAĞI
+    // tekilliği, orası KOD tekilliği — iki ayrı invaryant.
     const alreadyBound = await this.ltaRateRepository.manager.findOne(
       LTAAgreement,
-      { where: { tenantId, agreementId: dto.agreementId } },
+      { where: { tenantId, agreementId: dto.agreementId }, withDeleted: true },
     );
     if (alreadyBound) {
       throw new ConflictException(
         `Yaşam döngüsü kaydı ${parent.agreementCode} zaten bir oran-şartları ` +
-          `başlığı taşıyor (${alreadyBound.agreementCode}). Bir kaydın EN ÇOK ` +
-          `BİR oran-şartları başlığı olur (UQ_lta_agreements_agreement_id).`,
+          `başlığı taşıyor (${alreadyBound.agreementCode}${
+            alreadyBound.deletedAt
+              ? ' — sonlandırılmış (soft-delete edilmiş) bir kayıt da yeri tutar, ömür boyu tekil'
+              : ''
+          }). Bir kaydın EN ÇOK BİR oran-şartları başlığı olur ` +
+          `(UQ_lta_agreements_agreement_id).`,
       );
     }
 
-    // Validate code uniqueness
+    // Validate code uniqueness. [[T-336]] `Q22` — `findByCode` artık
+    // `withDeleted: true` (repository yorumuna bkz.): kodun kendisi
+    // ÖMÜR BOYU tekil, sonlandırılmış bir kayıt da yeri tutar. Mesaj
+    // ebeveyn-bağı çakışmasıyla (yukarıdaki `alreadyBound`) AYNI CÜMLE
+    // DEĞİL — burası KOD tekilliği, orası EBEVEYN-BAĞI tekilliği.
     const existing = await this.ltaRepository.findByCode(
       tenantId,
       dto.agreementCode,
     );
     if (existing) {
       throw new ConflictException(
-        `LTA Agreement with code '${dto.agreementCode}' already exists`,
+        `LTA Agreement with code '${dto.agreementCode}' already exists` +
+          (existing.deletedAt
+            ? ' (sonlandırılmış/soft-delete edilmiş bir kayıt da kodu tutar — ömür boyu tekil)'
+            : ''),
       );
     }
 

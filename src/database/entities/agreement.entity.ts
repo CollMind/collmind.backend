@@ -27,6 +27,42 @@ export enum AgreementStatus {
   CANCELLED = 'CANCELLED',
 }
 
+/**
+ * [[T-335]] — YAŞAM DÖNGÜSÜ KAYDI "YÜRÜRLÜKTE" SAYILDIĞI DURUMLAR.
+ *
+ * Kaynak: `docs/brd/01_Main_BRD/Section_04_Actuals_First_Mode.md`
+ *   · `:220-247` yaşam döngüsü diyagramı —
+ *       `APPROVED` = *"Budget reserved, ready for execution"*
+ *       `ACTIVE`   = *"Promotion running, transactions posting"*
+ *       `CLOSED`   = *"Final state, NO FURTHER TRANSACTIONS"*
+ *       `DRAFT`/`PENDING` onay ÖNCESİ · `REJECTED`/`CANCELLED` olumsuz uçlar
+ *   · `:603` satır-doğrulama sözde-kodu, BİREBİR bu kümeyi yazıyor:
+ *       `if (lta && lta.status !== 'ACTIVE' && lta.status !== 'APPROVED')`
+ *
+ * ⚠️ Bu sabit YENİ bir kural GETİRMEZ — kod tabanında bu kümenin ZATEN
+ * DÖRT ayrı kopyası var (`CLAUDE.md §7`: *"bu yeteneğin mevcut bir
+ * implementasyonu var mı? arandı mı, nerede, hangi terimlerle?"* — arandı:
+ * `rg -n "AgreementStatus\.(ACTIVE|APPROVED)"`, dördü de bulundu):
+ *
+ *   reversal.service.ts#REVERSIBLE_AGREEMENT_STATES        "ters kayıt atılabilir mi"
+ *   settlement-close.service.ts#SETTLEABLE_STATES          "kapatılabilir mi"
+ *   off-invoice-validation.service.ts#validateRow          "harcama girilebilir mi"
+ *   agreement.service.ts#cancel                            "iptal edilebilir mi"
+ *
+ * ⛔ Ve BİLEREK BİRLEŞTİRİLMEDİ: dördü BUGÜN aynı değeri taşıyor ama AYNI
+ * SORUYU sormuyor. Değerin çakışması, anlamın çakışması DEĞİLDİR
+ * (`DISIPLIN`: *"bir AD, koruduğu SINIFTAN dar olabilir"*) — tek sabite
+ * indirmek, birini değiştiren bir kararın diğer dördünü SESSİZCE
+ * kaydırması demek olurdu. Konsolidasyon ayrı bir karar kalemidir.
+ *
+ * Bu sabitin sorduğu soru: **"bu kaydın ORAN KADEMESİ harcama motoruna
+ * iner mi?"** (`lta-agreement.repository.ts findActiveForCPL`).
+ */
+export const IN_FORCE_AGREEMENT_STATES: readonly AgreementStatus[] = [
+  AgreementStatus.APPROVED,
+  AgreementStatus.ACTIVE,
+] as const;
+
 export enum SpendType {
   ON_INVOICE = 'ON_INVOICE',
   OFF_INVOICE = 'OFF_INVOICE',

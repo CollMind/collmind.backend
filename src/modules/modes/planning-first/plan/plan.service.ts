@@ -47,10 +47,12 @@ import {
   SkuCalculationContext,
 } from '../../../shared/kpi-engine/kpi-engine.service';
 import { SpendCalculationService } from '../../../shared/spend-calculation/spend-calculation.service';
+import { CalculationContext } from '../../../shared/spend-calculation/dto/calculation-context.dto';
 import {
-  SKUContext,
-  CalculationContext,
-} from '../../../shared/spend-calculation/dto/calculation-context.dto';
+  resolveSkuSpendInputs,
+  summarizeNotEvaluableSkus,
+  SpendInputResolution,
+} from '../../../shared/spend-calculation/sku-spend-inputs';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -75,10 +77,13 @@ import {
 } from '../../../../common/kpi/target-roi';
 import {
   PLAN_MUST_HAVE_FU_MESSAGE,
+  collectPlanSpendRowWarnings,
   collectPlanStructureWarnings,
   collectPlanSubmissionValidationErrors,
   collectPlanSubmissionWarnings,
+  collectSpendInputWarnings,
   planSpendBreakdownError,
+  reservationInputIncompleteError,
   resolvePlanSpendBreakdown,
 } from '../../../../common/plan-submission/submission-checks';
 
@@ -125,25 +130,24 @@ export type PlanFuWithVersion = PlanFu & { planVersion: number };
 export type PlanSkuWithVersion = PlanSku & { planVersion: number };
 
 /**
- * T-027: Convert a raw (possibly string-typed decimal column, null, or
- * undefined) value into a strict number-or-null. Distinguishes "genuinely
- * absent" master/user data (null/undefined/NaN) from a legitimately entered
- * 0, which callers must NOT coalesce together — BRD requires missing data to
- * propagate as null through the KPI engine, never silently become 0.
+ * ⛔ `toNullableNumber` **SİLİNDİ** (`T-337`, 2026-08-31) — bir taşıma
+ * değil, bir BİRLEŞTİRME.
  *
- * ⚠️ HAS A TWIN: `boundOf` in `mechanic.service.ts`. Do NOT merge them yet, and
- * read that function's comment before trying — the obvious move launders ratchet
- * debt (line 119 below is one of this file's 36 findings, and the destination
- * `src/common/numeric/` is exempt from the detector, so the finding would vanish
- * rather than move). T-086 makes the exemption per-file; T-087 then does the
- * merge honestly. This note lives here too because whoever attempts the merge
- * will most likely start from THIS file — it is the one under ratchet pressure.
+ * Tek çağıranları recalc'in dört ham okumasıydı; hepsi artık
+ * `toFiniteDecimal` (`common/kpi/target-roi.ts`) kullanıyor — bu kod
+ * tabanının `decimal` kolonları için TEK dürüst okuyucusu, ve okuma
+ * sözleşmesi daha katı (`''` → `null`, `boolean` reddedilir).
+ *
+ * ⚠️ **`T-087`'nin uyarısı OKUNDU ve bu hamle onun kovaladığı şey DEĞİL.**
+ * O uyarı `src/common/numeric/`'e **taşımayı** yasaklıyor, çünkü orası
+ * `money-float` dedektörünün ateşlemediği dizin ⇒ bulgu hedefte yeniden
+ * doğmaz, ratchet ödenmemiş bir borcu ödenmiş sayar. Burada taşıma yok:
+ * fonksiyon **silindi**, çağıranlar **zaten var olan** kanonik okuyucuya
+ * bağlandı (`toFiniteDecimal`'ın kendi doc'u konumunun neden
+ * `common/kpi/` olduğunu ölçüyle yazıyor). ⇒ `plan.service.ts`'in
+ * `money-float` bulgusu **gerçekten bir azaldı**; baseline'ı düşürmek
+ * İYİLEŞTİREN TURUN işidir (`CLAUDE.md §4.2`).
  */
-function toNullableNumber(raw: unknown): number | null {
-  if (raw === null || raw === undefined) return null;
-  const num = Number(raw);
-  return Number.isFinite(num) ? num : null;
-}
 
 @Injectable()
 export class PlanService {
@@ -983,11 +987,51 @@ export class PlanService {
       tenantId,
       TARGET_ROI_KPI_CODE,
     );
+    // ── `T-337` / `Z77 §1` — GİRDİ-EKSİKLİĞİ, TEK TÜRETİM ────────────
+    //
+    // Olgu **KALICILAŞTIRILMIYOR, TÜRETİLİYOR** — ve bilerek:
+    //   · kaynak `plan_skus.planned_volume` / `skus.unit_price` **satırların
+    //     KENDİSİ**; türev bir işaret bayatlayabilir, satır bayatlayamaz.
+    //   · `plans`/`plan_fus`/`plan_skus`'ün harcama kolonları **NOT NULL
+    //     DEFAULT 0** (`K1 §3`) ⇒ `null` yazma seçeneği bugün YOK; bir
+    //     işaret alanı açmak MIGRATION demektir (`K1 §6 S3`, ürün sahibine
+    //     açık, `CLAUDE.md §3`: migration `data-engineer`'ın).
+    //   · ve **aynı resolver** kullanılıyor, ikinci bir türetim değil
+    //     (`§7`/`F8` ailesi).
+    // `initial` `findById` ile geldi ve `planFus.planSkus.sku`'yu YÜKLÜYOR
+    // (`plan.repository.ts:96-97`) ⇒ ek sorgu yok.
+    const spendInputResolutions: SpendInputResolution[] = (
+      initial.planFus ?? []
+    ).flatMap((planFu) =>
+      (planFu.planSkus ?? []).map((planSku) =>
+        resolveSkuSpendInputs({
+          skuId: planSku.skuId,
+          baseVolume: planSku.baseVolume,
+          plannedVolume: planSku.plannedVolume,
+          listPrice: planSku.sku?.unitPrice,
+          cogsPerUnit: planSku.sku?.cogs,
+          channelCode: initial.channel?.code,
+          categoryCode: initial.category?.code,
+          cplId: initial.cplId,
+        }),
+      ),
+    );
+    const notEvaluableSpendInputs = summarizeNotEvaluableSkus(
+      spendInputResolutions,
+    );
+
     const warnings = [
       // ⛔ SIRA ANLAMLI: yapısal bulgu ("bu FU boş") kullanıcının ÖNCE
       // düzelteceği şeydir; KPI yargıları ("hedefin altında") ondan sonra
       // gelir — boş bir FU zaten KPI'ları çürütür.
       ...collectPlanStructureWarnings(initial),
+      // `Q20`: plan-düzeyi *"hiçbir satıra hacim girilmedi"* — FU-yapısal
+      // bulgunun KARDEŞİ, aynı sıra kademesi (yapısal ⇒ KPI'lardan önce).
+      // Aynı `spendInputResolutions`'tan türer, ikinci bir tarama YOK.
+      ...collectPlanSpendRowWarnings(spendInputResolutions),
+      // `Z77 §1`: girdi eksikliği yapısal bir bulgudur (kullanıcı gidip
+      // hücreyi doldurur) ⇒ KPI yargılarından ÖNCE.
+      ...collectSpendInputWarnings(notEvaluableSpendInputs),
       ...collectPlanSubmissionWarnings(
         initial,
         targetRoiKpi?.targetRoiThreshold ?? null,
@@ -1156,6 +1200,54 @@ export class PlanService {
         throw new BadRequestException(lockedError);
       }
       if (locked.kind === 'USABLE') {
+        // ⛔ `T-337` / `Z77 §1` — **GİRDİ KAPISI, TAM REZERVASYONUN ÖNÜNDE.**
+        //
+        // > *"`NOT_EVALUABLE` BİR ZARFA `0` YAZMAZ — YAZMAYI REDDEDER."*
+        //
+        // Eksik `PLAN_VOL`/`BPTT` taşıyan SKU'lar bugün `0` harcama
+        // üretiyor ve zarfa **DÜŞÜK** bir tutar rezerve ediliyordu ⇒
+        // `%80/%95/%100` eşiği **GEÇ** ateşliyordu, yani sessiz sıfır
+        // bütçe korumasının TERSİNE çalışıyordu (`K1 §2b`).
+        //
+        // ⛔ **KAPI NEDEN `USABLE` DALININ İÇİNDE — VE BU BİR VARSAYIM
+        // DEĞİL, HÜKMÜN KENDİ KAPSAMI.** Hüküm *"REZERVASYON reddeder"*
+        // diyor. Rezervasyonun YAZILMADIĞI dalda reddedilecek bir şey de
+        // yoktur, ve iki durum ölçülerek ayrıldı:
+        // ```
+        // A  BAZI SKU'da PLAN_VOL var, bazısında YOK
+        //      ⇒ total_spend > 0 ve KISMİ ⇒ zarfa DÜŞÜK tutar giderdi
+        //      ⇒ Z77'nin ölçtüğü zarar. RED BURADA.
+        // B  HİÇBİR SKU'da PLAN_VOL yok (FU eklendi, grid doldurulmadı)
+        //      ⇒ total_spend = 0 ⇒ `NO_SPEND` ⇒ zarfa HİÇBİR ŞEY yazılmaz
+        //      ⇒ ne düşük rezervasyon var ne geç ateşleyen eşik.
+        //      Submit geçer, uyarı ALAN ADIYLA görünür (Z77 üst satır).
+        // ```
+        // ⚠️ `B` **sıradan bir taslak plandır**: `addFu` her `plan_sku`'yu
+        // `planned_volume = NULL` ile yaratır (`plan.repository.ts#addSku`,
+        // çağrısı `plan.service.ts#addFu`), yani grid doldurulmadan önce
+        // HER plan bu hâldedir. Kapıyı bu dalın dışına koymak `ADR 0005 K2`
+        // gerekçe-2'yi (*"bugün submit edilebilen plan yarın da
+        // edilebilmeli"*) **kırardı** — ölçüldü: 27 e2e testi düştü,
+        // `T-344`'ün sekiz-test vakasının birebir tekrarı.
+        // ⇒ **Ürün sahibine bildirildi** (`T-337` kapanış raporu): `Z77 §1`
+        // `A`/`B` ayrımını yazmıyordu; buradaki okuma hükmün KAPSAMINDAN
+        // türedi, genişletilmedi.
+        //
+        // ⚠️ RESOLUTION KİLİTTEN ÖNCE OKUNDU ve bu bilinçli: girdi satırları
+        // bu kilidin kapattığı para/durum yarışının parçası değil, ve buraya
+        // ikinci bir ağaç sorgusu koymak kilit penceresini genişletirdi
+        // (`T-034b/c` notu). ⛔ AÇIK KALAN: `updateSkuVolume`
+        // `plans.version`'ı BUMP ETMEZ ⇒ bu okuma ile kilit arasında bir
+        // hücre boşaltılırsa ne kapı ne sürüm-CAS görür. `T-337` takip
+        // kalemi olarak Team Lead'e bildirildi.
+        const reservationInputError = reservationInputIncompleteError(
+          id,
+          notEvaluableSpendInputs,
+        );
+        if (reservationInputError) {
+          throw new BadRequestException(reservationInputError);
+        }
+
         // T-019/T-048/T-053 machinery, now reachable from the live UI route:
         // gate-before-write (ADR 0004 Karar 2), only actually-spent types,
         // deterministic ON→OFF order — all delegated to the single motor.
@@ -2455,16 +2547,30 @@ export class PlanService {
     let planTotalOnInvoiceSpend = 0;
     let planTotalOffInvoiceSpend = 0;
 
+    // `T-337`: plan genelindeki girdi-eksikliği kaydı. Bu tur onu
+    // KALICILAŞTIRMIYOR (bkz. `submit()`'teki `resolveSkuSpendInputs`
+    // çağrısı) — burada yalnız log/telemetri için toplanıyor, çünkü
+    // rezervasyon kapısı olguyu **girdi satırlarından** yeniden türetir:
+    // ikinci bir türetim değil, aynı resolver.
+    const skuSpendResolutions: SpendInputResolution[] = [];
+
     for (const planFu of plan.planFus) {
       const skuResults: Array<Record<string, CalculationResult>> = [];
 
       // Build mechanic values map for this FU (needed by SpendCalc).
       // T-052: single shared derivation point — see
       // `SpendCalculationService#buildMechanicValues` doc comment.
-      // `calculateAllSpendsForFU` (the OTHER canonical spend-derivation
-      // path, used by `ApprovalWorkflowService#submitForApproval`) now
-      // calls the exact same method, so the two can never diverge again
-      // (T-049 postmortem: duplicate derivations of the same fact drift).
+      // `calculateAllSpendsForFU` (the OTHER spend-derivation path) calls
+      // the exact same method, so the two can never diverge again (T-049
+      // postmortem: duplicate derivations of the same fact drift).
+      //
+      // ⛔ `F12` — ÖNCÜL DÜZELTİLDİ (`T-337`, 2026-08-31; ölçüm `K1 §0`).
+      // Buradaki iddia *"`calculateAllSpendsForFU` …
+      // `ApprovalWorkflowService#submitForApproval` tarafından kullanılıyor"*
+      // idi ve **YANLIŞTI**: `approval-workflow.service.ts`
+      // `SpendCalculationService`'i enjekte bile etmiyor. Bu satırdaki
+      // `recalculatePlanWithKpiEngineLocked` bugün spend'in **TEK** canlı
+      // türetim yoludur; kardeşi tüketicisizdir (`Z77 §3c`).
       const mechanicValues = await this.spendCalc.buildMechanicValues(
         planFu,
         cachedActiveMechanics,
@@ -2504,6 +2610,14 @@ export class PlanService {
       let fuTotalPlannedSpend = 0;
       let fuTotalPlannedVolume = 0;
       let fuTotalGp = 0;
+      // `T-337`: toplamlara GİRMEYEN SKU sayaçları. Bir toplamın *kısmi*
+      // olduğu, sayının kendisinden okunamaz — ayrı taşınır (`Z68 §2`
+      // tanımlı-yokluk; `coverageRatio` emsali).
+      let fuNotEvaluableSpendSkus = 0;
+      let fuMissingGpSkus = 0;
+      // `Q20`: dokunulmamış (planlanmadı) satırlar — `fuNotEvaluableSpendSkus`
+      // İLE KARIŞTIRILMAZ, aşağıdaki uyarı metninin doğruluğu buna bağlı.
+      let fuUntouchedSkus = 0;
       // T-056 step 4: FU-level on/off accumulators (see plan-level comment
       // above for the identity this preserves).
       let fuTotalOnInvoiceSpend = 0;
@@ -2517,67 +2631,122 @@ export class PlanService {
 
       for (const planSku of planFu.planSkus || []) {
         const sku = planSku.sku;
-        // T-027: distinguish "genuinely missing master/user data" (null/undefined
-        // source) from "legitimately 0". SpendCalc's SKUContext has no null-safety
-        // (raw arithmetic), so it keeps the 0-fallback numeric values below — a
-        // missing input there degrades to 0 spend rather than crashing on NaN.
-        // The KPI engine context (below) instead receives the nullable
-        // (`*OrNull`) versions so missing COGS/BPTT/volume propagates as null
-        // through PLANNED_GP/GP_ROI_PCT/RAG (BRD: missing data → null, never a
-        // fabricated 100%/GREEN result).
-        const baseVolOrNull = toNullableNumber(planSku.baseVolume);
-        const planVolOrNull = toNullableNumber(planSku.plannedVolume);
-        const unitPriceOrNull = toNullableNumber(sku.unitPrice);
-        const cogsOrNull = toNullableNumber(sku.cogs);
-        const baseVol = baseVolOrNull ?? 0;
-        const planVol = planVolOrNull ?? 0;
-        const unitPrice = unitPriceOrNull ?? 0;
-        const cogs = cogsOrNull ?? 0;
-
-        // ── Step 1: Call SpendCalculationService for this SKU ────────────
-        // This is the single source of truth for LTA, promo spend breakdown.
-        const skuCtx: SKUContext = {
+        // ── `T-337` / `Z77 §2` — TEK RESOLVER ──────────────────────────
+        //
+        // `T-027` (2026-07-27) eksik girdiyi KPI motoruna `null` taşıdı ve
+        // sahte `%100`/`GREEN`'i bitirdi. Ama SPEND tarafına dört `?? 0`
+        // bıraktı, gerekçesi *"SKUContext'in null-güvenliği yok, eksik
+        // girdi NaN ile çökmek yerine 0 harcamaya düşer"* + *"bunlar ekran
+        // toplamı"*. **İKİ gerekçe de mekanizmasını kaybetti** (`Z75 §1`,
+        // `K1 §2`):
+        //   `P2` `T-056`/`T-057`/`T-048` sonrası `plan.total_spend` ve
+        //        `on/off_invoice_spend` **bütçe rezervasyonunun girdisi**;
+        //        ekran toplamı değil.
+        //   `P3` üçüncü seçenek (`NOT_EVALUABLE`, `Z68 §2` tanımlı-yokluk)
+        //        `T-323`/`T-342` ile **üretildi**; ikili dünya bitti.
+        // ⇒ Hüküm `Z77 §1`: SUBMIT DURMAZ (uyarı, alan adıyla),
+        //   REZERVASYON REDDEDER.
+        //
+        // ⛔ `SKUContext` artık MARKALI: literal inşa **derlenmez**. Alan
+        // başına sabit `A`/`B` ayrımı resolver'ın içinde, çağıranda değil.
+        const resolution = resolveSkuSpendInputs({
           skuId: planSku.skuId,
-          baseVolume: baseVol,
-          plannedVolume: planVol,
-          listPrice: unitPrice,
-          cogsPerUnit: cogs,
+          baseVolume: planSku.baseVolume,
+          plannedVolume: planSku.plannedVolume,
+          listPrice: sku.unitPrice,
+          cogsPerUnit: sku.cogs,
           channelCode: plan.channel?.code,
           categoryCode: plan.category?.code,
           cplId: plan.cplId,
-        };
+        });
+        skuSpendResolutions.push(resolution);
 
+        // KPI motoru tarafı `T-027`'den beri DOĞRUYDU ve DEĞİŞMİYOR: ham
+        // değerler `null` olarak gider, `PLANNED_GP`/`GP_ROI_PCT`/`RAG`
+        // null-propagation ile `null`'a düşer.
+        const baseVolOrNull = toFiniteDecimal(planSku.baseVolume);
+        const planVolOrNull = toFiniteDecimal(planSku.plannedVolume);
+        const unitPriceOrNull = toFiniteDecimal(sku.unitPrice);
+        const cogsOrNull = toFiniteDecimal(sku.cogs);
+
+        // ── Step 1: Call SpendCalculationService for this SKU ────────────
+        // This is the single source of truth for LTA, promo spend breakdown.
+        // ⛔ `NOT_EVALUABLE` bir SKU'da bile `ctx` VARSA çağrı YAPILIR —
+        // taban zinciri (`BASE_LTA_ON/OFF`, `BASE_TO`) `PLAN_VOL`'e bağlı
+        // DEĞİLDİR ve koşmaya devam etmelidir. `null` dönen yalnızca
+        // hesaplanamayan KOVA'dır, breakdown'ın tamamı değil.
+        // `Q20`: `UNTOUCHED`'ın `ctx` alanı bile YOK (tip seviyesinde) —
+        // `kind !== 'UNTOUCHED'` narrow'u önce gelir, aksi hâlde derlenmez.
         let spendBreakdown: Awaited<
           ReturnType<SpendCalculationService['calculateAllSpendsForSKU']>
-        >;
-        try {
-          spendBreakdown = await this.spendCalc.calculateAllSpendsForSKU(
-            tenantId,
-            skuCtx,
-            calcCtx,
-            cachedActiveMechanics,
-            cachedLtaContext,
-          );
-        } catch (spendErr) {
-          this.logger.error(
-            `SpendCalc failed for SKU ${planSku.skuId} in FU ${planFu.id}: ${spendErr}`,
-          );
-          throw spendErr; // surface the error — do not silently produce wrong values
+        > | null = null;
+        if (resolution.kind !== 'UNTOUCHED' && resolution.ctx !== null) {
+          try {
+            spendBreakdown = await this.spendCalc.calculateAllSpendsForSKU(
+              tenantId,
+              resolution.ctx,
+              calcCtx,
+              cachedActiveMechanics,
+              cachedLtaContext,
+            );
+          } catch (spendErr) {
+            this.logger.error(
+              `SpendCalc failed for SKU ${planSku.skuId} in FU ${planFu.id}: ${spendErr}`,
+            );
+            throw spendErr; // surface the error — do not silently produce wrong values
+          }
         }
+        if (resolution.kind === 'NOT_EVALUABLE') {
+          // ⛔ SESSİZ `0` KATKI YOK (`§2.5`). SKU'nun PLANLANAN harcaması
+          // hiçbir toplama girmez; eksiklik alan ADIYLA loglanır ve submit
+          // yolunda aynı resolver'dan yeniden türetilip kullanıcıya çıkar.
+          this.logger.warn(
+            `SKU ${planSku.skuId} planned spend NOT_EVALUABLE in FU ` +
+              `${planFu.id}: missing ${resolution.missing.join(', ')}`,
+          );
+        }
+        // `Q20`: `resolution.kind === 'UNTOUCHED'` için BİLEREK hiçbir
+        // `logger.warn` YOK — dokunulmamış bir satır bir kusur değil, bir
+        // olgudur ("planlanmadı"). `NOT_EVALUABLE`'ın *"missing …"* cümlesi
+        // burada YANLIŞ olurdu (hiçbir alan "eksik" değil, hiç girilmedi).
+        // Toplamlara katılmama davranışı (aşağıdaki `else` dalı) zaten
+        // `spendBreakdown === null` üzerinden AYNEN çalışıyor — para
+        // tarafında değişiklik YOK, yalnız gürültü kesildi.
 
-        const totalPlannedSpend = spendBreakdown.planned.totalSpend;
-        const baseTotalSpend = spendBreakdown.base.totalSpend;
-        const incrSpend = spendBreakdown.incremental.total;
+        const totalPlannedSpend = spendBreakdown?.planned?.totalSpend ?? null;
+        const baseTotalSpend = spendBreakdown?.base?.totalSpend ?? null;
+        const incrSpend = spendBreakdown?.incremental?.total ?? null;
         // BRD NIV semantics: only on-invoice deductions reduce Turnover.
         // plannedOnInvoiceSpend = LTA_ON + all on-invoice promo spends (CPP_ON etc.)
-        const plannedOnInvoiceSpend = spendBreakdown.planned.totalOnInvoice;
+        const plannedOnInvoiceSpend =
+          spendBreakdown?.planned?.totalOnInvoice ?? null;
         // T-056 step 4: off-invoice counterpart, SAME `spendBreakdown.planned`
         // object as `plannedOnInvoiceSpend` above (not derived by
         // subtraction — see plan-level comment on `planTotalOnInvoiceSpend`).
-        const plannedOffInvoiceSpend = spendBreakdown.planned.totalOffInvoice;
-        fuTotalPlannedSpend += totalPlannedSpend;
-        fuTotalOnInvoiceSpend += plannedOnInvoiceSpend;
-        fuTotalOffInvoiceSpend += plannedOffInvoiceSpend;
+        const plannedOffInvoiceSpend =
+          spendBreakdown?.planned?.totalOffInvoice ?? null;
+        // ⛔ `if` VAR, `else` DE VAR (`§2.5`): hesaplanamayan SKU toplama
+        // GİRMEZ, ve girmediği `notEvaluableSkuCount` ile SAYILIR — sessizce
+        // atlanmaz.
+        // `Q20`: `UNTOUCHED` da bu `else` dalına düşer (para tarafında
+        // davranış AYNI — katkı yok), ama AYRI sayaçla (`fuUntouchedSkus`):
+        // `fuNotEvaluableSpendSkus`'un beslediği aşağıdaki uyarı metni
+        // *"missing PLAN_VOL/BPTT"* der ve bu, dokunulmamış bir satır için
+        // YANLIŞ bir cümle olurdu — iki olgu ayrı sayılır (`§7`/`F8` ailesi
+        // burada da geçerli: bir sayı iki farklı olguyu temsil edemez).
+        if (
+          totalPlannedSpend !== null &&
+          plannedOnInvoiceSpend !== null &&
+          plannedOffInvoiceSpend !== null
+        ) {
+          fuTotalPlannedSpend += totalPlannedSpend;
+          fuTotalOnInvoiceSpend += plannedOnInvoiceSpend;
+          fuTotalOffInvoiceSpend += plannedOffInvoiceSpend;
+        } else if (resolution.kind === 'UNTOUCHED') {
+          fuUntouchedSkus += 1;
+        } else {
+          fuNotEvaluableSpendSkus += 1;
+        }
 
         // ── Step 2: Build KPI engine context with BRD-required external values ──
         // BRD canonical fields (all must be present for GP_ROI_PCT to resolve):
@@ -2595,11 +2764,15 @@ export class PlanService {
           // which would fabricate GP_ROI_PCT = 100% / RAG = GREEN)
           BPTT: unitPriceOrNull,
           COGS: cogsOrNull,
-          // BRD external — from SpendCalc (BUG #2 / Gap G fix)
-          PLANNED_LTA_ON: spendBreakdown.planned.ltaOnInvoice,
-          PLANNED_LTA_OFF: spendBreakdown.planned.ltaOffInvoice,
-          BASE_LTA_ON: spendBreakdown.base.ltaOnInvoice,
-          BASE_LTA_OFF: spendBreakdown.base.ltaOffInvoice,
+          // BRD external — from SpendCalc (BUG #2 / Gap G fix).
+          // ⛔ `T-337`: `spendBreakdown` **`null` olabilir** (SKU
+          // `NOT_EVALUABLE`). O durumda bu alanlar `null` gider ve motorun
+          // null-propagation'ı devralır — `0` DEĞİL. `?? null` burada bir
+          // varsayılan değil, "hesaplanmadı"nın taşınmasıdır.
+          PLANNED_LTA_ON: spendBreakdown?.planned?.ltaOnInvoice ?? null,
+          PLANNED_LTA_OFF: spendBreakdown?.planned?.ltaOffInvoice ?? null,
+          BASE_LTA_ON: spendBreakdown?.base?.ltaOnInvoice ?? null,
+          BASE_LTA_OFF: spendBreakdown?.base?.ltaOffInvoice ?? null,
           TOTAL_PLANNED_SPEND: totalPlannedSpend,
           BASE_TOTAL_SPEND: baseTotalSpend,
           INCR_SPEND: incrSpend,
@@ -2607,7 +2780,7 @@ export class PlanService {
           // KALEM: *yalnız promo · LTA hariç · incremental*.
           // ⛔ `TOTAL_PLANNED_SPEND` (yukarıda) DEĞİŞMEDİ ve `plan.totalSpend`/
           // bütçe rezervasyonunu beslemeye devam ediyor — finansal yayılım SIFIR.
-          INCR_PROMO_SPEND: spendBreakdown.incremental.promoTotal,
+          INCR_PROMO_SPEND: spendBreakdown?.incremental?.promoTotal ?? null,
           // T-008: PLANNED_TO uses only on-invoice deductions (BRD NIV semantics)
           PLANNED_ON_INVOICE_SPEND: plannedOnInvoiceSpend,
           // Tactic percentage values (CPP_ON_SPEND formula needs CPP_ON_PCT etc.)
@@ -2632,7 +2805,18 @@ export class PlanService {
         // ── Step 4: Persist SKU KPI results ─────────────────────────────
         // All values come from kpiResults; no fallback arithmetic here.
         // If a value is null, it persists as null (BRD: missing data → null).
-        const incrementalVolume = planVol - baseVol;
+        // `T-337`: `incremental_volume` kolonu **NOT NULL** (`K1 §3`).
+        // Hacim farkı yalnız İKİ hacim de girilmişken tanımlıdır; biri
+        // eksikken `0` yazmak *"artış yok"* demektir ve o bir yargıdır.
+        // ⛔ Kolon `null` alamadığı için `0` yazılıyor — ve bu SATIR
+        // `plannedGp`/`plannedTurnover`/`gpRoi`/`ragStatus` alanlarının
+        // hepsi `null` iken yazılır, yani satırın kendisi *"değerlendirilemedi"*
+        // diyor. Kolonun nullable olması bir MIGRATION kararıdır (`K1 §6 S3`,
+        // ürün sahibine açık).
+        const incrementalVolume =
+          planVolOrNull === null || baseVolOrNull === null
+            ? 0
+            : planVolOrNull - baseVolOrNull;
         const plannedTurnover = kpiResults['PLANNED_TO']?.value ?? null;
         const plannedGp = kpiResults['PLANNED_GP']?.value ?? null;
         const gpRoi = kpiResults[RAG_CARRIER_KPI_CODE]?.value ?? null;
@@ -2644,8 +2828,24 @@ export class PlanService {
         // `fuTotalPlannedSpend` above). `planVol` is recalc's own loaded
         // value (never mutated by recalc itself); `plannedGp` is exactly
         // what's queued into `skuUpdatesForBatch` just below.
-        fuTotalPlannedVolume += planVol;
-        fuTotalGp += plannedGp ?? 0;
+        // `T-337`: `PLAN_VOL` girilmemişse hacim toplamına KATKI YOK —
+        // eskiden `planVol = planVolOrNull ?? 0` üzerinden `0` giriyordu,
+        // yani "girilmemiş" ile "sıfır planlandı" ayırt edilemiyordu.
+        if (planVolOrNull !== null) {
+          fuTotalPlannedVolume += planVolOrNull;
+        }
+        // ⛔ `?? 0` ÖLDÜ. `plannedGp` **kasten `null` olabilir** (`T-027`,
+        // 166 COGS'suz SKU) ve `0` sayılıp toplanması FU/plan `total_gp`'sini
+        // *"eksik ama DOLU görünen"* bir sayı yapıyordu (`K1 §1b:2648`).
+        // `plan_fus.total_gp` **NOT NULL DEFAULT 0** olduğu için `null`
+        // yazılamıyor ⇒ toplam KISMİ kalır, ama kısmiliği artık SAYILIYOR
+        // (`fuMissingGpSkus`) ve submit uyarısına çıkıyor. Kolonun nullable
+        // olması bir MIGRATION kararıdır (`K1 §6 S4`, ürün sahibine açık).
+        if (plannedGp === null) {
+          fuMissingGpSkus += 1;
+        } else {
+          fuTotalGp += plannedGp;
+        }
 
         // Convert KPI results to calculated_kpis JSONB format
         const calculatedKpis: Record<string, any> = {};
@@ -2681,7 +2881,15 @@ export class PlanService {
             // silently leaving stale data behind (explicit `null` in the
             // batched UPDATE, same as TypeORM `.update()`'s prior behaviour).
             plannedTurnover,
-            tacticSpend: totalPlannedSpend,
+            // `T-337`: `plan_skus.tactic_spend` **NOT NULL DEFAULT 0**
+            // (`K1 §3`) ⇒ `null` yazma seçeneği BUGÜN YOK. Hesaplanamayan
+            // SKU'da `0` yazılır, ama bu `0` **sessiz değildir**: aynı
+            // satırda `planned_turnover`/`planned_gp`/`gp_roi`/`rag_status`
+            // hepsi `null`, ve para kapısı (submit'teki rezervasyon)
+            // bu kolonu DEĞİL, girdi satırlarını okur. Kolonun nullable
+            // olması `K1 §6 S3`'ün MIGRATION sorusudur — ürün sahibine açık,
+            // bu turda YAZILMADI (`CLAUDE.md §3`: migration data-engineer'ın).
+            tacticSpend: totalPlannedSpend ?? 0,
             plannedGp,
             gpRoi,
             ragStatus,
@@ -2749,6 +2957,40 @@ export class PlanService {
         };
       }
 
+      // ⛔ `T-337`: KISMİ TOPLAM GÖRÜNÜR OLMALI. `plan_fus.total_spend` ve
+      // `total_gp` **NOT NULL DEFAULT 0** olduğu için sayının kendisi
+      // *"eksik"* diyemiyor; söyleyen bu satır. Sessizce atlamak yasak
+      // (`§2.5`), ve `if` yazıp `else` bırakmamak da.
+      if (
+        fuNotEvaluableSpendSkus > 0 ||
+        fuMissingGpSkus > 0 ||
+        fuUntouchedSkus > 0
+      ) {
+        // `Q20`: `fuUntouchedSkus` REZERVASYONU BLOKLAMAZ — mesaj bunu
+        // `fuNotEvaluableSpendSkus`'tan (bloklayan sınıf) AYRI söyler.
+        // `fuMissingGpSkus` üçüncü bir eksen (`total_gp` yalnız), o da
+        // rezervasyonu bloklamaz (`RESERVATION_INPUT_INCOMPLETE` yalnız
+        // `PLAN_VOL`/`BPTT` eksikliğinden doğar, `submission-checks.ts
+        // #reservationInputIncompleteError`).
+        this.logger.warn(
+          `FU ${planFu.id}: partial aggregates — ` +
+            `${fuNotEvaluableSpendSkus} SKU excluded from spend totals ` +
+            `(missing PLAN_VOL/BPTT — blocks reservation WHEN the plan has ` +
+            `non-zero spend; the gate lives inside the \`USABLE\` branch, ` +
+            `plan.service.ts \`locked.kind === 'USABLE'\`), ` +
+            `${fuUntouchedSkus} SKU untouched (no volume entered — does NOT ` +
+            `block reservation, Q20), ` +
+            `${fuMissingGpSkus} SKU excluded from total_gp (PLANNED_GP null). ` +
+            `total_spend/total_gp are NOT NULL columns and therefore carry a ` +
+            `PARTIAL sum` +
+            (fuNotEvaluableSpendSkus > 0
+              ? '; the reservation gate refuses the plan on submit ' +
+                '(RESERVATION_INPUT_INCOMPLETE) — but ONLY when the plan ' +
+                'reaches the USABLE branch; a NO_SPEND plan never runs it.'
+              : '.'),
+        );
+      }
+
       // T-034: deliberate CAS bypass — derived FU-level aggregate, not a
       // user edit (same rationale as updatePlanSkuUnversioned above).
       // T-034c: routed through `manager` (see method doc comment).
@@ -2784,6 +3026,23 @@ export class PlanService {
       // totals above — no re-read, no re-derivation.
       planTotalOnInvoiceSpend += fuTotalOnInvoiceSpend;
       planTotalOffInvoiceSpend += fuTotalOffInvoiceSpend;
+    }
+
+    // ⛔ `T-337`: plan genelinde eksik-girdi özeti. Bu tur onu KOLONA
+    // yazmıyor (hepsi `NOT NULL`, ve bir işaret alanı MIGRATION demek —
+    // `K1 §6 S3`); submit yolu aynı olguyu **aynı resolver ile girdi
+    // satırlarından** türetiyor. Buradaki kayıt operasyonel görünürlük
+    // içindir ve sayıyı bir daha türetmez.
+    const planNotEvaluable = summarizeNotEvaluableSkus(skuSpendResolutions);
+    const planNotEvaluableFields = Object.keys(planNotEvaluable);
+    if (planNotEvaluableFields.length > 0) {
+      this.logger.warn(
+        `Plan ${planId}: spend NOT_EVALUABLE for some SKUs — ` +
+          planNotEvaluableFields
+            .sort()
+            .map((f) => `${f}: ${planNotEvaluable[f as never]} SKU`)
+            .join(', '),
+      );
     }
 
     // ── Plan-level KPI aggregation ────────────────────────────────────────
