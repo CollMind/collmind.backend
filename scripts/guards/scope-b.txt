@@ -37,7 +37,6 @@ src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/reject	#
 src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/return-to-draft	# planService → accessScope gerçek kontrol
 src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/review	# approval-workflow.service → accessScope gerçek kontrol
 src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/submit	# planService → accessScope gerçek kontrol
-src/modules/modes/planning-first/plan/plan.controller.ts|POST|plans/:id/submit-for-approval	# planService → accessScope gerçek kontrol
 src/modules/shared/dashboard/dashboard.controller.ts|GET|dashboard/cpl-status	# resolveScopedCplIds → accessScopeService.resolveScope gerçek kontrol
 src/modules/shared/dashboard/dashboard.controller.ts|GET|dashboard/pending-tasks	# resolveScopedCplIds → accessScopeService.resolveScope gerçek kontrol
 src/modules/shared/dashboard/dashboard.controller.ts|GET|dashboard/summary	# resolveScopedCplIds → accessScopeService.resolveScope gerçek kontrol

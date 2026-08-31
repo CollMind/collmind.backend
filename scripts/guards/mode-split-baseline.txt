@@ -93,8 +93,6 @@ F 12 src/modules/modes/planning-first/plan/dto/index.ts
 F 18 src/modules/modes/planning-first/plan/dto/remove-fu.dto.ts
 F 54 src/modules/modes/planning-first/plan/dto/review-plan.dto.spec.ts
 F 37 src/modules/modes/planning-first/plan/dto/review-plan.dto.ts
-F 28 src/modules/modes/planning-first/plan/dto/submit-for-approval.dto.spec.ts
-F 47 src/modules/modes/planning-first/plan/dto/submit-for-approval.dto.ts
 F 25 src/modules/modes/planning-first/plan/dto/submit-plan.dto.ts
 F 38 src/modules/modes/planning-first/plan/dto/update-fu-tactic.dto.ts
 F 20 src/modules/modes/planning-first/plan/dto/update-plan.dto.ts

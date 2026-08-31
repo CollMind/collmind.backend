@@ -54,6 +54,10 @@ src/modules/modes/actuals-first/on-invoice
 # columns" -> noisy reject), i.e. it was already being treated as Domain A in
 # practice and simply never written down.
 src/modules/modes/planning-first/plan
+# `T-344`: `submission-checks.ts` `modes/` bölmesinden (mode-split guard'ı o
+# bölmeyi DONDURDU) buraya taşındı. Alan A üyeliği ONUNLA BİRLİKTE taşındı —
+# `resolvePlanSpendBreakdown` para üretir ve bir eşikle karşılaştırır.
+src/common/plan-submission
 
 # ADR 0007 errata E15 — exactness primitives. Domain A by E10 (it compares a
 # TRY total against a rule) and the single derivation point of money semantics

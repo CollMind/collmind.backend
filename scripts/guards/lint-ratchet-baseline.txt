@@ -1,8 +1,8 @@
 # lint-ratchet baseline (backend) — T-113 ratchet reference
-# date:    2026-08-29
-# commit:  c8ed7f1
+# date:    2026-08-31
+# commit:  52f4534
 # guard:   lint-ratchet v1 (backend)
-# total:   183 (file,rule) tuples, 931 problems, 168 files
+# total:   181 (file,rule) tuples, 888 problems, 168 files
 # format:  <file> <ruleId> <errorCount+warningCount for that rule in that file>
 # KEY IS (file, rule), NOT file alone — see this script's header for why.
 src/common/guards/admin-restrictions.guard.ts @typescript-eslint/no-unused-vars 2
@@ -129,12 +129,10 @@ src/modules/modes/actuals-first/sales-actuals/services/sales-actuals-validation.
 src/modules/modes/actuals-first/settlement/settlement-close.service.spec.ts @typescript-eslint/no-explicit-any 5
 src/modules/modes/actuals-first/settlement/settlement-summary.service.spec.ts @typescript-eslint/no-explicit-any 2
 src/modules/modes/actuals-first/settlement/settlement.guard.spec.ts @typescript-eslint/no-explicit-any 1
-src/modules/modes/planning-first/plan/approval-workflow.service.spec.ts @typescript-eslint/no-explicit-any 61
-src/modules/modes/planning-first/plan/approval-workflow.service.spec.ts @typescript-eslint/no-unused-vars 1
-src/modules/modes/planning-first/plan/approval-workflow.service.ts @typescript-eslint/no-explicit-any 6
+src/modules/modes/planning-first/plan/approval-workflow.service.spec.ts @typescript-eslint/no-explicit-any 22
+src/modules/modes/planning-first/plan/approval-workflow.service.ts @typescript-eslint/no-explicit-any 4
 src/modules/modes/planning-first/plan/dto/review-plan.dto.spec.ts @typescript-eslint/no-explicit-any 1
 src/modules/modes/planning-first/plan/plan.controller.spec.ts @typescript-eslint/no-explicit-any 2
-src/modules/modes/planning-first/plan/plan.controller.spec.ts @typescript-eslint/no-unused-vars 1
 src/modules/modes/planning-first/plan/plan.repository.spec.ts @typescript-eslint/no-explicit-any 10
 src/modules/modes/planning-first/plan/plan.repository.ts @typescript-eslint/no-explicit-any 6
 src/modules/modes/planning-first/plan/plan.service.spec.ts @typescript-eslint/no-explicit-any 110
