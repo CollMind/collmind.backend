@@ -303,6 +303,22 @@ else
   exit 1
 fi
 
+# e2e-run-lock'un self-test'i AYRI bir dosyadır (T-325) — bu bir "findings"
+# guard'ı DEĞİL, TEK-ÇALIŞTIRAN KİLİDİNİN (test/helpers/e2e-run-lock.js,
+# `global-setup.js`/`global-teardown.js` tarafından çağrılır) DB'siz bir
+# fixture matrisi (boş kilit · canlı-PID çekişmesi · stale-PID devralma).
+# Aynı zincirleme kuralı burada da geçerli: self-test dosyası VAR ama hiçbir
+# gerçek kapı yolu onu ÇAĞIRMIYORSA "doğrulama bir kapıdır, durdurmuyorsa
+# doğrulama değildir" ihlal edilir.
+echo "=== self-test (e2e-run-lock) ==="
+if node "$DIR/../../test/helpers/e2e-run-lock.self-test.js"; then
+  echo "(e2e-run-lock fixture matrisi tutuyor)"
+  echo
+else
+  echo "!! e2e-run-lock kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
+  exit 1
+fi
+
 TOTAL=0
 TOTAL_SUP=0
 SKIPPED_OK=0

@@ -92,30 +92,48 @@
 const fs = require('fs');
 const path = require('path');
 const { connect, resolveFixtureTenantId, countRows } = require('./helpers/e2e-row-count');
+const { acquireLock } = require('./helpers/e2e-run-lock');
 
 const SNAPSHOT_PATH = path.join(__dirname, '.e2e-row-count-snapshot.json');
 
 module.exports = async function globalSetup() {
-  const client = await connect();
+  // T-325 — TEK-ÇALIŞTIRAN KİLİDİ. İlk adım, DB'ye dokunmadan ÖNCE:
+  // T-047/T-319/T-324 satır-sayısı invaryantı zaten "aynı DB'yi paylaşan
+  // iki e2e suite'i" senaryosuna karşı KÖRDÜ (T-269 ∥ T-270, T-324 turu) —
+  // kilit burada, globalTeardown'da serbest bırakılır (bkz. o dosya).
+  //
+  // ⚠️ Kilit alındıktan SONRA bu fonksiyonun geri kalanı başarısız olursa
+  // (ör. DB'ye bağlanılamıyor) Jest globalTeardown'ı HER ZAMAN çalıştırmayı
+  // GARANTİ ETMEZ — bu yüzden setup'ın KENDİ hata yolunda da kilit
+  // serbest bırakılır (aşağıdaki dış try/catch), yoksa bir bağlantı hatası
+  // bile kilidi kalıcı olarak tutup bir sonraki koşumu bloklardı.
+  const releaseLock = acquireLock();
+
   try {
-    const tenantId = await resolveFixtureTenantId(client);
-    const { tables, connectedAsRole } = await countRows(client, tenantId);
+    const client = await connect();
+    try {
+      const tenantId = await resolveFixtureTenantId(client);
+      const { tables, connectedAsRole } = await countRows(client, tenantId);
 
-    fs.writeFileSync(
-      SNAPSHOT_PATH,
-      JSON.stringify({ tenantId, tables }, null, 2),
-    );
+      fs.writeFileSync(
+        SNAPSHOT_PATH,
+        JSON.stringify({ tenantId, tables }, null, 2),
+      );
 
-    // eslint-disable-next-line no-console
-    console.log(
-      `[T-047/T-319/T-324 invariant] BAŞLANGIÇ satır sayıları (tenant=` +
-        `Wella Turkey, role=${connectedAsRole}, ${Object.keys(tables).length} ` +
-        `tablo, pg_catalog'dan türetilmiş TAM evren — yetki filtresi YOK, ` +
-        `T-324/Z61):`,
-    );
-    // eslint-disable-next-line no-console
-    console.log('  ' + JSON.stringify(tables));
-  } finally {
-    await client.end();
+      // eslint-disable-next-line no-console
+      console.log(
+        `[T-047/T-319/T-324 invariant] BAŞLANGIÇ satır sayıları (tenant=` +
+          `Wella Turkey, role=${connectedAsRole}, ${Object.keys(tables).length} ` +
+          `tablo, pg_catalog'dan türetilmiş TAM evren — yetki filtresi YOK, ` +
+          `T-324/Z61):`,
+      );
+      // eslint-disable-next-line no-console
+      console.log('  ' + JSON.stringify(tables));
+    } finally {
+      await client.end();
+    }
+  } catch (err) {
+    releaseLock();
+    throw err;
   }
 };

@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const { connect, countRows } = require('./helpers/e2e-row-count');
+const { releaseLock } = require('./helpers/e2e-run-lock');
 
 const SNAPSHOT_PATH = path.join(__dirname, '.e2e-row-count-snapshot.json');
 // `T-319`: sabit bir anahtar listesi YOK artık — karşılaştırma
@@ -26,6 +27,20 @@ const SNAPSHOT_PATH = path.join(__dirname, '.e2e-row-count-snapshot.json');
 // migration tablo eklemiş/kaldırmışsa) bu da SESSİZCE yutulmaz, açık hata.
 
 module.exports = async function globalTeardown() {
+  // T-325 — kilit HER durumda serbest bırakılır: invaryant PASS olsun,
+  // aşağıda throw etsin, fark etmez. `finally` burada §2.5'in "kirli →
+  // sessizce devam etme" ilkesinin tersi değil, onun TAMAMLAYICISI: bir
+  // ihlali RAPORLAMAK (throw) ile bir sonraki koşumu SONSUZA KADAR
+  // bloklamak (kilidi hiç bırakmamak) ayrı şeyler — ikincisi burada asla
+  // olmamalı.
+  try {
+    await runInvariantCheck();
+  } finally {
+    releaseLock();
+  }
+};
+
+async function runInvariantCheck() {
   if (!fs.existsSync(SNAPSHOT_PATH)) {
     // eslint-disable-next-line no-console
     console.warn(
@@ -109,4 +124,4 @@ module.exports = async function globalTeardown() {
   console.log(
     '[T-047 invariant] PASS — satır sayıları suite öncesi/sonrası birebir aynı.',
   );
-};
+}
