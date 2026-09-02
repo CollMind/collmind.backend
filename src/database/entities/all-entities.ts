@@ -46,6 +46,7 @@ import { SalesActual } from './sales-actual.entity';
 import { SalesActualBatch } from './sales-actual-batch.entity';
 import { BaselineVolume } from './baseline-volume.entity';
 import { BaselineVolumeImportBatch } from './baseline-volume-import-batch.entity';
+import { BaselineVolumeImportBatchRow } from './baseline-volume-import-batch-row.entity';
 import { BudgetSummaryView } from './budget-summary.view-entity';
 import { Brand } from './brand.entity';
 import { Category } from './category.entity';
@@ -101,6 +102,7 @@ export const ALL_ENTITIES = [
   // BL-1 (T-357 / Z84) — baseline hacim tablosu
   BaselineVolume,
   BaselineVolumeImportBatch,
+  BaselineVolumeImportBatchRow,
   // Master Data entities
   Brand,
   Category,

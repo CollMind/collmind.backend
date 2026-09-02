@@ -708,6 +708,21 @@ GRANT INSERT, DELETE ON :"schema".lta_rates TO app_runtime;
 GRANT SELECT, INSERT ON :"schema".baseline_volume_import_batches TO app_runtime;
 GRANT SELECT, INSERT ON :"schema".baseline_volumes TO app_runtime;
 
+-- ── `BL-3` ADIM 1 (data-engineer, `T-358`/`Z87`, 2026-09-02) —
+--    `main.baseline_volume_import_batch_rows` ölçüm ÖNCESİ GRANT: bu
+--    migration'la BİRLİKTE hiçbir uygulama kodu (service/controller/
+--    repository) yazılmadı — `T-358`'in DUR listesi bunu açıkça yasakladı
+--    (`BL-3` ADIM 2/3'ün işi). Yani `app-runtime-grants` guard'ının kaynak-A
+--    ölçümü (ENJEKSİYON/ÇAĞRI taraması) bu tablo için BUGÜN sıfır sonuç
+--    verir — GRANT bir ÖLÇÜME değil, `Z87`'nin ŞEKİL hükmüne dayanıyor:
+--    `SELECT` + `INSERT`, ⛔ `UPDATE`/`DELETE` YOK (satır IMMUTABLE, düzeltme
+--    = yeni batch, `ADR 0012` ruhu — kardeşi `baseline_volumes`/
+--    `baseline_volume_import_batches` ile AYNI desen, yukarısı). ADIM 2/3
+--    yazma yolunu ekleyince kendi ölçümünü yapar; bu GRANT set'i o turda
+--    GENİŞLEMEZ, yalnız DOĞRULANIR (SELECT/INSERT'in üretim çağrı yoluyla
+--    eşleştiği ayrıca ölçülür).
+GRANT SELECT, INSERT ON :"schema".baseline_volume_import_batch_rows TO app_runtime;
+
 -- ── Z24 (data-engineer, 2026-08-23) — `main.budget_allocations` +
 --    `main.budget_transaction_logs` DÜŞÜRÜLDÜ (migration 1811000000000,
 --    `Z21` şart 3+4 / `Z24`). Model `K-2.2.3` ihlali olarak doğdu ve
