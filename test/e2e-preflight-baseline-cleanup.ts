@@ -64,8 +64,22 @@ const DIRTY_TABLES = [
   },
 ];
 
+/**
+ * `countDirty`'nin ihtiyaç duyduğu TEK yetenek: parametreli bir sorgu koşup
+ * satır dizisi döndürmek. `pg.Client` tipini import etmek bu dosyayı driver
+ * sürümüne bağlar; `any` ise `lint-ratchet`'in *"yeni kod LINT-TEMİZ DOĞAR"*
+ * kuralını ihlal eder (ve bir tur bu yüzden kırmızı kaldı, `Z82`).
+ * ⇒ YAPISAL tip: ne fazlası ne eksiği.
+ */
+type QueryRunner = {
+  query(
+    sql: string,
+    params: unknown[],
+  ): Promise<{ rows: Array<{ n: number }> }>;
+};
+
 async function countDirty(
-  client: any,
+  client: QueryRunner,
   tenantId: string,
 ): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};

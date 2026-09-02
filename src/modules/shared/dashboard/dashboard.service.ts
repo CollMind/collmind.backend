@@ -22,6 +22,7 @@ import { FinanceReportingService } from '../finance-reporting/finance-reporting.
 import { ReportFilters } from '../finance-reporting/dto/report-filters.dto';
 // [[T-254]] — `[]` = "boş küme = hiçbir satır" sözleşmesinin TEK tanımı.
 import { arrayFilterField } from '../../../common/query/array-filter';
+import { toPeriodMonthUtc } from '../../../common/date/period-month';
 import { DashboardSummaryResponseDto } from './dto/dashboard-summary.dto';
 import { diagnosticsOf } from '../../../common/errors/diagnostics';
 import {
@@ -394,10 +395,8 @@ export class DashboardService {
     if (period && period.trim()) {
       return period.trim();
     }
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    return `${yyyy}-${mm}`;
+    // T-333 (Z81 §2): UTC bileşenlerinden — bkz. `common/date/period-month.ts`
+    return toPeriodMonthUtc(new Date());
   }
 
   /**
@@ -435,10 +434,12 @@ export class DashboardService {
     }
 
     // Fallback: treat as current month
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-    const mm = String(month).padStart(2, '0');
+    // T-333 (Z81 §2): AYNI yardımcı — ikinci bir türetim noktası açılmıyor
+    // (`common/date/period-month.ts`, §7/F8 "tek yardımcı" kuralı).
+    const [yyyyStr, mmStr] = toPeriodMonthUtc(new Date()).split('-');
+    const year = Number(yyyyStr);
+    const month = Number(mmStr);
+    const mm = mmStr;
     return {
       startDate: `${year}-${mm}-01`,
       endDate: `${year}-${mm}-${this.lastDayOfMonth(year, month)}`,

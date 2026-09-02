@@ -10,6 +10,7 @@ import {
   BatchImportResultDto,
 } from './dto';
 import { AgreementTransaction } from '../../../../database/entities/agreement-transaction.entity';
+import { toPeriodMonthUtc } from '../../../../common/date/period-month';
 import { LedgerService } from '../ledger/ledger.service';
 import { AgreementService } from '../agreement/agreement.service';
 import {
@@ -114,9 +115,10 @@ export class AgreementTransactionService {
     }
     if (!fiscalPeriod) {
       // Last fallback: derive from invoice date
-      const invoiceYear = invoiceDate.getFullYear();
-      const invoiceMonth = String(invoiceDate.getMonth() + 1).padStart(2, '0');
-      fiscalPeriod = `${invoiceYear}-${invoiceMonth}`;
+      // T-333 (Z81 §3): AYNI yardımcı (`common/date/period-month.ts`) —
+      // bu, bir bütçe düşüm zarfı seçen ANAHTAR üretimidir (§2.5 sınıfı),
+      // periodMonth/fiscalPeriod ile AYNI format ve AYNI katman: pakette.
+      fiscalPeriod = toPeriodMonthUtc(invoiceDate);
     }
 
     // Find budget envelope for this agreement

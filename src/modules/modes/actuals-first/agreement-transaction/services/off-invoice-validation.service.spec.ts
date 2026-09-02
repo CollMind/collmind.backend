@@ -290,4 +290,86 @@ describe('OffInvoiceValidationService — parseErrors integration (T-126)', () =
       results[1].errors.find((e) => e.field === 'invoice_date')?.rowNumber,
     ).toBe(3);
   });
+
+  // T-333 (Z81 §4): a row.fiscalPeriod that disagrees with the period
+  // derived from invoiceDate used to be a WARNING (isValid stayed true). A
+  // mismatched fiscal_period is a wrong budget-envelope KEY, not a cosmetic
+  // discrepancy — "yarım anahtar, tam anahtar kadar yanlış eşleşir" — so it
+  // must REJECT the row (§2.5 class: silent-wrong-match is not acceptable).
+  describe('fiscal_period vs invoiceDate mismatch (T-333 / Z81 §4)', () => {
+    it('rejects the row (ERROR, isValid=false) when fiscalPeriod disagrees with the invoiceDate-derived period', async () => {
+      const row = buildRow({
+        fiscalPeriod: '2026-02',
+        dto: {
+          agreementId: 'agreement-1',
+          invoiceNo: 'INV-3',
+          invoiceDate: '2026-01-15', // -> derived period 2026-01
+          amount: 100,
+          currency: 'TRY',
+          notes: undefined,
+        },
+      });
+
+      const result = await service.validateRow(row, TENANT_ID);
+
+      expect(result.isValid).toBe(false);
+      const mismatchError = result.errors.find(
+        (e) => e.field === 'fiscal_period',
+      );
+      expect(mismatchError).toBeDefined();
+      expect(mismatchError!.severity).toBe('ERROR');
+      // Message must not collide with the format-validation ERROR
+      // ("Fiscal Period formatı hatalı") — this is a DIFFERENT failure class.
+      expect(mismatchError!.message).not.toContain('formatı hatalı');
+      expect(
+        result.warnings.find((w) => w.field === 'fiscal_period'),
+      ).toBeUndefined();
+    });
+
+    it('stays valid when fiscalPeriod agrees with the invoiceDate-derived period', async () => {
+      const row = buildRow({
+        fiscalPeriod: '2026-01',
+        dto: {
+          agreementId: 'agreement-1',
+          invoiceNo: 'INV-4',
+          invoiceDate: '2026-01-15',
+          amount: 100,
+          currency: 'TRY',
+          notes: undefined,
+        },
+      });
+
+      const result = await service.validateRow(row, TENANT_ID);
+
+      expect(result.isValid).toBe(true);
+      expect(
+        result.errors.find((e) => e.field === 'fiscal_period'),
+      ).toBeUndefined();
+    });
+
+    // TZ-bağımsızlık: T-333'ün kökü local getMonth()/getFullYear() idi.
+    // Ayın son gününde (UTC gece yarısı parse), local getter batı TZ'de bir
+    // gün/ay geriye kayardı. `toPeriodMonthUtc` kullanıldığı için bu artık
+    // process TZ'sinden bağımsız olmalı.
+    it('derives the period on UTC components regardless of process TZ (month-boundary date)', async () => {
+      const row = buildRow({
+        fiscalPeriod: '2026-02',
+        dto: {
+          agreementId: 'agreement-1',
+          invoiceNo: 'INV-5',
+          invoiceDate: '2026-02-01', // date-only ISO -> UTC midnight
+          amount: 100,
+          currency: 'TRY',
+          notes: undefined,
+        },
+      });
+
+      const result = await service.validateRow(row, TENANT_ID);
+
+      expect(result.isValid).toBe(true);
+      expect(
+        result.errors.find((e) => e.field === 'fiscal_period'),
+      ).toBeUndefined();
+    });
+  });
 });

@@ -3,6 +3,7 @@ import { AgreementService } from '../../agreement/agreement.service';
 import { AgreementStatus } from '../../../../../database/entities/agreement.entity';
 import { ParsedOffInvoiceRow } from './off-invoice-file-parser.service';
 import { AgreementTransactionRepository } from '../agreement-transaction.repository';
+import { toPeriodMonthUtc } from '../../../../../common/date/period-month';
 
 export interface ValidationError {
   rowNumber: number;
@@ -241,22 +242,25 @@ export class OffInvoiceValidationService {
           originalRowData: row.originalRowData,
         });
       } else {
-        // Fiscal period ile invoice date karşılaştırması (Warning)
+        // Fiscal period ile invoice date karşılaştırması
+        // T-333 (Z81 §4): bu satır bir GÖSTERİM uyuşmazlığı değil, bir
+        // ANAHTAR uyuşmazlığıdır — `row.fiscalPeriod` bütçe zarfı seçiminde
+        // `create()`'in birincil-öncelikli anahtarı olarak kullanılıyor
+        // (`agreement-transaction.service.ts` fiscalPeriod önceliği).
+        // Tutarsız bir satır, faturayı YANLIŞ zarftan düşürebilir — "yarım
+        // anahtar, tam anahtar kadar yanlış eşleşir" (Z81 §4). Bu yüzden
+        // WARNING değil ERROR: satır reddedilir. (§4.2/§2.5 sınıfı — sessiz
+        // yanlış eşleşme yerine açık red.)
         if (row.dto.invoiceDate) {
           const invoiceDate = new Date(row.dto.invoiceDate);
-          const invoiceYear = invoiceDate.getFullYear();
-          const invoiceMonth = String(invoiceDate.getMonth() + 1).padStart(
-            2,
-            '0',
-          );
-          const invoicePeriod = `${invoiceYear}-${invoiceMonth}`;
+          const invoicePeriod = toPeriodMonthUtc(invoiceDate);
 
           if (row.fiscalPeriod !== invoicePeriod) {
-            warnings.push({
+            errors.push({
               rowNumber: row.originalRowNumber,
               field: 'fiscal_period',
-              severity: 'WARNING',
-              message: `Fiscal period (${row.fiscalPeriod}) fatura tarihinden (${invoicePeriod}) farklı.`,
+              severity: 'ERROR',
+              message: `Fiscal period (${row.fiscalPeriod}) fatura tarihinden türetilen dönemden (${invoicePeriod}) farklı — anahtar eşleşmesi bozulacağı için satır reddedildi.`,
               originalRowData: row.originalRowData,
             });
           }

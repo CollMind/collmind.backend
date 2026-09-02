@@ -20,6 +20,7 @@ import {
   PlanReservationReleaseReason,
 } from './budget-reservation.service';
 import { BudgetTierNotificationService } from './budget-tier-notification.service';
+import { toPeriodMonthUtc } from '../../../common/date/period-month';
 import { UtilizationStatus } from '../finance-reporting/dto/budget-utilization.dto';
 import { CreateBudgetEnvelopeDto } from './dto/create-budget-envelope.dto';
 import {
@@ -1650,9 +1651,9 @@ export class BudgetService {
     status: UtilizationStatus;
   }> {
     // Get current month if not provided
+    // T-333 (Z81 §2): UTC bileşenlerinden — bkz. `common/date/period-month.ts`
     if (!periodMonth) {
-      const now = new Date();
-      periodMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      periodMonth = toPeriodMonthUtc(new Date());
     }
 
     // Fetch thresholds once (config-driven, tenant-scoped)

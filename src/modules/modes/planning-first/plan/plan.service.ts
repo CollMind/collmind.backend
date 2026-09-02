@@ -12,6 +12,7 @@ import {
   ScaleViolation,
   checkEnteredScale,
 } from '../../../../common/numeric/mechanic-input';
+import { toPeriodMonthUtc } from '../../../../common/date/period-month';
 import {
   CreatePlanDto,
   SubmissionResult,
@@ -312,8 +313,9 @@ export class PlanService {
     }
 
     // Calculate period month from start date
+    // T-333 (Z81 §2): UTC bileşenlerinden — bkz. `common/date/period-month.ts`
     const startDate = new Date(dto.startDate);
-    const periodMonth = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+    const periodMonth = toPeriodMonthUtc(startDate);
 
     // Retry logic for plan code generation (handle race conditions)
     const maxAttempts = 10;
@@ -479,8 +481,9 @@ export class PlanService {
     const updateData: Partial<Plan> = { ...dtoWithoutDates, updatedBy: userId };
 
     if (dtoStartDate) {
+      // T-333 (Z81 §2): UTC bileşenlerinden
       const startDate = new Date(dtoStartDate);
-      updateData.periodMonth = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+      updateData.periodMonth = toPeriodMonthUtc(startDate);
       updateData.startDate = startDate;
     }
     if (dtoEndDate) {

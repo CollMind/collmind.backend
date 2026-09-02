@@ -19,6 +19,7 @@ import { BudgetService } from '../../../shared/budget/budget.service';
 import { BudgetReservationService } from '../../../shared/budget/budget-reservation.service';
 import { ApprovalService } from '../../../shared/approval/approval.service';
 import { AdminAuditService } from '../../../../common/services/admin-audit.service';
+import { toPeriodMonthUtc } from '../../../../common/date/period-month';
 import { ApprovalRequestType } from '../../../../database/entities/approval-request.entity';
 import { KpiEngineService } from '../../../shared/kpi-engine/kpi-engine.service';
 import { TacticService } from '../../../master-data/tactic/tactic.service';
@@ -177,7 +178,8 @@ export class AgreementService {
       }
 
       // Calculate period month from start date
-      const periodMonth = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+      // T-333 (Z81 §2): UTC bileşenlerinden — bkz. `common/date/period-month.ts`
+      const periodMonth = toPeriodMonthUtc(startDate);
 
       // Convert string dates to Date objects
       const agreementData: Partial<Agreement> = {
@@ -471,8 +473,9 @@ export class AgreementService {
     };
 
     if (dtoStartDate) {
+      // T-333 (Z81 §2): UTC bileşenlerinden
       const startDate = new Date(dtoStartDate);
-      updateData.periodMonth = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+      updateData.periodMonth = toPeriodMonthUtc(startDate);
       updateData.startDate = startDate;
     }
     if (dtoEndDate) {
