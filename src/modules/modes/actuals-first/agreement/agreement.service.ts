@@ -1236,6 +1236,13 @@ export class AgreementService {
       }
     }
 
+    // T-346 / `Z80` (Q21): bu tactic-düzeyi applicability, mechanic-düzeyi
+    // grid-uygunluğundan (`MechanicService#getApplicableMechanics`) AYRI bir
+    // sorunun cevabıdır — bkz. `tactic.entity.ts` alan yorumu. Birleştirme yok.
+    //
+    // ⚠️ `length === 0` muhafızı FAIL-OPEN DEĞİL, TANIMLI-WILDCARD'dır:
+    // "kısıt tanımlanmamış = tümüne uygun" bilinçli bir modelleme kararıdır
+    // (`Z80` S3), kazara geçirilen bir boşluk değil.
     // Filter by channel applicability (using channel code)
     let filtered = tactics.filter((t) => {
       // If no applicable channels defined, it's available for all

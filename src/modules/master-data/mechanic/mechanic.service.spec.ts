@@ -1,6 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
-import { MechanicService } from './mechanic.service';
+import {
+  MechanicService,
+  resolveMechanicEligibility,
+} from './mechanic.service';
 import { MechanicRepository } from './mechanic.repository';
 import { TacticRepository } from '../tactic/tactic.repository';
 import { AdminAuditService } from '../../../common/services/admin-audit.service';
@@ -284,5 +287,78 @@ describe('MechanicService — min/max bound guard (T-084)', () => {
         BadRequestException,
       );
     });
+  });
+});
+
+/**
+ * T-346 / `Z80` HÜKÜM PAKETİ S4 — `resolveMechanicEligibility` PİN DÖRTLÜSÜ.
+ *
+ * Kaynak: `docs/brd-v2/04_KARAR_KAYDI.md` `Z80` — "ÇÖZÜMLEME KURALI — TEK
+ * RESOLVER". Dördü de ayrı test: #2 kuralın kalbi (negatif yarı) — fixture
+ * kanalda UYGUN olmalı, yoksa test #3'ü ölçer #2'yi değil (`§2.7 #6`).
+ */
+describe('resolveMechanicEligibility (T-346 PİN DÖRTLÜSÜ, Z80 S4)', () => {
+  const cplA = 'cpl-a-uuid';
+  const cplB = 'cpl-b-uuid';
+
+  it('PİN 1 — CPL tanımlı ve UYGUN → eligible, decidedBy=CPL', () => {
+    const result = resolveMechanicEligibility(
+      { applicableCpls: [cplA, cplB], applicableChannels: null },
+      { cplId: cplA },
+    );
+    expect(result).toEqual({ eligible: true, decidedBy: 'CPL' });
+  });
+
+  it('PİN 2 (kalp — negatif yarı) — CPL tanımlı, DEĞİL — kanal UYGUN OLSA BİLE → NOT eligible', () => {
+    // Fixture: applicableChannels açıkça bu kanalı İÇERİYOR (kanal tek başına
+    // sorulsa "uygun" derdi) — CPL'in kanalı EZDİĞİNİ ölçmek için kanal
+    // tarafı bilerek UYGUN kurulmuştur (§2.7 #6: aksi hâlde bu test PİN 3'ü
+    // ölçer, PİN 2'yi değil).
+    const result = resolveMechanicEligibility(
+      { applicableCpls: [cplB], applicableChannels: ['NKA'] },
+      { cplId: cplA, channelCode: 'NKA' },
+    );
+    expect(result).toEqual({ eligible: false, decidedBy: 'CPL' });
+  });
+
+  it('PİN 3 — CPL yok, kanal tanımlı → kanal karar verir (eşleşen)', () => {
+    const result = resolveMechanicEligibility(
+      { applicableCpls: null, applicableChannels: ['NKA'] },
+      { channelCode: 'NKA' },
+    );
+    expect(result).toEqual({ eligible: true, decidedBy: 'CHANNEL' });
+  });
+
+  it('PİN 3b — CPL yok, kanal tanımlı → kanal karar verir (eşleşmeyen)', () => {
+    const result = resolveMechanicEligibility(
+      { applicableCpls: null, applicableChannels: ['NKA'] },
+      { channelCode: 'TRAD' },
+    );
+    expect(result).toEqual({ eligible: false, decidedBy: 'CHANNEL' });
+  });
+
+  it('PİN 4 — ikisi de yok → TANIMLI-WILDCARD, eligible', () => {
+    const result = resolveMechanicEligibility(
+      { applicableCpls: null, applicableChannels: null },
+      {},
+    );
+    expect(result).toEqual({ eligible: true, decidedBy: 'WILDCARD' });
+  });
+
+  it('§2.5 — CPL kısıtı tanımlı ama planContext.cplId YOK → sessizce varsayılmaz, açık hata', () => {
+    expect(() =>
+      resolveMechanicEligibility(
+        { applicableCpls: [cplA], applicableChannels: null },
+        { channelCode: 'NKA' },
+      ),
+    ).toThrow(BadRequestException);
+  });
+
+  it('ALL wildcard kanal listesi hâlâ eligible verir (CPL tanımsızken)', () => {
+    const result = resolveMechanicEligibility(
+      { applicableCpls: null, applicableChannels: ['ALL'] },
+      { channelCode: 'ANYTHING' },
+    );
+    expect(result).toEqual({ eligible: true, decidedBy: 'CHANNEL' });
   });
 });

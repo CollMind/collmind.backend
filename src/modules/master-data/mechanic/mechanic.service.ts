@@ -127,6 +127,88 @@ function boundOf(value: number | string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * T-346 / `Z80` HÜKÜM PAKETİ (`docs/brd-v2/04_KARAR_KAYDI.md`) — S4: TEK RESOLVER.
+ *
+ * A mechanic's eligibility for a plan context is decided by EXACTLY ONE
+ * tier, chosen by priority — never by ANDing every populated axis together.
+ * The pre-`Z80` code did exactly that: it checked channel AND category AND
+ * CPL independently, so a mechanic restricted to CPL-X was rejected for a
+ * CPL-Y plan even when CPL-Y's channel would otherwise have matched — the
+ * channel check ran REGARDLESS of the CPL check's outcome. That is wrong:
+ * a defined CPL restriction must be the ONLY word on the matter.
+ *
+ *   1. `applicableCpls` non-empty → CPL decides ALONE.
+ *      Not in the list → NOT eligible. Never falls through to channel.
+ *      ⛔ KISIT-DIŞI ≠ KISIT-YOKLUĞU — a defined-but-non-matching CPL
+ *      restriction is a REJECTION, not an unanswered question that channel
+ *      gets to answer instead.
+ *   2. `applicableCpls` empty/absent → the CHANNEL definition decides.
+ *   3. Both empty/absent → TANIMLI-WILDCARD: "no restriction defined" is a
+ *      DELIBERATE modelling choice ("kısıt tanımlanmamış = tümüne uygun"),
+ *      not an accidental fail-open. See PİN DÖRTLÜSÜ below.
+ *
+ * `category` is a SEPARATE, independent axis and stays OUTSIDE this ladder
+ * — `Z80` only speaks to CPL/channel priority; category applicability is
+ * unaffected and remains an additional AND-filter in
+ * `getApplicableMechanics` below, exactly as before this change.
+ *
+ * The caller does not need to know which tier decided — but it CAN ask:
+ * `decidedBy` is returned precisely so a future audit/tooltip surface can
+ * read it without a second resolver being written (§7/`F8`: one resolver,
+ * not two).
+ *
+ * PİN DÖRTLÜSÜ (each is its own test in `mechanic.service.spec.ts`):
+ *   1. CPL defined, matches                                → eligible (CPL)
+ *   2. CPL defined, does NOT match — even if channel WOULD  → NOT eligible (CPL)
+ *      match ⚠️ the negative half — kuralın kalbi, en kolay kaçırılan test.
+ *   3. CPL undefined, channel defined                       → channel decides
+ *   4. Neither defined                                      → wildcard, eligible
+ *
+ * Eksik girdi (§2.5): bir CPL kısıtı TANIMLIYKEN `planContext.cplId` yoksa,
+ * "uygun" ya da "uygun değil" sessizce varsayılmaz — açık hata fırlatılır.
+ * (Pre-`Z80` kod bunu sessizce "reddetme" tarafına düşürüyordu: `cplId &&
+ * !includes(cplId)` yalnız cplId VARSA reddediyordu, yoksa sessizce geçiyordu.)
+ */
+export function resolveMechanicEligibility(
+  // ⚠️ `null | undefined` — bilerek ikisi de. `applicableCpls`/`applicableChannels`
+  // nullable jsonb/uuid[] kolonlarıdır; Postgres/TypeORM boş değeri `null`
+  // döner, `undefined` değil (bu dosyanın başındaki `boundOf` yorumunun AYNI
+  // dersi — `Mechanic`'in kendi alan tipi `string[] | undefined` yazsa da).
+  mechanic: {
+    applicableCpls?: string[] | null;
+    applicableChannels?: string[] | null;
+  },
+  planContext: Pick<PlanContextDto, 'cplId' | 'channelCode' | 'channelId'>,
+): { eligible: boolean; decidedBy: 'CPL' | 'CHANNEL' | 'WILDCARD' } {
+  const cplRule = mechanic.applicableCpls;
+  if (cplRule && cplRule.length > 0) {
+    if (!planContext.cplId) {
+      throw new BadRequestException(
+        'planContext.cplId is required to evaluate a CPL-restricted mechanic ' +
+          '(applicableCpls is defined) — §2.5, eksik girdi sessizce varsayılamaz',
+      );
+    }
+    return {
+      eligible: cplRule.includes(planContext.cplId),
+      decidedBy: 'CPL',
+    };
+  }
+
+  const channelRule = mechanic.applicableChannels;
+  if (channelRule && channelRule.length > 0) {
+    const hasAll = channelRule.includes('ALL');
+    const matches =
+      hasAll ||
+      (!!planContext.channelCode &&
+        channelRule.includes(planContext.channelCode)) ||
+      (!!planContext.channelId && channelRule.includes(planContext.channelId));
+    return { eligible: matches, decidedBy: 'CHANNEL' };
+  }
+
+  return { eligible: true, decidedBy: 'WILDCARD' };
+}
+
 @Injectable()
 export class MechanicService {
   constructor(
@@ -508,26 +590,20 @@ export class MechanicService {
       true,
     );
 
+    // S3 (`Z80`): uygun olmayan mechanic listeden DÜŞER (throw yok, filtrelenir)
+    // — çağıran (grid) boş listeyi görünür bir mesaja çevirir, bu servis
+    // yalnız filtreler. `length > 0` muhafızları TANIMLI-WILDCARD anlamındadır
+    // ("kısıt tanımlanmamış = tümüne uygun"), fail-open DEĞİL — `resolveMechanicEligibility`
+    // JSDoc'una bkz.
     return allMechanics.filter((mechanic) => {
-      // Check channel applicability
-      if (
-        mechanic.applicableChannels &&
-        mechanic.applicableChannels.length > 0
-      ) {
-        const hasAll = mechanic.applicableChannels.includes('ALL');
-        const matchesChannel =
-          hasAll ||
-          (planContext.channelCode &&
-            mechanic.applicableChannels.includes(planContext.channelCode)) ||
-          (planContext.channelId &&
-            mechanic.applicableChannels.includes(planContext.channelId));
-
-        if (!matchesChannel) {
-          return false;
-        }
+      // S4: CPL/channel — TEK RESOLVER, öncelik sıralı (bkz. resolveMechanicEligibility).
+      const { eligible } = resolveMechanicEligibility(mechanic, planContext);
+      if (!eligible) {
+        return false;
       }
 
-      // Check category applicability
+      // Category: BAĞIMSIZ eksen — `Z80`'in S4 resolver merdiveni yalnız
+      // CPL/channel'a değiniyor, category'e dokunmuyor. AND-filtre olarak kalır.
       if (
         mechanic.applicableCategories &&
         mechanic.applicableCategories.length > 0
@@ -541,16 +617,6 @@ export class MechanicService {
             mechanic.applicableCategories.includes(planContext.categoryId));
 
         if (!matchesCategory) {
-          return false;
-        }
-      }
-
-      // Check CPL applicability
-      if (mechanic.applicableCpls && mechanic.applicableCpls.length > 0) {
-        if (
-          planContext.cplId &&
-          !mechanic.applicableCpls.includes(planContext.cplId)
-        ) {
           return false;
         }
       }

@@ -39,6 +39,16 @@ export class Tactic extends BaseEntity {
   spendType?: 'ON_INVOICE' | 'OFF_INVOICE' | 'BOTH';
 
   // Applicability rules (JSONB for flexibility)
+  //
+  // T-346 / `Z80` (Q21 deseni — `docs/brd-v2/04_KARAR_KAYDI.md`): bu iki alan
+  // "bu tactic bir LTA ANLAŞMASINDA teklif edilebilir mi?" sorusuna cevap
+  // verir — tüketicisi `AgreementService#getAvailableTactics`
+  // (`agreement.service.ts`).
+  //
+  // ⛔ KARDEŞİ İLE KARIŞTIRMA: `Mechanic.applicableChannels`/`applicableCategories`/
+  // `applicableCpls` (`mechanic.entity.ts`) "bu mekanik PLANLAMA GRID'İNDE bir
+  // kolon olarak görünebilir mi?" sorusuna cevap verir — tüketicisi
+  // `MechanicService#getApplicableMechanics`. İKİ SORU AYRI, BİRLEŞTİRME YOK.
   @Column({ name: 'applicable_channels', type: 'jsonb', nullable: true })
   applicableChannels?: string[]; // Channel codes
 

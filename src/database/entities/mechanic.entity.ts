@@ -15,6 +15,14 @@ export enum SpendingType {
   BOTH = 'both',
 }
 
+// S5 (`Z80` HÜKÜM PAKETİ) — KANONİK "calc type" ekseni. Excel-referans belgesi
+// (`docs/research/DEMO_EXCEL_KPI_TACTIC_REFERANSI.md §2`) "Calc Type" diye ayrı
+// bir sütun taşır (Rate%/Rate per-unit/Lumpsum); CTPM'de bu ayrımı `MechanicType`
+// (PERCENT/AMOUNT/AMOUNT_PER_UNIT, calc-ŞEKLİ) ile `MechanicCategory` (yön +
+// gruplama, aşağıda) birlikte taşır — grid, `mechanic.category` üzerinden
+// dallanır (`PlanningGridEnhanced.tsx`). ⛔ İKİNCİ BİR `calcType` ALANI AÇILMAZ
+// (`F8`): `MechanicType` zaten hesap-şeklini, `MechanicCategory` zaten
+// yön+gruplamayı taşıyor — üçüncü bir alan aynı bilgiyi ikinci kez kodlar.
 export enum MechanicCategory {
   ON_INVOICE_DISCOUNT = 'on_invoice_discount',
   OFF_INVOICE_DISCOUNT = 'off_invoice_discount',
@@ -196,12 +204,27 @@ export class Mechanic extends BaseEntity {
   testData?: Record<string, any>; // Test data for formula validation
 
   // Applicability Rules
+  //
+  // T-346 / `Z80` (Q21 deseni — `docs/brd-v2/04_KARAR_KAYDI.md`): bu üç alan
+  // "bu mekanik PLANLAMA GRID'İNDE bir kolon olarak görünebilir mi / girilebilir
+  // mi?" sorusuna cevap verir — tüketicisi `MechanicService#getApplicableMechanics`
+  // (`resolveMechanicEligibility`, `mechanic.service.ts`).
+  //
+  // ⛔ KARDEŞİ İLE KARIŞTIRMA: `Tactic.applicableChannels`/`applicableCategories`
+  // (`tactic.entity.ts`) "bu tactic bir LTA ANLAŞMASINDA teklif edilebilir mi?"
+  // sorusuna cevap verir — tüketicisi `AgreementService#getAvailableTactics`.
+  // İKİ SORU AYRI: bir mekanik grid'de kolon olarak görünüp aynı zamanda bir
+  // anlaşmada `TACTIC_NOT_ELIGIBLE_FOR_AGREEMENT` alabilir (ya da tersi) —
+  // bu bir çelişki DEĞİL, iki farklı sorunun bağımsız cevabı. BİRLEŞTİRME YOK:
+  // biri değişirse diğeri BİLEREK değişmez.
   @Column({ name: 'applicable_channels', type: 'jsonb', nullable: true })
   applicableChannels?: string[]; // NKA, Traditional Trade, E-Commerce, etc. or ["ALL"]
 
   @Column({ name: 'applicable_categories', type: 'jsonb', nullable: true })
   applicableCategories?: string[]; // Dairy, Beverages, etc. or ["ALL"]
 
+  // S4 (`Z80`): `applicableChannels`'dan DAHA YÜKSEK öncelikli — tanımlıysa
+  // TEK BAŞINA karar verir, channel'a düşülmez (`resolveMechanicEligibility`).
   @Column({
     name: 'applicable_cpls',
     type: 'uuid',
