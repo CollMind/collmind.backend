@@ -17,6 +17,11 @@ import {
   BaselineVolumeSourceType,
 } from '../../../database/entities/baseline-volume.entity';
 import {
+  BaselineVolumeImportBatchRow,
+  ImportBatchRowReason,
+  ImportBatchRowStatus,
+} from '../../../database/entities/baseline-volume-import-batch-row.entity';
+import {
   BaselineVolumeRowIssue,
   IngestBaselineVolumeResultDto,
 } from './dto/ingest-result.dto';
@@ -60,6 +65,21 @@ export interface IngestUserContext {
  *      `acceptance_status = 'REJECTED'` olarak YAZILIR — `reason` NOT NULL
  *      (DB CHECK). `BL-3`'ün `≥%95` kapısı bu satırları "EKSİK" sayar
  *      (`Z79 §4` / `Z85 §3` PİN 2).
+ *
+ * ── `BL-3 ADIM 4` (`docs/process/BL3_DOGRULAMA_BRIEF.md` kapanış eki) ────
+ * **HER kaynak satır** (ACCEPTED de, REJECTED de, `keyUnresolvedRows` DA)
+ * `baseline_volume_import_batch_rows`'a (migration `1823`) yazılır —
+ * `sourceMatchRatio`'nun PAYDASI ve "kabul edilen satır hangi kaynak
+ * satırdan geldi" izi burada kurulur (`Z87 §2`). Köprü:
+ * `baseline_volumes` ↔ `batch_id` + `row_no` (uygulama katmanı, bu satır
+ * numaraları `row.originalRowNumber` ile BİREBİR aynı).
+ *
+ * ⛔ **İKİ KANAL → TEK SÖZLÜK** (`Z87 §F12` ikinci hükmü): parser'ın
+ * `error_type`'ı (`FieldParseError`, ör. `INVALID_PERIOD`) servise
+ * ULAŞTIĞINDA reasonCode olarak DA taşınır — `MISSING_REQUIRED_FIELD`'e
+ * ÇEVRİLMEZ. `period` alanı BLANK (hiç yazılmamış) olmakla PARSE
+ * EDİLEMEDİ (yazılmış ama okunamadı) olmak AYRI durumlardır; yalnız
+ * ikincisi `INVALID_PERIOD` üretir.
  *
  * ── `RolesGuard`/`CapabilityGuard` ──────────────────────────────────────
  * Kontrolör tarafında (bkz. `baseline-volume.controller.ts`); bu serviste
@@ -105,33 +125,82 @@ export class BaselineVolumeService {
       cplId: string;
       period: string;
     }> = [];
+    // `BL-3 ADIM 4`: ADIM 1'in ürettiği kalıcı iz — batchId eklenmeden önce
+    // toplanır (batch henüz DB'de yok), transaction içinde tamamlanır.
+    const keyStageBatchRows: Array<
+      Omit<Partial<BaselineVolumeImportBatchRow>, 'batchId' | 'tenantId'>
+    > = [];
 
     // ── ADIM 1: anahtar çözümlemesi (Q20/`§3`: eksik/çözülemeyen anahtar → satır tabloya HİÇ GİRMEZ) ──
     for (const row of rows) {
-      const missing: string[] = [];
-      if (!row.skuCode) missing.push('sku_code');
-      if (!row.cplCode) missing.push('cpl_code');
-      if (!row.period) missing.push('period');
+      // ⛔ §2.5 — `raw` (batch_rows) HER satırda NOT NULL; parser HER satırda
+      // `originalRowData: row` üretir (mapToBaselineVolumeRows) ama tip
+      // opsiyonel — sessizce `{}` yazmak yerine AÇIK HATA.
+      if (!row.originalRowData) {
+        throw new Error(
+          `ingest: satır ${row.originalRowNumber} için originalRowData YOK — parser'ın hücre-ham izi üretmediği beklenmeyen bir durum (§2.5, sessiz geçiş yok).`,
+        );
+      }
+      const raw = row.originalRowData;
+
+      // Gerçekten BOŞ (hücre hiç yazılmamış) alanlar — anahtar hiç okunamadı.
+      const missingBlank: string[] = [];
+      if (!row.skuCode) missingBlank.push('sku_code');
+      if (!row.cplCode) missingBlank.push('cpl_code');
+
+      // `period` hücresi YAZILMIŞ ama PARSE EDİLEMEMİŞ olabilir — bu, boş
+      // olmaktan AYRI bir durumdur (parser `INVALID_PERIOD` üretir, bkz.
+      // `baseline-volume-file-parser.service.ts` `getPeriodValue`). Boş
+      // hücre parser'a hiç hata ürettirmez (ilk satırda `isBlankCellValue`
+      // ile döner) — yani "period blank" ve "period parse error" AYRIK
+      // kümelerdir, aynı anda ikisi de doğru olamaz.
+      const periodParseError = row.parseErrors?.find(
+        (err) => err.field === 'period' && err.error_type === 'INVALID_PERIOD',
+      );
+      if (!row.period && !periodParseError) missingBlank.push('period');
       // base_volume EKSİK olabilir (o durumda REJECTED olarak yazılır,
       // aşağıda ADIM 2) — anahtar değil, DEĞER; bu döngüde saymaz.
 
-      if (row.parseErrors && row.parseErrors.length > 0) {
-        for (const err of row.parseErrors) {
-          if (err.field === 'sku_code' || err.field === 'cpl_code') {
-            missing.push(err.field);
-          } else if (err.field === 'period' && !missing.includes('period')) {
-            missing.push('period');
-          }
-        }
-      }
-
-      if (missing.length > 0) {
+      if (missingBlank.length > 0) {
+        // ⛔ ÖNCELİK (açık, gizli tie-break DEĞİL): şema bir satıra TEK
+        // reasonCode izin verir. Bir satırda gerçekten-boş bir anahtar VARSA
+        // (ör. sku_code hiç yazılmamış) — bu, "period yazılmış ama okunamadı"
+        // sorunundan daha temel bir eksikliktir ve MISSING_REQUIRED_FIELD
+        // KAZANIR. `INVALID_PERIOD` yalnız TEK BAŞINA sorun olduğunda üretilir
+        // (aşağıdaki dal).
         keyUnresolvedRows.push({
           rowNumber: row.originalRowNumber,
           reasonCode: 'MISSING_REQUIRED_FIELD',
-          field: missing.join(','),
-          message: `Zorunlu alan(lar) eksik veya okunamadı: ${missing.join(', ')}.`,
+          field: missingBlank.join(','),
+          message: `Zorunlu alan(lar) eksik veya okunamadı: ${missingBlank.join(', ')}.`,
           originalRowData: row.originalRowData,
+        });
+        keyStageBatchRows.push({
+          rowNo: row.originalRowNumber,
+          raw,
+          status: ImportBatchRowStatus.REJECTED,
+          reason: ImportBatchRowReason.MISSING_REQUIRED_FIELD,
+          resolvedSkuId: undefined,
+          resolvedCplId: undefined,
+        });
+        continue;
+      }
+
+      if (periodParseError) {
+        keyUnresolvedRows.push({
+          rowNumber: row.originalRowNumber,
+          reasonCode: 'INVALID_PERIOD',
+          field: 'period',
+          message: periodParseError.error_message,
+          originalRowData: row.originalRowData,
+        });
+        keyStageBatchRows.push({
+          rowNo: row.originalRowNumber,
+          raw,
+          status: ImportBatchRowStatus.REJECTED,
+          reason: ImportBatchRowReason.INVALID_PERIOD,
+          resolvedSkuId: undefined,
+          resolvedCplId: undefined,
         });
         continue;
       }
@@ -145,6 +214,15 @@ export class BaselineVolumeService {
           message: `SKU kodu katalogda bulunamadı: '${row.skuCode}'.`,
           originalRowData: row.originalRowData,
         });
+        keyStageBatchRows.push({
+          rowNo: row.originalRowNumber,
+          raw,
+          status: ImportBatchRowStatus.REJECTED,
+          reason: ImportBatchRowReason.SKU_NOT_FOUND,
+          // SKU bulunamadı ⇒ CPL lookup'a hiç ulaşılmaz (CHECK: ikisi de NULL).
+          resolvedSkuId: undefined,
+          resolvedCplId: undefined,
+        });
         continue;
       }
 
@@ -156,6 +234,15 @@ export class BaselineVolumeService {
           field: 'cpl_code',
           message: `CPL kodu katalogda bulunamadı: '${row.cplCode}'.`,
           originalRowData: row.originalRowData,
+        });
+        keyStageBatchRows.push({
+          rowNo: row.originalRowNumber,
+          raw,
+          status: ImportBatchRowStatus.REJECTED,
+          reason: ImportBatchRowReason.CPL_NOT_FOUND,
+          // SKU zaten çözüldü (CHECK: resolved_sku_id NOT NULL, resolved_cpl_id NULL).
+          resolvedSkuId: sku.id,
+          resolvedCplId: undefined,
         });
         continue;
       }
@@ -332,6 +419,50 @@ export class BaselineVolumeService {
       });
 
       await this.repository.insertRowsChunked(manager, finalRows);
+
+      // ── `BL-3 ADIM 4`: satır yazarı — HER kaynak satır burada da yaşar ──
+      // `finalRows[i]` ADIM 3'ün (DB-önceden-var grain) flip'ini içerir,
+      // `toInsert[i]`'nin AYNI SIRA/UZUNLUKTA türevidir (`finalRows =
+      // toInsert.map(...)`) — status/reason'ı ORADAN, skuId/cplId/rowNo/raw'ı
+      // `toInsert[i]`'den al (bu ikisi zip'lenir, tahmin değil).
+      const valueStageBatchRows: Array<
+        Omit<Partial<BaselineVolumeImportBatchRow>, 'batchId' | 'tenantId'>
+      > = toInsert.map((item, i) => {
+        const finalRow = finalRows[i];
+        const isAccepted =
+          finalRow.acceptanceStatus === BaselineVolumeAcceptanceStatus.ACCEPTED;
+        if (!item.row.originalRowData) {
+          // Yukarıda ADIM 1'de zaten garanti edildi (tüm `rows` için); bu
+          // dal yalnız bir ileride-refactor regresyonunu YAKALAMAK için
+          // (§2.5 — sessizce `{}` yazılmaz).
+          throw new Error(
+            `ingest: satır ${item.row.originalRowNumber} için originalRowData YOK (value-stage) — beklenmeyen durum.`,
+          );
+        }
+        return {
+          rowNo: item.row.originalRowNumber,
+          raw: item.row.originalRowData,
+          status: isAccepted
+            ? ImportBatchRowStatus.ACCEPTED
+            : ImportBatchRowStatus.REJECTED,
+          reason: isAccepted
+            ? undefined
+            : this.toImportBatchRowReason(finalRow.reason),
+          // Bu dizinin HER üyesi SKU+CPL+period'u ÇÖZEREK ADIM 1'i geçmiştir
+          // (`acceptedOrRejected`'in tanımı) — ACCEPTED da, value-stage
+          // REJECTED (INVALID_VOLUME_FORMAT/NEGATIVE_VOLUME/DUPLICATE_GRAIN/
+          // MISSING_REQUIRED_FIELD-value-aşaması) da resolved_* NOT NULL.
+          resolvedSkuId: item.skuId,
+          resolvedCplId: item.cplId,
+        };
+      });
+
+      const allBatchRows: Partial<BaselineVolumeImportBatchRow>[] = [
+        ...keyStageBatchRows,
+        ...valueStageBatchRows,
+      ].map((r) => ({ ...r, batchId, tenantId, createdBy: userCtx.userId }));
+
+      await this.repository.insertBatchRowsChunked(manager, allBatchRows);
     });
 
     await this.adminAuditService.logAdminAction(
@@ -367,6 +498,25 @@ export class BaselineVolumeService {
       formatRejectedRows,
       keyUnresolvedRows,
     };
+  }
+
+  /**
+   * `Z87 §F12` ikinci hükmü: iki kanal (parser `error_type`, servis
+   * `reasonCode`) → tek sözlük. `baseline_volumes.reason` serbest metin
+   * (bkz. entity), ama `baseline_volume_import_batch_rows.reason` Postgres
+   * ENUM'a kilitli — burada bir DÖNÜŞÜM YOK, yalnız TİP DOĞRULAMASI: kod
+   * `ImportBatchRowReason`'ın bir üyesi DEĞİLSE sessizce geçilmez, açık hata
+   * (§2.5) — dictionay'in ikisi arasında SESSİZCE ayrışması riskine karşı.
+   */
+  private toImportBatchRowReason(
+    code: string | undefined,
+  ): ImportBatchRowReason {
+    if (!code || !(code in ImportBatchRowReason)) {
+      throw new Error(
+        `ingest: reasonCode '${code}' ImportBatchRowReason sözlüğünde yok — iki kanal tek sözlük şartı ihlal edildi (Z87 §F12, §2.5).`,
+      );
+    }
+    return ImportBatchRowReason[code as keyof typeof ImportBatchRowReason];
   }
 
   async getBatch(tenantId: string, batchId: string) {

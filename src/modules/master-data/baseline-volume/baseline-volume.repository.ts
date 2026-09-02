@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, IsNull, Repository } from 'typeorm';
+import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import {
   BaselineVolume,
   BaselineVolumeAcceptanceStatus,
 } from '../../../database/entities/baseline-volume.entity';
 import { BaselineVolumeImportBatch } from '../../../database/entities/baseline-volume-import-batch.entity';
+import { BaselineVolumeImportBatchRow } from '../../../database/entities/baseline-volume-import-batch-row.entity';
 
 const CHUNK_SIZE = 500;
 
@@ -73,6 +75,28 @@ export class BaselineVolumeRepository {
     for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
       const chunk = rows.slice(i, i + CHUNK_SIZE);
       await repo.insert(chunk);
+    }
+  }
+
+  /**
+   * `BL-3 ADIM 4` — teşhis raporunun kalıcı evi (`Z87`). `insertRowsChunked`
+   * ile AYNI desen: `manager.getRepository` (transaction-scoped), chunk'lı
+   * `insert` (yalnız INSERT — bu tablo IMMUTABLE, `update`/`delete` hiç yok).
+   */
+  async insertBatchRowsChunked(
+    manager: EntityManager,
+    rows: Partial<BaselineVolumeImportBatchRow>[],
+  ): Promise<void> {
+    const repo = manager.getRepository(BaselineVolumeImportBatchRow);
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CHUNK_SIZE);
+      // `raw` (`Record<string, unknown>`, jsonb) TypeORM'un derin-partial
+      // eşlemesiyle recursive olarak uyuşmuyor (yalnız `unknown` değerli
+      // index-signature'lar için ölçülen bir tip-uyumsuzluğu, DAVRANIŞ
+      // DEĞİL) — `QueryDeepPartialEntity` ile açık cast, `any` DEĞİL.
+      await repo.insert(
+        chunk as QueryDeepPartialEntity<BaselineVolumeImportBatchRow>[],
+      );
     }
   }
 
