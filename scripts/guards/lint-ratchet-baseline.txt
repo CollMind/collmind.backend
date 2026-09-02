@@ -1,8 +1,8 @@
 # lint-ratchet baseline (backend) — T-113 ratchet reference
-# date:    2026-08-31
-# commit:  52f4534
+# date:    2026-09-02
+# commit:  676ff7f
 # guard:   lint-ratchet v1 (backend)
-# total:   181 (file,rule) tuples, 888 problems, 168 files
+# total:   179 (file,rule) tuples, 862 problems, 167 files
 # format:  <file> <ruleId> <errorCount+warningCount for that rule in that file>
 # KEY IS (file, rule), NOT file alone — see this script's header for why.
 src/common/guards/admin-restrictions.guard.ts @typescript-eslint/no-unused-vars 2
@@ -162,9 +162,7 @@ src/modules/shared/lta/lta-agreement.controller.ts @typescript-eslint/no-explici
 src/modules/shared/lta/lta-agreement.repository.ts @typescript-eslint/no-explicit-any 1
 src/modules/shared/persistence/versioned-update.helper.spec.ts @typescript-eslint/no-explicit-any 6
 src/modules/shared/spend-calculation/dto/validation-result.dto.ts @typescript-eslint/no-explicit-any 1
-src/modules/shared/spend-calculation/spend-calculation.service.spec.ts @typescript-eslint/no-explicit-any 28
-src/modules/shared/spend-calculation/spend-calculation.service.spec.ts @typescript-eslint/no-unused-vars 4
-src/modules/shared/spend-calculation/spend-calculation.service.ts @typescript-eslint/no-unused-vars 1
+src/modules/shared/spend-calculation/spend-calculation.service.spec.ts @typescript-eslint/no-explicit-any 7
 src/modules/shared/spend-calculation/spend-distribution.service.ts @typescript-eslint/no-explicit-any 2
 src/modules/shared/spend-calculation/spend-distribution.service.ts @typescript-eslint/no-unused-vars 4
 src/modules/shared/spend-calculation/spend-validation.service.spec.ts @typescript-eslint/no-explicit-any 18
