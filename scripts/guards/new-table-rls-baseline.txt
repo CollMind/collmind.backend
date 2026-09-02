@@ -1,21 +1,28 @@
 # new-table-rls.sh baseline — TAZE ÖLÇÜM (2026-08-28, ADIM 6/EK 1-b)
+# ⛔ SÖZLEŞME Z85 (2026-09-02) İLE İKİ KADEMEYE AYRILDI — bkz. new-table-rls.sh başlığı.
 #
 # Bu KARARIN KAYDI değil, bir ENVANTERDİR: bugün `tenant_id` taşıyan ve
-# `ENABLE`/`FORCE ROW LEVEL SECURITY` HİÇBİRİNE sahip OLMAYAN 44 tablo
-# (main şeması, relkind='r', view'lar hariç — bkz. view-security-invoker.sh).
+# `ENABLE`/`FORCE ROW LEVEL SECURITY` HİÇBİRİNE VE GERÇEK BİR RLS
+# POLİTİKASINA sahip OLMAYAN 44 tablo (main şeması, relkind='r', view'lar
+# hariç — bkz. view-security-invoker.sh).
 #
 # ⛔ STATÜ: `blocked` (T-308 deseni, Z53 §4b) — bu liste RLS-AKTİVASYON
 # dalgasının İLK MADDESİNDE (Z54 §3) TEK TEK kapatılır; guard bu liste
-# İÇİNDEKİ tablolara bulgu üretmez (mevcut borç TOLERE edilir), ama listede
-# OLMAYAN (yeni doğan) bir tenant_id tablosu ENABLE+FORCE ÇİFTİ OLMADAN
-# doğarsa KIRMIZI verir (Z54: "tenant_id taşıyan tablo ENABLE+FORCE ÇİFTİ
-# OLMADAN DOĞAMAZ").
+# İÇİNDEKİ tablolara bulgu üretmez (mevcut KADEME 1 + KADEME 2 borcu TOLERE
+# edilir), ama listede OLMAYAN (yeni doğan) bir tenant_id tablosu GERÇEK bir
+# RLS politikası OLMADAN doğarsa KIRMIZI verir (Z85 KADEME 1: "tenant_id
+# taşıyan tablo GERÇEK/FAIL-CLOSED bir politika olmadan DOĞAMAZ"). ⚠️ KADEME
+# 2 (ENABLE+FORCE çifti) bu guard'da bugün BLOKLANMIYOR — bu listede olmayan
+# ama yalnız politikaya (ENABLE/FORCE'suz) sahip yeni bir tablo da TEMİZ
+# sayılır (ör. `baseline_volumes`, `baseline_volume_import_batches` —
+# `T-357`/`1822`).
 #
-# AÇILMA KOŞULU: bir migration bu tablolardan birine
-#   ALTER TABLE main.<tablo> ENABLE ROW LEVEL SECURITY;
-#   ALTER TABLE main.<tablo> FORCE ROW LEVEL SECURITY;
-# uyguladığında, o tablo bu dosyadan ÇIKARILIR (satır silinir) — aksi hâlde
-# guard artık gerçek olmayan bir "hâlâ borç" iddiasında bulunur.
+# AÇILMA KOŞULU (KADEME 1): bir migration bu tablolardan birine GERÇEK
+# (fail-closed, `USING (true)` OLMAYAN) bir `CREATE POLICY` uyguladığında, o
+# tablo bu dosyadan ÇIKARILIR (satır silinir) — aksi hâlde guard artık
+# gerçek olmayan bir "hâlâ borç" iddiasında bulunur. KADEME 2'nin (ENABLE+
+# FORCE) açılma koşulu RLS-aktivasyon dalgasının kendi işidir, bu dosyayı
+# etkilemez.
 #
 # Format: bir satır bir tablo adı. `#` ile başlayan satırlar yorum.
 admin_audit_logs
