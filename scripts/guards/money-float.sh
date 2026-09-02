@@ -284,6 +284,11 @@ case "${1:-}" in
     fi
     CUR="$(counts_by_file)"
     RC=0
+    # Z82 iş 1: a stale baseline (findings decreased but the baseline file was
+    # never lowered) used to print an "improved" line and exit 0 — a note, not
+    # a gate. Measured: this was ignored twice in a row because nothing forced
+    # the follow-up. IMPROVED_COUNT turns it into a real gate below.
+    IMPROVED_COUNT=0
     # Increases and new files are failures. Decreases are the ratchet turning
     # and are reported as progress, never auto-applied: updating the baseline
     # stays an explicit, reviewable commit.
@@ -328,6 +333,7 @@ case "${1:-}" in
         RC=1
       elif [ "$now" -lt "$count" ]; then
         echo "-- [$GUARD_NAME] improved: $file $count -> $now (update baseline explicitly)"
+        IMPROVED_COUNT=$((IMPROVED_COUNT + 1))
       fi
     done < "$BASELINE"
 
@@ -339,6 +345,17 @@ case "${1:-}" in
         RC=1
       fi
     done <<< "$CUR"
+
+    # Z82 iş 1: an "improved" note is now a gate, distinct from RATCHET
+    # VIOLATION / OUT OF SCOPE / NEW — same exit code (1), different label, so
+    # the two failure classes are never confused (Z77 §1a emsali).
+    if [ "$IMPROVED_COUNT" -gt 0 ]; then
+      echo
+      echo "!! [$GUARD_NAME] BASELINE STALE: $IMPROVED_COUNT file(s) improved vs baseline but the baseline was not lowered." >&2
+      echo "!! Fix (in a SEPARATE commit, AFTER this one):" >&2
+      echo "!!   bash scripts/guards/money-float.sh --baseline > scripts/guards/money-float-baseline.txt" >&2
+      RC=1
+    fi
 
     exit "$RC"
     ;;
