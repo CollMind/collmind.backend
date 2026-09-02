@@ -109,3 +109,22 @@ src/modules/user/user.controller.ts|PATCH|users/me/password	# self-write — req
 src/modules/user/user.controller.ts|POST|users	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
 src/modules/user/user.controller.ts|POST|users/:id/activate	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
 src/modules/user/user.controller.ts|POST|users/:id/deactivate	# kullanıcı hesabı yönetimi, CPL ekseni yok, ADMIN-only
+
+# ── BL-2 · baseline-volumes (ürün sahibi hükmü, 2026-09-02) ──────────────
+# ⛔ VE BU ÜÇ SATIR, BU KOVANIN BAŞLIK GEREKÇESİNİ GENİŞLETİYOR:
+#   başlık "kapsam EKSENİ YOK (gerekçeli — VERİ SINIFINDAN türer)" diyor.
+#   Burada VERİ CPL EKSENİ TAŞIYOR (grain: tenant × sku × CPL × period) —
+#   yokluk veri sınıfından DEĞİL, ERİŞİM ekseninden türüyor.
+#   > VERİ-EKSENİ ≠ ERİŞİM-EKSENİ: bir eksenin VERİDE olması, o uçta
+#   > KAPSAM FİLTRESİ olması demek DEĞİLDİR.
+# TAŞIYICI gerekçe: baseline MERKEZİ MASTER-DATA'dır (görev ayrılığı, BL-2 §3).
+#   "FINANCE kendi kapsamındaki CPL'lerin baseline'ını yükler" demek, (A) kararının
+#   ÖLDÜRDÜĞÜ manipülasyon yüzeyini KAPSAM KAPISINDAN GERİ GETİRMEK olurdu —
+#   referans veri parça parça, farklı ellerden yüklenirse REFERANS OLMAKTAN ÇIKAR.
+# DESTEKLEYİCİ: MASTER_DATA_WRITE'ın iki sahibi (ADMIN+FINANCE) ZATEN kapsam-sınırsız
+#   roller ⇒ kapsam kovası seçmek HİÇ UYGULANMAYACAK bir filtre yazmak olurdu (ÖLÜ DAL).
+# ⚠️ PLANNER'ın baseline OKUMASI ayrı soru ve ZATEN cevaplı: grid içinden, planın
+#   KENDİ CPL'iyle — yeni rota değil, MEVCUT kapsam-filtreli yol.
+src/modules/master-data/baseline-volume/baseline-volume.controller.ts|POST|master-data/baseline-volumes/upload	# baseline MERKEZİ MASTER-DATA (ürün sahibi 2026-09-02, BL-2 §3+kova hükmü): tenant-genel, kapsam ekseni YOK
+src/modules/master-data/baseline-volume/baseline-volume.controller.ts|GET|master-data/baseline-volumes/batches/:batchId	# yükleme TEŞHİSİ yükleyenin yüzeyidir — upload ile AYNI kovada; bölünürse 'yükledi ama raporunu göremiyor' doğar
+src/modules/master-data/baseline-volume/baseline-volume.controller.ts|GET|master-data/baseline-volumes/batches/:batchId/rows	# aynı gerekçe — üç rota TEK KOVA

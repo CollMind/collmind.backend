@@ -123,6 +123,15 @@ MASTER_DATA_GOVERNANCE_READ_ROUTES = {
  ('POST', 'master-data/kpis/validate-formula'),
  ('POST', 'master-data/mechanics/validate-formula'),
 }
+# --- `F12` düzeltme turu (ürün sahibi hükmü, 2026-09-02, `BL-2` kapanış
+# paketi §2, `Z42` usulü): BASELINE_WRITE — baseline hacim upload'ı,
+# GÖREV AYRILIĞI gerekçesiyle {ADMIN,FINANCE}. Genel fam+verb kuralı bunu
+# YAKALAMAZ: dosyası `master-data/` altında POST, mekanik olarak
+# MASTER_DATA_WRITE'a düşerdi — ve o hücre {ADMIN} kaldı (KPI/mekanik/SKU/
+# CPL/tactic/brand/channel/category/FU yazma uçlarını taşıdığı için).
+BASELINE_WRITE_ROUTES = {
+ ('POST', 'master-data/baseline-volumes/upload'),
+}
 
 # --- Z36 (B3 W4b): SHARED_WRITE bölünmesi — ÜYELİK YOL+FİİL'DEN (davranış),
 # genel fam+verb kuralından DEĞİL. Ayırt edici mekanik bir birleşim değil:
@@ -316,6 +325,7 @@ def cell_for(f, meth, path):
     if key in MODES_ONINVOICE_READ_ROUTES:     return 'MODES_ONINVOICE_READ','Z42'
     if key in BUDGET_CHECK_READ_ROUTES:        return 'BUDGET_CHECK_READ','Z42'
     if key in MASTER_DATA_GOVERNANCE_READ_ROUTES: return 'MASTER_DATA_GOVERNANCE_READ','Z42'
+    if key in BASELINE_WRITE_ROUTES:           return 'BASELINE_WRITE','F12'
     if key in MODES_READ_CROSS_ROUTES:         return 'MODES_READ','Z43'
     if path in SUMMARY:            return 'SUMMARY_READ','Z31/Z32'
     if path in APPROVE:            return 'MODES_APPROVE','YARGI'
@@ -645,7 +655,26 @@ def reconcile(rows):
         'CUSTOMER_WRITE': {'ADMIN', 'PLANNER'},
         'MASTER_DATA_GOVERNANCE_READ': {'ADMIN'},
         'MASTER_DATA_READ': {'ADMIN', 'CATEGORY_MANAGER', 'FINANCE', 'PLANNER', 'READONLY'},
+        # ⛔ ~~GENİŞLETİLDİ (ürün sahibi hükmü, 2026-09-02, `BL-2` kapanış
+        # paketi §3) — {ADMIN} → {ADMIN,FINANCE}. Gerekçe: baseline hacim
+        # yükleyicisi (merkezi master-data) planın ÖLÇÜLDÜĞÜ referanstır;
+        # PLANNER kendi referansını yüklerse düşük-baseline → yüksek-uplift
+        # yapısal açığı doğar (GÖREV AYRILIĞI). PLANNER bu hücrede YOK.
+        # Canlı taraf: `src/common/authorization/capabilities.ts` FINANCE
+        # bloğu, MASTER_DATA_WRITE satırı.~~
+        # ⛔ GERİ ALINDI (`F12`, ürün sahibi hükmü, 2026-09-02, düzeltme
+        # turu) — hüküm YANLIŞ HÜCREYE verilmişti: `MASTER_DATA_WRITE`
+        # yalnız baseline upload değil KPI/mekanik/SKU/CPL/tactic/brand/
+        # channel/category/FU yazma uçlarını da taşıyor; genişleme 11
+        # e2e'yi kırdı. Baseline gerekçesi geçerliliğini KORUYOR — yeni ve
+        # dar `BASELINE_WRITE` hücresinde (aşağı bkz.).
         'MASTER_DATA_WRITE': {'ADMIN'},
+        # ✅ DOĞDU (`F12` düzeltme turu, ürün sahibi hükmü, 2026-09-02,
+        # `BL-2` kapanış paketi §2, `Z42` usulü) — yalnız
+        # `master-data/baseline-volumes/upload` rotasını taşır. Canlı
+        # taraf: `src/common/authorization/capabilities.ts` FINANCE ∧ ADMIN
+        # bloğu, BASELINE_WRITE satırı.
+        'BASELINE_WRITE': {'ADMIN', 'FINANCE'},
         'MODES_ACTUALS_WRITE': {'ADMIN', 'FINANCE'},
         'MODES_IMPORT_READ': {'ADMIN', 'FINANCE'},
         'MODES_LEDGER_READ': {'ADMIN', 'FINANCE', 'PLANNER', 'READONLY'},

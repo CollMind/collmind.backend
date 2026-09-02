@@ -586,6 +586,20 @@ export const CAPABILITIES = {
   // cümlesi), yönetişim-okuma — `MASTER_DATA_READ` (5/5) seçeneği
   // REDDEDİLDİ: çağıransız yüzeye genişleme, `İlke-1`'in tam tersi.
   MASTER_DATA_GOVERNANCE_READ: 'master-data:governance-read',
+  // ✅ DOĞDU (`F12` düzeltme turu, ürün sahibi hükmü, 2026-09-02, `BL-2`
+  // kapanış paketi §2, `Z42` usulü) — `BASELINE_WRITE`, {ADMIN,FINANCE}.
+  // Önceki tur baseline hacim yükleme (`master-data/baseline-volumes/
+  // upload`) hükmünü `MASTER_DATA_WRITE`'a genişleterek verdi ve bu, o
+  // hücrenin taşıdığı DOKUZ modül-yüzeyinin (KPI/mekanik/SKU/CPL/tactic/
+  // brand/channel/category/FU) tamamını FINANCE'a açtı — 11 e2e kırıldı
+  // (`master-data-capability-boundary.e2e-spec.ts` ·
+  // `master-data-kpi-mechanic-capability-boundary.e2e-spec.ts`). Düzeltme:
+  // `MASTER_DATA_WRITE` {ADMIN}'e GERİ DÖNDÜ, baseline yükleme YENİ ve DAR
+  // bir hücreye taşındı — yalnız üç `baseline-volume.controller.ts`
+  // rotasını kapsar (POST upload → bu hücre; GET batch/rows →
+  // `MASTER_DATA_READ`, değişmedi). Kanonik hüküm:
+  // `scripts/analysis/route-cell-map.py` KARAR_HUKMU['BASELINE_WRITE'].
+  BASELINE_WRITE: 'master-data:baseline-write',
   // ⛔ `MASTER_DATA_MANAGE` DÜŞTÜ (`Z39` `dalga-sonu H3`, 2026-08-26 · `B3 W8`
   // kapanışı) — sıfır-rota kanıtı: `@RequireCapability(CAPABILITIES.
   // MASTER_DATA_MANAGE)` deseni `*.controller.ts` genelinde SIFIR eşleşme
@@ -872,6 +886,9 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     // ↓ MASTER_DATA_GOVERNANCE_READ (Z42 §5, B3b-1 W9, 2026-08-26) — dal 1,
     // mekanik (validate-formula çifti {ADMIN} birebir).
     CAPABILITIES.MASTER_DATA_GOVERNANCE_READ,
+    // ↓ BASELINE_WRITE (`F12` düzeltme turu, ürün sahibi hükmü, 2026-09-02) —
+    // ADMIN her hücrede zaten var; bölünme ADMIN için sonuç DEĞİŞTİRMEZ.
+    CAPABILITIES.BASELINE_WRITE,
     // ↓ MASTER_DATA_MANAGE DÜŞTÜ (Z39 dalga-sonu H3, B3 W8 kapanışı) —
     // sıfır-rota, bkz. CAPABILITIES yorumu.
     // ↓ Z42 §4 (B3b-1 W9, 2026-08-26) — MODES_READ tabanı (5/5, birebir) +
@@ -1044,6 +1061,34 @@ export const ROLE_CAPABILITIES: Record<UserRole, Capability[]> = {
     CAPABILITIES.APPROVAL_QUEUE_READ,
     CAPABILITIES.CUSTOMER_READ,
     CAPABILITIES.MASTER_DATA_READ,
+    // ⛔ ~~MASTER_DATA_WRITE +FINANCE (ürün sahibi hükmü, 2026-09-02, `BL-2`
+    // kapanış paketi §3) — GÖREV AYRILIĞI: baseline hacim (Excel "Master
+    // Data" katmanı) planın ÖLÇÜLDÜĞÜ referanstır; PLANNER kendi
+    // referansını yüklerse düşük-baseline → yüksek-uplift yapısal açığı
+    // doğar. Hücre {ADMIN} → {ADMIN,FINANCE} GENİŞLETİLDİ; PLANNER bu
+    // hücrede YOK (yalnız MASTER_DATA_READ — yukarı bkz.), bilinçli.
+    // Kanonik hüküm dondurulmuş tabloda da eşitlendi:
+    // `scripts/analysis/route-cell-map.py` KARAR_HUKMU['MASTER_DATA_WRITE'].~~
+    // ⛔ GERİ ALINDI (`F12`, ürün sahibi hükmü, 2026-09-02, düzeltme turu):
+    // hüküm YANLIŞ HÜCREYE verilmişti — `MASTER_DATA_WRITE` yalnız baseline
+    // upload'ı değil KPI/mekanik/SKU/CPL/tactic/brand/channel/category/FU
+    // yazma uçlarını da taşıyor, ve bu genişleme 11 e2e'yi kırmıştı
+    // (`master-data-capability-boundary.e2e-spec.ts` ·
+    // `master-data-kpi-mechanic-capability-boundary.e2e-spec.ts`:
+    // "FINANCE → 403 (MASTER_DATA_WRITE yalnız ADMIN)" beklerken 400/404/201
+    // aldı). `MASTER_DATA_WRITE` {ADMIN}'e GERİ DÖNDÜ. Asıl gövde-ayrılığı
+    // gerekçesi (baseline hacim referansı) geçerliliğini KORUYOR — YENİ ve
+    // DAR bir hücrede: `BASELINE_WRITE` (aşağı bkz.), yalnız üç baseline
+    // rotasını taşır.
+    // ↓ BASELINE_WRITE (`F12` düzeltme turu, ürün sahibi hükmü, 2026-09-02) —
+    // GÖREV AYRILIĞI: baseline hacim (Excel "Master Data" katmanı) planın
+    // ÖLÇÜLDÜĞÜ referanstır; PLANNER kendi referansını yüklerse
+    // düşük-baseline → yüksek-uplift yapısal açığı doğar. YENİ, DAR hücre —
+    // yalnız üç baseline rotasını taşır (`baseline-volume.controller.ts`).
+    // PLANNER bu hücrede YOK (yalnız MASTER_DATA_READ — yukarı bkz.),
+    // bilinçli. Kanonik hüküm dondurulmuş tabloda da eşitlendi:
+    // `scripts/analysis/route-cell-map.py` KARAR_HUKMU['BASELINE_WRITE'].
+    CAPABILITIES.BASELINE_WRITE,
     // ↓ Z42 §4/§6 (B3b-1 W9, 2026-08-26) — MODES_READ tabanı (5/5, FINANCE
     // dahil, birebir) + üç evrim hücresinin ÜÇÜNDE de FINANCE VAR
     // ({A,F,P}/{A,F}/{A,F,P,RO}) — defter/içe-aktarma/on-invoice OKUMA,

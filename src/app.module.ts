@@ -21,6 +21,7 @@ import { SettlementModule } from './modules/modes/actuals-first/settlement/settl
 import { SalesActualsModule } from './modules/modes/actuals-first/sales-actuals/sales-actuals.module';
 // Master Data module
 import { MasterDataModule } from './modules/master-data/master-data.module';
+import { BaselineVolumeModule } from './modules/master-data/baseline-volume/baseline-volume.module';
 // Planning-First mode modules
 import { PlanModule } from './modules/modes/planning-first/plan/plan.module';
 // Shared KPI Engine
@@ -67,6 +68,7 @@ import { AdminModule } from './modules/admin/admin.module';
     SalesActualsModule,
     // Master Data module
     MasterDataModule,
+    BaselineVolumeModule,
     // Planning-First mode modules
     PlanModule,
     // Admin Module

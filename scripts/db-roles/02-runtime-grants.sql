@@ -668,6 +668,46 @@ GRANT INSERT, UPDATE ON :"schema".lta_agreements TO app_runtime;
 --    `relations` kümesiyle o tabloya SIFIR SQL üretiyordu).
 GRANT INSERT, DELETE ON :"schema".lta_rates TO app_runtime;
 
+-- ── `BL-2` (data-engineer, 2026-09-02) — `app-runtime-grants` guard'ı
+--    `baseline_volumes` / `baseline_volume_import_batches` için SIFIR
+--    ayrıcalık gördü (T-249 sınıfı: `BaselineVolumeModule`
+--    `TypeOrmModule.forFeature([BaselineVolumeImportBatch, BaselineVolume])`
+--    ile enjekte ediyor, 02-runtime-grants.sql ikisine de hiç dokunmuyordu —
+--    `POST /master-data/baseline-volumes/upload` canlıda `permission denied`
+--    ile 500 verirdi).
+--
+--    Ölçülmüş minimal (repository/service kodu okunarak — ENJEKSİYON değil,
+--    ÇAĞRI sayıldı, `baseline-volume.repository.ts`):
+--
+--    baseline_volume_import_batches:
+--      SELECT — `findBatchById` (:80-86, `getBatch`/`getBatchRows`'un ilk adımı).
+--      INSERT — `createBatch` (:21-27) → `repo.save(repo.create(data))`; data
+--        hiçbir zaman bir `id` taşımıyor (çağıran, `service.ts:272`, yalnız
+--        `tenantId`/`createdBy` veriyor) ⇒ TypeORM bunu HER ZAMAN INSERT'e
+--        çevirir (id yoksa `save()` upsert'e düşmez). ⚠️ SAPMA: ürün sahibinin
+--        ilk öngörüsü UPDATE'i de içeriyordu — ÖLÇÜM ONU DOĞRULAMADI: bu
+--        tabloyu güncelleyen HİÇBİR çağrı yok (`grep -n
+--        "batchRepo\.\(save\|update\)" baseline-volume.repository.ts` →
+--        yalnız `createBatch`'in tek `save`'i, koşulsuz INSERT). İlke 1:
+--        bugün ihtiyacı ölçülmeyen izin verilmez — bir güncelleme yolu (ör.
+--        batch durumu) eklendiğinde o task kendi UPDATE GRANT'ini ölçer.
+--
+--    baseline_volumes:
+--      SELECT — `findExistingGrainKeys` (:36-66, ADIM 3 ön-kontrolü),
+--        `findRowsByBatchId` (:88-96), `countByAcceptance` (:98-114).
+--      INSERT — `insertRowsChunked` (:68-77) → `repo.insert(chunk)`; `.insert()`
+--        TypeORM'da HER ZAMAN saf SQL `INSERT`tir, `.save()`'in aksine bir
+--        var-olan-satır UPDATE'ine asla düşmez (upsert yolu yok, ölçüldü —
+--        kod bu metodun tek çağrı yeri, `service.ts:334`).
+--      ⛔ UPDATE VERİLMEDİ — ölçüm UPDATE gerektiren hiçbir çağrı bulmadı.
+--      ⛔ DELETE ASLA VERİLMEDİ — `ADR 0012` (düzeltme = yeni batch +
+--        süpersede, silme değil; `INV-R-004`'ün sürümlü `REPLACED` modeliyle
+--        aynı aile) ve ölçüm bunu doğruluyor: `grep -n
+--        "rowRepo\.\(delete\|remove\|softDelete\)" baseline-volume.
+--        repository.ts` → 0 satır.
+GRANT SELECT, INSERT ON :"schema".baseline_volume_import_batches TO app_runtime;
+GRANT SELECT, INSERT ON :"schema".baseline_volumes TO app_runtime;
+
 -- ── Z24 (data-engineer, 2026-08-23) — `main.budget_allocations` +
 --    `main.budget_transaction_logs` DÜŞÜRÜLDÜ (migration 1811000000000,
 --    `Z21` şart 3+4 / `Z24`). Model `K-2.2.3` ihlali olarak doğdu ve
