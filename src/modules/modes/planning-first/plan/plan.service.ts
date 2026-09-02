@@ -2560,9 +2560,6 @@ export class PlanService {
       // Build mechanic values map for this FU (needed by SpendCalc).
       // T-052: single shared derivation point — see
       // `SpendCalculationService#buildMechanicValues` doc comment.
-      // `calculateAllSpendsForFU` (the OTHER spend-derivation path) calls
-      // the exact same method, so the two can never diverge again (T-049
-      // postmortem: duplicate derivations of the same fact drift).
       //
       // ⛔ `F12` — ÖNCÜL DÜZELTİLDİ (`T-337`, 2026-08-31; ölçüm `K1 §0`).
       // Buradaki iddia *"`calculateAllSpendsForFU` …
@@ -2570,7 +2567,12 @@ export class PlanService {
       // idi ve **YANLIŞTI**: `approval-workflow.service.ts`
       // `SpendCalculationService`'i enjekte bile etmiyor. Bu satırdaki
       // `recalculatePlanWithKpiEngineLocked` bugün spend'in **TEK** canlı
-      // türetim yoludur; kardeşi tüketicisizdir (`Z77 §3c`).
+      // türetim yoludur.
+      //
+      // `T-350` (`Z79 §7`): kardeş metot `calculateAllSpendsForFU`
+      // **silindi** (üretim çağıranı hiç kazanmamıştı, `Z77 §3c`'nin
+      // dokuzuncu ölü-uç adayı) — bu artık `buildMechanicValues`'ün TEK
+      // çağıranıdır, "iki çağıran ayrışmaz" endişesi konusuz kaldı.
       const mechanicValues = await this.spendCalc.buildMechanicValues(
         planFu,
         cachedActiveMechanics,
@@ -2581,8 +2583,8 @@ export class PlanService {
       // (needs every sibling SKU's base volume — see
       // `SpendCalculationService#computeLumpsumDistribution` doc comment)
       // and threaded through the same `calcCtx` every SKU in this FU reads
-      // below. `calculateAllSpendsForFU` (the OTHER canonical spend path)
-      // computes this identically — same shared method, not re-derived.
+      // below. `T-350` (`Z79 §7`): this is now the ONLY caller — the sibling
+      // (`calculateAllSpendsForFU`) was deleted, zero production callers.
       const lumpsumSharesBySku = this.spendCalc.computeLumpsumDistribution(
         planFu.id,
         mechanicValues,

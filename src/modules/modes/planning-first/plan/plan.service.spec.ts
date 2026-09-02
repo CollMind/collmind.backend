@@ -180,7 +180,6 @@ describe('PlanService', () => {
           provide: SpendCalculationService,
           useValue: {
             calculateAllSpendsForSKU: jest.fn(),
-            calculateAllSpendsForFU: jest.fn(),
             calculateCompleteSKUFinancialMetrics: jest.fn(),
             // T-045: recalc hot path fetches active mechanics once and
             // reuses across all SKUs instead of re-querying per SKU.

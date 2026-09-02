@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  InternalServerErrorException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlanSku, PlanFu } from '../../../database/entities/plan.entity';
@@ -11,7 +6,6 @@ import {
   Mechanic,
   MechanicCategory,
   SpendingType,
-  MechanicType,
 } from '../../../database/entities/mechanic.entity';
 import { PlanMechanicValue } from '../../../database/entities/plan-mechanic-value.entity';
 import { MechanicSpendBreakdown } from '../../../database/entities/mechanic-spend-breakdown.entity';
@@ -20,16 +14,11 @@ import { LTAContext } from '../lta/dto/lta-context.dto';
 import { PlanContextDto } from '../../master-data/mechanic/dto/plan-context.dto';
 import {
   SpendBreakdown,
-  FUSpendBreakdown,
   ValidationResult,
-  BaseSpendBreakdown,
-  PlannedSpendBreakdown,
-  IncrementalSpendBreakdown,
   PromoOnInvoiceSpend,
   PromoOffInvoiceSpend,
 } from './dto/spend-breakdown.dto';
 import { CalculationContext, SKUContext } from './dto/calculation-context.dto';
-import { resolveSkuSpendInputs } from './sku-spend-inputs';
 import {
   CompleteSKUFinancialMetrics,
   NIVMetrics,
@@ -345,9 +334,10 @@ export class SpendCalculationService {
    * T-062: single derivation point for distributing a FU-level
    * LUMPSUM_SPEND mechanic's entered value across its SKUs.
    *
-   * Both canonical per-FU entry points (`calculateAllSpendsForFU` here and
-   * `PlanService#recalculatePlanWithKpiEngineLocked`) call this ONCE per
-   * FU, BEFORE looping over SKUs, and thread the result through
+   * `PlanService#recalculatePlanWithKpiEngineLocked` — the only live per-FU
+   * entry point since `T-350` (`Z79 §7`) deleted its sibling
+   * (`calculateAllSpendsForFU`, zero production callers) — calls this ONCE
+   * per FU, BEFORE looping over SKUs, and threads the result through
    * `CalculationContext.lumpsumSharesBySku` — never re-derived per SKU
    * (T-052 postmortem: two independent derivations of the same fact drift
    * apart). This replaces `distributeSpendToSKUs`, which existed since
@@ -858,10 +848,11 @@ export class SpendCalculationService {
    * Yorum SİLİNMEDİ, DÜZELTİLDİ: bir yanlış canlılık iddiası okuyucuya
    * *"bu yol korunuyor"* dedirtir (`T-084`: yanlış yorum KORUMA üretir).
    *
-   * Both callers (`recalculatePlanWithKpiEngineLocked` — the only LIVE one —
-   * and `calculateAllSpendsForFU` below, today consumer-less) call this ONE
-   * method instead of each re-implementing the merge — T-049 postmortem: two
-   * independent derivations of the same fact WILL drift apart over time.
+   * `T-350` (`Z79 §7`): the consumer-less sibling `calculateAllSpendsForFU`
+   * was deleted. `recalculatePlanWithKpiEngineLocked` is now this method's
+   * ONLY caller — still a single shared derivation point rather than each
+   * caller re-implementing the merge (T-049 postmortem: independent
+   * derivations of the same fact WILL drift apart over time).
    *
    * Precedence on key collision (same mechanic code present in both
    * sources): `tactics` wins, matching the pre-existing behaviour of
@@ -992,268 +983,13 @@ export class SpendCalculationService {
   }
 
   /**
-   * Calculate all spends for a FU
+   * `calculateAllSpendsForFU` — **SİLİNDİ** (`T-350`, `Z79 §7`, `BL`-öncesi).
+   * Dokuzuncu ölü-uç adayıydı (`Z75 §4`): üretim çağıranı hiç kazanmadı
+   * (ölçüm: yalnız `*.spec.ts` çağırıyordu). Aynı FU-toplu hesabı CANLI
+   * olarak `PlanService#recalculatePlanWithKpiEngineLocked` zaten yapıyor
+   * (aynı paylaşılan `buildMechanicValues`/`computeLumpsumDistribution`
+   * üzerinden) — `BL` (baseline-import) bu ikinci yola ihtiyaç duymuyor.
    */
-  async calculateAllSpendsForFU(
-    tenantId: string,
-    fuId: string,
-  ): Promise<FUSpendBreakdown> {
-    const startTime = Date.now();
-
-    const planFu = await this.planFuRepository.findOne({
-      where: { id: fuId, tenantId },
-      relations: [
-        'plan',
-        'planSkus',
-        'planSkus.sku',
-        'planMechanicValues',
-        'planMechanicValues.mechanic',
-      ],
-    });
-
-    if (!planFu) {
-      this.logger.error(
-        `calculateAllSpendsForFU: PlanFU not found [fuId=${fuId}, tenantId=${tenantId}]`,
-      );
-      throw new InternalServerErrorException(
-        `Plan FU with ID ${fuId} not found for tenant ${tenantId}`,
-      );
-    }
-
-    // Build context. T-052: merge `plan_mechanic_values.enteredValue` AND
-    // `plan_fus.tactics` via the single shared derivation point (see
-    // `buildMechanicValues` doc comment) — reading only the former left the
-    // real (tactics-PATCH) UI flow computing 0/0 spend through this path.
-    // Mechanics must be resolved BEFORE buildMechanicValues: semantics are
-    // derived from the mechanic row, in one place. Same call, moved earlier —
-    // no extra round-trip (it was already fetched a few lines below).
-    const activeMechanics = await this.getActiveMechanics(tenantId);
-    const mechanicValues = await this.buildMechanicValues(
-      planFu,
-      activeMechanics,
-      tenantId,
-    );
-
-    // Get plan context for LTA
-    const planContext: PlanContextDto = {
-      cplId: planFu.plan?.cplId,
-      channelCode: planFu.plan?.channel?.code,
-      categoryCode: planFu.plan?.category?.code,
-    };
-
-    // Calculate for each SKU. T-045: fetch the active-mechanics list once
-    // for this call and reuse it across all SKUs below (SKU-independent).
-    // T-046a: same for LTA context — `planContext`/`planFu.planId` above are
-    // built from `planFu.plan`, constant for every SKU in this FU, so
-    // resolve once and reuse (docs/analysis/0007 §2.3).
-    const skuBreakdowns: SpendBreakdown[] = [];
-    const ltaContext = await this.getLtaContextForPlan(
-      tenantId,
-      planContext,
-      planFu.planId,
-    );
-
-    // T-062: FU-level lumpsum distribution, computed ONCE before the SKU
-    // loop (needs every sibling's base volume — see
-    // `computeLumpsumDistribution` doc comment).
-    const lumpsumSharesBySku = this.computeLumpsumDistribution(
-      planFu.id,
-      mechanicValues,
-      activeMechanics,
-      planFu.planSkus || [],
-    );
-
-    const context: CalculationContext = {
-      planId: planFu.planId,
-      fuId: planFu.id,
-      skuContexts: [],
-      mechanicValues,
-      lumpsumSharesBySku,
-    };
-
-    // `T-337`/`Z77 §2`: `SKUContext` artık MARKALI bir tiptir ve nesne
-    // literaliyle inşa EDİLEMEZ — tek üreteci `resolveSkuSpendInputs`.
-    // Buradaki eski dört `|| 0` (`K1 §1a:1001-1004`) `plan.service`'in
-    // dört kardeşiyle AYNI kusurdu; ikisi ayrı ayrı düzeltilseydi
-    // `T-049` postmortem'i tekrarlanırdı (*"aynı olgunun iki türetimi
-    // ayrışır"*). Tek resolver bunu derleme zamanında imkânsız kılar.
-    const notEvaluableSkus: Array<{
-      skuId: string;
-      missing: readonly string[];
-    }> = [];
-
-    for (const planSku of planFu.planSkus || []) {
-      const resolution = resolveSkuSpendInputs({
-        skuId: planSku.skuId,
-        baseVolume: planSku.baseVolume,
-        plannedVolume: planSku.plannedVolume,
-        listPrice: planSku.sku?.unitPrice,
-        cogsPerUnit: planSku.sku?.cogs,
-        channelCode: planFu.plan?.channel?.code,
-        categoryCode: planFu.plan?.category?.code,
-        cplId: planFu.plan?.cplId,
-      });
-
-      if (resolution.kind === 'UNTOUCHED') {
-        // `Q20`: dokunulmamış satır bir eksiklik DEĞİL — "planlanmadı".
-        // Sessizce dışlanır (para tarafında `NOT_EVALUABLE` ile AYNI
-        // davranış: toplamlara katkı yok), ama `notEvaluableSkus`'a
-        // GİRMEZ ve `logger.warn` ÜRETMEZ (bu ikisi "eksiklik" anlatır,
-        // burada eksiklik yok).
-        continue;
-      }
-
-      if (resolution.kind === 'NOT_EVALUABLE') {
-        // ⛔ SESSİZCE `0` KATKI YOK (`§2.5`). SKU toplamlardan DIŞLANIR ve
-        // eksikliği eksik alan ADIYLA döner (`Z77 §1`).
-        notEvaluableSkus.push({
-          skuId: resolution.skuId,
-          missing: resolution.missing,
-        });
-        this.logger.warn(
-          `SKU ${resolution.skuId} spend NOT_EVALUABLE in FU ${fuId}: ` +
-            `missing ${resolution.missing.join(', ')}`,
-        );
-        continue;
-      }
-
-      const skuContext = resolution.ctx;
-
-      const breakdown = await this.calculateAllSpendsForSKU(
-        tenantId,
-        skuContext,
-        context,
-        activeMechanics,
-        ltaContext,
-      );
-      skuBreakdowns.push(breakdown);
-    }
-
-    // Aggregate to FU level.
-    // `T-337`: taban kalemleri `number | null`. Bir SKU'nun tabanı
-    // hesaplanamadıysa FU tabanı da **hesaplanamaz** — `null` bir toplama
-    // sessizce `0` olarak giremez (`§2.5`). `sumOrNull` bu kuralı TEK
-    // yerde taşır; her `reduce`'ün kendi `?? 0`'ını yazması `F8` ailesidir.
-    const sumOrNull = (values: Array<number | null>): number | null =>
-      values.some((v) => v === null)
-        ? null
-        : values.reduce<number>((sum, v) => sum + (v as number), 0);
-
-    const sumBases = (field: keyof BaseSpendBreakdown): number =>
-      skuBreakdowns.reduce(
-        (sum, b) => sum + (b.base as BaseSpendBreakdown)[field],
-        0,
-      );
-
-    // ⛔ `skuBreakdowns` YALNIZ `EVALUABLE` SKU'ları taşır (NOT_EVALUABLE
-    // olanlar `notEvaluableSkus`'a ayrıldı ve `continue` edildi) ⇒ hepsinin
-    // `planned`/`incremental`'ı non-null. Tip bunu göremez; daraltma TEK
-    // noktada, her `reduce`'ün içinde ayrı ayrı değil (`F8`).
-    const plannedOf = (b: SpendBreakdown): PlannedSpendBreakdown =>
-      b.planned as PlannedSpendBreakdown;
-    const incrementalOf = (b: SpendBreakdown): IncrementalSpendBreakdown =>
-      b.incremental as IncrementalSpendBreakdown;
-
-    // ⛔ Taban toplamı, SKU'lardan biri bile TABANSIZSA tanımsızdır —
-    // `null`'ı `0` sayarak toplamak `§2.5` ihlalidir.
-    const aggregatedBase: BaseSpendBreakdown | null = skuBreakdowns.some(
-      (b) => b.base === null,
-    )
-      ? null
-      : {
-          ltaOnInvoice: sumBases('ltaOnInvoice'),
-          ltaOffInvoice: sumBases('ltaOffInvoice'),
-          totalOnInvoice: sumBases('totalOnInvoice'),
-          totalOffInvoice: sumBases('totalOffInvoice'),
-          totalSpend: sumBases('totalSpend'),
-        };
-
-    const aggregatedPlanned: PlannedSpendBreakdown = {
-      ltaOnInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + plannedOf(b).ltaOnInvoice,
-        0,
-      ),
-      ltaOffInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + plannedOf(b).ltaOffInvoice,
-        0,
-      ),
-      promoOnInvoice: {},
-      promoOffInvoice: {},
-      totalPromoOnInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + plannedOf(b).totalPromoOnInvoice,
-        0,
-      ),
-      totalPromoOffInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + plannedOf(b).totalPromoOffInvoice,
-        0,
-      ),
-      totalOnInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + plannedOf(b).totalOnInvoice,
-        0,
-      ),
-      totalOffInvoice: skuBreakdowns.reduce(
-        (sum, b) => sum + plannedOf(b).totalOffInvoice,
-        0,
-      ),
-      totalSpend: skuBreakdowns.reduce(
-        (sum, b) => sum + plannedOf(b).totalSpend,
-        0,
-      ),
-    };
-
-    // Aggregate mechanic spends
-    for (const breakdown of skuBreakdowns) {
-      for (const [code, value] of Object.entries(
-        plannedOf(breakdown).promoOnInvoice,
-      )) {
-        if (value) {
-          aggregatedPlanned.promoOnInvoice[code] =
-            (aggregatedPlanned.promoOnInvoice[code] || 0) + value;
-        }
-      }
-      for (const [code, value] of Object.entries(
-        plannedOf(breakdown).promoOffInvoice,
-      )) {
-        if (value) {
-          aggregatedPlanned.promoOffInvoice[code] =
-            (aggregatedPlanned.promoOffInvoice[code] || 0) + value;
-        }
-      }
-    }
-
-    const aggregatedIncremental: IncrementalSpendBreakdown = {
-      onInvoice: sumOrNull(
-        skuBreakdowns.map((b) => incrementalOf(b).onInvoice),
-      ),
-      offInvoice: sumOrNull(
-        skuBreakdowns.map((b) => incrementalOf(b).offInvoice),
-      ),
-      total: sumOrNull(skuBreakdowns.map((b) => incrementalOf(b).total)),
-      // `T-334`/`Q6` — ROI paydası FU seviyesinde de toplanır (SUM).
-      // ⚠️ `T-337`: bu kalem `null` OLAMAZ (tabana bağlı değil) — üç
-      // kardeşinden bilerek ayrı, `IncrementalSpendBreakdown` doc'una bak.
-      promoTotal: skuBreakdowns.reduce(
-        (sum, b) => sum + incrementalOf(b).promoTotal,
-        0,
-      ),
-    };
-
-    const duration = Date.now() - startTime;
-    if (duration > 100) {
-      this.logger.warn(
-        `FU spend calculation took ${duration}ms (target: <100ms)`,
-      );
-    }
-
-    return {
-      fuId: planFu.id,
-      skuBreakdowns,
-      aggregatedBase,
-      aggregatedPlanned,
-      aggregatedIncremental,
-      notEvaluableSkus,
-    };
-  }
 
   /**
    * Validate spend calculations for a plan

@@ -39,32 +39,15 @@ import { toFiniteDecimal } from '../../../common/kpi/target-roi';
  * aşağıdadır ve bilerek tek noktadadır.
  * > **"Bir çağıran unutuldu ⇒ DERLEME HATASI olur, BÜTÇE SAPMASI değil."**
  *
- * `K1 §4d` bu kapının kovaladığı vakayı yazıyor: `plan.service` dönüşür,
+ * `K1 §4d` bu kapının kovaladığı vakayı yazıyordu: `plan.service` dönüşür,
  * `calculateAllSpendsForFU` dönüşmezse **aynı plan iki farklı toplam**
  * üretir (`T-049` postmortem'inin birebir tekrarı) — ve bu kez ayrışan şey
- * ekran değil **bütçe rezervasyonu** olurdu.
- *
- * ⛔ **VE MARKA BU AYRIŞMAYI YAKALAMIYOR — ÖLÇÜLDÜ (`Z78 §7`, review 🟡-1).**
- * Marka her iki çağıranı resolver'a **zorlar**, ama üç `kind`'ı **aynı** ele
- * almaya zorlamaz. Bugünkü ayrışma:
- * ```
- * plan.service (recalc)      kind !== 'UNTOUCHED' && ctx !== null ⇒ ÇAĞIRIR
- *                            ⇒ PLAN_VOL yok + BPTT var ⇒ TABAN ZİNCİRİ KOŞAR
- * calculateAllSpendsForFU    kind === 'NOT_EVALUABLE' ⇒ continue
- *                            ⇒ AYNI satırı TAMAMEN ATAR ⇒ FU tabanı AYRIŞIR
- * ```
- * ⇒ Aşağıdaki *"`PLAN_VOL` yok, `BPTT` var ⇒ ctx VAR — taban zinciri koşmaya
- * devam eder"* sözleşmesini `calculateAllSpendsForFU` **İHLAL EDİYOR.**
- *
- * **Neden bugün düzeltilmedi, ve bu bir erteleme DEĞİL bir RANDEVU:**
- * `calculateAllSpendsForFU`'nun **üretim çağıranı SIFIR** (ölçüldü: yalnız
- * `*.spec.ts`) ⇒ canlı para etkisi yok. Metot `Z77 §3c`'nin **dokuzuncu
- * adayı**: *"ya tüketici kazanır ya ölür, karar `W3` tasarımıyla."*
- * ⛔ **O KARAR VERİLDİĞİ GÜN BU AYRIŞMA DA KAPANIR** — metot yaşarsa
- * recalc'in şekline getirilir, ölürse soru düşer. Sözleşme **o güne kadar
- * yazılı bir sapmadır**, sessiz bir ihlal değil.
- * > `DISIPLIN`: *"bir yorum, kodunun tersini söylüyorsa yorum yanlıştır —*
- * > *ama sapmayı YAZMAK, onu doğru kılmaz; GÖRÜNÜR kılar."*
+ * ekran değil **bütçe rezervasyonu** olurdu. `Z78 §7`'nin ölçtüğü SAPMA
+ * (marka iki çağıranı resolver'a zorluyor ama üç `kind`'ı aynı ele almaya
+ * zorlamıyordu) **`T-350` (`Z79 §7`) ile KAPANDI**: `calculateAllSpendsForFU`
+ * **silindi** — üretim çağıranı hiç kazanmamıştı (`Z77 §3c`'nin dokuzuncu
+ * ölü-uç adayı). Ayrışma artık imkânsız, çünkü ayrışacak ikinci bir çağıran
+ * yok; tek per-FU yol `PlanService#recalculatePlanWithKpiEngineLocked`.
  *
  * ── NEDEN `Number()` YOK ────────────────────────────────────────────────
  * Bu dizin `money-float` **Alan A** listesinde

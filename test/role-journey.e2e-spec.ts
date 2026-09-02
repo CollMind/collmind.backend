@@ -2188,12 +2188,13 @@ describe('Role Journey (E2E) — Uçtan uca rol bazlı akış teşhisi', () => {
 
       // A17'deki gibi MEC-DISCOUNT (on_invoice_discount) + CPP_OFF_PCT
       // (off_invoice_discount) — createT029TestPlan'ın CPP_ON_PCT+VIS_LS
-      // kombinasyonundan FARKLI: VIS_LS lumpsum, calculateAllSpendsForFU
-      // (submit'ın kullandığı yol) lumpsum'u 0 döndürüyor
-      // (`spend-calculation.service.ts:165-167`, distributeSpendToSKUs ayrı
-      // bir çağrı zinciri) — o kombinasyon adım 4'te offAmount=0 üretir ve
-      // testin ön koşulunu (her iki kova da POSTED RESERVE > 0) bozar. Bu
-      // ayrım F1'in konusu değil; sadece doğru fixture seçimi.
+      // kombinasyonundan FARKLI: o kombinasyon adım 4'te offAmount=0 üretir
+      // ve testin ön koşulunu (her iki kova da POSTED RESERVE > 0) bozar.
+      // ⛔ Eski metin bunu `calculateAllSpendsForFU`'nun ("submit'ın
+      // kullandığı yol") lumpsum'u 0 döndürmesine bağlıyordu — YANLIŞTI:
+      // o metot submit'in yolunda hiç koşmuyordu (`Z77 §3c`) ve artık kod
+      // tabanında da yok (`T-350`, silindi). Bu ayrım F1'in konusu değil;
+      // sadece doğru fixture seçimi.
       const createRes = await request(app.getHttpServer())
         .post('/plans')
         .set(planner.authHeader())

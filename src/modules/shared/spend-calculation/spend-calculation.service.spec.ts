@@ -39,7 +39,6 @@ function evaluableSkuContext(raw: RawSkuSpendInputs): SKUContext {
   }
   return resolution.ctx;
 }
-import { SpendBreakdown } from './dto/spend-breakdown.dto';
 
 // F2/C2a: mechanicValues now carries the scale in the type. These builders keep
 // the fixtures readable and make each test state which scale it means, instead
@@ -62,13 +61,8 @@ const unitIn = (code: string, tryPerUnit: number): MechanicInput => ({
 
 describe('SpendCalculationService', () => {
   let service: SpendCalculationService;
-  let planSkuRepo: jest.Mocked<Repository<PlanSku>>;
   let planFuRepo: jest.Mocked<Repository<PlanFu>>;
   let mechanicRepo: jest.Mocked<Repository<Mechanic>>;
-  let planMechanicValueRepo: jest.Mocked<Repository<PlanMechanicValue>>;
-  let mechanicSpendBreakdownRepo: jest.Mocked<
-    Repository<MechanicSpendBreakdown>
-  >;
   let ltaAgreementService: jest.Mocked<LTAAgreementService>;
 
   const mockTenantId = 'tenant-1';
@@ -125,13 +119,8 @@ describe('SpendCalculationService', () => {
     }).compile();
 
     service = module.get<SpendCalculationService>(SpendCalculationService);
-    planSkuRepo = module.get(getRepositoryToken(PlanSku));
     planFuRepo = module.get(getRepositoryToken(PlanFu));
     mechanicRepo = module.get(getRepositoryToken(Mechanic));
-    planMechanicValueRepo = module.get(getRepositoryToken(PlanMechanicValue));
-    mechanicSpendBreakdownRepo = module.get(
-      getRepositoryToken(MechanicSpendBreakdown),
-    );
     ltaAgreementService = module.get(LTAAgreementService);
   });
 
@@ -303,10 +292,15 @@ describe('SpendCalculationService', () => {
    * T-062: `computeLumpsumDistribution` is the single derivation point that
    * replaced the dead-since-inception `distributeSpendToSKUs` (measured via
    * `git log -S distributeSpendToSKUs` — never had a production caller in
-   * this repo's history). See the fuller behavioural coverage in the
-   * "LUMPSUM_SPEND distribution (T-062)" describe block below, which
-   * exercises this through the canonical `calculateAllSpendsForFU` entry
-   * point end-to-end.
+   * this repo's history). `T-350` (`Z79 §7`) deleted the OTHER caller of
+   * this method, `calculateAllSpendsForFU` (zero production callers), along
+   * with the unit-level behavioural describe block that drove it through
+   * that dead path. Live (unmocked) end-to-end coverage of proportional
+   * base-volume distribution and null-base rejection now lives in
+   * `test/recalc-perf-regression.e2e-spec.ts` and
+   * `test/role-journey.e2e-spec.ts` (`LUMPSUM_DISTRIBUTION_NO_BASE_VOLUME`)
+   * — both go through `PlanService#recalculatePlanWithKpiEngineLocked`, the
+   * only live per-FU entry point.
    */
   describe('computeLumpsumDistribution', () => {
     it('should distribute spend based on base volume ratio', () => {
@@ -348,182 +342,6 @@ describe('SpendCalculationService', () => {
           [],
         ),
       ).toEqual({});
-    });
-  });
-
-  /**
-   * T-062: LUMPSUM_SPEND must be distributed to SKUs, base-volume
-   * proportional, null-base SKU gets no share (ADR 0006 Karar 2, 0001 Set
-   * C). `calculateAllSpendsForFU` is one of the two canonical per-FU entry
-   * points (T-052) that both feed `plan.totalSpend`/budget reservation.
-   */
-  describe('LUMPSUM_SPEND distribution (T-062)', () => {
-    const lumpsumMechanic: Partial<Mechanic> = {
-      id: 'mech-ls',
-      code: 'VIS_LS',
-      category: MechanicCategory.LUMPSUM_SPEND,
-      mechanicType: MechanicType.AMOUNT,
-      spendingType: SpendingType.OFF_INVOICE,
-      isActive: true,
-    };
-
-    it('should distribute lumpsum spend to SKUs proportional to base volume (non-zero FU total, budget-visible)', async () => {
-      const planFu: Partial<PlanFu> = {
-        id: mockFuId,
-        tenantId: mockTenantId,
-        planId: mockPlanId,
-        plan: {
-          cplId: 'cpl-1',
-          channel: { code: 'NKA' },
-          category: { code: 'Dairy' },
-        } as any,
-        planSkus: [
-          {
-            skuId: 'sku-a',
-            baseVolume: 100,
-            plannedVolume: 100,
-            sku: { unitPrice: 10, cogs: 5 } as any,
-          } as any,
-          {
-            skuId: 'sku-b',
-            baseVolume: 200,
-            plannedVolume: 200,
-            sku: { unitPrice: 10, cogs: 5 } as any,
-          } as any,
-        ],
-        planMechanicValues: [],
-        tactics: { VIS_LS: 300 },
-      };
-
-      planFuRepo.findOne.mockResolvedValue(planFu as PlanFu);
-      mechanicRepo.find.mockResolvedValue([lumpsumMechanic] as Mechanic[]);
-      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
-
-      const result = await service.calculateAllSpendsForFU(
-        mockTenantId,
-        mockFuId,
-      );
-
-      // FU total must see the full 300 — this is the T-062 bug: today it is 0.
-      expect(result.aggregatedPlanned.totalOffInvoice).toBeCloseTo(300, 2);
-      expect(result.aggregatedPlanned.totalSpend).toBeCloseTo(300, 2);
-
-      // Base-volume proportional: sku-a (100/300) -> 100, sku-b (200/300) -> 200.
-      const skuA = result.skuBreakdowns.find((b) => b.skuId === 'sku-a')!;
-      const skuB = result.skuBreakdowns.find((b) => b.skuId === 'sku-b')!;
-      expect(skuA.planned!.promoOffInvoice['VIS_LS']).toBeCloseTo(100, 2);
-      expect(skuB.planned!.promoOffInvoice['VIS_LS']).toBeCloseTo(200, 2);
-
-      // Rounding invariant: distributed shares must sum EXACTLY to the FU
-      // lumpsum total (no penny loss/gain).
-      const distributedSum =
-        (skuA.planned!.promoOffInvoice['VIS_LS'] || 0) +
-        (skuB.planned!.promoOffInvoice['VIS_LS'] || 0);
-      expect(distributedSum).toBe(300);
-    });
-
-    it('should give null-base SKU zero lumpsum share (0001 Set C / ADR 0006 Karar 2) and preserve exact-sum rounding', async () => {
-      const planFu: Partial<PlanFu> = {
-        id: mockFuId,
-        tenantId: mockTenantId,
-        planId: mockPlanId,
-        plan: {
-          cplId: 'cpl-1',
-          channel: { code: 'NKA' },
-          category: { code: 'Dairy' },
-        } as any,
-        planSkus: [
-          {
-            // Set C: new-product SKU, no historical base volume.
-            skuId: 'sku-new-product',
-            baseVolume: null,
-            plannedVolume: 500,
-            sku: { unitPrice: 10, cogs: 5 } as any,
-          } as any,
-          {
-            skuId: 'sku-1',
-            baseVolume: 1,
-            plannedVolume: 1,
-            sku: { unitPrice: 10, cogs: 5 } as any,
-          } as any,
-          {
-            skuId: 'sku-2',
-            baseVolume: 2,
-            plannedVolume: 2,
-            sku: { unitPrice: 10, cogs: 5 } as any,
-          } as any,
-        ],
-        planMechanicValues: [],
-        tactics: { VIS_LS: 100 },
-      };
-
-      planFuRepo.findOne.mockResolvedValue(planFu as PlanFu);
-      mechanicRepo.find.mockResolvedValue([lumpsumMechanic] as Mechanic[]);
-      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
-
-      const result = await service.calculateAllSpendsForFU(
-        mockTenantId,
-        mockFuId,
-      );
-
-      const newProduct = result.skuBreakdowns.find(
-        (b) => b.skuId === 'sku-new-product',
-      )!;
-      const sku1 = result.skuBreakdowns.find((b) => b.skuId === 'sku-1')!;
-      const sku2 = result.skuBreakdowns.find((b) => b.skuId === 'sku-2')!;
-
-      expect(newProduct.planned!.promoOffInvoice['VIS_LS'] || 0).toBe(0);
-      // sku-1:sku-2 base ratio 1:2 -> 33.33/66.67 (non-terminating decimal —
-      // exercises the rounding-remainder path, not a coincidentally exact split).
-      expect(sku1.planned!.promoOffInvoice['VIS_LS']).toBeCloseTo(33.33, 2);
-      expect(sku2.planned!.promoOffInvoice['VIS_LS']).toBeCloseTo(66.67, 2);
-
-      const distributedSum =
-        (newProduct.planned!.promoOffInvoice['VIS_LS'] || 0) +
-        (sku1.planned!.promoOffInvoice['VIS_LS'] || 0) +
-        (sku2.planned!.promoOffInvoice['VIS_LS'] || 0);
-      expect(distributedSum).toBe(100);
-    });
-
-    it('should reject (not silently distribute 0) when ALL SKUs in the FU have null/zero base volume and lumpsum > 0 is entered', async () => {
-      const planFu: Partial<PlanFu> = {
-        id: mockFuId,
-        tenantId: mockTenantId,
-        planId: mockPlanId,
-        plan: {
-          cplId: 'cpl-1',
-          channel: { code: 'NKA' },
-          category: { code: 'Dairy' },
-        } as any,
-        planSkus: [
-          {
-            skuId: 'sku-a',
-            baseVolume: null,
-            plannedVolume: 100,
-            sku: { unitPrice: 10, cogs: 5 } as any,
-          } as any,
-          {
-            skuId: 'sku-b',
-            baseVolume: 0,
-            plannedVolume: 200,
-            sku: { unitPrice: 10, cogs: 5 } as any,
-          } as any,
-        ],
-        planMechanicValues: [],
-        tactics: { VIS_LS: 300 },
-      };
-
-      planFuRepo.findOne.mockResolvedValue(planFu as PlanFu);
-      mechanicRepo.find.mockResolvedValue([lumpsumMechanic] as Mechanic[]);
-      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
-
-      await expect(
-        service.calculateAllSpendsForFU(mockTenantId, mockFuId),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({
-          code: 'LUMPSUM_DISTRIBUTION_NO_BASE_VOLUME',
-        }),
-      });
     });
   });
 
@@ -677,45 +495,13 @@ describe('SpendCalculationService', () => {
       expect(resolution.baseEvaluable).toBe(false);
     });
 
-    it('eksik girdili SKU FU toplamına GİRMEZ, adıyla raporlanır', async () => {
-      planFuRepo.findOne.mockResolvedValue({
-        id: mockFuId,
-        tenantId: mockTenantId,
-        planId: mockPlanId,
-        plan: {
-          cplId: 'cpl-1',
-          channel: { code: 'NKA' },
-          category: { code: 'Hair' },
-        },
-        planMechanicValues: [],
-        tactics: { CPP_ON: 10 },
-        planSkus: [
-          {
-            skuId: 'sku-ok',
-            baseVolume: 1000,
-            plannedVolume: 1680,
-            sku: { unitPrice: 10, cogs: 6 },
-          },
-          {
-            // ⛔ PLAN_VOL YOK — eskiden `Number(null) || 0` ile `0` olur,
-            // `0` harcama üretir ve toplama SESSİZCE girerdi.
-            skuId: 'sku-missing-planvol',
-            baseVolume: 1000,
-            plannedVolume: null,
-            sku: { unitPrice: 10, cogs: 6 },
-          },
-        ],
-      } as never);
-
-      const fu = await service.calculateAllSpendsForFU(mockTenantId, mockFuId);
-
-      expect(fu.notEvaluableSkus).toEqual([
-        { skuId: 'sku-missing-planvol', missing: ['PLAN_VOL'] },
-      ]);
-      // Yalnız değerlendirilebilen SKU toplamda:
-      expect(fu.skuBreakdowns).toHaveLength(1);
-      expect(fu.aggregatedPlanned.totalSpend).toBeCloseTo(1680, 1);
-    });
+    // `T-350` (`Z79 §7`): "eksik girdili SKU FU toplamına GİRMEZ, adıyla
+    // raporlanır" testi buradaydı ve `calculateAllSpendsForFU` üzerinden
+    // koşuyordu — metot silindi (zero production callers). `resolveSkuSpendInputs`
+    // (`NOT_EVALUABLE`/`missing` alan adları) `sku-spend-inputs.spec.ts`'de
+    // doğrudan, canlı-rota davranışı ise `q20-untouched-vs-partial-row-gate
+    // .e2e-spec.ts` ve `submission-checks.spec.ts`'de zaten kanıtlı — ikinci
+    // bir kopya yazılmadı (`§7` ailesi: aynı olgunun iki türetimi ayrışır).
   });
 
   /**
@@ -848,156 +634,20 @@ describe('SpendCalculationService', () => {
     });
   });
 
-  /**
-   * B-1 (BLOCKER): tenant isolation — calculateAllSpendsForFU must NOT return
-   * data belonging to a different tenant. Both findOne calls must include tenantId.
-   */
-  describe('calculateAllSpendsForFU – tenant isolation (B-1)', () => {
-    it('should throw when PlanFU belongs to a different tenant', async () => {
-      // planFuRepo.findOne returns null because tenantId mismatch filters it out
-      planFuRepo.findOne.mockResolvedValue(null);
-
-      await expect(
-        service.calculateAllSpendsForFU('wrong-tenant', mockFuId),
-      ).rejects.toThrow(/not found/i);
-
-      // Verify tenantId was included in the where clause
-      expect(planFuRepo.findOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ tenantId: 'wrong-tenant' }),
-        }),
-      );
-    });
-
-    it('should use correct tenantId in calculateAllSpendsForFU findOne query', async () => {
-      const tenantA = 'tenant-A';
-      const tenantB = 'tenant-B';
-
-      // Returns null — simulating tenant-B's FU not visible to tenant-A
-      planFuRepo.findOne.mockResolvedValue(null);
-
-      await expect(
-        service.calculateAllSpendsForFU(tenantA, mockFuId),
-      ).rejects.toThrow();
-
-      expect(planFuRepo.findOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ tenantId: tenantA }),
-        }),
-      );
-      // Must NOT have been called with tenantB
-      expect(planFuRepo.findOne).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ tenantId: tenantB }),
-        }),
-      );
-    });
-  });
+  // `T-350` (`Z79 §7`): iki `describe` bloğu buradaydı —
+  // "calculateAllSpendsForFU – tenant isolation (B-1)" ve
+  // "calculateAllSpendsForFU – reads plan_fus.tactics (T-052)" — ikisi de
+  // silinen `calculateAllSpendsForFU` üzerinden koşuyordu. Tenant izolasyonu
+  // ve `tactics`/`plan_mechanic_values` birleşimi `buildMechanicValues`
+  // testlerinde (aşağıda) ve canlı rotanın kendi tenant-scope guard'larında
+  // zaten kanıtlı; ikinci bir kopya yazılmadı.
 
   /**
-   * T-052: `calculateAllSpendsForFU` (used by
-   * `ApprovalWorkflowService#submitForApproval` -> `calculateSpendBreakdown`)
-   * must read `plan_fus.tactics` — the ONLY UI-reachable way to set mechanic
-   * values (`PATCH .../fus/:fuId/tactics` -> `PlanService#updateFuTactic`) —
-   * not just `plan_mechanic_values.enteredValue`. Before the fix, a FU whose
-   * ONLY mechanic input was `tactics` computed zero spend through this path.
-   */
-  describe('calculateAllSpendsForFU – reads plan_fus.tactics (T-052)', () => {
-    const buildOnInvoiceMechanic = (): Partial<Mechanic> => ({
-      id: 'mech-tactic-1',
-      code: 'MEC-DISCOUNT',
-      category: MechanicCategory.ON_INVOICE_DISCOUNT,
-      mechanicType: MechanicType.PERCENT,
-      spendingType: SpendingType.ON_INVOICE,
-      isActive: true,
-    });
-
-    const buildMockPlanFu = (
-      overrides: Partial<PlanFu> = {},
-    ): Partial<PlanFu> => ({
-      id: mockFuId,
-      tenantId: mockTenantId,
-      planId: mockPlanId,
-      plan: {
-        cplId: 'cpl-1',
-        channel: { code: 'NKA' },
-        category: { code: 'Dairy' },
-      } as any,
-      planSkus: [
-        {
-          skuId: mockSkuId,
-          baseVolume: 800,
-          plannedVolume: 1000,
-          sku: { unitPrice: 10, cogs: 5 } as any,
-        } as any,
-      ],
-      planMechanicValues: [],
-      tactics: {},
-      ...overrides,
-    });
-
-    beforeEach(() => {
-      ltaAgreementService.getLTAForPlanContext.mockResolvedValue(null);
-      mechanicRepo.find.mockResolvedValue([
-        buildOnInvoiceMechanic(),
-      ] as Mechanic[]);
-    });
-
-    it('should compute non-zero spend for a FU whose ONLY mechanic input is plan_fus.tactics (no plan_mechanic_values rows)', async () => {
-      planFuRepo.findOne.mockResolvedValue(
-        buildMockPlanFu({ tactics: { 'MEC-DISCOUNT': 10 } }) as PlanFu,
-      );
-
-      const result = await service.calculateAllSpendsForFU(
-        mockTenantId,
-        mockFuId,
-      );
-
-      // (PLANNED_GSV=10000) * 10% = 1000, no LTA (null context) — must be
-      // non-zero to prove `tactics` was actually read, not just present.
-      expect(result.aggregatedPlanned.totalOnInvoice).toBeGreaterThan(0);
-      expect(result.aggregatedPlanned.totalSpend).toBeGreaterThan(0);
-    });
-
-    it('should compute zero spend when plan_fus.tactics is empty and plan_mechanic_values is empty (both sources genuinely absent)', async () => {
-      planFuRepo.findOne.mockResolvedValue(buildMockPlanFu() as PlanFu);
-
-      const result = await service.calculateAllSpendsForFU(
-        mockTenantId,
-        mockFuId,
-      );
-
-      expect(result.aggregatedPlanned.totalSpend).toBe(0);
-    });
-
-    it('should still read plan_mechanic_values.enteredValue when tactics is empty (no regression on the pre-existing source)', async () => {
-      planFuRepo.findOne.mockResolvedValue(
-        buildMockPlanFu({
-          tactics: {},
-          planMechanicValues: [
-            {
-              enteredRatePct: 10,
-              mechanic: buildOnInvoiceMechanic(),
-            } as any,
-          ],
-        }) as PlanFu,
-      );
-
-      const result = await service.calculateAllSpendsForFU(
-        mockTenantId,
-        mockFuId,
-      );
-
-      expect(result.aggregatedPlanned.totalOnInvoice).toBeGreaterThan(0);
-    });
-  });
-
-  /**
-   * T-052: `buildMechanicValues` is the single shared derivation point both
-   * canonical spend-derivation paths (`calculateAllSpendsForFU` here, and
-   * `PlanService#recalculatePlanWithKpiEngineLocked`) call — asserted
-   * directly so the merge/precedence rule is pinned regardless of which
-   * caller exercises it.
+   * T-052: `buildMechanicValues` is the single shared derivation point the
+   * one live per-FU spend path (`PlanService#recalculatePlanWithKpiEngineLocked`)
+   * calls — asserted directly so the merge/precedence rule is pinned
+   * regardless of caller. (`T-350`/`Z79 §7`: the other former caller,
+   * `calculateAllSpendsForFU`, was deleted — zero production callers.)
    */
   describe('buildMechanicValues (T-052 shared derivation point)', () => {
     // F2/C2a: the derivation point now resolves scale from the mechanic row,

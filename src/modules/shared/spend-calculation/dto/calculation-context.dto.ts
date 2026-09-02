@@ -118,9 +118,10 @@ export class CalculationContext {
    * context (e.g. a standalone `calculateMechanicSpend`/
    * `calculateCompleteSKUFinancialMetrics` call outside a FU loop) — in
    * that case LUMPSUM_SPEND mechanics degrade to 0 (documented, not a
-   * silent production behaviour: both canonical entry points,
-   * `calculateAllSpendsForFU` and `PlanService#recalculatePlanWithKpiEngineLocked`,
-   * always populate this field).
+   * silent production behaviour: the one live per-FU entry point,
+   * `PlanService#recalculatePlanWithKpiEngineLocked`, always populates this
+   * field — its former sibling `calculateAllSpendsForFU` was deleted,
+   * `T-350`/`Z79 §7`, zero production callers).
    */
   lumpsumSharesBySku?: Record<string, Record<string, number>>;
 }
