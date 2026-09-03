@@ -29,7 +29,6 @@ interface MockRepository {
   insertRowsChunked: jest.Mock;
   insertBatchRowsChunked: jest.Mock;
   findBatchById: jest.Mock;
-  findRowsByBatchId: jest.Mock;
   countByAcceptance: jest.Mock;
 }
 
@@ -86,7 +85,6 @@ describe('BaselineVolumeService.ingest', () => {
       insertRowsChunked: jest.fn().mockResolvedValue(undefined),
       insertBatchRowsChunked: jest.fn().mockResolvedValue(undefined),
       findBatchById: jest.fn(),
-      findRowsByBatchId: jest.fn(),
       countByAcceptance: jest.fn(),
     };
 
@@ -314,7 +312,6 @@ describe('BaselineVolumeService.ingest — import_batch_rows satır yazarı', ()
       insertRowsChunked: jest.fn().mockResolvedValue(undefined),
       insertBatchRowsChunked: jest.fn().mockResolvedValue(undefined),
       findBatchById: jest.fn(),
-      findRowsByBatchId: jest.fn(),
       countByAcceptance: jest.fn(),
     };
 

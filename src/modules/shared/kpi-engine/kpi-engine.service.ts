@@ -8,6 +8,8 @@ import {
 } from '../../../database/entities/kpi.entity';
 import { FormulaParserService, ParsedFormula } from './formula-parser.service';
 import {
+  attributeBaselineMissing,
+  RAG_BASELINE_INPUT_KPI_CODE,
   RAG_CARRIER_KPI_CODE,
   RAG_EXCLUSION_SCOPE_KPI_CODE,
   RAG_NOT_APPLICABLE,
@@ -434,6 +436,56 @@ export class KpiEngineService {
    * yoktur — ve o durumda **dışlama sebebi de yazılmaz**: kısmi veriyle
    * *"değerlendirme dışı"* demek, *"değerlendirilemedi"*yi meşru bir
    * yoklukmuş gibi göstermek olurdu.
+   *
+   * ⚠️ ~~Kısmi kapsamada (`0 < c < 1`) hiçbir koşulda sebep yazılmaz~~ —
+   * `BL-4b` turu (`code-reviewer` ölçümü, 2026-09-03): bu kural **KISMİ**
+   * kapsama içindir, **TAM YOKLUK** (`c = 0`) için değildir. `Z90 §2`'nin
+   * koruduğu vaka tam da tam yokluk — "baseline hiç girilmemiş bir firma"
+   * — ve eski kapsama kapısı (aşağıdaki `for` döngüsü) `c = 0`'ı `0 < c < 1`
+   * ile AYNI dala düşürüyordu, yani FU/plan seviyesinde `BASELINE_MISSING`
+   * hiçbir koşulda üretilemiyordu (SKU seviyesinde `coverageRatio` tanımsız
+   * olduğu için kapı hiç ateşlemiyor, FU/plan'da ise kapı SKU-altı
+   * `BASE_VOL` kapsaması `1`'den küçük olan HER durumda — `c = 0` dahil —
+   * erken dönüyordu).
+   *
+   * ⛔⛔ **İKİNCİ TUR (`Z94 §1`, Team Lead ölçümü 2026-09-03) — SIRA
+   * DEĞİŞTİ, KAPSAM GENİŞLEMEDİ.** İlk sürüm `c = 0` dalını doğrudan
+   * kapsama kapısından önce koymuştu, ama `promo`'nun (`INCR_PROMO_SPEND`)
+   * DEĞERİNE hiç bakmıyordu — yalnız VARLIĞına (`!to || !gp || !promo`).
+   * Sonuç, `rag-quadrant.ts#attributeBaselineMissing`'in kendi JSDoc'unun
+   * pinlediği önceliğin (`LTA_ONLY` kapsam yargısı VERİ/BASELINE
+   * yargısını YUTAR — *"değerlendirilmeyecek bir planın referansının
+   * eksikliği kullanıcıya bir eylem önermez"*) **SEVİYELER ARASINDA
+   * ÇELİŞMESİYDİ**:
+   * ```
+   * SKU        coverageRatio undefined → resolveRagQuadrant ÇAĞRILIR
+   *                                     → incrPromoSpend===0 ÖNCE bakılır → LTA_ONLY kazanır
+   * FU/PLAN    (eski) c=0 dalı         → resolveRagQuadrant HİÇ ÇAĞRILMAZ
+   *                                     → promo değeri hiç okunmadan BASELINE_MISSING
+   * ```
+   * Baseline'sız bir LTA-only planda SKU hücresi "değerlendirme dışı"
+   * derken PLAN satırı "baseline gir" diyordu — aynı olguya iki farklı
+   * cevap. Düzeltme: `c = 0` dalından ÖNCE, promo'nun LTA yargısını
+   * (`resolveRagQuadrant`'ın TEK NOKTASINDAN, ikinci bir `incrPromoSpend
+   * === 0` literali YAZILMADAN) sorar — SKU seviyesindeki sırayı FU/PLAN'a
+   * TAŞIR, tekrarlamaz.
+   *
+   * ⚠️ **`promo.value === 0` yargısı yalnız `promo`'nun KENDİ kapsaması
+   * TAMSA güvenilirdir** (`promoCoverageFull`, aşağıda) — SKU seviyesinde
+   * `coverageRatio` her zaman `undefined`'dır (rollup yok, tanım gereği tam),
+   * ama FU/plan'da `INCR_PROMO_SPEND` de `BASE_VOL` gibi SKU'lardan
+   * TOPLANIR: bazı SKU'larda `NULL` iken toplam tesadüfen `0`'a düşebilir
+   * (ör. bir SKU `500`, biri hesaplanamadığı için `null` ⇒ filtrelenip
+   * kalan tek SKU `500` olsaydı `0` değil, ama iki SKU `500`/`-500` gibi
+   * KISMEN dolu bir alt kümede toplam `0`'a denk gelebilir) — bu
+   * *"promosyon YOK"* değil *"bazı SKU'lar ÖLÇÜLEMEDİ"* demektir (`§2.5`).
+   * Kapsama tam değilse bu dal atlanır ve aşağıdaki kapsama kapısı (mevcut
+   * `for` döngüsü) `promo`'yu bir eksen olarak zaten yakalayıp
+   * `RAG_NOT_APPLICABLE` (sebepsiz) döner — `Z94 §1`'in *"`0 < c < 1` hâlâ
+   * sebepsiz kalmalı"* şartı böyle korunur.
+   *
+   * SIRA BUGÜN: **`[promo tam-kapsamalı LTA?] → [BASE_VOL c=0?] →
+   * [kapsama kapısı] → [kadran]`.**
    */
   private resolveCarrierRag(
     results: Record<string, CalculationResult>,
@@ -452,13 +504,67 @@ export class KpiEngineService {
       return RAG_NOT_APPLICABLE;
     }
 
+    // `Z94 §1` — KAPSAM (LTA) yargısı, BASELINE yargısından ÖNCE, HER
+    // SEVİYEDE. `promo`'nun kendi kapsaması `undefined` (SKU — rollup yok,
+    // tanım gereği tam) ya da `1` (FU/plan — tüm çocuklar çözüldü) iken
+    // `value === 0` güvenilir bir "bu planda promosyon yok" sinyalidir.
+    // ⛔ İkinci bir `incrPromoSpend === 0` literali YAZILMAZ —
+    // `resolveRagQuadrant` (`rag-quadrant.ts`) bu kararın TEK NOKTASI;
+    // `to`/`gp` o an `null` olsa bile fonksiyon LTA kontrolünü ÖNCE yapar
+    // (kendi kaynağında dokümante, `S1`), yani burada onları beklemeye
+    // gerek yok.
+    const promoCoverageFull =
+      promo.coverageRatio === undefined || promo.coverageRatio === 1;
+    if (promoCoverageFull && promo.value === 0) {
+      return resolveRagQuadrant(to.value, gp.value, promo.value);
+    }
+
+    // `BL-4b` (`Z90 §2` · `Z91 §3`, sınırı netleştiren `code-reviewer`
+    // hükmü 2026-09-03) — `BASE_VOL`'un kendi SKU→FU/plan kapsaması
+    // (`baseVol.coverageRatio`, `calculationOrder: 1` olduğu için burada
+    // GARANTİ doludur — `to`/`gp`/`promo` için yukarıdaki sıralama garantisi
+    // aynen geçerli) **TAM SIFIRSA** (`c = 0`) ve toplanan değer `null`'sa,
+    // bu FU/plan altındaki HİÇBİR SKU'nun baseline'ı girilmemiştir — kısmi
+    // bir kapsama değil, tam bir yokluktur. Bu satıra ulaşıldığında yukarıki
+    // LTA dalı ELENMİŞTİR (promo tam kapsamalı değil YA DA `value !== 0`) —
+    // yani bu dal artık LTA_ONLY ile ÇAKIŞMAZ (`Z94 §1`).
+    //
+    // ⛔ İki koşul BİRLİKTE aranır, `c = 0` TEK BAŞINA YETMEZ: `c = 0`
+    // `iTO`/`iGP` gibi BAŞKA bir eksenin kapsamasında da (`PİN D`: BASE_VOL
+    // dolu ama başka bir bağımlılık — ör. COGS — hiçbir SKU'da yok)
+    // üretilebilir, ve o durumda `BASELINE_MISSING` atfetmek YANLIŞ ATIFTIR.
+    // Ayırt edici `baseVol.value === null` — `aggregate([])` (bu dosyanın
+    // `aggregate()` metodu) tam olarak "toplanacak SKU kalmadı" durumunda
+    // `null` döner, yani bu değer `baseVol.coverageRatio === 0` ile birlikte
+    // okununca "SIFIR SKU'da BASE_VOL vardı" anlamına gelir — kısmi bir
+    // toplamın (ör. `50`, `PİN B`) yanlışlıkla `null` sanılması söz konusu
+    // değildir. Truthiness KULLANILMAZ (`0` meşru bir taban hacimdir, SKU
+    // seviyesindeki `=== null` kuralının aynısı — `Z77`'nin rollup'taki
+    // yansıması).
+    const baseVol = results[RAG_BASELINE_INPUT_KPI_CODE];
+    if (baseVol && baseVol.coverageRatio === 0 && baseVol.value === null) {
+      return attributeBaselineMissing(RAG_NOT_APPLICABLE, baseVol.value);
+    }
+
     for (const axis of [to, gp, promo]) {
       if (axis.coverageRatio !== undefined && axis.coverageRatio !== 1) {
         return RAG_NOT_APPLICABLE;
       }
     }
 
-    return resolveRagQuadrant(to.value, gp.value, promo.value);
+    const outcome = resolveRagQuadrant(to.value, gp.value, promo.value);
+
+    // `BL-4b` (`Z90 §2` · `Z91 §3`) — kadranın VERİ dalı (`ragStatus: null,
+    // ragExclusionReason: null`) *"eksik veri, sebep belirsiz"* ile
+    // *"baseline hiç girilmemiş"*i AYIRMAZ; kadran üç eksen sayısını alır,
+    // "baseline var mıydı" onların içinde taşınmaz (brief `§2` DUR şartı —
+    // `attributeBaselineMissing`'in JSDoc'u neden 4. parametre yerine
+    // post-processing seçildiğini açıklıyor). Bu satıra ulaşıldığında hem
+    // yukarıdaki LTA dalı hem `baseVol`'un `c = 0` özel durumu elenmiştir —
+    // kalan yol `attributeBaselineMissing`'in kendi `baseVolValue === null`
+    // kontrolü ile SKU seviyesindeki (tam kapsamalı, `coverageRatio ===
+    // undefined`) vakayı kapsar.
+    return attributeBaselineMissing(outcome, baseVol?.value);
   }
 
   /**

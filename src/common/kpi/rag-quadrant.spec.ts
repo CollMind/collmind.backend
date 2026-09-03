@@ -1,5 +1,6 @@
 import {
   RAG_CARRIER_KPI_CODE,
+  attributeBaselineMissing,
   RAG_EXCLUSION_SCOPE_KPI_CODE,
   RagExclusionReason,
   parseRagExclusionReason,
@@ -138,5 +139,44 @@ describe('RAG kadranı — sınır ve yokluk vakaları', () => {
       // KPI'nın sonucundan yazılır (`plan.service.ts`).
       expect(RAG_CARRIER_KPI_CODE).toBe('GP_ROI_PCT');
     });
+  });
+});
+
+/**
+ * `code-reviewer` bulgusu (2026-09-03) — `attributeBaselineMissing`'in
+ * `LTA_ONLY` karşısındaki ÖNCELİĞİ bir **gizli tie-break**ti: kodda vardı,
+ * hiçbir yerde yazılı değildi, hiçbir test onu pinlemiyordu. `§2.5` bunu
+ * kelime kelime sayıyor (*"iki seçenek arasında gizli tie-break"*).
+ */
+describe('attributeBaselineMissing — sebep ÖNCELİĞİ (gizli tie-break pinlendi)', () => {
+  it('LTA_ONLY, BASELINE_MISSING tarafından EZİLMEZ (kapsam yargısı veri yargısını yutar)', () => {
+    const ltaOutcome = resolveRagQuadrant(null, null, 0);
+    expect(ltaOutcome.ragExclusionReason).toBe(RagExclusionReason.LTA_ONLY);
+
+    // baseline de YOK — yine de LTA_ONLY kalır.
+    expect(attributeBaselineMissing(ltaOutcome, null).ragExclusionReason).toBe(
+      RagExclusionReason.LTA_ONLY,
+    );
+  });
+
+  it('LTA_ONLY yokken VERİ dalı BASELINE_MISSING alır', () => {
+    const dataOutcome = resolveRagQuadrant(null, null, 500);
+    expect(dataOutcome.ragExclusionReason).toBeNull();
+    expect(attributeBaselineMissing(dataOutcome, null).ragExclusionReason).toBe(
+      RagExclusionReason.BASELINE_MISSING,
+    );
+  });
+
+  it('RENK üretilmişse üstüne YAZILMAZ (baseline null olsa bile)', () => {
+    const green = resolveRagQuadrant(100, 50, 500);
+    expect(green.ragStatus).toBe('GREEN');
+    expect(attributeBaselineMissing(green, null)).toEqual(green);
+  });
+
+  it('baseVolValue UNDEFINED (KPI katalogda yok) ⇒ ATIF YAPILMAZ — uydurma sebep yok', () => {
+    const dataOutcome = resolveRagQuadrant(null, null, 500);
+    expect(
+      attributeBaselineMissing(dataOutcome, undefined).ragExclusionReason,
+    ).toBeNull();
   });
 });

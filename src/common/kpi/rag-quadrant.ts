@@ -63,6 +63,20 @@ export const RAG_QUADRANT_PROFIT_AXIS_KPI_CODE = 'INCR_GP' as const;
 export const RAG_EXCLUSION_SCOPE_KPI_CODE = ROI_DENOMINATOR_KPI_CODE;
 
 /**
+ * `BL-4b` (`Z90 §2` · `Z91 §3`) — `BASELINE_MISSING`'İ ATAYAN sinyalin
+ * okunduğu KPI kodu: **taban hacim, kullanıcı girdisi** (`kpi.seed.ts`
+ * `calculationOrder: 1`, `formulaText: 'BASE_VOL'`).
+ *
+ * ⛔ Elle tekrarlanmaz — `BASE_VOL` `main.kpis` sözlüğünün kodudur, burada
+ * yalnız ADLANDIRILIR (`RAG_EXCLUSION_SCOPE_KPI_CODE` emsali).
+ *
+ * ⚠️ Bu kadranın kendi ÜÇ sayısal ekseninden (`incrTo`/`incrGp`/
+ * `incrPromoSpend`) BİRİ DEĞİLDİR — `attributeBaselineMissing`'in okuduğu
+ * AYRI bir sinyaldir (aşağıya bkz.).
+ */
+export const RAG_BASELINE_INPUT_KPI_CODE = 'BASE_VOL' as const;
+
+/**
  * Kadran rengini **taşıyan** KPI kodu.
  *
  * Bu bir hesap değil, bir **yerleşim** kararıdır: `plan_skus.rag_status`,
@@ -85,21 +99,28 @@ export enum RagExclusionReason {
   /** Planda incremental promo harcaması yok ⇒ promosyon değerlendirmesi değil. */
   LTA_ONLY = 'LTA_ONLY',
   /**
-   * `BL-4` (`docs/process/BL4_YUZEY_BRIEF.md §1b/§1c`) — SKU × CPL × period
-   * grain'i için kabul edilmiş bir `baseline_volumes` satırı YOK (`NULL`,
-   * bir grid girişi de yapılmamış). İncremental eksenler (`iVol`/`iTO`/`iGP`/
-   * uplift/ROI) bu grain için **hesaplanamaz** — bu ayrı bir sınıftır,
-   * `LTA_ONLY`'nin yerine geçmez (o "promosyon yok", bu "referans yok").
+   * `BL-4` (`docs/process/BL4_YUZEY_BRIEF.md §1b/§1c`) · `BL-4b` (`Z90 §2` ·
+   * `Z91 §3`) — SKU'nun `BASE_VOL` (taban hacim) girdisi `NULL`: plan
+   * seviyesinde `plan_skus.base_volume` girilmemiş. İncremental eksenler
+   * (`iVol`/`iTO`/`iGP`/uplift/ROI) bu SKU için **hesaplanamaz** — bu ayrı
+   * bir sınıftır, `LTA_ONLY`'nin yerine geçmez (o "promosyon yok", bu
+   * "referans yok").
    *
-   * ⛔ **`0` bu üyeyi TETİKLEMEZ** — `baseline_volumes.base_volume = 0` MEŞRU
-   * bir değerdir (yeni ürün) ve uplift = planlanan hacmin tamamı olarak
-   * HESAPLANIR. Yalnız `NULL` (satır hiç yok) `BASELINE_MISSING` üretir
-   * (`§1c`, `Z77`'nin tersi — dal seçimi `=== null` ile yapılır, truthiness
-   * ile DEĞİL, bkz. `sku-spend-inputs.ts` emsali).
+   * ⛔ **`0` bu üyeyi TETİKLEMEZ** — `base_volume = 0` MEŞRU bir değerdir
+   * (yeni ürün) ve uplift = planlanan hacmin tamamı olarak HESAPLANIR.
+   * Yalnız `NULL` `BASELINE_MISSING` üretir (`§1c`, `Z77`'nin tersi — dal
+   * seçimi `=== null` ile yapılır, truthiness ile DEĞİL, bkz.
+   * `sku-spend-inputs.ts` emsali). Üretici: `attributeBaselineMissing`
+   * (bu dosya) + `kpi-engine.service.ts#resolveCarrierRag`.
    *
-   * ⚠️ Bu üye BUGÜN yalnız SÖZLÜĞE eklendi — onu ÜRETEN resolver (uplift/ROI
-   * hesabının baseline'a bakan tarafı) `BL-4`'ün kapsamı DIŞINDA (bu adım
-   * yalnız kapı rotası + teşhis ekranı). Kova/bağlama görevi ileri bir tur.
+   * ⚠️ **SINIR:** bu üye `plan_skus.base_volume`'un KENDİSİNİN `null`
+   * olmasını okur — `BASE_VOL`'un ayrıca SKU×CPL×period grain'i için
+   * `baseline_volumes` (master-data import) tablosundan OTOMATİK
+   * doldurulup doldurulmadığı (`BL-4`'ün kapsadığı import/coverage tarafı)
+   * BAŞKA bir sorudur ve BUGÜN bağlı DEĞİLDİR (`Z90 §1`: "servis
+   * controller'a bağlı değil"). Yani bir plan_sku'nun baseline'ı elle de
+   * girilmemişse (ya da hiçbir otomatik doldurma yolu yoksa) bu üye üretilir
+   * — kaynağın import mı, elle giriş mi olacağı ayrı bir tur.
    */
   BASELINE_MISSING = 'BASELINE_MISSING',
 }
@@ -168,6 +189,67 @@ export function resolveRagQuadrant(
   if (incrTo <= 0) return { ragStatus: 'RED', ragExclusionReason: null };
   if (incrGp <= 0) return { ragStatus: 'AMBER', ragExclusionReason: null };
   return { ragStatus: 'GREEN', ragExclusionReason: null };
+}
+
+/**
+ * `BL-4b` (`Z90 §2` · `Z91 §3`) — `resolveRagQuadrant`'ın **VERİ** dalı
+ * (`ragStatus: null, ragExclusionReason: null`) iki AYRI olguyu tek `null`'a
+ * ezer: *"eksik veri, sebep belirsiz"* ile *"baseline hiç girilmemiş"*.
+ * `resolveRagQuadrant` bunu kendi başına AYIRAMAZ — üç sayısal eksenden
+ * (`incrTo`/`incrGp`/`incrPromoSpend`) hiçbiri *"baseline var mıydı"*
+ * bilgisini TAŞIMIYOR (brief `§2` DUR şartı).
+ *
+ * ⛔ **İmza DEĞİŞMEDİ — 4. parametre EKLENMEDİ.** Tek çağıran
+ * (`kpi-engine.service.ts` `resolveCarrierRag`, ölçüldü: `resolveRagQuadrant`
+ * repo genelinde TEK yerden çağrılıyor) zaten `results['BASE_VOL']`'u — KPI
+ * motorunun `BASE_VOL`'u `calculationOrder: 1`'de, taşıyıcıdan (`order: 48`)
+ * ÖNCE hesapladığının garantisiyle — elinde tutuyor. Sinyali kadranın
+ * SAYISAL sözleşmesine sokmak (4. parametre) `incrTo`/`incrGp`/
+ * `incrPromoSpend`'in aksine bu bir EKSEN DEĞİL, bir NEDEN-ATIFI'dır; kadranı
+ * genel-amaçlı ve payda-agnostik tutmak için post-processing adımı olarak
+ * AYRI bırakıldı — çağıranda zaten mevcut bilgiyi taşımak için imza kırmaya
+ * gerek yok.
+ *
+ * `Z90 §2` hükmü VERİ dalı içinde koşulsuzdur: baseline `NULL` ⇒ sebep
+ * `BASELINE_MISSING`, başka bir alanın (ör. COGS) da eksik olup olmadığına
+ * BAKILMAKSIZIN — yani bu fonksiyon yalnız `baseVolValue === null`'a bakar,
+ * VERİ dalının hangi bağımlılıktan tetiklendiğini ayrıca izlemez.
+ *
+ * ⛔ **AMA `LTA_ONLY` ÖNCELİKLİDİR — VE BU BİR SIRALAMA KARARIDIR, ÖLÇÜLDÜ:**
+ * ```
+ * baseVol === null  +  incrPromoSpend === 0   ⇒  LTA_ONLY   (BASELINE_MISSING DEĞİL)
+ * ```
+ * `resolveRagQuadrant` KAPSAM yargısını (`incrPromoSpend === 0`) VERİ
+ * yargısından ÖNCE verir; bu fonksiyon dolu bir sebebin üstüne yazmaz. Yani
+ * *"bu bir promosyon değerlendirmesi değil"* yargısı, *"referansı yok"*
+ * yargısını YUTAR — çünkü değerlendirilmeyecek bir planın referansının
+ * eksikliği kullanıcıya bir eylem önermez.
+ *
+ * ⚠️ `§2.5` *gizli tie-break* yasağı gereği bu öncelik **yazılıdır ve
+ * testle pinlenmiştir** — bir okuyucunun sırayı koddan çıkarması
+ * beklenmez. (`code-reviewer` bulgusu, 2026-09-03: ilk yazımda
+ * *"koşulsuzdur"* deniyordu ve okuyucuyu ters yöne çekiyordu.)
+ *
+ * `0` bu fonksiyonu TETİKLEMEZ (`Z77`'nin tersi, `=== null` ile dal seçimi):
+ * `baseVolValue === 0` ⇒ `resolveRagQuadrant` zaten VERİ dalına hiç
+ * düşmemiştir (`incrTo`/`incrGp` dolu), bu fonksiyon o dalı GÖRMEZ bile.
+ */
+export function attributeBaselineMissing(
+  outcome: RagQuadrantOutcome,
+  baseVolValue: number | null | undefined,
+): RagQuadrantOutcome {
+  if (outcome.ragStatus !== null || outcome.ragExclusionReason !== null) {
+    // Renk üretilmiş (kadran) ya da başka bir sebep zaten atanmış
+    // (`LTA_ONLY`) — bu ikisinin ÜSTÜNE yazılmaz.
+    return outcome;
+  }
+  if (baseVolValue === null) {
+    return {
+      ragStatus: null,
+      ragExclusionReason: RagExclusionReason.BASELINE_MISSING,
+    };
+  }
+  return outcome;
 }
 
 /**

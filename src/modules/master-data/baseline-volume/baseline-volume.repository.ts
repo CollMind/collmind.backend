@@ -138,16 +138,6 @@ export class BaselineVolumeRepository {
     });
   }
 
-  async findRowsByBatchId(
-    tenantId: string,
-    batchId: string,
-  ): Promise<BaselineVolume[]> {
-    return this.rowRepo.find({
-      where: { tenantId, importBatchId: batchId, deletedAt: IsNull() },
-      order: { period: 'ASC' },
-    });
-  }
-
   async countByAcceptance(
     tenantId: string,
     batchId: string,

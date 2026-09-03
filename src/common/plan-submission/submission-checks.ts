@@ -232,11 +232,54 @@ export function collectPlanSpendRowWarnings(
  *   **transformer YOK** ⇒ `pg`'den DİZGE gelir. Normalizasyon
  *   `evaluateTargetRoi` içinde, burada DEĞİL (`F8` ailesi).
  */
+/**
+ * `BASELINE_MISSING` uyarısının `N` sayısı — **KAÇ `plan_sku`'nun
+ * `base_volume`'u `NULL`** (`BL-4b` turu, ürün sahibi hükmü 2026-09-03:
+ * *"uyarı SKU-LİSTESİNDEN beslenir"*).
+ *
+ * ⛔ **`N` `plans`'a YAZILMAZ, HER ÇAĞRIDA TÜRETİLİR** (ürün sahibi `(a)`
+ * şıkkını reddetti: bir toplayıcı kolon `INV-B-009` kopya-kolon sınıfı
+ * olurdu). Kaynak `plan.planFus[].planSkus[].baseVolume` — `plan.service.ts`
+ * bu ilişkiyi `findById` ile **zaten yüklüyor** (`plan.repository.ts`), yani
+ * bu fonksiyon ek bir sorgu AÇMAZ; parametre olarak akan veriden sayar.
+ *
+ * ⚠️ **`sku-spend-inputs.ts#SpendInputResolution.baseEvaluable` KULLANILMADI
+ * — bilerek.** O alan `baseVolume !== null && listPrice !== null` — İKİ
+ * ayrı eksikliği (`BASE_VOL` VE `BPTT`) tek booleana ezer. `N` yalnız
+ * `BASE_VOL`'u sayar; `baseEvaluable`'ı kullanmak `BPTT` eksik ama
+ * `BASE_VOL` dolu SKU'ları da `N`'e katardı — `attributeBaselineMissing`'in
+ * kendisinin ayırdığı sınırın (`BASE_VOL`'DAN BAĞIMSIZ bir eksiklik
+ * `BASELINE_MISSING` üretmez, `kpi-engine.service.ts` PİN D) metin
+ * tarafındaki bir ihlali olurdu.
+ *
+ * `Q20`'nin `UNTOUCHED` satırları da sayılır — `baseVolume === null`
+ * `UNTOUCHED`'ta da doğrudur (satıra hiç dokunulmamış) ve kullanıcının
+ * göreceği gerçek durum tam olarak budur: bu SKU için baseline yok.
+ */
+function countBaselineMissingSkus(plan: {
+  planFus?: ReadonlyArray<{
+    planSkus?: ReadonlyArray<{ baseVolume?: number | null }> | null;
+  } | null> | null;
+}): number {
+  let count = 0;
+  for (const planFu of plan.planFus ?? []) {
+    for (const planSku of planFu?.planSkus ?? []) {
+      if (planSku.baseVolume === null || planSku.baseVolume === undefined) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
 export function collectPlanSubmissionWarnings(
   plan: {
     ragStatus?: string | null;
     ragExclusionReason?: string | null;
     overallRoi?: number | string | null;
+    planFus?: ReadonlyArray<{
+      planSkus?: ReadonlyArray<{ baseVolume?: number | null }> | null;
+    } | null> | null;
   },
   targetRoiThreshold: number | string | null | undefined,
 ): string[] {
@@ -262,6 +305,29 @@ export function collectPlanSubmissionWarnings(
         'Değerlendirme dışı — LTA: bu planda incremental promosyon ' +
           'harcaması yok, RAG bir promosyon değerlendirmesidir ve ' +
           'LTA-only planlar için tanımlı değildir.',
+      );
+    } else if (exclusion === RagExclusionReason.BASELINE_MISSING) {
+      // `BL-4b` (`Z90 §2` · `Z91 §3`) — TANIMLI-YOKLUK, `LTA_ONLY` ile AYNI
+      // ailenin ikinci üyesi: sebep GÖRÜNÜR, jenerik "kapsama tam değil"
+      // cümlesine düşmez (brief `§4`/PİN 4).
+      //
+      // ⛔ `N` (kaç SKU) burada FABRİKE EDİLMEZ. `plan.planFus` bu
+      // fonksiyona verilmemişse (ör. testler ya da eski bir çağıran yalnız
+      // `{ ragStatus, ragExclusionReason }` geçiyorsa) sayı **bilinmez** —
+      // ve bilinmeyen bir şeyi `0` yazmak `§2.5`'in yasakladığı sessiz
+      // sıfırın ta kendisi olurdu. `n > 0` iken sayı görünür; değilse cümle
+      // jenerik kalır (eski davranış, geriye dönük uyumlu).
+      const n = countBaselineMissingSkus(plan);
+      warnings.push(
+        n > 0
+          ? `RAG hesaplanamadı — baseline eksik: ${n} SKU için taban ` +
+              'hacim (baseline) girilmemiş. Incremental hacim/ciro/kâr/ROI ' +
+              'bu SKU(lar) için hesaplanamıyor; baseline girildiğinde plan ' +
+              'yeniden hesaplanacaktır.'
+          : 'RAG hesaplanamadı — baseline eksik: bir veya daha fazla SKU için ' +
+              'taban hacim (baseline) girilmemiş. Incremental hacim/ciro/kâr/ROI ' +
+              'bu SKU(lar) için hesaplanamıyor; baseline girildiğinde plan ' +
+              'yeniden hesaplanacaktır.',
       );
     } else {
       warnings.push(

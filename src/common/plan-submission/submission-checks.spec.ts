@@ -207,6 +207,71 @@ describe('submission-checks — submit ön-doğrulama + uyarı sözleşmesi (Z73
       );
       expect(warnings.some((w) => w.includes('hesaplanamadı'))).toBe(true);
     });
+
+    /**
+     * `BL-4b` ikinci tur — bu `describe` bloğu daha önce `BASELINE_MISSING`
+     * dalını HİÇ sınamıyordu (`code-reviewer` bulgusu, 2026-09-03): dal
+     * yazılmıştı ama testsizdi, yani üretim yolundan hiç geçmediği ölçülene
+     * kadar bilinmiyordu. Ürün sahibi hükmü: uyarı SKU-LİSTESİNDEN beslenir
+     * (`N` = `plan.planFus[].planSkus[].baseVolume === null` sayısı,
+     * `countBaselineMissingSkus` — bu dosyada export edilmiyor, davranışı
+     * yalnız `collectPlanSubmissionWarnings`'in ÇIKTISINDAN sınanır, `§2.7
+     * #8`: kontrolü kendi kopyasıyla sınama).
+     */
+    it('⭐ `BASELINE_MISSING` ⇒ "baseline eksik", `N` SKU sayısıyla (SKU listesinden)', () => {
+      const warnings = collectPlanSubmissionWarnings(
+        {
+          ragStatus: null,
+          ragExclusionReason: 'BASELINE_MISSING',
+          planFus: [
+            {
+              planSkus: [
+                { baseVolume: null },
+                { baseVolume: 50 },
+                { baseVolume: null },
+              ],
+            },
+            { planSkus: [{ baseVolume: null }] },
+          ],
+        },
+        null,
+      );
+      const w = warnings.find((x) => x.includes('baseline eksik'));
+      expect(w).toBeDefined();
+      expect(w).toContain('3 SKU'); // 2 (ilk FU) + 1 (ikinci FU) = 3, dolu SKU sayılmaz
+      expect(warnings.some((x) => x.includes('Değerlendirme dışı'))).toBe(
+        false,
+      );
+    });
+
+    it('`BASELINE_MISSING` ama `planFus` VERİLMEMİŞ (eski çağıran şekli) ⇒ jenerik cümle, UYDURMA SAYI YOK', () => {
+      // `§2.5`: `planFus` yoksa `N` BİLİNMEZ — `0` yazılmaz, sayı hiç
+      // basılmaz (jenerik "bir veya daha fazla SKU" cümlesi korunur).
+      const warnings = collectPlanSubmissionWarnings(
+        { ragStatus: null, ragExclusionReason: 'BASELINE_MISSING' },
+        null,
+      );
+      const w = warnings.find((x) => x.includes('baseline eksik'));
+      expect(w).toBeDefined();
+      expect(w).toContain('bir veya daha fazla SKU');
+      expect(w).not.toMatch(/\d+ SKU/);
+    });
+
+    it('`BASELINE_MISSING` — dolu SKU`lar `N`e KATILMAZ (yanlış-pozitif taraması)', () => {
+      const warnings = collectPlanSubmissionWarnings(
+        {
+          ragStatus: null,
+          ragExclusionReason: 'BASELINE_MISSING',
+          planFus: [
+            { planSkus: [{ baseVolume: 10 }, { baseVolume: 20 }] },
+            { planSkus: [{ baseVolume: null }] },
+          ],
+        },
+        null,
+      );
+      const w = warnings.find((x) => x.includes('baseline eksik'));
+      expect(w).toContain('1 SKU');
+    });
   });
 
   describe('resolvePlanSpendBreakdown — ADR 0005 K3 tek karar noktası', () => {
