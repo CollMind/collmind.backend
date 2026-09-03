@@ -5,6 +5,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -18,6 +19,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { BaselineVolumeService } from './baseline-volume.service';
+import { BaselineVolumeCoverageService } from './services/baseline-volume-coverage.service';
+import {
+  ImportBatchRowReason,
+  ImportBatchRowStatus,
+} from '../../../database/entities/baseline-volume-import-batch-row.entity';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { CapabilityGuard } from '../../../common/guards/capability.guard';
@@ -49,7 +55,10 @@ import { TenantId } from '../../../common/decorators/tenant.decorator';
 @Controller('master-data/baseline-volumes')
 @UseGuards(JwtAuthGuard, RolesGuard, CapabilityGuard)
 export class BaselineVolumeController {
-  constructor(private readonly service: BaselineVolumeService) {}
+  constructor(
+    private readonly service: BaselineVolumeService,
+    private readonly coverageService: BaselineVolumeCoverageService,
+  ) {}
 
   @Post('upload')
   @RequireCapability(CAPABILITIES.BASELINE_WRITE)
@@ -85,6 +94,23 @@ export class BaselineVolumeController {
     );
   }
 
+  /**
+   * `BL-4` (`docs/process/BL4_YUZEY_BRIEF.md §3`) — coverage KAPI DEĞİL,
+   * KARAR DESTEĞİDİR (`Z90`, ürün sahibi): `RED`/`UNMEASURABLE` hiçbir yolu
+   * BLOKLAMAZ, yalnız *"uplift/ROI %X'lik evren için anlamlı"* der. Üç
+   * değer (`GREEN`/`RED`/`UNMEASURABLE`) OLDUĞU GİBİ yüzeye çıkar —
+   * istemci `UNMEASURABLE`'ı `%0` ya da "yeşil" diye OKUYAMAZ.
+   */
+  @Get('coverage')
+  @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
+  @ApiOperation({
+    summary:
+      'Baseline kapsam ORANI (katalog × CPL × dönem) — KAPI DEĞİL, karar desteği (Z90)',
+  })
+  async getCoverage(@TenantId() tenantId: string) {
+    return this.coverageService.computeCoverageGate(tenantId);
+  }
+
   @Get('batches/:batchId')
   @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
   @ApiOperation({ summary: 'Batch detayı + kabul/red sayıları' })
@@ -95,13 +121,67 @@ export class BaselineVolumeController {
     return this.service.getBatch(tenantId, batchId);
   }
 
+  /**
+   * `BL-4 §4` — teşhis ekranı: `batch → satırlar → NEDEN`. Filtreler
+   * (`reason`/`status`/`rowNo`) OPSİYONEL, hepsi AND'lenir. Tanınmayan bir
+   * `reason`/`status` değeri SESSİZCE yok sayılmaz — `400` (§2.5, gizli
+   * tie-break/varsayılan yasağı).
+   */
   @Get('batches/:batchId/rows')
   @RequireCapability(CAPABILITIES.MASTER_DATA_READ)
-  @ApiOperation({ summary: 'Batch satırları (ACCEPTED + REJECTED)' })
+  @ApiOperation({
+    summary:
+      'Batch satırları (ACCEPTED + REJECTED + anahtarı çözülemeyenler) — düzeltme cümlesiyle',
+  })
   async getBatchRows(
     @Param('batchId', ParseUUIDPipe) batchId: string,
     @TenantId() tenantId: string,
+    @Query('reason') reasonParam?: string,
+    @Query('status') statusParam?: string,
+    @Query('rowNo') rowNoParam?: string,
   ) {
-    return this.service.getBatchRows(tenantId, batchId);
+    let reason: ImportBatchRowReason | undefined;
+    if (reasonParam !== undefined) {
+      // `in` PROTOTİP ZİNCİRİNİ tarar: 'toString'/'constructor'/'__proto__'
+      // doğrulamayı GEÇER ve `where`'e bir Function sızdırırdı (ölçüldü, Z92).
+      // Object.values ⇒ yalnız GERÇEK üyeler.
+      if (
+        !(Object.values(ImportBatchRowReason) as string[]).includes(reasonParam)
+      ) {
+        throw new BadRequestException(
+          `Tanınmayan reason: '${reasonParam}'. Geçerli değerler: ${Object.values(ImportBatchRowReason).join(', ')}.`,
+        );
+      }
+      reason = reasonParam as ImportBatchRowReason;
+    }
+
+    let status: ImportBatchRowStatus | undefined;
+    if (statusParam !== undefined) {
+      if (
+        !(Object.values(ImportBatchRowStatus) as string[]).includes(statusParam)
+      ) {
+        throw new BadRequestException(
+          `Tanınmayan status: '${statusParam}'. Geçerli değerler: ${Object.values(ImportBatchRowStatus).join(', ')}.`,
+        );
+      }
+      status = statusParam as ImportBatchRowStatus;
+    }
+
+    let rowNo: number | undefined;
+    if (rowNoParam !== undefined) {
+      const parsed = Number(rowNoParam);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new BadRequestException(
+          `Tanınmayan rowNo: '${rowNoParam}' — pozitif tamsayı olmalı.`,
+        );
+      }
+      rowNo = parsed;
+    }
+
+    return this.service.getBatchRows(tenantId, batchId, {
+      reason,
+      status,
+      rowNo,
+    });
   }
 }

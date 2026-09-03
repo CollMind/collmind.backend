@@ -84,6 +84,24 @@ export const RAG_CARRIER_KPI_CODE = 'GP_ROI_PCT' as const;
 export enum RagExclusionReason {
   /** Planda incremental promo harcaması yok ⇒ promosyon değerlendirmesi değil. */
   LTA_ONLY = 'LTA_ONLY',
+  /**
+   * `BL-4` (`docs/process/BL4_YUZEY_BRIEF.md §1b/§1c`) — SKU × CPL × period
+   * grain'i için kabul edilmiş bir `baseline_volumes` satırı YOK (`NULL`,
+   * bir grid girişi de yapılmamış). İncremental eksenler (`iVol`/`iTO`/`iGP`/
+   * uplift/ROI) bu grain için **hesaplanamaz** — bu ayrı bir sınıftır,
+   * `LTA_ONLY`'nin yerine geçmez (o "promosyon yok", bu "referans yok").
+   *
+   * ⛔ **`0` bu üyeyi TETİKLEMEZ** — `baseline_volumes.base_volume = 0` MEŞRU
+   * bir değerdir (yeni ürün) ve uplift = planlanan hacmin tamamı olarak
+   * HESAPLANIR. Yalnız `NULL` (satır hiç yok) `BASELINE_MISSING` üretir
+   * (`§1c`, `Z77`'nin tersi — dal seçimi `=== null` ile yapılır, truthiness
+   * ile DEĞİL, bkz. `sku-spend-inputs.ts` emsali).
+   *
+   * ⚠️ Bu üye BUGÜN yalnız SÖZLÜĞE eklendi — onu ÜRETEN resolver (uplift/ROI
+   * hesabının baseline'a bakan tarafı) `BL-4`'ün kapsamı DIŞINDA (bu adım
+   * yalnız kapı rotası + teşhis ekranı). Kova/bağlama görevi ileri bir tur.
+   */
+  BASELINE_MISSING = 'BASELINE_MISSING',
 }
 
 export type RagColor = 'RED' | 'AMBER' | 'GREEN';
@@ -163,9 +181,11 @@ export function resolveRagQuadrant(
 export function parseRagExclusionReason(
   raw: unknown,
 ): RagExclusionReason | null {
-  return raw === RagExclusionReason.LTA_ONLY
-    ? RagExclusionReason.LTA_ONLY
-    : null;
+  if (raw === RagExclusionReason.LTA_ONLY) return RagExclusionReason.LTA_ONLY;
+  if (raw === RagExclusionReason.BASELINE_MISSING) {
+    return RagExclusionReason.BASELINE_MISSING;
+  }
+  return null;
 }
 
 /** Renk de sebep de yok — bir KPI'nın RAG taşımadığı hâl. */

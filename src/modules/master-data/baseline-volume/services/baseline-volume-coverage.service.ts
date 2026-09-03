@@ -12,7 +12,12 @@ import {
  * `BL-3` `ADIM 2` (`docs/process/BL3_DOGRULAMA_BRIEF.md §B`) — `D4` `≥%95`
  * kapsam kapısı.
  *
- * ⛔ **BU SERVİS BİLEREK BİR CONTROLLER'A BAĞLANMADI.** `Z87`/brief §D-§E'nin
+ * ⭐ **`BL-4` (2026-09-03, `Z90`) — BAĞLANDI:** `GET /baseline-volumes/coverage`,
+ * kova **C**, okuma yetkisi `MASTER_DATA_READ`. Kapı **BLOKLAMAZ** — bir
+ * KARAR DESTEĞİdir (`Z90 §1`). Aşağıdaki paragraf o karardan ÖNCEKİ durumu
+ * anlatır ve `F12` gereği SİLİNMEDİ — ama ARTIK YÜRÜRLÜKTE DEĞİLDİR:
+ *
+ * ~~⛔ **BU SERVİS BİLEREK BİR CONTROLLER'A BAĞLANMADI.**~~ `Z87`/brief §D-§E'nin
  * "yeni rota eklersen scope-ratchet KOVA KARARI ister ⇒ DUR" (`T-266`) şartı
  * — bu servisin bir HTTP ucuna bağlanması `src/**\/*.controller.ts`'e yeni
  * bir rota ekler, ve `scope-ratchet.sh` guard'ı yeni rotayı A1/A2/B/C

@@ -14,10 +14,13 @@ import { ImportBatchRowReason } from '../../../../database/entities/baseline-vol
  * derleme zamanında bir üye eksik/fazla kalırsa `tsc` hata verir (sessiz
  * eksik-eşleme yasağı, `§2.5`'in bu yüzeydeki karşılığı).
  *
- * ⚠️ **KAPSAM:** bu dosya yalnız CÜMLE SÖZLÜĞÜdür — `baseline_volume_
- * import_batch_rows` tablosunu DOLDURAN yazma yolu (ingest() → batch_rows
- * INSERT) VE bu sözlüğü tüketen bir teşhis raporu ENDPOINT'i BU TURDA
- * YAZILMADI. Gerekçe + açık bulgu: `docs/process/BL3_DOGRULAMA_BRIEF.md`
+ * ⭐ **`BL-4` (2026-09-03) — İKİSİ DE YAZILDI:** yazma yolu `ingest()` →
+ * `batch_rows` INSERT (`BL-3 ADIM 4`), tüketen teşhis ucu
+ * `GET /baseline-volumes/batches/:batchId/rows`. Aşağıdaki eski kapsam
+ * notu `F12` gereği SİLİNMEDİ, ama ARTIK YÜRÜRLÜKTE DEĞİLDİR:
+ *
+ * ~~⚠️ **KAPSAM:** bu dosya yalnız CÜMLE SÖZLÜĞÜdür — yazma yolu VE bu
+ * sözlüğü tüketen bir teşhis raporu ENDPOINT'i BU TURDA YAZILMADI.~~ Gerekçe + açık bulgu: `docs/process/BL3_DOGRULAMA_BRIEF.md`
  * ekindeki task raporu (BL-3 ADIM 2-3 kapanışı).
  */
 export const BASELINE_VOLUME_REMEDIATION: Record<ImportBatchRowReason, string> =

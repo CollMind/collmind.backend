@@ -7,9 +7,36 @@ import {
   BaselineVolumeAcceptanceStatus,
 } from '../../../database/entities/baseline-volume.entity';
 import { BaselineVolumeImportBatch } from '../../../database/entities/baseline-volume-import-batch.entity';
-import { BaselineVolumeImportBatchRow } from '../../../database/entities/baseline-volume-import-batch-row.entity';
+import {
+  BaselineVolumeImportBatchRow,
+  ImportBatchRowReason,
+  ImportBatchRowStatus,
+} from '../../../database/entities/baseline-volume-import-batch-row.entity';
 
 const CHUNK_SIZE = 500;
+
+/** `BL-4 §5` — teşhis ekranının satır filtresi. Hepsi opsiyonel (AND'lenir). */
+export interface ImportBatchRowFilter {
+  reason?: ImportBatchRowReason;
+  status?: ImportBatchRowStatus;
+  rowNo?: number;
+}
+
+/**
+ * `BL-4 §5` — `sourceMatchRatio` (eşleşen satır / dosya satırı, BATCH
+ * BAŞLIĞI metriği, TEŞHİS). `coverageRatio`'nun (KAPI,
+ * `baseline-volume-coverage.service.ts`) KARIŞTIRILMAMASI GEREKEN kardeşi —
+ * `Z87 §3`/brief `§5a`.
+ *
+ * ⚠️ `totalCount === 0` (boş batch) ⇒ `sourceMatchRatio: null` — `0/0` BİR
+ * ORAN DEĞİLDİR (coverage kapısıyla AYNI disiplin, brief `§5a`).
+ */
+export interface SourceMatchRatioResult {
+  matchedCount: number;
+  totalCount: number;
+  /** `null` YALNIZ `totalCount === 0` iken (boş batch, oran tanımsız). */
+  sourceMatchRatio: number | null;
+}
 
 @Injectable()
 export class BaselineVolumeRepository {
@@ -18,6 +45,8 @@ export class BaselineVolumeRepository {
     private readonly batchRepo: Repository<BaselineVolumeImportBatch>,
     @InjectRepository(BaselineVolume)
     private readonly rowRepo: Repository<BaselineVolume>,
+    @InjectRepository(BaselineVolumeImportBatchRow)
+    private readonly batchRowRepo: Repository<BaselineVolumeImportBatchRow>,
   ) {}
 
   async createBatch(
@@ -135,5 +164,58 @@ export class BaselineVolumeRepository {
       result[row.acceptanceStatus]++;
     }
     return result;
+  }
+
+  /**
+   * `BL-4 §4` — teşhis ekranının KAYNAĞI: `baseline_volumes` DEĞİL,
+   * `baseline_volume_import_batch_rows` (`BL-3 ADIM 4`). `keyUnresolvedRows`
+   * (anahtarı hiç çözülemeyen satırlar) `baseline_volumes`'a HİÇ GİRMEZ ama
+   * bu tabloda YAŞAR — teşhis ekranı bu yüzden BU tabloyu okur, o tabloyu
+   * DEĞİL.
+   */
+  async findImportBatchRows(
+    tenantId: string,
+    batchId: string,
+    filter?: ImportBatchRowFilter,
+  ): Promise<BaselineVolumeImportBatchRow[]> {
+    const where: Record<string, unknown> = { tenantId, batchId };
+    if (filter?.reason !== undefined) where.reason = filter.reason;
+    if (filter?.status !== undefined) where.status = filter.status;
+    if (filter?.rowNo !== undefined) where.rowNo = filter.rowNo;
+    return this.batchRowRepo.find({ where, order: { rowNo: 'ASC' } });
+  }
+
+  /**
+   * `BL-4 §5` — `sourceMatchRatio`: `ACCEPTED` (batch_rows) satır sayısı /
+   * TOPLAM kaynak satır sayısı. ⛔ ÖZET KOLON YOK (`INV-B-009`) — SORGUYLA
+   * türer, `main.baseline_volume_import_batch_rows` + tenant scope'un
+   * DIŞINDA hiçbir kalıcı kopya yazılmaz.
+   */
+  async computeSourceMatchRatio(
+    tenantId: string,
+    batchId: string,
+  ): Promise<SourceMatchRatioResult> {
+    const raw = await this.batchRowRepo
+      .createQueryBuilder('r')
+      .select(`COUNT(*) FILTER (WHERE r.status = :accepted)`, 'matchedCount')
+      .addSelect('COUNT(*)', 'totalCount')
+      .where('r.tenant_id = :tenantId', { tenantId })
+      .andWhere('r.batch_id = :batchId', { batchId })
+      .setParameter('accepted', ImportBatchRowStatus.ACCEPTED)
+      .getRawOne<{ matchedCount: string; totalCount: string }>();
+
+    const totalCount = Number(raw?.totalCount ?? 0);
+    const matchedCount = Number(raw?.matchedCount ?? 0);
+
+    if (totalCount === 0) {
+      // ⛔ `0/0` BİR ORAN DEĞİLDİR — coverage kapısıyla AYNI disiplin.
+      return { matchedCount, totalCount, sourceMatchRatio: null };
+    }
+
+    return {
+      matchedCount,
+      totalCount,
+      sourceMatchRatio: matchedCount / totalCount,
+    };
   }
 }

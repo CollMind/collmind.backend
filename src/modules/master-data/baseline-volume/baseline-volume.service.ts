@@ -9,7 +9,11 @@ import {
   ParsedBaselineVolumeRow,
 } from './services/baseline-volume-file-parser.service';
 import { BaselineVolumeLookupService } from './services/baseline-volume-lookup.service';
-import { BaselineVolumeRepository } from './baseline-volume.repository';
+import {
+  BaselineVolumeRepository,
+  ImportBatchRowFilter,
+} from './baseline-volume.repository';
+import { BASELINE_VOLUME_REMEDIATION } from './services/baseline-volume-remediation';
 import { AdminAuditService } from '../../../common/services/admin-audit.service';
 import {
   BaselineVolume,
@@ -25,6 +29,10 @@ import {
   BaselineVolumeRowIssue,
   IngestBaselineVolumeResultDto,
 } from './dto/ingest-result.dto';
+import {
+  BaselineVolumeDiagnosticRowDto,
+  BaselineVolumeSourceMatchDto,
+} from './dto/diagnostics.dto';
 
 export interface IngestBaselineVolumeInput {
   fileName: string;
@@ -525,11 +533,40 @@ export class BaselineVolumeService {
       throw new NotFoundException(`Batch bulunamadı: ${batchId}`);
     }
     const counts = await this.repository.countByAcceptance(tenantId, batchId);
-    return { ...batch, counts };
+    // `BL-4 §5`/`§5a` — `sourceMatchRatio` BATCH BAŞLIĞINDA yaşar,
+    // `coverageRatio` (KAPI, ayrı rota) burada YOK — iki metrik karışmaz.
+    const sourceMatch: BaselineVolumeSourceMatchDto =
+      await this.repository.computeSourceMatchRatio(tenantId, batchId);
+    return { ...batch, counts, sourceMatch };
   }
 
-  async getBatchRows(tenantId: string, batchId: string) {
+  /**
+   * `BL-4 §4` — teşhis ekranı: `batch → satırlar → NEDEN`. Kaynak
+   * `baseline_volume_import_batch_rows` (`BL-3 ADIM 4`) — `keyUnresolvedRows`
+   * DA burada yaşar, `baseline_volumes`'ta YAŞAMAZ (bkz. `ingest()` JSDoc'u).
+   * Her REJECTED satır `BASELINE_VOLUME_REMEDIATION`'dan (`Z87 §F12`'nin
+   * yedi cümlesi, ÇAĞRILIR — yeniden yazılmaz, `F8`) bir düzeltme cümlesi
+   * taşır.
+   */
+  async getBatchRows(
+    tenantId: string,
+    batchId: string,
+    filter?: ImportBatchRowFilter,
+  ): Promise<BaselineVolumeDiagnosticRowDto[]> {
     await this.getBatch(tenantId, batchId);
-    return this.repository.findRowsByBatchId(tenantId, batchId);
+    const rows = await this.repository.findImportBatchRows(
+      tenantId,
+      batchId,
+      filter,
+    );
+    return rows.map((row) => ({
+      rowNo: row.rowNo,
+      status: row.status,
+      reason: row.reason ?? null,
+      remediation: row.reason ? BASELINE_VOLUME_REMEDIATION[row.reason] : null,
+      resolvedSkuId: row.resolvedSkuId ?? null,
+      resolvedCplId: row.resolvedCplId ?? null,
+      raw: row.raw,
+    }));
   }
 }
