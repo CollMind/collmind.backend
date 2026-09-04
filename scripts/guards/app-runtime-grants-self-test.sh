@@ -73,11 +73,51 @@ for f in "$FIX_ENTITIES"/*.entity.ts.fixture; do
   cp "$f" "$ENTITIES_DIR/$(basename "$f" .fixture)"
 done
 
+# [[T-362]] — kaynak C (CANLI DB) mock'ları. Case 1-15 yalnız A\B semantiğini
+# sınıyor; kaynak C'yi mock'lamazsak `run()` gerçek `docker exec`'e düşer —
+# hem hermetik-olmayan bir self-test üretir hem de fixture tabloları canlı
+# DB'de HİÇ olmadığı için (var olmaları da beklenmez) A\C/B\C her çağrıda
+# gürültülü bulgu üretir. Çözüm: kaynak C'yi İLGİLİ .sql fixture'ının kaynak
+# B'siyle AYNI tutan bir mock — böylece eski assertion'lar (hepsi `$`
+# ile ÇAPALI, `:not-live`/`:not-applied`/`:undeclared-live` sonekli yeni
+# anahtarlarla ÇAKIŞMAZ) davranışını KORUR. Kaynak C'ye özgü yönler (PIN
+# 2-5) ayrı, adanmış case'lerde (16-19) sınanıyor.
+mk_db_mock() { # <hedef-dosya> <tablo1> <tablo2> ...
+  local f="$1"; shift
+  {
+    echo '#!/usr/bin/env bash'
+    printf 'printf '\''%%s\\n'\'' '
+    for t in "$@"; do printf "'%s' " "$t"; done
+    echo
+    echo 'exit 0'
+  } > "$f"
+  chmod +x "$f"
+}
+
+DB_MOCK_COMPLETE="$TMP/db-mock-complete.sh"
+mk_db_mock "$DB_MOCK_COMPLETE" fixture_granted fixture_indexed fixture_injected fixture_direct_granted
+
+DB_MOCK_FULL="$TMP/db-mock-full.sh"
+mk_db_mock "$DB_MOCK_FULL" fixture_granted fixture_indexed fixture_injected \
+  fixture_injected_missing fixture_direct_granted fixture_direct_missing fixture_missing
+
 FAIL=0
 
-run() { # <grants-sql> [mode]
+run() { # <grants-sql> [mode] [db-mock]
+  local dbmock="${3:-}"
+  if [ -z "$dbmock" ]; then
+    case "$1" in
+      "$GRANTS_COMPLETE") dbmock="$DB_MOCK_COMPLETE" ;;
+      "$GRANTS_FULL")     dbmock="$DB_MOCK_FULL" ;;
+      *)
+        echo "!! self-test SETUP HATASI: run() üçüncü argümansız, tanınmayan bir grants-sql ile çağrıldı: $1" >&2
+        echo "!! (mutasyon üreten her call site DB mock'unu AÇIKÇA üçüncü argümanla vermeli — sessiz varsayılan YOK)" >&2
+        exit 2
+        ;;
+    esac
+  fi
   GUARD_ARTG_SRC_DIR="$SRC_DIR" GUARD_ARTG_ENTITIES_DIR="$ENTITIES_DIR" \
-    GUARD_ARTG_GRANTS_SQL="$1" GUARD_MODE="${2:-report}" bash "$GUARD"
+    GUARD_ARTG_GRANTS_SQL="$1" GUARD_ARTG_DB_QUERY="$dbmock" GUARD_MODE="${2:-report}" bash "$GUARD"
 }
 
 # --- case 1: detector alive — FixtureMissing HER ZAMAN bulgu vermeli --------
@@ -111,7 +151,7 @@ if grep -q 'fixture_indexed' "$MUTATED_IDX"; then
   echo "!! self-test SETUP HATASI [case 2b]: mutasyon uygulanmadı, 'fixture_indexed' hâlâ dosyada" >&2
   FAIL=1
 else
-  OUT2B="$(run "$MUTATED_IDX" report)"
+  OUT2B="$(run "$MUTATED_IDX" report "$DB_MOCK_COMPLETE")"
   if ! printf '%s\n' "$OUT2B" | grep -q '^\[app-runtime-grants\] table:fixture_indexed$'; then
     echo "!! self-test FAIL [case 2b: T-249 sabit-pencere tuzağı geri geldi]: GRANT satırı silindi ama 'table:fixture_indexed' bulgusu YOK — FixtureIndexed muhtemelen kaynak A'dan SESSİZCE düştü (dekoratör-arası eşleme kırık)" >&2
     printf '%s\n' "$OUT2B" >&2
@@ -134,7 +174,7 @@ if grep -q 'fixture_injected' "$MUTATED_INJ"; then
   echo "!! self-test SETUP HATASI [case 3b]: mutasyon uygulanmadı, 'fixture_injected' hâlâ dosyada" >&2
   FAIL=1
 else
-  OUT3B="$(run "$MUTATED_INJ" report)"
+  OUT3B="$(run "$MUTATED_INJ" report "$DB_MOCK_COMPLETE")"
   if ! printf '%s\n' "$OUT3B" | grep -q '^\[app-runtime-grants\] table:fixture_injected$'; then
     echo "!! self-test FAIL [case 3b: InjectRepository kanalı ölü]: GRANT satırı silindi ama 'table:fixture_injected' bulgusu YOK — kanal 2 muhtemelen hiç tetiklenmiyor" >&2
     printf '%s\n' "$OUT3B" >&2
@@ -183,13 +223,13 @@ if grep -q 'fixture_granted' "$MUTATED"; then
   echo "!! self-test SETUP HATASI [case 7]: mutasyon uygulanmadı, 'fixture_granted' hâlâ dosyada" >&2
   FAIL=1
 else
-  OUT7="$(run "$MUTATED" report)"
+  OUT7="$(run "$MUTATED" report "$DB_MOCK_FULL")"
   if ! printf '%s\n' "$OUT7" | grep -q '^\[app-runtime-grants\] table:fixture_granted$'; then
     echo "!! self-test FAIL [case 7: pozitif kontrol]: GRANT satırı silindi ama 'table:fixture_granted' bulgusu YOK" >&2
     printf '%s\n' "$OUT7" >&2
     FAIL=1
   fi
-  run "$MUTATED" block > /dev/null 2>&1
+  run "$MUTATED" block "$DB_MOCK_FULL" > /dev/null 2>&1
   if [ $? -ne 1 ]; then
     echo "!! self-test FAIL [case 7b]: mutasyon sonrası block modu exit 1 bekleniyordu" >&2
     FAIL=1
@@ -343,6 +383,94 @@ restore_source_awk || { echo "!! self-test SETUP HATASI [case 15 geri alma]: sha
 echo "-- [case 15] geri alındı, satır:"
 grep -n 'dataSource' "$SOURCE_AWK" | grep 'match(line'
 
+# =============================================================================
+# [[T-362]] — KAYNAK C (CANLI DB). Bilinen-yeşil BİLE VAR (case 1-15, kaynak
+# C = kaynak B mock'landığı için A\C/B\C/C\B hep boş) — burası bilinen-KIRMIZI
+# tarafı (`Z83` doğum şartı). GRANTS_FULL kullanılıyor (A\B = ∅), yani her
+# bulgu SADECE kaynak C yönlerinden geliyor — A\B ile karışamaz.
+# =============================================================================
+
+# --- case 16: A\C — kaynak C BOŞ (canlıda sıfır ayrıcalık) → A'nın TÜMÜ
+#     ":not-live" bulgusu vermeli. TAM OLARAK T-362'nin brief'teki vakası
+#     (baseline_volume_import_batch_rows: beyan var, canlı SIFIR). ⚠️ Boş C
+#     bir SETUP HATASI DEĞİL (exit 2 değil) — GERÇEK bir bulgu kümesi.
+DB_MOCK_EMPTY="$TMP/db-mock-empty.sh"
+mk_db_mock "$DB_MOCK_EMPTY"
+OUT16="$(run "$GRANTS_FULL" report "$DB_MOCK_EMPTY")"; RC16=$?
+if [ "$RC16" -ne 0 ]; then
+  echo "!! self-test FAIL [case 16]: report modu exit 0 bekleniyordu (boş C bir bulgu kümesidir, SETUP HATASI değil), $RC16 bulundu" >&2
+  printf '%s\n' "$OUT16" >&2
+  FAIL=1
+fi
+for t in fixture_granted fixture_indexed fixture_injected fixture_injected_missing fixture_direct_granted fixture_direct_missing fixture_missing; do
+  if ! printf '%s\n' "$OUT16" | grep -q "^\[app-runtime-grants\] table:${t}:not-live\$"; then
+    echo "!! self-test FAIL [case 16: A\\C]: 'table:${t}:not-live' bulgusu YOK — kaynak C boşken A'nın TAMAMI bulgu vermeli" >&2
+    printf '%s\n' "$OUT16" >&2
+    FAIL=1
+  fi
+done
+run "$GRANTS_FULL" block "$DB_MOCK_EMPTY" > /dev/null 2>&1
+if [ $? -ne 1 ]; then
+  echo "!! self-test FAIL [case 16b]: boş C ile block modu exit 1 bekleniyordu" >&2
+  FAIL=1
+fi
+
+# --- case 17: B\C — SQL beyan ediyor, kaynak C'de YOK ("betik uygulanmamış").
+#     Aynı DB_MOCK_EMPTY çalıştırmasını (case 16 ile PAYLAŞILAN OUT16) kullanır
+#     — GRANTS_FULL'ün yedi tablosunun HEPSİ B'de var, C'de YOK.
+for t in fixture_granted fixture_indexed fixture_injected fixture_injected_missing fixture_direct_granted fixture_direct_missing fixture_missing; do
+  if ! printf '%s\n' "$OUT16" | grep -q "^\[app-runtime-grants\] table:${t}:not-applied\$"; then
+    echo "!! self-test FAIL [case 17: B\\C]: 'table:${t}:not-applied' bulgusu YOK" >&2
+    printf '%s\n' "$OUT16" >&2
+    FAIL=1
+  fi
+done
+
+# --- case 18: C\B — kaynak C'de bir tablo var ama SQL HİÇ beyan etmiyor
+#     ("kayıt-dışı canlı GRANT", Z51 §2 sınıfı). Kaynak C = kaynak B (temiz)
+#     + bir "rogue" tablo — A\C ve B\C SIFIR olmalı, yalnız C\B bulgu vermeli.
+DB_MOCK_ROGUE="$TMP/db-mock-rogue.sh"
+mk_db_mock "$DB_MOCK_ROGUE" fixture_granted fixture_indexed fixture_injected \
+  fixture_injected_missing fixture_direct_granted fixture_direct_missing fixture_missing \
+  fixture_rogue_grant
+OUT18="$(run "$GRANTS_FULL" report "$DB_MOCK_ROGUE")"; RC18=$?
+if [ "$RC18" -ne 0 ]; then
+  echo "!! self-test FAIL [case 18]: report modu exit 0 bekleniyordu, $RC18 bulundu" >&2
+  printf '%s\n' "$OUT18" >&2
+  FAIL=1
+fi
+if ! printf '%s\n' "$OUT18" | grep -q '^\[app-runtime-grants\] table:fixture_rogue_grant:undeclared-live$'; then
+  echo "!! self-test FAIL [case 18: C\\B]: 'table:fixture_rogue_grant:undeclared-live' bulgusu YOK" >&2
+  printf '%s\n' "$OUT18" >&2
+  FAIL=1
+fi
+if printf '%s\n' "$OUT18" | grep -qE ':not-live$|:not-applied$'; then
+  echo "!! self-test FAIL [case 18: yan etki]: C=B+rogue temizken A\\C/B\\C SIFIR bulgu bekleniyordu, ama var" >&2
+  printf '%s\n' "$OUT18" >&2
+  FAIL=1
+fi
+run "$GRANTS_FULL" block "$DB_MOCK_ROGUE" > /dev/null 2>&1
+if [ $? -ne 1 ]; then
+  echo "!! self-test FAIL [case 18b]: rogue C ile block modu exit 1 bekleniyordu" >&2
+  FAIL=1
+fi
+
+# --- case 19: DB'ye ulaşılamıyor → exit 2 ("ÖLÇEMEDİM"), SESSİZ YEŞİL DEĞİL -
+DB_MOCK_UNREACHABLE="$TMP/db-mock-unreachable.sh"
+cat > "$DB_MOCK_UNREACHABLE" << 'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$DB_MOCK_UNREACHABLE"
+run "$GRANTS_FULL" report "$DB_MOCK_UNREACHABLE" > /tmp/artg-case19-out.$$ 2>&1
+RC19=$?
+if [ "$RC19" -ne 2 ]; then
+  echo "!! self-test FAIL [case 19: DB ulaşılamaz]: exit 2 (ÖLÇEMEDİM) bekleniyordu, $RC19 bulundu" >&2
+  cat /tmp/artg-case19-out.$$ >&2
+  FAIL=1
+fi
+rm -f /tmp/artg-case19-out.$$
+
 if [ "$FAIL" -ne 0 ]; then
   {
     echo "!!"
@@ -353,4 +481,5 @@ if [ "$FAIL" -ne 0 ]; then
   exit 1
 fi
 
+echo "app-runtime-grants self-test: case 1-19 tutuyor (kaynak C — A\\C/B\\C/C\\B/ÖLÇEMEDİM dahil, [[T-362]])"
 exit 0
