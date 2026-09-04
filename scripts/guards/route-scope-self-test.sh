@@ -116,7 +116,8 @@ assert_bucket "case 1h: SELF (Z26/Z28)" "^  SELF " "fixture-plain.controller.ts|
 
 # case 1i: 'self' FILTRESIZ kovasına YANLIŞLIKLA DÜŞMEMELİ (SELF_OLCUM_
 # RAPORU.md §4'ün ölçtüğü sessizliğin tam tersi — negatif kontrol).
-if printf '%s\n' "$OUT1" | awk '/^  FILTRESIZ /{f=1;next} f && /^  [A-Z(]/{f=0} f' | grep -q 'fixture-plain/self$'; then
+OUT1_BUCKET_FILTRESIZ="$(awk '/^  FILTRESIZ /{f=1;next} f && /^  [A-Z(]/{f=0} f' <<< "$OUT1")"
+if grep -q 'fixture-plain/self$' <<< "$OUT1_BUCKET_FILTRESIZ"; then
   echo "!! self-test FAIL [case 1i]: 'self' YANLIŞLIKLA FILTRESIZ kovasına düştü" >&2
   FAIL=1
 else
@@ -127,9 +128,10 @@ fi
 # — bkz. route-scope.sh), o yüzden dolaylı doğrulanır: FILTRESIZ/PUBLIC/
 # ALAN_GUARD kovalarının HİÇBİRİNDE görünmemeli VE ROLES sayısı 2 olmalı
 # (roled + roled-multiline).
-if printf '%s\n' "$OUT1" | grep -qF "fixture-plain/roled"; then
+if grep -qF "fixture-plain/roled" <<< "$OUT1"; then
   # yalnız FILTRESIZ/PUBLIC/ALAN_GUARD satırlarında (ROLES bilgi satırı hariç)
-  if printf '%s\n' "$OUT1" | grep -E "^    " | grep -qF "fixture-plain/roled"; then
+  OUT1_INDENTED="$(grep -E "^    " <<< "$OUT1")"
+  if grep -qF "fixture-plain/roled" <<< "$OUT1_INDENTED"; then
     echo "!! self-test FAIL [case 1e]: 'roled' bir kova LİSTESİNDE göründü (ROLES'te listelenmemesi gerekir)" >&2
     FAIL=1
   fi
@@ -201,7 +203,8 @@ echo "-- [case 2 mutasyon] değiştirilen satır:"
 grep -n 'name == "RolesXX"' "$AWK_ROUTE"
 OUT2="$(run)"
 # 'roled' artık @Roles TANINMADIĞI için hiçbir bayrak taşımıyor -> FILTRESIZ'e düşer.
-if ! printf '%s\n' "$OUT2" | awk '/FILTRESIZ \(ratchet/{f=1;next} f && /^  [A-Z(]/{f=0} f && index($0,"fixture-plain/roled\"")==0 && index($0,"fixture-plain/roled")' | grep -q "roled\$"; then
+OUT2_ROLED_PROBE="$(awk '/FILTRESIZ \(ratchet/{f=1;next} f && /^  [A-Z(]/{f=0} f && index($0,"fixture-plain/roled\"")==0 && index($0,"fixture-plain/roled")' <<< "$OUT2")"
+if ! grep -q "roled\$" <<< "$OUT2_ROLED_PROBE"; then
   :
 fi
 ROLED_IN_FILTRESIZ="$(printf '%s\n' "$OUT2" | awk '/FILTRESIZ \(ratchet/{f=1;next} f && /^  [A-Z(]/{f=0} f' | grep -c 'fixture-plain/roled$')"
@@ -212,7 +215,7 @@ if [ "$ROLED_IN_FILTRESIZ" != "1" ]; then
 fi
 # YAN ETKİ KONTROLÜ: diğer kanallar (PUBLIC, ALAN_GUARD x2) etkilenmemeli.
 for key in "fixture-plain.controller.ts|GET|fixture-plain/pub" "fixture-plain.controller.ts|POST|fixture-plain/route-guard" "fixture-domain.controller.ts|GET|fixture-domain/inherited"; do
-  if ! printf '%s\n' "$OUT2" | grep -qF "$key"; then
+  if ! grep -qF "$key" <<< "$OUT2"; then
     echo "!! self-test FAIL [case 2 YAN ETKİ]: @Roles mutasyonu '$key' görünürlüğünü de bozdu" >&2
     FAIL=1
   fi
@@ -241,7 +244,7 @@ if [ "$PUB_IN_FILTRESIZ" != "1" ]; then
   FAIL=1
 fi
 for key in "fixture-plain.controller.ts|POST|fixture-plain/route-guard" "fixture-domain.controller.ts|GET|fixture-domain/inherited"; do
-  if ! printf '%s\n' "$OUT3" | grep -qF "$key"; then
+  if ! grep -qF "$key" <<< "$OUT3"; then
     echo "!! self-test FAIL [case 3 YAN ETKİ]: @Public mutasyonu '$key' görünürlüğünü de bozdu" >&2
     FAIL=1
   fi
@@ -270,7 +273,8 @@ if [ "$RG_IN_FILTRESIZ" != "1" ]; then
   FAIL=1
 fi
 # YAN ETKİ: controller-seviyesi UseGuards (inherited) ETKİLENMEMELİ.
-if ! printf '%s\n' "$OUT4A" | awk '/ALAN_GUARD /{f=1;next} f && /^  [A-Z(]/{f=0} f' | grep -q 'fixture-domain/inherited$'; then
+OUT4A_BUCKET_ALAN_GUARD="$(awk '/ALAN_GUARD /{f=1;next} f && /^  [A-Z(]/{f=0} f' <<< "$OUT4A")"
+if ! grep -q 'fixture-domain/inherited$' <<< "$OUT4A_BUCKET_ALAN_GUARD"; then
   echo "!! self-test FAIL [case 4a YAN ETKİ]: rota-seviyesi mutasyon controller-seviyesi kanalı (inherited) da kırdı" >&2
   FAIL=1
 else
@@ -298,7 +302,8 @@ if [ "$CG_IN_FILTRESIZ" != "1" ]; then
   printf '%s\n' "$OUT4B" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT4B" | awk '/ALAN_GUARD /{f=1;next} f && /^  [A-Z(]/{f=0} f' | grep -q 'fixture-plain/route-guard$'; then
+OUT4B_BUCKET_ALAN_GUARD="$(awk '/ALAN_GUARD /{f=1;next} f && /^  [A-Z(]/{f=0} f' <<< "$OUT4B")"
+if ! grep -q 'fixture-plain/route-guard$' <<< "$OUT4B_BUCKET_ALAN_GUARD"; then
   echo "!! self-test FAIL [case 4b YAN ETKİ]: controller-seviyesi mutasyon rota-seviyesi kanalı (route-guard) da kırdı" >&2
   FAIL=1
 else
@@ -330,7 +335,7 @@ if [ "$SELF_IN_FILTRESIZ" != "1" ]; then
   FAIL=1
 fi
 for key in "fixture-plain.controller.ts|GET|fixture-plain/pub" "fixture-plain.controller.ts|POST|fixture-plain/route-guard" "fixture-domain.controller.ts|GET|fixture-domain/inherited"; do
-  if ! printf '%s\n' "$OUT5" | grep -qF "$key"; then
+  if ! grep -qF "$key" <<< "$OUT5"; then
     echo "!! self-test FAIL [case 5 YAN ETKİ]: @SelfScoped mutasyonu '$key' görünürlüğünü de bozdu" >&2
     FAIL=1
   fi
@@ -411,7 +416,7 @@ if [ "$RC_R1" -ne 0 ]; then
   echo "!! self-test FAIL [case R1]: değişmemiş baseline rotası için exit 0 bekleniyordu, $RC_R1 bulundu" >&2
   printf '%s\n' "$OUT_R1" >&2
   FAIL=1
-elif printf '%s\n' "$OUT_R1" | grep -qE "İYİLEŞTİ|GONE"; then
+elif grep -qE "İYİLEŞTİ|GONE" <<< "$OUT_R1"; then
   echo "!! self-test FAIL [case R1]: değişmemiş rota için İYİLEŞTİ/GONE mesajı YANLIŞLIKLA basıldı" >&2
   FAIL=1
 else
@@ -439,7 +444,7 @@ if [ "$RC_R2" -ne 1 ]; then
   echo "!! self-test FAIL [case R2: pozitif kontrol]: YENİ filtresiz rota eklendi, exit 1 bekleniyordu, $RC_R2 bulundu" >&2
   printf '%s\n' "$OUT_R2" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_R2" | grep -qF "fixture-plain/new-gap"; then
+elif ! grep -qF "fixture-plain/new-gap" <<< "$OUT_R2"; then
   echo "!! self-test FAIL [case R2]: ihlal mesajı yeni rotayı İSİMLENDİRMEDİ" >&2
   FAIL=1
 else
@@ -466,7 +471,7 @@ if [ "$RC_R3" -ne 0 ]; then
   echo "!! self-test FAIL [case R3]: baseline rotası @Roles kazandı, exit 0 (İYİLEŞME bloklamaz) bekleniyordu, $RC_R3 bulundu" >&2
   printf '%s\n' "$OUT_R3" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_R3" | grep -q "İYİLEŞTİ.*fixture-plain/gap.*ROLES"; then
+elif ! grep -q "İYİLEŞTİ.*fixture-plain/gap.*ROLES" <<< "$OUT_R3"; then
   echo "!! self-test FAIL [case R3]: İYİLEŞTİ mesajı basılmadı ya da doğru bucket'ı (ROLES) anmadı" >&2
   printf '%s\n' "$OUT_R3" >&2
   FAIL=1
@@ -513,7 +518,7 @@ if [ "$RC_T" -ne 0 ]; then
   echo "!! self-test FAIL [case T: RATCHET TAMAMLANDI]: exit 0 bekleniyordu, $RC_T bulundu" >&2
   printf '%s\n' "$OUT_T" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_T" | grep -qF "RATCHET TAMAMLANDI"; then
+elif ! grep -qF "RATCHET TAMAMLANDI" <<< "$OUT_T"; then
   echo "!! self-test FAIL [case T]: SIFIR 'F ' satırlı sağlıklı baseline için 'RATCHET" >&2
   echo "!! TAMAMLANDI' mesajı basılmadı" >&2
   printf '%s\n' "$OUT_T" >&2
@@ -533,7 +538,7 @@ if [ "$RC_T2" -ne 2 ]; then
   echo "!! self-test FAIL [case T2: bozuk baseline]: exit 2 bekleniyordu, $RC_T2 bulundu" >&2
   printf '%s\n' "$OUT_T2" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_T2" | grep -qF "başlık biçimi TANINMADI"; then
+elif ! grep -qF "başlık biçimi TANINMADI" <<< "$OUT_T2"; then
   echo "!! self-test FAIL [case T2]: hata mesajı başlık eksikliğini İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT_T2" >&2
   FAIL=1
@@ -551,7 +556,7 @@ if [ "$RC_T3" -ne 2 ]; then
   echo "!! self-test FAIL [case T3: baseline satırı bozuk]: exit 2 bekleniyordu, $RC_T3 bulundu" >&2
   printf '%s\n' "$OUT_T3" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_T3" | grep -qF "TANINMAYAN satır"; then
+elif ! grep -qF "TANINMAYAN satır" <<< "$OUT_T3"; then
   echo "!! self-test FAIL [case T3]: hata mesajı bozuk satırı İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT_T3" >&2
   FAIL=1
@@ -626,7 +631,7 @@ if [ "$RC_G2" -ne 2 ]; then
   echo "!! self-test FAIL [case G2: pozitif kontrol, ROTA seviyesi]: exit 2 bekleniyordu, $RC_G2 bulundu" >&2
   printf '%s\n' "$OUT_G2" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_G2" | grep -qF "roles-route.controller.ts" || ! printf '%s\n' "$OUT_G2" | grep -qF "roles-route/protected"; then
+elif ! grep -qF "roles-route.controller.ts" <<< "$OUT_G2" || ! grep -qF "roles-route/protected" <<< "$OUT_G2"; then
   echo "!! self-test FAIL [case G2]: hata mesajı etkilenen rotayı İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT_G2" >&2
   FAIL=1
@@ -692,7 +697,7 @@ if [ "$RC_G4" -ne 2 ]; then
   echo "!! self-test FAIL [case G4: pozitif kontrol, CONTROLLER seviyesi]: exit 2 bekleniyordu, $RC_G4 bulundu" >&2
   printf '%s\n' "$OUT_G4" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_G4" | grep -qF "roles-class.controller.ts" || ! printf '%s\n' "$OUT_G4" | grep -qF "roles-class/protected"; then
+elif ! grep -qF "roles-class.controller.ts" <<< "$OUT_G4" || ! grep -qF "roles-class/protected" <<< "$OUT_G4"; then
   echo "!! self-test FAIL [case G4]: hata mesajı etkilenen rotayı İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT_G4" >&2
   FAIL=1
@@ -770,8 +775,8 @@ if [ "$RC_C1" -ne 0 ]; then
   echo "!! self-test FAIL [case C1]: exit 0 bekleniyordu, $RC_C1" >&2
   printf '%s\n' "$OUT_C1" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_C1" | grep -qE "CAPABILITY .*: 1" \
-     || ! printf '%s\n' "$OUT_C1" | grep -qE "FILTRESIZ .*: 0"; then
+elif ! grep -qE "CAPABILITY .*: 1" <<< "$OUT_C1" \
+     || ! grep -qE "FILTRESIZ .*: 0" <<< "$OUT_C1"; then
   echo "!! self-test FAIL [case C1]: CAPABILITY=1 ve FILTRESIZ=0 bekleniyordu" >&2
   printf '%s\n' "$OUT_C1" >&2
   FAIL=1
@@ -798,11 +803,11 @@ export class BareController {
 EOF
 OUT_C2="$(ROUTE_SCOPE_SRC_DIR="$C_SRC2" ROUTE_SCOPE_BASELINE="$NO_BASELINE" GUARD_MODE=report bash "$GUARD" 2>&1)"
 RC_C2=$?
-if ! printf '%s\n' "$OUT_C2" | grep -qE "FILTRESIZ .*: 1"; then
+if ! grep -qE "FILTRESIZ .*: 1" <<< "$OUT_C2"; then
   echo "!! self-test FAIL [case C2]: dekoratörsüz rota FILTRESIZ'de KALMALIYDI (INFRA kararı)" >&2
   printf '%s\n' "$OUT_C2" >&2
   FAIL=1
-elif printf '%s\n' "$OUT_C2" | grep -qE "ALAN_GUARD .*: 1"; then
+elif grep -qE "ALAN_GUARD .*: 1" <<< "$OUT_C2"; then
   echo "!! self-test FAIL [case C2]: CapabilityGuard DOMAIN gibi davrandı — korumasız rota 'korunuyor' sayıldı" >&2
   printf '%s\n' "$OUT_C2" >&2
   FAIL=1
@@ -831,7 +836,7 @@ if [ "$RC_C3" -ne 2 ]; then
   echo "!! self-test FAIL [case C3]: exit 2 (SETUP HATASI) bekleniyordu, $RC_C3" >&2
   printf '%s\n' "$OUT_C3" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT_C3" | grep -qF "fo/boom"; then
+elif ! grep -qF "fo/boom" <<< "$OUT_C3"; then
   echo "!! self-test FAIL [case C3]: hata mesajı etkilenen rotayı İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT_C3" >&2
   FAIL=1

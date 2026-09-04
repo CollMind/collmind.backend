@@ -139,9 +139,13 @@ ms_expect() { # <beklenen> <etiket> [desen]
     echo "!! self-test BAŞARISIZ: mode-split × $label → beklenen $want, bulunan $got" >&2
     ms >&2; FAIL_MS=1; return
   fi
-  if [ -n "$pat" ] && ! ms | grep -q "$pat"; then
-    echo "!! self-test BAŞARISIZ: mode-split × $label → bulgu var ama '$pat' değil" >&2
-    ms >&2; FAIL_MS=1
+  if [ -n "$pat" ]; then
+    local ms_out
+    ms_out="$(ms)"
+    if ! grep -q "$pat" <<< "$ms_out"; then
+      echo "!! self-test BAŞARISIZ: mode-split × $label → bulgu var ama '$pat' değil" >&2
+      ms >&2; FAIL_MS=1
+    fi
   fi
 }
 

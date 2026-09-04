@@ -119,12 +119,12 @@ if [ "$RC_D" -ne 1 ]; then
   printf '%s\n' "$OUT_D" >&2
   FAIL=1
 fi
-if ! printf '%s' "$OUT_D" | grep -q '\[new-table-rls\] main.new_tenant_widgets'; then
+if ! grep -q '\[new-table-rls\] main.new_tenant_widgets' <<< "$OUT_D"; then
   echo "!! self-test FAIL [case D]: bulgu satırı 'main.new_tenant_widgets' ile görünmedi" >&2
   printf '%s\n' "$OUT_D" >&2
   FAIL=1
 fi
-if ! printf '%s' "$OUT_D" | grep -q 'KADEME 1'; then
+if ! grep -q 'KADEME 1' <<< "$OUT_D"; then
   echo "!! self-test FAIL [case D]: bulgu mesajı 'KADEME 1'i ADIYLA söylemiyor" >&2
   printf '%s\n' "$OUT_D" >&2
   FAIL=1
@@ -146,7 +146,7 @@ if [ "$RC_E" -ne 0 ]; then
   printf '%s\n' "$OUT_E" >&2
   FAIL=1
 fi
-if printf '%s' "$OUT_E" | grep -q '\[new-table-rls\] main.new_tenant_widgets'; then
+if grep -q '\[new-table-rls\] main.new_tenant_widgets' <<< "$OUT_E"; then
   echo "!! self-test FAIL [case E]: gerçek politikalı tablo YİNE DE bulgu üretti (KADEME 2 blocked olmalıydı)" >&2
   printf '%s\n' "$OUT_E" >&2
   FAIL=1
@@ -196,7 +196,8 @@ fi
 # YOK — ölçüldü). Sentetik tablo isimleri gerçek evrenle ÇAKIŞMAYACAK
 # (`new_table_rls_selftest_` öneki) şekilde seçildi.
 # =============================================================================
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'collmind-tpm-postgres'; then
+DOCKER_PS_NAMES_H="$(docker ps --format '{{.Names}}' 2>/dev/null)"
+if grep -qx 'collmind-tpm-postgres' <<< "$DOCKER_PS_NAMES_H"; then
   WRAPPER_H="$TMP/live-catalog-wrapper.sh"
   cat > "$WRAPPER_H" << 'WRAPEOF'
 #!/usr/bin/env bash
@@ -232,17 +233,18 @@ WRAPEOF
     printf '%s\n' "$OUT_H" >&2
     FAIL=1
   fi
-  if ! printf '%s' "$OUT_H" | grep -q '\[new-table-rls\] main.new_table_rls_selftest_red'; then
+  if ! grep -q '\[new-table-rls\] main.new_table_rls_selftest_red' <<< "$OUT_H"; then
     echo "!! self-test FAIL [case H]: bilinen-kırmızı tablo (politikasız) bulgu ÜRETMEDİ — guard canlı katalogda kör" >&2
     printf '%s\n' "$OUT_H" >&2
     FAIL=1
   fi
-  if ! printf '%s' "$OUT_H" | grep -A3 '\[new-table-rls\] main.new_table_rls_selftest_red' | grep -q 'KADEME 1'; then
+  OUT_H_CTX="$(grep -A3 '\[new-table-rls\] main.new_table_rls_selftest_red' <<< "$OUT_H")"
+  if ! grep -q 'KADEME 1' <<< "$OUT_H_CTX"; then
     echo "!! self-test FAIL [case H]: bilinen-kırmızı bulgusu 'KADEME 1'i adıyla söylemiyor" >&2
     printf '%s\n' "$OUT_H" >&2
     FAIL=1
   fi
-  if printf '%s' "$OUT_H" | grep -q '\[new-table-rls\] main.new_table_rls_selftest_green'; then
+  if grep -q '\[new-table-rls\] main.new_table_rls_selftest_green' <<< "$OUT_H"; then
     echo "!! self-test FAIL [case H]: bilinen-yeşil tablo (gerçek politikalı) YANLIŞLIKLA bulgu üretti — guard canlı katalogda AYIRT EDEMİYOR" >&2
     printf '%s\n' "$OUT_H" >&2
     FAIL=1

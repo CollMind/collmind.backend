@@ -165,7 +165,7 @@ export class CController {
 EOF
   local outc
   outc=$(SINGLE_MECH_SRC="$tmp/c" run_gate 2>&1); rc=$?
-  if [ "$rc" -eq 3 ] && printf '%s' "$outc" | grep -q 'c/boom'; then
+  if [ "$rc" -eq 3 ] && grep -q 'c/boom' <<< "$outc"; then
     echo "-- [case C] POZ.KONTROL: iki mekanizma → exit 3 (İHLAL), rota adlandırıldı"
   else
     echo "⛔ [case C] beklenen exit 3 + rota adı; gelen rc=$rc"; printf '%s\n' "$outc"; fail=1
@@ -184,7 +184,7 @@ export class EController {
 EOF
   local oute
   oute=$(SINGLE_MECH_SRC="$tmp/e" run_gate 2>&1); rc=$?
-  if [ "$rc" -eq 3 ] && printf '%s' "$oute" | grep -q 'FAIL-OPEN'; then
+  if [ "$rc" -eq 3 ] && grep -q 'FAIL-OPEN' <<< "$oute"; then
     echo "-- [case E] POZ.KONTROL: yetenek var, guard YOK → exit 3 (FAIL-OPEN yakalandı)"
   else
     echo "⛔ [case E] beklenen exit 3 + FAIL-OPEN; gelen rc=$rc"; printf '%s\n' "$oute"; fail=1
@@ -221,7 +221,7 @@ export class GController {
 EOF
   local outg
   outg=$(SINGLE_MECH_SRC="$tmp/g" run_gate 2>&1); rc=$?
-  if [ "$rc" -eq 3 ] && printf '%s' "$outg" | grep -q 'g/boom'; then
+  if [ "$rc" -eq 3 ] && grep -q 'g/boom' <<< "$outg"; then
     echo "-- [case G] POZ.KONTROL: CLASS @Roles + rota @RequireCapability → exit 3"
   else
     echo "⛔ [case G] beklenen exit 3 + rota adı; gelen rc=$rc"; printf '%s\n' "$outg"; fail=1
@@ -241,7 +241,7 @@ export class ZController {
 EOF
   local outh
   outh=$(SINGLE_MECH_SRC="$tmp/h" run_gate 2>&1); rc=$?
-  if [ "$rc" -eq 3 ] && printf '%s' "$outh" | grep -q 'g/boom' && ! printf '%s' "$outh" | grep -q 'z/clean'; then
+  if [ "$rc" -eq 3 ] && grep -q 'g/boom' <<< "$outh" && ! grep -q 'z/clean' <<< "$outh"; then
     echo "-- [case H] class bayrağı sonraki dosyaya SIZMIYOR (yalnız g/boom bulundu)"
   else
     echo "⛔ [case H] sızıntı ya da yanlış tespit; rc=$rc"; printf '%s\n' "$outh"; fail=1
@@ -263,7 +263,7 @@ export class IController {
 EOF
   local outi
   outi=$(SINGLE_MECH_SRC="$tmp/i" run_gate 2>&1); rc=$?
-  if [ "$rc" -eq 3 ] && printf '%s' "$outi" | grep -q '@Public+@RequireCapability'; then
+  if [ "$rc" -eq 3 ] && grep -q '@Public+@RequireCapability' <<< "$outi"; then
     echo "-- [case I] POZ.KONTROL: @Public + @RequireCapability → exit 3, çift ADLANDIRILDI"
   else
     echo "⛔ [case I] beklenen exit 3 + çift adı; gelen rc=$rc"; printf '%s\n' "$outi"; fail=1

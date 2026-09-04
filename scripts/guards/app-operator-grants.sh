@@ -97,7 +97,7 @@ scan() {
     tbl="${line%%|*}"
     priv="${line#*|}"
     declared_hit=0
-    if [ "$priv" = "DELETE" ] && printf '%s\n' "$DECLARED" | grep -qx "$tbl"; then
+    if [ "$priv" = "DELETE" ] && grep -qx "$tbl" <<< "$DECLARED"; then
       declared_hit=1
     fi
     if [ "$declared_hit" -eq 0 ]; then

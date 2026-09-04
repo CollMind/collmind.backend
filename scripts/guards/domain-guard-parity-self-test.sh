@@ -58,7 +58,7 @@ if [ "$RC_A" -ne 0 ]; then
   printf '%s\n' "$OUT_A" >&2
   FAIL=1
 fi
-if printf '%s\n' "$OUT_A" | grep -q "^\[domain-guard-parity\]"; then
+if grep -q "^\[domain-guard-parity\]" <<< "$OUT_A"; then
   echo "!! self-test FAIL [case A]: eşit kümelerde bir bulgu basıldı" >&2
   printf '%s\n' "$OUT_A" >&2
   FAIL=1
@@ -74,7 +74,7 @@ sed -i '' "s/ReversalGuard SettlementGuard/ReversalGuard SettlementGuard FooGuar
 MUT_B_LINE="$(grep -n 'KNOWN_DOMAIN_GUARDS=' "$A_MUT")"
 echo "-- [self-test case B] mutasyon: KAYNAK A'nın DEĞİŞTİRİLEN satırı:"
 echo "   ${MUT_B_LINE}"
-if ! printf '%s' "$MUT_B_LINE" | grep -q "FooGuard"; then
+if ! grep -q "FooGuard" <<< "$MUT_B_LINE"; then
   echo "!! self-test FAIL [case B]: mutasyon hedefi YANLIŞ — 'FooGuard' satırda YOK" >&2
   FAIL=1
 fi
@@ -86,7 +86,7 @@ if [ "$RC_B" -ne 1 ]; then
   printf '%s\n' "$OUT_B" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT_B" | grep -q "KAYNAK-A-ONLY:FooGuard"; then
+if ! grep -q "KAYNAK-A-ONLY:FooGuard" <<< "$OUT_B"; then
   echo "!! self-test FAIL [case B]: bulgu 'FooGuard'ı KAYNAK-A-ONLY olarak İSİMLE göstermiyor" >&2
   printf '%s\n' "$OUT_B" >&2
   FAIL=1
@@ -123,7 +123,7 @@ if [ "$RC_C" -ne 1 ]; then
   printf '%s\n' "$OUT_C" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT_C" | grep -q "KAYNAK-B-ONLY:FakeDomainGuard"; then
+if ! grep -q "KAYNAK-B-ONLY:FakeDomainGuard" <<< "$OUT_C"; then
   echo "!! self-test FAIL [case C]: bulgu 'FakeDomainGuard'ı KAYNAK-B-ONLY olarak İSİMLE göstermiyor" >&2
   printf '%s\n' "$OUT_C" >&2
   FAIL=1
@@ -136,7 +136,7 @@ if [ "$RC_C_REPORT" -ne 0 ]; then
   echo "!! self-test FAIL [case C report]: report modunda exit 0 bekleniyordu, $RC_C_REPORT bulundu" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT_C_REPORT" | grep -q "^\[domain-guard-parity\]"; then
+if ! grep -q "^\[domain-guard-parity\]" <<< "$OUT_C_REPORT"; then
   echo "!! self-test FAIL [case C report]: report modunda bulgu BASILMADI" >&2
   FAIL=1
 fi

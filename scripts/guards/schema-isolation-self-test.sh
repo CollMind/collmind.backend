@@ -81,7 +81,7 @@ if [ "$RC_B" -ne 0 ]; then
   printf '%s\n' "$OUT_B" >&2
   FAIL=1
 fi
-if ! printf '%s' "$OUT_B" | grep -q 'SUPPRESSED: 1'; then
+if ! grep -q 'SUPPRESSED: 1' <<< "$OUT_B"; then
   echo "!! self-test FAIL [case B]: bulgu RAW olarak üretilmedi (SUPPRESSED satırı yok) — guard'ın bulgu ürettiği doğrulanamadı" >&2
   printf '%s\n' "$OUT_B" >&2
   FAIL=1
@@ -114,7 +114,7 @@ if [ "$RC_D" -ne 0 ]; then
   printf '%s\n' "$OUT_D" >&2
   FAIL=1
 fi
-if ! printf '%s' "$OUT_D" | grep -q 'SKIPPED'; then
+if ! grep -q 'SKIPPED' <<< "$OUT_D"; then
   echo "!! self-test FAIL [case D]: çıktıda 'SKIPPED' görünmedi" >&2
   printf '%s\n' "$OUT_D" >&2
   FAIL=1

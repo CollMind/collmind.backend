@@ -112,14 +112,14 @@ if [ "$RC1" -ne 0 ]; then
   echo "!! self-test FAIL [case 1: steady state]: exit 0 bekleniyordu, $RC1 bulundu" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
-elif printf '%s\n' "$OUT1" | grep -qE "İYİLEŞTİ|GONE|GEREKÇESİZ EKLEME"; then
+elif grep -qE "İYİLEŞTİ|GONE|GEREKÇESİZ EKLEME" <<< "$OUT1"; then
   echo "!! self-test FAIL [case 1]: steady state'te ratchet/İYİLEŞTİ/GONE mesajı YANLIŞLIKLA çıktı" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
 else
   echo "-- [case 1] steady state → sessiz, exit 0"
 fi
-if ! printf '%s\n' "$OUT1" | grep -q "rota envanteri: 2 "; then
+if ! grep -q "rota envanteri: 2 " <<< "$OUT1"; then
   echo "!! self-test FAIL [case 1b]: envanter 2 (bar+baz) bekleniyordu" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
@@ -135,7 +135,7 @@ if [ "$RC2" -ne 2 ]; then
   echo "!! self-test FAIL [case 2: TAMLIK]: sınıflandırılmamış rota için exit 2 bekleniyordu, $RC2 bulundu" >&2
   printf '%s\n' "$OUT2" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT2" | grep -qF "foo.controller.ts|GET|foo/extra"; then
+elif ! grep -qF "foo.controller.ts|GET|foo/extra" <<< "$OUT2"; then
   echo "!! self-test FAIL [case 2]: hata mesajı sınıflandırılmamış rotayı İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT2" >&2
   FAIL=1
@@ -155,7 +155,7 @@ if [ "$RC3" -ne 2 ]; then
   echo "!! self-test FAIL [case 3: TEKİLLİK]: çakışan sınıflandırma için exit 2 bekleniyordu, $RC3 bulundu" >&2
   printf '%s\n' "$OUT3" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT3" | grep -qF "foo.controller.ts|GET|foo/bar"; then
+elif ! grep -qF "foo.controller.ts|GET|foo/bar" <<< "$OUT3"; then
   echo "!! self-test FAIL [case 3]: hata mesajı çakışan rotayı İSİMLENDİRMEDİ" >&2
   FAIL=1
 else
@@ -180,7 +180,7 @@ if [ "$RC4" -ne 1 ]; then
   echo "!! self-test FAIL [case 4: A1 büyüme]: exit 1 bekleniyordu, $RC4 bulundu" >&2
   printf '%s\n' "$OUT4" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT4" | grep -q "\[scope-ratchet\] src/foo.controller.ts|GET|foo/baz"; then
+elif ! grep -q "\[scope-ratchet\] src/foo.controller.ts|GET|foo/baz" <<< "$OUT4"; then
   echo "!! self-test FAIL [case 4]: A1 büyüme bulgusu rotayı İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT4" >&2
   FAIL=1
@@ -192,7 +192,7 @@ OUT4R="$(run report 2>&1)"; RC4R=$?
 if [ "$RC4R" -ne 0 ]; then
   echo "!! self-test FAIL [case 4b: report modu]: exit 0 bekleniyordu (bulgu var ama block değil), $RC4R bulundu" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT4R" | grep -qF "GEREKÇESİZ EKLEME"; then
+elif ! grep -qF "GEREKÇESİZ EKLEME" <<< "$OUT4R"; then
   echo "!! self-test FAIL [case 4b]: report modunda bulgu BASILMADI (yalnız exit kodu değişti sanılmasın)" >&2
   FAIL=1
 else
@@ -216,7 +216,7 @@ if [ "$RC5" -ne 0 ]; then
   echo "!! self-test FAIL [case 5: İYİLEŞTİ]: exit 0 bekleniyordu, $RC5 bulundu" >&2
   printf '%s\n' "$OUT5" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT5" | grep -q "İYİLEŞTİ: src/foo.controller.ts|GET|foo/bar"; then
+elif ! grep -q "İYİLEŞTİ: src/foo.controller.ts|GET|foo/bar" <<< "$OUT5"; then
   echo "!! self-test FAIL [case 5]: İYİLEŞTİ mesajı basılmadı ya da rotayı adlandırmadı" >&2
   printf '%s\n' "$OUT5" >&2
   FAIL=1
@@ -312,7 +312,7 @@ if [ "$RC6" -ne 0 ]; then
   echo "!! self-test FAIL [case 6: GONE]: exit 0 bekleniyordu, $RC6 bulundu" >&2
   printf '%s\n' "$OUT6" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT6" | grep -q "GONE: src/foo.controller.ts|GET|foo/baz"; then
+elif ! grep -q "GONE: src/foo.controller.ts|GET|foo/baz" <<< "$OUT6"; then
   echo "!! self-test FAIL [case 6]: GONE mesajı basılmadı ya da rotayı adlandırmadı" >&2
   printf '%s\n' "$OUT6" >&2
   FAIL=1
@@ -345,7 +345,7 @@ if [ "$RC7B" -ne 2 ]; then
   echo "!! self-test FAIL [case 7b: A1 başlıksız]: exit 2 bekleniyordu, $RC7B bulundu" >&2
   printf '%s\n' "$OUT7B" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT7B" | grep -qF "başlık biçimi TANINMADI"; then
+elif ! grep -qF "başlık biçimi TANINMADI" <<< "$OUT7B"; then
   echo "!! self-test FAIL [case 7b]: hata mesajı başlık eksikliğini İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT7B" >&2
   FAIL=1
@@ -364,7 +364,7 @@ if [ "$RC7C" -ne 2 ]; then
   echo "!! self-test FAIL [case 7c: A1 satır bozuk]: exit 2 bekleniyordu, $RC7C bulundu" >&2
   printf '%s\n' "$OUT7C" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUT7C" | grep -qF "TANINMAYAN satır"; then
+elif ! grep -qF "TANINMAYAN satır" <<< "$OUT7C"; then
   echo "!! self-test FAIL [case 7c]: hata mesajı bozuk satırı İSİMLENDİRMEDİ" >&2
   printf '%s\n' "$OUT7C" >&2
   FAIL=1
@@ -419,7 +419,7 @@ if [ "$RCT" -ne 0 ]; then
   echo "!! self-test FAIL [case T: RATCHET TAMAMLANDI]: exit 0 bekleniyordu, $RCT bulundu" >&2
   printf '%s\n' "$OUTT" >&2
   FAIL=1
-elif ! printf '%s\n' "$OUTT" | grep -qF "RATCHET TAMAMLANDI"; then
+elif ! grep -qF "RATCHET TAMAMLANDI" <<< "$OUTT"; then
   echo "!! self-test FAIL [case T]: SIFIR anahtarlı sağlıklı A1 için 'RATCHET TAMAMLANDI'" >&2
   echo "!! mesajı basılmadı (Şart 2: sıfır SESSİZCE geçilemez)" >&2
   printf '%s\n' "$OUTT" >&2
@@ -460,7 +460,7 @@ check_single_bucket_absorbs() { # <kova-adı> <a1-içerik> <a2-içerik> <b-içer
   local out rc
   out="$(SCOPE_RATCHET_SRC_DIR="$REPO3/src" SCOPE_RATCHET_A1="$REPO3/guards/a1.txt" SCOPE_RATCHET_A2="$REPO3/guards/a2.txt" SCOPE_RATCHET_B="$REPO3/guards/b.txt" SCOPE_RATCHET_C="$REPO3/guards/c.txt" GUARD_MODE=report bash "$GUARD" 2>&1)"
   rc=$?
-  if [ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -q "sınıflandırılmamış"; then
+  if [ "$rc" -eq 2 ] && grep -q "sınıflandırılmamış" <<< "$out"; then
     echo "!! self-test FAIL [case 8/9: $label]: TEK BAŞINA $label kovası envanter rotasını ABSORBE ETMEDİ (yanlışlıkla 'sınıflandırılmamış' dendi)" >&2
     printf '%s\n' "$out" >&2
     FAIL=1
@@ -491,7 +491,7 @@ check_single_bucket_absorbs_neg() {
   local out rc
   out="$(SCOPE_RATCHET_SRC_DIR="$REPO3/src" SCOPE_RATCHET_A1="$REPO3/guards/a1.txt" SCOPE_RATCHET_A2="$REPO3/guards/a2.txt" SCOPE_RATCHET_B="$REPO3/guards/b.txt" SCOPE_RATCHET_C="$REPO3/guards/c.txt" GUARD_MODE=report bash "$GUARD" 2>&1)"
   rc=$?
-  if [ "$rc" -ne 2 ] || ! printf '%s\n' "$out" | grep -qF "qux.controller.ts|GET|qux/only"; then
+  if [ "$rc" -ne 2 ] || ! grep -qF "qux.controller.ts|GET|qux/only" <<< "$out"; then
     echo "!! self-test FAIL [case 8/9 POZ. KONTROL]: qux/only HİÇBİR kovada değilken exit 2 + isimlendirme BEKLENİYORDU" >&2
     printf '%s\n' "$out" >&2
     FAIL=1

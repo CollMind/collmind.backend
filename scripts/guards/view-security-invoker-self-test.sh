@@ -78,7 +78,7 @@ if [ "$RC_C" -ne 1 ]; then
   printf '%s\n' "$OUT_C" >&2
   FAIL=1
 fi
-if ! printf '%s' "$OUT_C" | grep -q '\[view-security-invoker\] main.v_foo'; then
+if ! grep -q '\[view-security-invoker\] main.v_foo' <<< "$OUT_C"; then
   echo "!! self-test FAIL [case C]: bulgu satırı 'main.v_foo' adıyla görünmedi" >&2
   printf '%s\n' "$OUT_C" >&2
   FAIL=1

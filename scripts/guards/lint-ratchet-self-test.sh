@@ -58,19 +58,19 @@ FAIL=0
 # directly with `npx eslint <fixture> --format json`: 2 no-unused-vars, 1
 # no-explicit-any) must be COUNTED exactly, per rule.
 REPORT_OUT="$(run_report 2>&1)"
-if ! printf '%s\n' "$REPORT_OUT" | grep -qE "^\[lint-ratchet\] ${REL_ERROR} @typescript-eslint/no-unused-vars: 2 problems$"; then
+if ! grep -qE "^\[lint-ratchet\] ${REL_ERROR} @typescript-eslint/no-unused-vars: 2 problems$" <<< "$REPORT_OUT"; then
   echo "!! self-test FAIL [case 1a: no-unused-vars]: beklenen '${REL_ERROR} @typescript-eslint/no-unused-vars: 2 problems', çıktı:"
   echo "$REPORT_OUT"
   FAIL=1
 fi
-if ! printf '%s\n' "$REPORT_OUT" | grep -qE "^\[lint-ratchet\] ${REL_ERROR} @typescript-eslint/no-explicit-any: 1 problems$"; then
+if ! grep -qE "^\[lint-ratchet\] ${REL_ERROR} @typescript-eslint/no-explicit-any: 1 problems$" <<< "$REPORT_OUT"; then
   echo "!! self-test FAIL [case 1b: no-explicit-any]: beklenen '${REL_ERROR} @typescript-eslint/no-explicit-any: 1 problems', çıktı:"
   echo "$REPORT_OUT"
   FAIL=1
 fi
 
 # --- case 2: clean fixture reports zero — must not appear in findings at all.
-if printf '%s\n' "$REPORT_OUT" | grep -q "$REL_CLEAN"; then
+if grep -q "$REL_CLEAN" <<< "$REPORT_OUT"; then
   echo "!! self-test FAIL [case 2: temiz]: $REL_CLEAN olmasa gereken bir bulguda göründü"
   echo "$REPORT_OUT"
   FAIL=1

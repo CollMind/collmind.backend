@@ -119,13 +119,13 @@ self_test() {
   fi
 
   for f in f-dot f-dotdot f-dotdotdot f-require f-index f-comment; do
-    if ! printf '%s\n' "$out" | grep -q "/$f\.ts:"; then
+    if ! grep -q "/$f\.ts:" <<< "$out"; then
       echo "!! self-test DÜŞTÜ: $f.ts eşleşmeliydi, eşleşmedi" >&2
       fail=1
     fi
   done
   for f in f-decoy1 f-decoy2; do
-    if printf '%s\n' "$out" | grep -q "/$f\.ts:"; then
+    if grep -q "/$f\.ts:" <<< "$out"; then
       echo "!! self-test DÜŞTÜ: $f.ts YANLIŞ POZİTİF — dizin adı ALT DİZE olarak eşleşti, SEGMENT olarak değil" >&2
       fail=1
     fi

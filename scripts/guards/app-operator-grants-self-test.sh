@@ -89,7 +89,7 @@ if [ "$RC_C" -ne 1 ]; then
   printf '%s\n' "$OUT_C" >&2
   FAIL=1
 fi
-if ! printf '%s' "$OUT_C" | grep -q '\[app-operator-grants\] main.tenants:INSERT'; then
+if ! grep -q '\[app-operator-grants\] main.tenants:INSERT' <<< "$OUT_C"; then
   echo "!! self-test FAIL [case C]: bulgu satırı 'main.tenants:INSERT' ile görünmedi" >&2
   printf '%s\n' "$OUT_C" >&2
   FAIL=1

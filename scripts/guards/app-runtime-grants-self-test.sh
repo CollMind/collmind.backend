@@ -127,7 +127,7 @@ if [ "$RC1" -ne 0 ]; then
   printf '%s\n' "$OUT1" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT1" | grep -q '^\[app-runtime-grants\] table:fixture_missing$'; then
+if ! grep -q '^\[app-runtime-grants\] table:fixture_missing$' <<< "$OUT1"; then
   echo "!! self-test FAIL [case 1: detector-alive]: 'table:fixture_missing' bulgusu YOK" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
@@ -140,7 +140,7 @@ fi
 # Bu yüzden GRANT'i MUTE EDİP FixtureIndexed'in GERÇEKTEN kaynak A'da
 # İZLENDİĞİNİ (yani şimdi bulgu VERMESİ gerektiğini) de kanıtla — tam olarak
 # case 7'nin tekniği, T-249'un asıl regresyonuna uygulanmış hâli.
-if printf '%s\n' "$OUT1" | grep -q '^\[app-runtime-grants\] table:fixture_indexed$'; then
+if grep -q '^\[app-runtime-grants\] table:fixture_indexed$' <<< "$OUT1"; then
   echo "!! self-test FAIL [case 2a: GRANT'li ama bulgu var]: 'fixture_indexed' GRANT'li olmasına rağmen bulgu verdi" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
@@ -152,7 +152,7 @@ if grep -q 'fixture_indexed' "$MUTATED_IDX"; then
   FAIL=1
 else
   OUT2B="$(run "$MUTATED_IDX" report "$DB_MOCK_COMPLETE")"
-  if ! printf '%s\n' "$OUT2B" | grep -q '^\[app-runtime-grants\] table:fixture_indexed$'; then
+  if ! grep -q '^\[app-runtime-grants\] table:fixture_indexed$' <<< "$OUT2B"; then
     echo "!! self-test FAIL [case 2b: T-249 sabit-pencere tuzağı geri geldi]: GRANT satırı silindi ama 'table:fixture_indexed' bulgusu YOK — FixtureIndexed muhtemelen kaynak A'dan SESSİZCE düştü (dekoratör-arası eşleme kırık)" >&2
     printf '%s\n' "$OUT2B" >&2
     FAIL=1
@@ -163,7 +163,7 @@ fi
 # Aynı gerekçe case 2b ile: "bulgu yok" tek başına kanal 2'nin çalıştığını
 # KANITLAMAZ — kanal tamamen kırılsa (hiç tetiklenmese) da FixtureInjected
 # kaynak A'ya hiç girmez ve sonuç yine "bulgu yok" olur, YANLIŞ NEDENLE.
-if printf '%s\n' "$OUT1" | grep -q '^\[app-runtime-grants\] table:fixture_injected$'; then
+if grep -q '^\[app-runtime-grants\] table:fixture_injected$' <<< "$OUT1"; then
   echo "!! self-test FAIL [case 3a: InjectRepository kanalı]: 'fixture_injected' GRANT'li olmasına rağmen bulgu verdi" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
@@ -175,7 +175,7 @@ if grep -q 'fixture_injected' "$MUTATED_INJ"; then
   FAIL=1
 else
   OUT3B="$(run "$MUTATED_INJ" report "$DB_MOCK_COMPLETE")"
-  if ! printf '%s\n' "$OUT3B" | grep -q '^\[app-runtime-grants\] table:fixture_injected$'; then
+  if ! grep -q '^\[app-runtime-grants\] table:fixture_injected$' <<< "$OUT3B"; then
     echo "!! self-test FAIL [case 3b: InjectRepository kanalı ölü]: GRANT satırı silindi ama 'table:fixture_injected' bulgusu YOK — kanal 2 muhtemelen hiç tetiklenmiyor" >&2
     printf '%s\n' "$OUT3B" >&2
     FAIL=1
@@ -183,14 +183,14 @@ else
 fi
 
 # --- case 4: yalnız yorumda geçen sınıf (FixtureGhost) kaynak A'ya SIZMAMALI
-if printf '%s\n' "$OUT1" | grep -q 'fixture_ghost'; then
+if grep -q 'fixture_ghost' <<< "$OUT1"; then
   echo "!! self-test FAIL [case 4: yorum sızıntısı]: 'fixture_ghost' hiçbir kanalda enjekte edilmiyor ama bulgu/A'da göründü" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
 fi
 
 # --- case 5: normal (GRANT'li) fixture bulgu ÜRETMEMELİ ---------------------
-if printf '%s\n' "$OUT1" | grep -q '^\[app-runtime-grants\] table:fixture_granted$'; then
+if grep -q '^\[app-runtime-grants\] table:fixture_granted$' <<< "$OUT1"; then
   echo "!! self-test FAIL [case 5]: 'fixture_granted' GRANT'li olmasına rağmen bulgu verdi" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
@@ -202,7 +202,7 @@ if [ "$RC6" -ne 0 ]; then
   echo "!! self-test FAIL [case 6]: report modu exit 0 bekleniyordu, $RC6 bulundu" >&2
   FAIL=1
 fi
-if printf '%s\n' "$OUT6" | grep -q '^\[app-runtime-grants\]'; then
+if grep -q '^\[app-runtime-grants\]' <<< "$OUT6"; then
   echo "!! self-test FAIL [case 6: temiz ağaç]: grants-full.sql ile SIFIR bulgu bekleniyordu" >&2
   printf '%s\n' "$OUT6" >&2
   FAIL=1
@@ -224,7 +224,7 @@ if grep -q 'fixture_granted' "$MUTATED"; then
   FAIL=1
 else
   OUT7="$(run "$MUTATED" report "$DB_MOCK_FULL")"
-  if ! printf '%s\n' "$OUT7" | grep -q '^\[app-runtime-grants\] table:fixture_granted$'; then
+  if ! grep -q '^\[app-runtime-grants\] table:fixture_granted$' <<< "$OUT7"; then
     echo "!! self-test FAIL [case 7: pozitif kontrol]: GRANT satırı silindi ama 'table:fixture_granted' bulgusu YOK" >&2
     printf '%s\n' "$OUT7" >&2
     FAIL=1
@@ -264,21 +264,21 @@ fi
 # --- case 10: kanal 2'nin KENDİ "detector alive" pini ------------------------
 # case 3a/3b FixtureInjected'i (GRANT'li) MUTE EDEREK dolaylı ölçüyordu — bu,
 # doğrudan bir "her zaman bulgu" standing assertion, case 1'in kanal 2 eşdeğeri.
-if ! printf '%s\n' "$OUT1" | grep -q '^\[app-runtime-grants\] table:fixture_injected_missing$'; then
+if ! grep -q '^\[app-runtime-grants\] table:fixture_injected_missing$' <<< "$OUT1"; then
   echo "!! self-test FAIL [case 10: kanal 2 detector-alive]: 'table:fixture_injected_missing' bulgusu YOK" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
 fi
 
 # --- case 11: kanal 3'ün (dataSource.getRepository) "detector alive" pini ---
-if ! printf '%s\n' "$OUT1" | grep -q '^\[app-runtime-grants\] table:fixture_direct_missing$'; then
+if ! grep -q '^\[app-runtime-grants\] table:fixture_direct_missing$' <<< "$OUT1"; then
   echo "!! self-test FAIL [case 11: kanal 3 detector-alive]: 'table:fixture_direct_missing' bulgusu YOK — DUR #1 kanalı köreldi mi?" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
 fi
 
 # --- case 12: kanal 3, GRANT'li uç → bulgu ÜRETMEMELİ (yanlış pozitif kontrolü)
-if printf '%s\n' "$OUT1" | grep -q 'table:fixture_direct_granted'; then
+if grep -q 'table:fixture_direct_granted' <<< "$OUT1"; then
   echo "!! self-test FAIL [case 12]: 'fixture_direct_granted' GRANT'li olmasına rağmen bulgu verdi" >&2
   printf '%s\n' "$OUT1" >&2
   FAIL=1
@@ -311,7 +311,9 @@ restore_source_awk() {
 }
 
 detector_alive() { # <table>
-  printf '%s\n' "$(run "$GRANTS_COMPLETE" report)" | grep -q "^\[app-runtime-grants\] table:$1\$"
+  local report_out
+  report_out="$(run "$GRANTS_COMPLETE" report)"
+  grep -q "^\[app-runtime-grants\] table:$1\$" <<< "$report_out"
 }
 
 channel_independence_check() { # <case-etiketi> <hedef-kanalın-tablosu>
@@ -403,7 +405,7 @@ if [ "$RC16" -ne 0 ]; then
   FAIL=1
 fi
 for t in fixture_granted fixture_indexed fixture_injected fixture_injected_missing fixture_direct_granted fixture_direct_missing fixture_missing; do
-  if ! printf '%s\n' "$OUT16" | grep -q "^\[app-runtime-grants\] table:${t}:not-live\$"; then
+  if ! grep -q "^\[app-runtime-grants\] table:${t}:not-live\$" <<< "$OUT16"; then
     echo "!! self-test FAIL [case 16: A\\C]: 'table:${t}:not-live' bulgusu YOK — kaynak C boşken A'nın TAMAMI bulgu vermeli" >&2
     printf '%s\n' "$OUT16" >&2
     FAIL=1
@@ -419,7 +421,7 @@ fi
 #     Aynı DB_MOCK_EMPTY çalıştırmasını (case 16 ile PAYLAŞILAN OUT16) kullanır
 #     — GRANTS_FULL'ün yedi tablosunun HEPSİ B'de var, C'de YOK.
 for t in fixture_granted fixture_indexed fixture_injected fixture_injected_missing fixture_direct_granted fixture_direct_missing fixture_missing; do
-  if ! printf '%s\n' "$OUT16" | grep -q "^\[app-runtime-grants\] table:${t}:not-applied\$"; then
+  if ! grep -q "^\[app-runtime-grants\] table:${t}:not-applied\$" <<< "$OUT16"; then
     echo "!! self-test FAIL [case 17: B\\C]: 'table:${t}:not-applied' bulgusu YOK" >&2
     printf '%s\n' "$OUT16" >&2
     FAIL=1
@@ -439,12 +441,12 @@ if [ "$RC18" -ne 0 ]; then
   printf '%s\n' "$OUT18" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT18" | grep -q '^\[app-runtime-grants\] table:fixture_rogue_grant:undeclared-live$'; then
+if ! grep -q '^\[app-runtime-grants\] table:fixture_rogue_grant:undeclared-live$' <<< "$OUT18"; then
   echo "!! self-test FAIL [case 18: C\\B]: 'table:fixture_rogue_grant:undeclared-live' bulgusu YOK" >&2
   printf '%s\n' "$OUT18" >&2
   FAIL=1
 fi
-if printf '%s\n' "$OUT18" | grep -qE ':not-live$|:not-applied$'; then
+if grep -qE ':not-live$|:not-applied$' <<< "$OUT18"; then
   echo "!! self-test FAIL [case 18: yan etki]: C=B+rogue temizken A\\C/B\\C SIFIR bulgu bekleniyordu, ama var" >&2
   printf '%s\n' "$OUT18" >&2
   FAIL=1

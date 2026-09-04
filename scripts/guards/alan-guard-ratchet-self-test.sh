@@ -75,7 +75,7 @@ if [ "$RC_A" -ne 0 ]; then
   printf '%s\n' "$OUT_A" >&2
   FAIL=1
 fi
-if printf '%s\n' "$OUT_A" | grep -q "^\[alan-guard-ratchet\]"; then
+if grep -q "^\[alan-guard-ratchet\]" <<< "$OUT_A"; then
   echo "!! self-test FAIL [case A]: büyüme yokken bir bulgu basıldı" >&2
   printf '%s\n' "$OUT_A" >&2
   FAIL=1
@@ -103,7 +103,7 @@ if [ "$RC_B" -ne 1 ]; then
   printf '%s\n' "$OUT_B" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT_B" | grep -q "fixture-plain/route-guard"; then
+if ! grep -q "fixture-plain/route-guard" <<< "$OUT_B"; then
   echo "!! self-test FAIL [case B]: bulgu 'route-guard' anahtarını İSİMLE göstermiyor" >&2
   printf '%s\n' "$OUT_B" >&2
   FAIL=1
@@ -115,7 +115,7 @@ if [ "$RC_B_REPORT" -ne 0 ]; then
   echo "!! self-test FAIL [case B report]: report modunda exit 0 bekleniyordu, $RC_B_REPORT bulundu" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT_B_REPORT" | grep -q "^\[alan-guard-ratchet\]"; then
+if ! grep -q "^\[alan-guard-ratchet\]" <<< "$OUT_B_REPORT"; then
   echo "!! self-test FAIL [case B report]: report modunda bulgu BASILMADI" >&2
   FAIL=1
 fi
@@ -130,7 +130,7 @@ if [ "$RC_C" -ne 0 ]; then
   printf '%s\n' "$OUT_C" >&2
   FAIL=1
 fi
-if ! printf '%s\n' "$OUT_C" | grep -q "SKIPPED"; then
+if ! grep -q "SKIPPED" <<< "$OUT_C"; then
   echo "!! self-test FAIL [case C]: SKIPPED mesajı basılmadı" >&2
   FAIL=1
 fi

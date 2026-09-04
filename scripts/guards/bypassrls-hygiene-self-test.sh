@@ -73,7 +73,7 @@ if [ "$RC_C" -ne 1 ]; then
   printf '%s\n' "$OUT_C" >&2
   FAIL=1
 fi
-if ! printf '%s' "$OUT_C" | grep -q '\[bypassrls-hygiene\] role:app_runtime:BYPASSRLS'; then
+if ! grep -q '\[bypassrls-hygiene\] role:app_runtime:BYPASSRLS' <<< "$OUT_C"; then
   echo "!! self-test FAIL [case C]: bulgu satırı 'role:app_runtime:BYPASSRLS' ile görünmedi" >&2
   printf '%s\n' "$OUT_C" >&2
   FAIL=1
@@ -91,7 +91,7 @@ if [ "$RC_D" -ne 1 ]; then
   printf '%s\n' "$OUT_D" >&2
   FAIL=1
 fi
-if ! printf '%s' "$OUT_D" | grep -q '\[bypassrls-hygiene\] role:renegade_admin:SUPERUSER'; then
+if ! grep -q '\[bypassrls-hygiene\] role:renegade_admin:SUPERUSER' <<< "$OUT_D"; then
   echo "!! self-test FAIL [case D]: bulgu satırı 'role:renegade_admin:SUPERUSER' ile görünmedi" >&2
   printf '%s\n' "$OUT_D" >&2
   FAIL=1

@@ -319,7 +319,7 @@ case "${1:-}" in
       # This is E16's distinction ("it cannot tell a repayment from a
       # relocation"), which was wired into the primitives list and left to
       # convention for the domain list.
-      if ! printf '%s\n' "$FILES" | grep -qxF "$file"; then
+      if ! grep -qxF "$file" <<< "$FILES"; then
         echo "[$GUARD_NAME] $file"
         echo "  OUT OF SCOPE: still on disk but no longer covered by the domain list (baseline $count)"
         echo "  A scope removal is not a repayment. Restore it, or remove the baseline line in the same commit with a reason."
