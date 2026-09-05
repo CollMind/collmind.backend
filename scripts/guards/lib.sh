@@ -19,7 +19,14 @@
 # Guard adlarının TEK doğruluk kaynağı. `run-all.sh` koşacağı guard listesini
 # buradan okur — iki yerde tutulursa biri güncellenip diğeri unutulduğunda ya
 # doğrulama reddeder ya runner sessizce atlar.
-GUARD_NAMES_VALID="migration-schema ledger-direction financial-ordering schema-isolation money-float mode-split lint-ratchet app-runtime-grants route-scope scope-ratchet roles-ratchet alan-guard-ratchet domain-guard-parity view-security-invoker dropped-column-absence app-operator-grants bypassrls-hygiene new-table-rls sigpipe-hygiene"
+#
+# ⛔ [[T-359b]] "KAPILARIN KAPISI": `sigpipe-hygiene` bu listeden ÇIKARILDI ve
+# META'ya taşındı (scripts/guards/sigpipe-hygiene.sh, meta zinciri:
+# scripts/run-all.sh). Gerekçe: kapının evreni tek repo değil — backend'te
+# doğduğunda frontend'in ÜÇ CANLI şekil-1 vakası hiç görülmüyordu (ölçüldü,
+# [[T-359b]] §0). Kopya bırakılmadı (F8: "meta kendi zinciri" aynı kapının iki
+# kopyası olurdu).
+GUARD_NAMES_VALID="migration-schema ledger-direction financial-ordering schema-isolation money-float mode-split lint-ratchet app-runtime-grants route-scope scope-ratchet roles-ratchet alan-guard-ratchet domain-guard-parity view-security-invoker dropped-column-absence app-operator-grants bypassrls-hygiene new-table-rls"
 
 # `ENV` joker anahtarını kullanabilen guard'lar (dosya:satır'ı olmayan bulgular).
 GUARD_NAMES_ENV_OK="schema-isolation"

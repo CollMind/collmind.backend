@@ -290,17 +290,11 @@ else
   exit 1
 fi
 
-# sigpipe-hygiene'in self-test'i AYRI bir dosya DEĞİL — guard'ın KENDİ içinde,
-# `--self-test` ile (üretim taraması ve self-test AYNI fonksiyondan geçer:
-# `§2.7 #8` — bir kontrolü sınayan test o kontrolün KOPYASINI çalıştırmamalı).
-echo "=== self-test (sigpipe-hygiene) ==="
-if bash "$DIR/sigpipe-hygiene.sh" --self-test; then
-  echo "(sigpipe-hygiene fixture matrisi tutuyor)"
-  echo
-else
-  echo "!! sigpipe-hygiene kendi fixture matrisini geçemedi — ölçüm güvenilmez, exit 1" >&2
-  exit 1
-fi
+# ⛔ [[T-359b]] "KAPILARIN KAPISI" — sigpipe-hygiene BU ZİNCİRDEN ÇIKARILDI ve
+# META'ya taşındı (scripts/guards/sigpipe-hygiene.sh + scripts/run-all.sh).
+# Evren tek repo değil ("pipefail kullanan her .sh", meta kökünden,
+# submodule'ler görünür) — kopya bırakılmadı (F8: iki kopya aynı kapı olurdu).
+# Bu zincirin `GUARD_NAMES_VALID`'inde de artık YOK (lib.sh).
 
 # new-table-rls'in de kendi self-test'i AYRI bir dosyadır (EK 1/b, Z53 §4b /
 # Z54 §3) — bu guard bir baseline dosyası da tüketir (money-float/mode-split
